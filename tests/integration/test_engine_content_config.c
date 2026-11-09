@@ -67,7 +67,7 @@ static void lifecycle(void){
   snprintf(anchor,sizeof anchor,"%s/content.anygm",fixture.directory);
   const char *name=strrchr(fixture.path,'/'); name=name?name+1:fixture.path;
   snprintf(text,sizeof text,"[anygm]\npayload=%s\n[overrides]\n"
-    "$anygm_probe=2\nostype|6\n$anchor_only=9\n",name);
+    "$anygm_probe=2\nostype|6\n$anchor_only=9\ngamepad|keyboard\n",name);
   write_text(anchor,text);
   config_text(text,sizeof text,hex,1,3); write_text(ini,text);
   AnygmHostServices services={0}; services.struct_size=sizeof services;
@@ -79,6 +79,7 @@ static void lifecycle(void){
   source.system_directory=fixture.directory; source.cache_directory=fixture.directory;
   assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
   assert(engine->vm.os_type_declared==1);
+  assert(engine_overrides_keyboard_emulation(engine));
   frame(engine);
   assert(gml_global_num(&engine->vm,"anygm_probe")==3);
   assert(gml_global_num(&engine->vm,"retained")==7);
@@ -91,6 +92,23 @@ static void lifecycle(void){
   assert(anygm_state_save(engine,state,capacity,&written)==ANYGM_OK);
   assert(anygm_reset(engine)==ANYGM_OK); frame(engine);
   assert(gml_global_num(&engine->vm,"anygm_probe")==3);
+  assert(engine_overrides_keyboard_emulation(engine));
+  assert(anygm_state_load(engine,state,written)==ANYGM_OK);
+  assert(engine_overrides_keyboard_emulation(engine));
+
+  /* The effective input declaration belongs to the existing content-state identity. */
+  anygm_unload(engine);
+  snprintf(text,sizeof text,"[anygm]\npayload=%s\n[overrides]\n"
+    "$anygm_probe=2\nostype|6\n$anchor_only=9\ngamepad|auto\n",name);
+  write_text(anchor,text);
+  assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
+  assert(!engine_overrides_keyboard_emulation(engine));
+  assert(anygm_state_load(engine,state,written)==ANYGM_ERROR_STATE_MISMATCH);
+  anygm_unload(engine);
+  snprintf(text,sizeof text,"[anygm]\npayload=%s\n[overrides]\n"
+    "$anygm_probe=2\nostype|6\n$anchor_only=9\ngamepad|keyboard\n",name);
+  write_text(anchor,text);
+  assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
   assert(anygm_state_load(engine,state,written)==ANYGM_OK);
 
   /* A hidden default has no part in the effective state identity. */
@@ -113,6 +131,7 @@ static void lifecycle(void){
   delta.values.struct_size=sizeof delta.values; delta.fields=ANYGM_CONFIG_CONTENT_OVERRIDES;
   delta.values.content_overrides=0;
   assert(anygm_set_config(engine,&delta)==ANYGM_OK);
+  assert(!engine_overrides_keyboard_emulation(engine));
   assert(anygm_state_load(engine,state,written)==ANYGM_ERROR_STATE_MISMATCH);
   anygm_unload(engine);
   delta.values.content_overrides=1; assert(anygm_set_config(engine,&delta)==ANYGM_OK);

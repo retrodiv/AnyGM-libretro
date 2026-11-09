@@ -322,7 +322,11 @@ owner maps GMXInput to the normalized host gamepads. Every gamepad and joystick 
 an explicit device, and the host contract carries one row per supported port. The adapter presents
 every supported port because frontend signals establish capacity and declaration, not occupancy,
 while idle and absent input are indistinguishable. The RetroPad behavior option determines
-ownership: keyboard emulation reports no pad rows and maps RetroPad input to the keyboard. Shared string conversion, fixed-array construction, and
+ownership: explicit keyboard emulation exposes no native pads and maps the first raw RetroPad row
+to the keyboard, including when the host reports zero native pads. Unreported raw rows stay idle
+under native or automatic ownership. Native button and axis readers remain
+disabled in that mode. Content may select this policy through its optional override declaration.
+Shared string conversion, fixed-array construction, and
 content-relative path resolution remain single facade operations while exact
 and ordered lookup coexist. The stage delegates unrecognized names directly to
 the instance-path stage, preserving precedence without indirect dispatch.

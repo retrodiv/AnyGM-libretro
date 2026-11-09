@@ -72,6 +72,14 @@ that branches on `os_type` accordingly takes the branch written for the declared
 declared value is returned without changing any other condition. It does not establish
 permission to run the content or override its license terms.
 
+`gamepad|keyboard` selects keyboard emulation for this content even when it contains optional
+joystick or gamepad functions. RetroPad directions and action buttons use the existing keyboard
+mapping; native pad connection, button and axis reads return inactive values. This is useful for
+content whose default or menu controls require a keyboard despite containing pad references.
+`gamepad|auto` withdraws an earlier declaration and leaves the frontend's RetroPad behavior option
+in charge. These singleton declarations follow ordinary content-override layering, disabling and
+save-state identity. They do not edit the frontend option or the content's own controller settings.
+
 `call|script_name` invokes the named zero-argument GMS script exactly once,
 after the first Step of a fresh content load. The name is the script asset
 name, not a CODE entry name: `call|configure_input` resolves only

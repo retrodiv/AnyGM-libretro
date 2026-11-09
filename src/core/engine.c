@@ -1192,9 +1192,11 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   memcpy(engine->pad_previous, engine->pad_current, sizeof(engine->pad_current));
   memcpy(engine->key_previous, engine->key_current, sizeof(engine->key_current));
   memcpy(engine->axis_previous, engine->axis_current, sizeof(engine->axis_current));
-  /* Copy every reported host port and leave all remaining rows at rest. */
+  /* Unreported native rows stay at rest. Explicit keyboard ownership additionally needs
+   * the first raw row when the host exposes no native pads. */
   unsigned pads=engine->input.connected_gamepads;
   if(pads>ANYGM_MAX_GAMEPADS) pads=ANYGM_MAX_GAMEPADS;
+  if(!pads && engine_input_keyboard_emulation_selected(engine)) pads=1u;
   for(unsigned device=0;device<ANYGM_MAX_GAMEPADS;device++){
     for (int b = 0; b < NPAD; b++)
       engine->pad_current[device][b]=

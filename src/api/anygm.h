@@ -15,7 +15,7 @@ extern "C" {
  * runtime library version, and every publishable metadata file declares the literal "Git" instead
  * of a number, so no copy can promise a value that has gone stale. CONTRIBUTING.md owns the single
  * increment step. */
-#define ANYGM_VERSION "0.1.671"
+#define ANYGM_VERSION "0.1.672"
 #define ANYGM_API_VERSION 7u
 #define ANYGM_HOST_SERVICES_VERSION 2u
 #define ANYGM_STATE_SCHEMA 44u
@@ -458,6 +458,8 @@ enum {
 
 typedef struct AnygmInputFrame {
   uint32_t struct_size;
+  /* Raw native pad rows require this host count. With explicit keyboard ownership,
+   * row zero also supplies emulation when the host exposes no native gamepads. */
   uint32_t connected_gamepads;
   uint8_t gamepad_buttons[ANYGM_MAX_GAMEPADS][ANYGM_MAX_GAMEPAD_BUTTONS];
   float gamepad_axes[ANYGM_MAX_GAMEPADS][ANYGM_MAX_GAMEPAD_AXES];

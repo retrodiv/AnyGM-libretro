@@ -2629,7 +2629,7 @@ static int game_restart_policy(void){
   return ok;
 }
 
-static int state_input_history_roundtrip(void){
+static int state_input_history_roundtrip_for_ports(unsigned ports){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_content_create(&fixture)){
     fputs("input-history fixture creation failed\n",stderr);
@@ -2651,7 +2651,16 @@ static int state_input_history_roundtrip(void){
   AnygmInputFrame input={0};
   input.struct_size=sizeof input;
   input.pointer_x=input.pointer_y=-1;
-  input.connected_gamepads=1;
+  input.connected_gamepads=ports;
+  if(!ports){
+    AnygmConfigDelta delta={0};
+    delta.struct_size=sizeof delta;delta.values.struct_size=sizeof delta.values;
+    delta.fields=ANYGM_CONFIG_GAMEPAD_CONNECTED;delta.values.gamepad_connected=0;
+    ok=ok && anygm_set_config(engine,&delta)==ANYGM_OK;
+    input.gamepad_axes[0][0]=0.5f;
+    input.gamepad_buttons[1][ANYGM_PAD_RIGHT]=1;
+    input.gamepad_axes[1][0]=0.75f;
+  }
   input.gamepad_buttons[0][ANYGM_PAD_RIGHT]=1;
   AnygmFrameOutput output={0};
   output.struct_size=sizeof output;
@@ -2663,24 +2672,104 @@ static int state_input_history_roundtrip(void){
   size_t state_size=0;
   ok=ok && engine->pad_current[0][ANYGM_PAD_RIGHT] &&
      engine->pad_previous[0][ANYGM_PAD_RIGHT] &&
+     (ports || (engine->vm.input.key(engine->vm.input.userdata,39,0) &&
+       !engine->vm.input.gamepad_connected(engine->vm.input.userdata,0) &&
+       !engine->vm.input.gamepad(engine->vm.input.userdata,0,32784,0) &&
+       engine->vm.input.gamepad_axis(engine->vm.input.userdata,0,0)==0.0 &&
+       engine->axis_current[0][0]==0.5 && engine->axis_previous[0][0]==0.5 &&
+       !engine->pad_current[1][ANYGM_PAD_RIGHT] && engine->axis_current[1][0]==0.0)) &&
      save_state(engine,&state,&state_size);
+  if(!ok && engine)
+    fprintf(stderr,"input history initial ports=%u current=%d previous=%d axis=%g/%g state=%zu\n",
+            ports,engine->pad_current[0][ANYGM_PAD_RIGHT],
+            engine->pad_previous[0][ANYGM_PAD_RIGHT],engine->axis_current[0][0],
+            engine->axis_previous[0][0],state_size);
   input.gamepad_buttons[0][ANYGM_PAD_RIGHT]=0;
+  input.gamepad_axes[0][0]=0.0f;
   output.struct_size=sizeof output;
   ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
      !engine->pad_current[0][ANYGM_PAD_RIGHT] &&
      engine->pad_previous[0][ANYGM_PAD_RIGHT] &&
      anygm_state_load(engine,state,state_size)==ANYGM_OK &&
      engine->pad_current[0][ANYGM_PAD_RIGHT] &&
-     engine->pad_previous[0][ANYGM_PAD_RIGHT];
+     engine->pad_previous[0][ANYGM_PAD_RIGHT] &&
+     (ports || (engine->axis_current[0][0]==0.0 && engine->axis_previous[0][0]==0.0));
+  if(!ok && engine && state_size)
+    fprintf(stderr,"input history restored ports=%u current=%d previous=%d axis=%g/%g\n",
+            ports,engine->pad_current[0][ANYGM_PAD_RIGHT],
+            engine->pad_previous[0][ANYGM_PAD_RIGHT],engine->axis_current[0][0],
+            engine->axis_previous[0][0]);
   input.gamepad_buttons[0][ANYGM_PAD_RIGHT]=1;
+  if(!ports) input.gamepad_axes[0][0]=0.5f;
   output.struct_size=sizeof output;
   ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
      engine->pad_current[0][ANYGM_PAD_RIGHT] &&
-     engine->pad_previous[0][ANYGM_PAD_RIGHT];
+     engine->pad_previous[0][ANYGM_PAD_RIGHT] &&
+     (ports || (engine->axis_current[0][0]==0.0 && engine->axis_previous[0][0]==0.0));
+  /* Analog samples belong to the live host, not serialized input history. The restored picture
+   * must not consume them; the following advancing frame polls them without creating a key edge. */
+  if(!ports && ok){
+    output.struct_size=sizeof output;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+       engine->axis_current[0][0]==0.5 &&
+       engine->vm.input.key(engine->vm.input.userdata,39,0) &&
+       !engine->vm.input.key(engine->vm.input.userdata,39,1) &&
+       !engine->vm.input.gamepad_connected(engine->vm.input.userdata,0) &&
+       engine->vm.input.gamepad_axis(engine->vm.input.userdata,0,0)==0.0;
+  }
   free(state);
   anygm_destroy(engine);
   anygm_synthetic_content_destroy(&fixture);
   if(!ok) fputs("state roundtrip did not preserve the input edge baseline\n",stderr);
+  return ok;
+}
+
+static int state_input_history_roundtrip(void){
+  return state_input_history_roundtrip_for_ports(1u) &&
+         state_input_history_roundtrip_for_ports(0u);
+}
+
+static int zero_count_native_pad_silence_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_content_create(&fixture)) return 0;
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;source.cache_directory=fixture.directory;
+  source.save_directory=fixture.directory;
+  const int modes[]={ANYGM_GAMEPAD_AUTO,1};
+  int ok=1;
+  for(unsigned mode=0;ok && mode<sizeof modes/sizeof modes[0];mode++){
+    AnygmEngine *engine=NULL;
+    ok=anygm_create(&services,&engine)==ANYGM_OK &&
+       anygm_load(engine,&source,NULL)==ANYGM_OK;
+    AnygmConfigDelta delta={0};
+    delta.struct_size=sizeof delta;delta.values.struct_size=sizeof delta.values;
+    delta.fields=ANYGM_CONFIG_GAMEPAD_CONNECTED;
+    delta.values.gamepad_connected=modes[mode];
+    ok=ok && anygm_set_config(engine,&delta)==ANYGM_OK;
+    AnygmInputFrame input={0};
+    input.struct_size=sizeof input;input.pointer_x=input.pointer_y=-1;
+    /* Unreported native rows may contain stale host samples. Neither their buttons nor axes
+     * become native input or the automatic keyboard bridge merely because row zero exists. */
+    input.gamepad_buttons[0][ANYGM_PAD_RIGHT]=1;
+    input.gamepad_buttons[1][ANYGM_PAD_LEFT]=1;
+    input.gamepad_axes[0][0]=0.5f;input.gamepad_axes[1][0]=0.75f;
+    AnygmFrameOutput output={0};output.struct_size=sizeof output;
+    ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+       !engine->pad_current[0][ANYGM_PAD_RIGHT] &&
+       !engine->pad_current[1][ANYGM_PAD_LEFT] &&
+       engine->axis_current[0][0]==0.0 && engine->axis_current[1][0]==0.0 &&
+       !engine->vm.input.key(engine->vm.input.userdata,39,0) &&
+       !engine->vm.input.gamepad(engine->vm.input.userdata,0,32784,0) &&
+       engine->vm.input.gamepad_axis(engine->vm.input.userdata,0,0)==0.0;
+    if(!ok) fprintf(stderr,"unreported native pad row was exposed in mode %d\n",modes[mode]);
+    anygm_destroy(engine);
+  }
+  anygm_synthetic_content_destroy(&fixture);
   return ok;
 }
 
@@ -2689,6 +2778,7 @@ static int raw_gamepad_button_layout_policy(void){
    * bit positions; modern profiles use 1..16 button enums. This synthetic
    * frame checks both interpretations. */
   AnygmEngine legacy={0};
+  legacy.config.gamepad_connected=1;
   engine_input_bind(&legacy);
   legacy.pad_current[0][ANYGM_PAD_START]=1;
   legacy.pad_current[0][ANYGM_PAD_FACE_BOTTOM]=1;
@@ -2701,6 +2791,7 @@ static int raw_gamepad_button_layout_policy(void){
 
   AnygmEngine modern={0};
   modern.win.bytecode=17;
+  modern.config.gamepad_connected=1;
   engine_input_bind(&modern);
   modern.pad_current[0][ANYGM_PAD_FACE_BOTTOM]=1;
   ok=ok && modern.vm.input.gamepad(modern.vm.input.userdata,0,1,0) &&
@@ -2804,6 +2895,38 @@ static int input_binding_ownership_policy(void){
      modern_auto_keyboard.vm.input.key(modern_auto_keyboard.vm.input.userdata,'Z',0) &&
      !modern_auto_keyboard.vm.input.gamepad_connected(
          modern_auto_keyboard.vm.input.userdata,0);
+
+  /* An optional content policy selects the existing keyboard path without exposing the same
+   * held buttons and axes through native APIs. Withdrawal restores the frontend's policy. */
+  AnygmEngine *declared[]={&classic_auto,&modern_auto};
+  for(unsigned i=0;ok && i<sizeof declared/sizeof declared[0];i++){
+    AnygmEngine *engine=declared[i];
+    char error[256];
+    engine->config.content_overrides=1;
+    engine->pad_current[0][ANYGM_PAD_START]=1;
+    engine->axis_current[0][0]=0.75;
+    ok=engine_boot_overrides_parse("gamepad|keyboard\n",engine->boot_cheats,
+         &engine->boot_cheat_count,error,sizeof error) &&
+       engine->vm.input.key(engine->vm.input.userdata,13,1) &&
+       !engine->vm.input.gamepad_connected(engine->vm.input.userdata,0) &&
+       !engine->vm.input.gamepad(engine->vm.input.userdata,0,32778,0) &&
+       engine->vm.input.gamepad_axis(engine->vm.input.userdata,0,0)==0.0;
+    engine->config.content_overrides=0;
+    ok=ok && !engine->vm.input.key(engine->vm.input.userdata,13,0) &&
+       engine->vm.input.gamepad_connected(engine->vm.input.userdata,0) &&
+       engine->vm.input.gamepad_axis(engine->vm.input.userdata,0,0)==0.75;
+    engine->config.content_overrides=1;
+    ok=ok && engine_boot_overrides_parse("gamepad|keyboard\ngamepad|auto\n",
+         engine->boot_cheats,&engine->boot_cheat_count,error,sizeof error) &&
+       engine->boot_cheat_count==1 &&
+       engine->vm.input.gamepad_connected(engine->vm.input.userdata,0);
+    engine->config.gamepad_connected=0;
+    ok=ok && engine->vm.input.key(engine->vm.input.userdata,13,0) &&
+       !engine->vm.input.gamepad_connected(engine->vm.input.userdata,0) &&
+       !engine->vm.input.gamepad(engine->vm.input.userdata,0,32778,0);
+    ok=ok && !engine_boot_overrides_parse("gamepad|invalid\n",engine->boot_cheats,
+         &engine->boot_cheat_count,error,sizeof error);
+  }
 
   if(!ok)
     fputs("RetroPad ownership did not follow what the content can hear\n",stderr);
@@ -3708,8 +3831,12 @@ int main(int argc,char **argv){
       return room_start_deactivation_policy()?0:1;
     if(!strcmp(argv[2],"input_binding_ownership"))
       return input_binding_ownership_policy()?0:1;
+    if(!strcmp(argv[2],"input_history_roundtrip"))
+      return state_input_history_roundtrip()?0:1;
     if(!strcmp(argv[2],"raw_gamepad_button_layout"))
       return raw_gamepad_button_layout_policy()?0:1;
+    if(!strcmp(argv[2],"input_zero_native_count"))
+      return zero_count_native_pad_silence_policy()?0:1;
     if(!strcmp(argv[2],"simulated_key_lifetime"))
       return simulated_key_lifetime_policy()?0:1;
     if(!strcmp(argv[2],"simulated_key_frame_lifetime"))
@@ -3748,7 +3875,7 @@ int main(int argc,char **argv){
           "first_generation_oversized_gui|"
           "background_color|view_surface_room_lifetime|view_surface_frame_mirror|"
           "view_surface_actual_target|multi_view_application_canvas|game_change|"
-          "input_binding_ownership|simulated_key_lifetime|simulated_key_frame_lifetime|"
+          "input_binding_ownership|input_zero_native_count|simulated_key_lifetime|simulated_key_frame_lifetime|"
           "bridged_key_press_delivery|bridged_key_hold|bridged_key_restore|undefined_placement|"
           "room_start_deactivation]\n",stderr);
     return 1;
@@ -3797,6 +3924,7 @@ int main(int argc,char **argv){
   if(!room_start_deactivation_policy()) return 1;
   if(!state_input_history_roundtrip()) return 1;
   if(!input_binding_ownership_policy()) return 1;
+  if(!zero_count_native_pad_silence_policy()) return 1;
   if(!simulated_key_lifetime_policy()) return 1;
   if(!simulated_key_frame_lifetime_policy()) return 1;
   if(!bridged_key_press_delivery_policy()) return 1;

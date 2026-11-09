@@ -44,7 +44,7 @@ operation kind and conditions. For example, `$counter=5` replaces `$counter=3`,
 but `?gameres $counter=5` and `$counter=3` remain distinct scoped operations.
 Indexes distinguish array/list items; camera destinations use the normalized
 handle mask and field. A surface resize is one operation with two dimensions.
-`ostype`, `introskip`, `introauto`, `monitorview` and the menu declaration are
+`ostype`, `gamepad`, `introskip`, `introauto`, `monitorview` and the menu declaration are
 singletons within their applicable scope. Menu rows replace the same label;
 `mset` replaces the same menu variable. Repeated calls to the same script and
 condition become one call. Different destinations remain available.

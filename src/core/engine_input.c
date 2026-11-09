@@ -65,6 +65,9 @@ static int vk_to_pad(AnygmEngine *engine,int vk){
  * for content that can hear a pad at all. Content that never references a joystick_* or
  * gamepad_* builtin has no other way to receive input from a pad-only frontend, so for it the
  * RetroPad remains the keyboard whatever the option reports. */
+int engine_input_keyboard_emulation_selected(AnygmEngine *engine){
+  return !engine->config.gamepad_connected || engine_overrides_keyboard_emulation(engine);
+}
 static int engine_pad_reserved_for_pad_api(AnygmEngine *engine){
   return core_opt_gamepad_connected(engine) &&
          gml_win_references_pad_input(&engine->win);
@@ -309,6 +312,7 @@ static int gp_to_pad(AnygmEngine *engine,int gp){
 }
 static int engine_input_gamepad(void *userdata,int device,int button, int edge){
   AnygmEngine *engine=userdata;
+  if(engine_input_keyboard_emulation_selected(engine)) return 0;
   if(device < 0 || device >= (int)ANYGM_MAX_GAMEPADS) return 0;
   int b = gp_to_pad(engine,button); if(b < 0) return 0;
   int cur = engine->pad_current[device][b], prev = engine->pad_previous[device][b];
@@ -329,6 +333,7 @@ static int gp_axis_slot(int axis){
 }
 static double engine_input_gamepad_axis(void *userdata,int device, int axis){
   AnygmEngine *engine=userdata;
+  if(engine_input_keyboard_emulation_selected(engine)) return 0.0;
   int slot = gp_axis_slot(axis);
   if(device < 0 || device >= (int)ANYGM_MAX_GAMEPADS || slot < 0) return 0.0;
   return engine->axis_current[device][slot];
@@ -493,6 +498,7 @@ static int core_opt_mouse_mode(AnygmEngine *engine) {
 
 
 static int core_opt_gamepad_connected(AnygmEngine *engine) {
+  if(engine_input_keyboard_emulation_selected(engine)) return 0;
   if(engine->config.gamepad_connected==ANYGM_GAMEPAD_AUTO){
     /* Apply the same structural input-reference rule to every generation. Content
      * without a pad-reading reference retains keyboard emulation. */

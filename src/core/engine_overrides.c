@@ -717,7 +717,7 @@ static int boot_same_target(const CheatSlot *left,const CheatSlot *right){
     return !strcmp(a->obj,b->obj) && !strcmp(a->var,b->var) &&
       a->idx==b->idx && a->idx2==b->idx2 && a->has_index==b->has_index &&
       a->eng==b->eng && a->camera_field==b->camera_field && a->camera_mask==b->camera_mask;
-  static const char *singletons[]={"ostype|","introskip|","introauto|","menu|"};
+  static const char *singletons[]={"ostype|","gamepad|","introskip|","introauto|","menu|"};
   for(size_t i=0;i<sizeof singletons/sizeof singletons[0];i++){
     size_t length=strlen(singletons[i]);
     if(!strncmp(left->code,singletons[i],length) && !strncmp(right->code,singletons[i],length)) return 1;
@@ -794,6 +794,12 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
           if(!value_ok || !digits){
             snprintf(error,error_capacity,
                      "directive %d: ostype| takes one non-negative os_type value",line_number);
+            return 0;
+          }
+        } else if(!strncmp(slot->code,"gamepad|",8)){
+          if(strcmp(slot->code+8,"keyboard") && strcmp(slot->code+8,"auto")){
+            snprintf(error,error_capacity,
+                     "directive %d: gamepad| takes keyboard or auto",line_number);
             return 0;
           }
         } else if(!strncmp(slot->code,"introskip|",10) || !strncmp(slot->code,"introauto|",10)){
@@ -1538,6 +1544,15 @@ int engine_overrides_declared_os_type(AnygmEngine *engine){
     if(engine->boot_cheats[i].enabled && !strncmp(engine->boot_cheats[i].code,"ostype|",7))
       return atoi(engine->boot_cheats[i].code+7);
   return -1;
+}
+/* The declaration is already layered and fingerprinted with other content directives.
+ * Auto withdraws a lower-priority declaration and leaves the frontend option in charge. */
+int engine_overrides_keyboard_emulation(AnygmEngine *engine){
+  int active=engine_boot_cheats_active(engine);
+  for(int i=0;i<active;i++)
+    if(engine->boot_cheats[i].enabled &&
+       !strcmp(engine->boot_cheats[i].code,"gamepad|keyboard")) return 1;
+  return 0;
 }
 void introskip_hook(AnygmEngine *engine){
   if(engine->introskip_enabled < 0){
