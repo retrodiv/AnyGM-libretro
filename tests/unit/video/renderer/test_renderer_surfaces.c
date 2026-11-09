@@ -1412,10 +1412,13 @@ static int point_downscale_case(void){
   return 0;
 }
 
-static int opaque_near_identity_reduction_case(void){
-  enum { SOURCE_WIDTH=5,SOURCE_HEIGHT=4,TARGET_WIDTH=4,TARGET_HEIGHT=3 };
+static int opaque_near_identity_reduction_control(int source_width,int source_height,
+                                                  int target_width,int target_height){
+  const int SOURCE_WIDTH=source_width,SOURCE_HEIGHT=source_height;
+  const int TARGET_WIDTH=target_width,TARGET_HEIGHT=target_height;
   GmlRender render;
-  uint32_t target[TARGET_WIDTH*TARGET_HEIGHT];
+  uint32_t *target=malloc((size_t)TARGET_WIDTH*TARGET_HEIGHT*sizeof *target);
+  REQUIRE(target!=NULL,"near-identity reduction target");
   memset(&render,0,sizeof render);
   render.next_surface_id=1;
   render.alphablend=1;
@@ -1431,7 +1434,7 @@ static int opaque_near_identity_reduction_case(void){
   uint32_t *source_pixels=surface_pixels(&render,source,NULL,NULL);
   REQUIRE(source_pixels!=NULL,"near-identity reduction source pixels");
   for(int y=0;y<SOURCE_HEIGHT;y++) for(int x=0;x<SOURCE_WIDTH;x++){
-    uint32_t value=(uint32_t)(13+y*47+x*9);
+    uint32_t value=(uint32_t)(13+y*47+x*9)&255u;
     source_pixels[(size_t)y*SOURCE_WIDTH+x]=
       0xFF000000u|(value<<16)|(value<<8)|value;
   }
@@ -1439,11 +1442,17 @@ static int opaque_near_identity_reduction_case(void){
   render.surface[0].all_opaque=1;
   render.surface[0].all_transparent=0;
 
-  for(int pass=0;pass<3;pass++){
-    int known=pass!=0;
+  for(int pass=0;pass<5;pass++){
+    int known=pass==1 || pass==2;
+    /* Odd-to-even near-identity reduction omits the middle source column. Certifying only
+     * sampled spans must ignore its alpha, but must reject a transparent sampled texel. */
+    uint32_t saved=source_pixels[pass==3?SOURCE_WIDTH/2:0];
+    if(pass==3 && SOURCE_WIDTH==TARGET_WIDTH+1 && TARGET_WIDTH%2==0)
+      source_pixels[SOURCE_WIDTH/2]&=0xFFFFFFu;
+    if(pass==4) source_pixels[0]&=0xFFFFFFu;
     render.surface[0].opaque_known=known;
     render.surface[0].all_opaque=known;
-    memset(target,0x4C,sizeof target);
+    memset(target,0x4C,(size_t)TARGET_WIDTH*TARGET_HEIGHT*sizeof *target);
     gml_render_begin(&render,target,TARGET_WIDTH,TARGET_HEIGHT,0.0,0.0);
     render.alpha_test_enable=pass==2;
     render.alpha_test_ref=254;
@@ -1458,6 +1467,7 @@ static int opaque_near_identity_reduction_case(void){
       int source_x=(int)((((int64_t)x*2+1)*SOURCE_WIDTH-1)/((int64_t)TARGET_WIDTH*2));
       int source_y=(int)((((int64_t)y*2+1)*SOURCE_HEIGHT-1)/((int64_t)TARGET_HEIGHT*2));
       uint32_t expected=source_pixels[(size_t)source_y*SOURCE_WIDTH+source_x];
+      if(!(expected>>24)) expected=0x4C4C4C4Cu;
       if(target[(size_t)y*TARGET_WIDTH+x]!=expected){
         fprintf(stderr,"renderer near-identity reduction mismatch at %d,%d: %08x != %08x\n",
                 x,y,target[(size_t)y*TARGET_WIDTH+x],expected);
@@ -1465,11 +1475,19 @@ static int opaque_near_identity_reduction_case(void){
         return 1;
       }
     }
-    REQUIRE(render.fb_opaque_known && render.fb_all_opaque,
+    if(pass<3) REQUIRE(render.fb_opaque_known && render.fb_all_opaque,
             "near-identity reduction opaque coverage");
+    source_pixels[pass==3?SOURCE_WIDTH/2:0]=saved;
   }
   gml_surface_free(&render,source);
+  free(target);
   return 0;
+}
+
+static int opaque_near_identity_reduction_case(void){
+  return opaque_near_identity_reduction_control(5,4,4,3) ||
+         opaque_near_identity_reduction_control(769,513,768,512) ||
+         opaque_near_identity_reduction_control(67,31,64,29);
 }
 
 static int zero_reference_alpha_test_case(void){

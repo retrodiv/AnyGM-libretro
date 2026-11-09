@@ -521,34 +521,42 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
     return 1;
   }
 
-  /* A near-identity point reduction often selects one contiguous source span per output row
-   * (for example, a 1920-wide surface presented into 1919 pixels).  The generic mapper below
-   * performs the same leading-edge lookup and alpha checks per pixel.  Copy a certified opaque
-   * span directly; when coverage metadata is conservative, a vectorized alpha scan can certify
-   * the sampled spans much more cheaply while preserving the exact sampled texels. */
+  /* Point reduction selects short contiguous source runs when only a few columns are omitted.
+   * Keep the established centre/boundary lookup, certify every sampled run before any write,
+   * then copy those exact texels. A bounded stack list leaves other reductions with the general
+   * mapper; conservative opacity never lets a transparent sampled texel enter this copy path. */
   if(!r->interp && W<=sw){
-    int sx_first=surface_point_index(px0,sw,W);
-    int sx_last=surface_point_index(px1-1,sw,W);
-    int copy_width=px1-px0;
-    if(sx_last-sx_first==copy_width-1){
+    struct { int destination,source,length; } runs[32];
+    int count=0,complete=1;
+    for(int px=px0;px<px1;px++){
+      int sx=surface_point_index(px,sw,W);
+      if(count && sx==runs[count-1].source+runs[count-1].length)
+        runs[count-1].length++;
+      else {
+        if(count==(int)(sizeof runs/sizeof runs[0])){ complete=0;break; }
+        runs[count].destination=px;runs[count].source=sx;runs[count].length=1;count++;
+      }
+    }
+    if(complete && count && (count==1 || px1-px0>=32)){
       int sampled_all_opaque=source_all_opaque;
       if(!sampled_all_opaque){
         sampled_all_opaque=1;
-        for(int py=py0;py<py1;py++){
+        for(int py=py0;py<py1 && sampled_all_opaque;py++){
           int sy=surface_point_index(py,sh,H);
-          if(!row_all_opaque32(src+(size_t)sy*sw+sx_first,copy_width)){
-            sampled_all_opaque=0;
-            break;
-          }
+          for(int run=0;run<count;run++)
+            if(!row_all_opaque32(src+(size_t)sy*sw+runs[run].source,runs[run].length)){
+              sampled_all_opaque=0;break;
+            }
         }
       }
       if(sampled_all_opaque){
         gml_render_dispatch_cpu_scope_write(r);
         for(int py=py0;py<py1;py++){
           int sy=surface_point_index(py,sh,H);
-          memcpy(r->fb+(size_t)(y0+py)*r->fbw+(x0+px0),
-                 src+(size_t)sy*sw+sx_first,
-                 (size_t)copy_width*sizeof(*src));
+          for(int run=0;run<count;run++)
+            memcpy(r->fb+(size_t)(y0+py)*r->fbw+x0+runs[run].destination,
+                   src+(size_t)sy*sw+runs[run].source,
+                   (size_t)runs[run].length*sizeof(*src));
         }
         if(rect_covers_target(r,x0+px0,y0+py0,x0+px1,y0+py1)){
           r->fb_opaque_known=1;
