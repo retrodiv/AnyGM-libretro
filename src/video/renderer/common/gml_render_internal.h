@@ -706,6 +706,7 @@ typedef struct GmlRender {
   long     generated_sprite_log_count;
   /* Diagnostic ownership counters, not state or image authority. */
   uint64_t completed_screen_cpu_reads,completed_screen_cpu_materializations;
+  uint64_t surface_multiply_skipped_pixels,surface_multiply_sampled_pixels;
 } GmlRender;
 
 /* Preserve alpha on explicit surface targets and on a first-generation Studio

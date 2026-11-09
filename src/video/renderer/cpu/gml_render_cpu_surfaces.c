@@ -1460,6 +1460,7 @@ typedef struct {
   int red,green,blue,white;
   double ax,ay,c,sn,xs,ys;
   atomic_int *coverage;
+  atomic_uint_fast64_t *skipped_pixels,*sampled_pixels;
 } MappedMultiplyBand;
 
 /* The general inverse map and multiply expression are unchanged. Immutable
@@ -1470,8 +1471,23 @@ static void mapped_multiply_band(void *context,int first,int last,int slot){
   MappedMultiplyBand *band=context;
   GmlRender *r=band->render;
   int written=0;
+  uint64_t skipped=0,sampled=0;
+  unsigned mask=r->color_write_mask;
+  uint32_t rgb_mask=(mask&1u?0x00FF0000u:0u)|(mask&2u?0x0000FF00u:0u)|
+                    (mask&4u?0x000000FFu:0u);
+  int force_alpha=r->target_sp==0 && (mask&8u);
   for(int py=band->y0+first;py<band->y0+last;py++){
     for(int px=band->x0;px<band->x1;px++){
+      uint32_t *destination=r->fb+(size_t)py*r->fbw+px;
+      uint32_t old=*destination;
+      /* Multiplication leaves selected zero RGB bytes unchanged. Once this band has witnessed
+       * one covered write, omitting another unchanged pixel cannot alter either the pixels or
+       * the draw-level coverage flag. A screen alpha byte which still needs stamping is not a
+       * no-op; numbered-target alpha is preserved by the existing multiply owner. */
+      if(written && !(old&rgb_mask) && (!force_alpha || old>>24==255u)){
+        skipped++;continue;
+      }
+      sampled++;
       double rx=px+0.5-band->ax,ry=py+0.5-band->ay;
       double u=(rx*band->c-ry*band->sn)/band->xs;
       double v=(rx*band->sn+ry*band->c)/band->ys;
@@ -1481,12 +1497,12 @@ static void mapped_multiply_band(void *context,int first,int last,int slot){
       if(!band->white){
         red=red*band->red/255;green=green*band->green/255;blue=blue*band->blue/255;
       }
-      uint32_t *destination=r->fb+(size_t)py*r->fbw+px;
-      uint32_t old=*destination;
       *destination=color_write_merge(r,old,blend_multiply_pixel(r,old,red,green,blue));
       written=1;
     }
   }
+  atomic_fetch_add_explicit(band->skipped_pixels,skipped,memory_order_relaxed);
+  atomic_fetch_add_explicit(band->sampled_pixels,sampled,memory_order_relaxed);
   if(written) gml_render_dispatch_cpu_coverage_write(band->coverage);
 }
 
@@ -1539,13 +1555,16 @@ static void draw_surface_ext_mapped_impl(GmlRender *r,int surf,double x,double y
     :source_address-target_address>=target_bytes;
   if(allow_fast && separate && !r->interp && r->blendmode==3 &&
      !destination_colour_blend_active(r) && !sremap && !squant && !slut && !sgrid){
+    atomic_uint_fast64_t skipped_pixels=0,sampled_pixels=0;
     MappedMultiplyBand band={r,src,sw,sh,x0,x1,y0,bR,bG,bB,
       (blend&0xFFFFFFu)==0xFFFFFFu,ax,ay,c,sn,xs,ys,
-      gml_render_dispatch_cpu_scope_coverage(r)};
+      gml_render_dispatch_cpu_scope_coverage(r),&skipped_pixels,&sampled_pixels};
     unsigned long long pixels=(unsigned long long)(x1-x0)*(unsigned)(y1-y0);
     if(gml_render_row_bands_profitable(r,pixels))
       gml_run_row_bands(r,y1-y0,mapped_multiply_band,&band);
     else mapped_multiply_band(&band,0,y1-y0,0);
+    r->surface_multiply_skipped_pixels+=atomic_load_explicit(&skipped_pixels,memory_order_relaxed);
+    r->surface_multiply_sampled_pixels+=atomic_load_explicit(&sampled_pixels,memory_order_relaxed);
     r->fb_opaque_known=0;
     free(copy);return;
   }

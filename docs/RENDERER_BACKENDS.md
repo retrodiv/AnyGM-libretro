@@ -33,6 +33,14 @@ with its own rasterization, sampling and texture filtering; that fill is picture
 and is judged against the original runner. Never split a scaled, rotated or
 filtered draw into CPU-shaped coverage rows or spans just to match CPU pixels.
 
+Plain CPU point-surface multiply draws omit pixels whose selected destination RGB bytes are
+already zero and whose alpha needs no change. Each worker band first witnesses an actual covered
+write with the original inverse mapper, preserving the exact draw-level coverage flag even for
+empty geometry and all-black targets. Screen pixels requiring an opaque alpha stamp retain their
+ordinary owner; numbered-target alpha and unselected channels remain unchanged. All sampled
+coordinates, tint and multiply expressions stay exact. No retained cache or state format changes.
+The GPU counterpart retains its physical quad and fixed-function multiply.
+
 Modern packaged nearest rotations with RGB-only writes on alpha-preserving numbered
 surfaces reuse the CPU's vertex and source-bound preparation and submit one native
 quad. The device samples its physical atlas coordinates and uses fixed source-over;

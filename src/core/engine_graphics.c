@@ -207,6 +207,11 @@ void engine_graphics_report(AnygmEngine *engine){
   if(!anygm_host_development_setting(&engine->host,"GML_GRAPHICS_DEVICE_STATS")) return;
   if(!engine->gpu){
     if(engine->scene_graphics_reported) return;
+    gml_render_resource_metrics(&engine->render,&resources);
+    engine_logf(engine,ANYGM_LOG_INFO,
+      "[graphics-cpu] surface_multiply_skipped_pixels=%llu surface_multiply_sampled_pixels=%llu\n",
+      (unsigned long long)resources.surface_multiply_skipped_pixels,
+      (unsigned long long)resources.surface_multiply_sampled_pixels);
     engine_logf(engine,ANYGM_LOG_INFO,
       "[graphics-scene] requested=%s active=CPU reason=%s offered=0 accepted=0\n",
       engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL?"OpenGL":"CPU",
