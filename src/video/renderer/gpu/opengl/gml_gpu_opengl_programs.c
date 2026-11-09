@@ -156,7 +156,8 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
                                mode==38?"#define GML_SCENE_CONSTANT_FILTER 36\n":
                                mode==39?"#define GML_SCENE_CONSTANT_FILTER 39\n":
                                mode==40?"#define GML_SCENE_CONSTANT_FILTER 41\n":
-                               mode==41?"#define GML_SCENE_CONSTANT_FILTER 31\n":"",
+                               mode==41?"#define GML_SCENE_CONSTANT_FILTER 31\n":
+                               mode==42?"#define GML_SCENE_CONSTANT_FILTER 40\n":"",
                                GML_GPU_OPENGL_SCENE_FRAGMENT_BODY);
   if(vertex_length<0 || (size_t)vertex_length>=sizeof vertex_source ||
      fragment_length<0 || (size_t)fragment_length>=sizeof fragment_source){
@@ -272,7 +273,9 @@ GlSceneProgram *gml_gpu_opengl_scene_draw_program(GmlGpuBackend *backend,uint32_
   if(filter==GL_SCENE_NATIVE_POINT_STAMP_FILTER) filter=82u;
   int mode=0;
   int plain_native=native_flags&GL_SCENE_NATIVE_PLAIN;
-  if(filter==31u){
+  if(filter==40u){
+    program=&scene->compact_programs[40];mode=42;
+  }else if(filter==31u){
     program=&scene->compact_programs[39];mode=41;
   }else if(filter==23u || filter==24u || filter==34u || filter==35u || filter==36u ||
      filter==39u || filter==41u){

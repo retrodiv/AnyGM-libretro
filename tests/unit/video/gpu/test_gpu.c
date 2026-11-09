@@ -1928,7 +1928,7 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
 }
 
 static int scene_hot_constant_programs_case(void){
-  const unsigned filters[]={32u,33u,153u,21u,22u,25u,26u,53u,55u,147u,149u,30u,23u,24u,34u,35u,36u,39u,41u};
+  const unsigned filters[]={32u,33u,153u,21u,22u,25u,26u,53u,55u,147u,149u,30u,23u,24u,34u,35u,36u,39u,41u,40u};
   for(unsigned api=0;api<2u;api++)for(unsigned selected=0;selected<sizeof filters/sizeof filters[0];selected++)
   for(unsigned failure=0;failure<2u;failure++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
@@ -5654,7 +5654,8 @@ static int scene_opaque_target_sourceover_api(GmlGpuApi api,int numbered,unsigne
 }
 
 static int scene_gui_tinted_text_case(void){
-  for(unsigned api=0;api<2u;api++){
+  for(unsigned api=0;api<2u;api++)for(unsigned rounded=0;rounded<2u;rounded++)
+  for(unsigned opaque=0;opaque<2u;opaque++){
     const uint8_t pixels[16]={208,32,16,128,16,208,32,255,32,16,208,0,192,176,160,64};
     GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,31u,1u,1u};
     GmlRenderImageRef target={GML_RENDER_RESOURCE_SCREEN,32u,1u,1u};
@@ -5680,13 +5681,14 @@ static int scene_gui_tinted_text_case(void){
     state.sampler_count=1u;
     state.samplers[0]=(GmlRenderSamplingPolicy){.filter=GML_RENDER_FILTER_NEAREST,
       .edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE,.source_region={0,0,2u,2u}};
+    if(rounded)state.samplers[0].quantisation=GML_RENDER_QUANTISE_INTEGER_TINT_ROUND;
     for(unsigned index=0;index<3u;index++){
       GmlRenderDrawOp *op=&ops[index];
       op->sequence=index+1u;
       op->target=(GmlRenderTargetRef){.image=target,.storage_version=1u,
         .width=8u,.height=8u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,.region={0,0,8u,8u}};
       op->target.image.content_version=index+1u;
-      if(!index){op->opcode=GML_RENDER_OP_CLEAR;op->payload.clear_colour=0x40123456u;continue;}
+      if(!index){op->opcode=GML_RENDER_OP_CLEAR;op->payload.clear_colour=opaque?0xFF123456u:0x40123456u;continue;}
       op->opcode=GML_RENDER_OP_TEXTURED_QUAD;op->scene_family=GML_RENDER_SCENE_TEXT;
       op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;op->sources=&source;op->source_count=1u;
       GmlRenderQuad *quad=&op->payload.quad;
@@ -5700,11 +5702,12 @@ static int scene_gui_tinted_text_case(void){
     }
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
     REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
-            anygm_test_graphics_scene_draw_calls()==2u &&
-            anygm_test_graphics_scene_vertices()==24u &&
+            anygm_test_graphics_scene_draw_calls()==(opaque?1:2) &&
+            anygm_test_graphics_scene_vertices()==(opaque?12:24) &&
             !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
-            "different uniform text tints batch RGB and alpha without predecessor reads");
-    for(unsigned variant=0;variant<4u;variant++){
+            "different text tints retain unknown-alpha stamps and omit only proven opaque stamps");
+    /* The original GUI-only policy rejects the other family. Integer tint also serves sprites. */
+    if(!rounded)for(unsigned variant=0;variant<4u;variant++){
       GmlRenderDrawOp prior=ops[1];
       if(variant==0u) ops[1].scene_family=GML_RENDER_SCENE_SPRITE;
       if(variant==1u) ops[1].payload.quad.corner_colour[0]^=1u;
