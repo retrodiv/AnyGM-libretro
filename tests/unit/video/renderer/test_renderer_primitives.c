@@ -7,6 +7,8 @@
 #include "gml_render_cpu_text.h"
 #include "gml_render_cpu_workers.h"
 #include "gml_render_cpu_dispatch_internal.h"
+#include "gml_render_cpu_backend.h"
+#include "gml_render_cpu_primitives.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -476,7 +478,61 @@ static void check_dispatch_subpixel_glyph_requires_visible_source(void){
          "a subpixel glyph was omitted, counted per pixel or altered by diagnostics");
 }
 
+typedef struct {GmlRender *render;uint32_t color;} CirclePixelReference;
+static void circle_pixel_reference(void *context,int x0,int x1,int y){
+  CirclePixelReference *reference=context;
+  for(int x=x0;x<=x1;x++)
+    gml_render_cpu_backend_draw_pixel(reference->render,x,y,reference->color);
+}
+static void check_circle_span_matches_pixel_writer(void){
+  const int precision[]={-1,4,12,64,69};
+  const unsigned masks[]={0u,7u,15u};
+  uint32_t expected[WIDTH*HEIGHT];
+  unsigned controls=0;
+  for(unsigned n=0;n<5u;n++) for(unsigned mask=0;mask<3u;mask++)
+  for(unsigned policy=0;policy<7u;policy++) for(unsigned surface=0;surface<2u;surface++)
+  for(unsigned clipped=0;clipped<2u;clipped++) for(unsigned pending=0;pending<2u;pending++){
+    GmlRender actual,reference;
+    reset_render(&actual,precision[n]);
+    for(unsigned i=0;i<WIDTH*HEIGHT;i++)frame[i]=0x78273859u+(i&15u);
+    actual.target_sp=(int)surface;actual.color_write_mask=masks[mask];
+    actual.fb_opaque_known=1;actual.fb_all_opaque=0;actual.fb_all_transparent=1;
+    if(policy==1u)actual.alpha=2.0;
+    if(policy==2u)actual.alpha=.6;
+    if(policy==3u)actual.alphablend=0;
+    if(policy==4u){actual.alphablend=0;actual.alpha=.6;}
+    if(policy==5u)actual.blend_equation_alpha=3;
+    if(policy==6u)actual.blendmode=2;
+    if(pending)gml_render_set_pending_fill(&actual,0x41627384u);
+    memcpy(expected,frame,sizeof expected);reference=actual;reference.fb=reference.base_fb=expected;
+    GmlRenderDispatchCpuScope scope_a,scope_b;
+    gml_render_dispatch_diagnostics_enable(&actual,1);
+    gml_render_dispatch_diagnostics_enable(&reference,1);
+    gml_render_dispatch_cpu_scope_begin(&actual,&scope_a,GML_RENDER_SCENE_PRIMITIVE);
+    gml_render_dispatch_cpu_scope_begin(&reference,&scope_b,GML_RENDER_SCENE_PRIMITIVE);
+    double cx=clipped?1.25:100.25,cy=clipped?-3.5:100.5;
+    CirclePixelReference pixels={&reference,0xB94D27u};
+    expect(gml_render_circle_filled_spans(&reference,cx,cy,31.75,21.25,
+                                         circle_pixel_reference,&pixels),"circle reference admitted");
+    gml_render_cpu_circle(&actual,cx,cy,31.75,21.25,0xB94D27u,0);
+    gml_render_dispatch_cpu_scope_end(&actual,&scope_a);
+    gml_render_dispatch_cpu_scope_end(&reference,&scope_b);
+    GmlRenderDispatchMetrics ma,mb;
+    expect(!memcmp(frame,expected,sizeof frame),"span fill differs from old per-pixel ARGB");
+    expect(actual.fb_opaque_known==reference.fb_opaque_known &&
+           actual.fb_all_opaque==reference.fb_all_opaque &&
+           actual.fb_all_transparent==reference.fb_all_transparent &&
+           actual.pending_fill==reference.pending_fill,
+           "span fill changes opacity or deferred-clear metadata");
+    expect(gml_render_dispatch_metrics(&actual,&ma) && gml_render_dispatch_metrics(&reference,&mb) &&
+           !memcmp(&ma,&mb,sizeof ma),"span fill changes actual-write dispatch witness");
+    controls++;
+  }
+  printf("circle span ARGB/metadata controls: %u\n",controls);
+}
+
 int main(void){
+  check_circle_span_matches_pixel_writer();
   check_fractional_radius_is_not_truncated();
   check_fractional_centre_is_not_quantized();
   check_integer_entry_point_is_unchanged();

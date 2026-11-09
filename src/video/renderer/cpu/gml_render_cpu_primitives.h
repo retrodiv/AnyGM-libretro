@@ -25,6 +25,8 @@ int gml_render_circle_outline_segments(GmlRender *render,double cx,double cy,
 void gml_render_cpu_line_color_subpixel(GmlRender *render,double x1,double y1,
                                         double x2,double y2,uint32_t color1,
                                         uint32_t color2,int width);
+int gml_render_circle_filled_vertices(const GmlRender *render,double cx,double cy,
+                                      double rx,double ry,double vx[64],double vy[64]);
 int gml_render_circle_filled_spans(GmlRender *render,double cx,double cy,
                                    double rx,double ry,GmlRenderPrimitiveSpan emit,
                                    void *context);

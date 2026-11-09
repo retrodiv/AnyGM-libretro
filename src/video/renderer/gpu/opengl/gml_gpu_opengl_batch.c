@@ -3354,6 +3354,9 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_NATIVE_TEXTURED_TRIANGLE;
     int native_triangle=native_textured || (op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_NATIVE_TRIANGLE);
+    int native_opaque_surface=native_triangle && !native_textured &&
+      op->target.image.resource_class==GML_RENDER_RESOURCE_SURFACE;
+    int primitive_alpha_test=native_triangle && !native_opaque_surface?0:-1;
     int particle=disc || (op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_LINE);
     int inverse_rect=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
@@ -3384,7 +3387,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       (op->payload.primitive.alpha_blend && (op->payload.primitive.alpha<1.0 || vertex_span) &&
        (rectangle_blend==0u || rectangle_blend==1u || rectangle_blend==4u) &&
        !(op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)?35u:34u):
-      native_triangle?32u:disc?109u:particle?28u:studio_alpha_rect?32u:31u;
+      native_triangle?(native_opaque_surface?31u:32u):disc?109u:particle?28u:studio_alpha_rect?32u:31u;
     if(textured_vertex) primitive_filter=(op->payload.primitive.interpolate?106u:103u)+
       (primitive_filter==35u?1u:0u);
     if(native_textured) primitive_filter=(op->payload.primitive.interpolate?GL_SCENE_NATIVE_TEXTURE_LINEAR_FILTER:GL_SCENE_NATIVE_TEXTURE_NEAREST_FILTER)+
@@ -3397,7 +3400,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
          rectangle_blend?(int)(GL_SCENE_BLEND_RECTANGLE_BASE+2u*rectangle_blend+
            ((op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)!=0u)):
          (op->payload.primitive.alpha<1.0 || vertex_span)?3:0):0):
-      native_triangle?3:inverse_rect?GL_SCENE_BLEND_INVERSE_RECT:
+      native_triangle?(native_opaque_surface?0:3):inverse_rect?GL_SCENE_BLEND_INVERSE_RECT:
       (particle || alpha_rect?(int)op->payload.primitive.alpha_blend:0);
     /* Opaque plain rectangles already carry their final uniform RGBA. Use the established
      * direct-colour sampler instead of executing the general rectangle program per fragment. */
@@ -3409,7 +3412,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     if(pending_count && (particle || alpha_rect || rectangle || native_triangle
        ? pending_palette.enabled || !active_target || !same_logical(active_target->ref,op->target.image) ||
          pending_count==GL_SCENE_MAX_QUADS || pending_filter!=primitive_filter ||
-         pending_blend!=primitive_blend || pending_alpha_test!=(native_triangle?0:-1) ||
+         pending_blend!=primitive_blend || pending_alpha_test!=primitive_alpha_test ||
          pending_write_mask!=primitive_write_mask ||
          ((textured_vertex || native_textured)?(!pending_source || !same_version(pending_source->ref,op->sources[0])):
                           pending_source!=NULL)
@@ -3597,7 +3600,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
           pending_source=primitive_source; pending_filter=primitive_filter; pending_blend=primitive_blend;
           pending_source_alpha_key=0u;
           memset(&pending_palette,0,sizeof pending_palette);
-          pending_alpha_test=native_triangle?0:-1;
+          pending_alpha_test=primitive_alpha_test;
           if(alpha_rect || rectangle || native_triangle) pending_write_mask=primitive_write_mask;
           pending_count++;
         }

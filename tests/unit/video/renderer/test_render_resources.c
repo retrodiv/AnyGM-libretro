@@ -5734,6 +5734,45 @@ static int resident_rectangle_function_matrix(void){
   return 1;
 }
 
+static int resident_surface_circle_geometry(void){
+  enum {W=48,H=40};
+  for(unsigned precision=4u;precision<=64u;precision+=4u){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={.bytecode=17,.has_room_layers=1};
+    FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+    uint32_t base[W*H]={0},shadow[W*H];CHECK(r && !gml_render_init(r,NULL));
+    r->win=&content;device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(r,&device);
+    CHECK(gml_render_begin_resident_base(r,base,W,H,0,0));
+    int id=gml_surface_create(r,W,H);CHECK(id>0 && gml_surface_set_target(r,id));
+    gml_render_set_pending_fill(r,0x40273859u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));memcpy(shadow,r->fb,sizeof shadow);
+    r->circle_precision=(int)precision;r->alpha=1.0;r->alphablend=1;
+    r->color_write_mask=15u;r->blendmode=0;r->active_shader=-1;
+    int before=fake.submits;
+    gml_render_primitive_circle_subpixel(r,24.25,20.5,12.5,9.25,0xB94D27u,0);
+    CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r));
+    CHECK(fake.submits==before+1 && fake.last_batch_operations==precision &&
+      gml_render_native_triangle_valid(&fake.last_primitive) &&
+      fake.last_target_image.resource_class==GML_RENDER_RESOURCE_SURFACE &&
+      !fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,sizeof shadow));
+    double vx[64],vy[64];CHECK(gml_render_circle_filled_vertices(r,24.25,20.5,12.5,9.25,vx,vy)==(int)precision);
+    const GmlRenderPrimitiveRect *p=&fake.last_primitive.payload.primitive;
+    CHECK(p->triangle[0][0]==24.25 && p->triangle[0][1]==20.5 &&
+      p->triangle[1][0]==vx[precision-1u] && p->triangle[1][1]==vy[precision-1u] &&
+      p->triangle[2][0]==vx[0] && p->triangle[2][1]==vy[0] &&
+      p->triangle[0][2]==39.0/255.0 && p->triangle[0][3]==77.0/255.0 &&
+      p->triangle[0][4]==185.0/255.0 && p->triangle[0][5]==1.0);
+    CHECK(!gml_render_cpu_replay_one(base,W,H,&fake.last_primitive,NULL,NULL));
+    /* A native packet cannot reconstruct its device image through CPU replay. */
+    const uint32_t *observed=NULL;
+    GmlRenderResource *resource=gml_render_surface_resource_ensure(r,id);CHECK(resource);
+    CHECK(gml_render_resource_acquire_cpu_read(resource,&observed) && observed &&
+      fake.readbacks==1 && observed[0]==fake.readback_colour);
+    gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int resident_circle_pixel_packets(void){
   static const double alphas[]={1.0,0.61,1.0/1024.0};
   for(unsigned blend=0;blend<12u;blend++) for(unsigned mask=0;mask<16u;mask++)
@@ -20475,6 +20514,7 @@ int main(void){
   passed+=resident_classic_identity_filtered_underlay();
   passed+=resident_classic_rectangle_scope();
   passed+=resident_rectangle_function_matrix();
+  passed+=resident_surface_circle_geometry();
   passed+=resident_circle_pixel_packets();
   passed+=resident_gradient_fan_packets();
   passed+=resident_classic_owned_rectangle_scope();
@@ -20718,6 +20758,6 @@ int main(void){
   passed+=skip_cpu_draw_policy_preserves_observers();
   passed+=resident_numbered_rotated_native_quad();
   passed+=resident_unit_texel_magnification();
-  printf("render resource cases: passed=%d failed=%d\n",passed,324-passed);
-  return passed==324?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,325-passed);
+  return passed==325?EXIT_SUCCESS:EXIT_FAILURE;
 }

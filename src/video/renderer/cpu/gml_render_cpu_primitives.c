@@ -478,6 +478,20 @@ static void draw_line_colour_subpixel_prim(GmlRender *R,
 }
 
 
+int gml_render_circle_filled_vertices(const GmlRender *R,double cx,double cy,
+                                      double rx,double ry,double vx[64],double vy[64]){
+  int n=R->circle_precision;
+  if(n<4) n=4;
+  if(n>64) n=64;
+  n=(n/4)*4; if(n<4) n=4;
+  for(int i=0;i<n;i++){
+    double a=(i*2.0*M_PI)/n;
+    vx[i]=cx+cos(a)*rx;
+    vy[i]=cy-sin(a)*ry;
+  }
+  return n;
+}
+
 /* The continuous form. The mapped centre and radii of a circle are generally fractional, and
  * truncating them before rasterization loses up to a whole destination pixel of extent, so the
  * geometry is carried as-is and only the covered pixel set is quantized. Integer public calls
@@ -490,16 +504,8 @@ int gml_render_circle_filled_spans(GmlRender *R,double cx,double cy,double rx,do
     if(x>=0 && y>=0 && x<R->fbw && y<R->fbh) emit(context,x,x,y);
     return 1;
   }
-  int n=R->circle_precision;
-  if(n<4) n=4;
-  if(n>64) n=64;
-  n=(n/4)*4; if(n<4) n=4;
   double vx[64],vy[64];
-  for(int i=0;i<n;i++){
-    double a=(i*2.0*M_PI)/n;
-    vx[i]=cx+cos(a)*rx;
-    vy[i]=cy-sin(a)*ry;
-  }
+  int n=gml_render_circle_filled_vertices(R,cx,cy,rx,ry,vx,vy);
   /* Keep the CPU polygon's exact scanline inclusion and clipping for resident spans. */
   double span_y0=floor(cy-ry),span_y1=ceil(cy+ry);
   if(span_y1<0.0 || span_y0>=(double)R->fbh) return 1;
@@ -526,9 +532,21 @@ int gml_render_circle_filled_spans(GmlRender *R,double cx,double cy,double rx,do
 typedef struct {GmlRender *render;uint32_t color;} GmlCircleCpuSpan;
 static void draw_circle_cpu_span(void *context,int x0,int x1,int y){
   GmlCircleCpuSpan *span=(GmlCircleCpuSpan*)context;
-  dispatch_primitive_pixel(span->render,x0,y,span->render->alpha);
+  GmlRender *r=span->render;
+  dispatch_primitive_pixel(r,x0,y,r->alpha);
+  if(r->alpha>=1.0 && (!r->alphablend ||
+     (!r->blendmode && r->blend_equation==1 && r->blend_equation_alpha==1))){
+    /* The ordinary opaque pixel writer ignores the raw colour mask. Keep its
+     * exact coverage and metadata while filling the already clipped span. */
+    if(r->pending_underlay || r->pending_fill) gml_render_prepare_draw(r);
+    gml_render_dispatch_cpu_scope_write(r);
+    r->fb_all_transparent=0;
+    gml_render_cpu_backend_fill_xrgb(r->fb+(size_t)y*r->fbw+x0,x1-x0+1,
+                                     gml_render_cpu_backend_color_to_xrgb(span->color));
+    return;
+  }
   for(int x=x0;x<=x1;x++)
-    gml_render_cpu_backend_draw_pixel(span->render,x,y,span->color);
+    gml_render_cpu_backend_draw_pixel(r,x,y,span->color);
 }
 
 int gml_render_circle_outline_segments(GmlRender *R,double cx,double cy,

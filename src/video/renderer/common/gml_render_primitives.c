@@ -941,10 +941,67 @@ static int resident_flat_spans(GmlRender *render,GmlFlatSpans *spans){
   return result!=GML_RENDER_RESOURCE_EXEC_FAILED;
 }
 
+static int resident_opaque_surface_circle(GmlRender *r,double cx,double cy,
+                                          double rx,double ry,uint32_t color){
+  if(!resident_flat_eligible(r) || r->classic ||
+     !anygm_policy_has_modern_layer_semantics(r->win) || r->target_sp<=0 || r->target_id<=0 ||
+     gml_d3_is_active(r) || r->fog_flat || r->classic_phase_scene_target ||
+     r->app_interp_phase[0] || r->app_interp_phase[1] || r->app_interp_phase[2] ||
+     r->fbw<=0 || r->fbh<=0 || r->fbw>16384 || r->fbh>16384 ||
+     !isfinite(cx) || !isfinite(cy) || !isfinite(rx) || !isfinite(ry) ||
+     cx<1.0 || cy<1.0 || cx>r->fbw-1.0 || cy>r->fbh-1.0 || rx<2.0 || ry<2.0)
+    return 0;
+  double vx[64],vy[64];
+  int count=gml_render_circle_filled_vertices(r,cx,cy,rx,ry,vx,vy);
+  GmlRenderDrawOp *operations=calloc((size_t)count,sizeof *operations);
+  if(!operations) return 0;
+  int result=0;
+  uint32_t rgb=gml_render_cpu_backend_color_to_xrgb(color);
+  for(int i=0;i<count;i++){
+    GmlRenderDrawOp *op=&operations[i];
+    op->opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;op->scene_family=GML_RENDER_SCENE_PRIMITIVE;
+    op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    op->target=(GmlRenderTargetRef){.image={.resource_class=GML_RENDER_RESOURCE_SURFACE},
+      .width=(uint32_t)r->fbw,.height=(uint32_t)r->fbh,.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+      .region={0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
+    GmlRenderPrimitiveRect *p=&op->payload.primitive;
+    p->region=op->target.region;p->kind=GML_RENDER_PRIMITIVE_NATIVE_TRIANGLE;
+    p->rectangle_flags=GML_RENDER_RECTANGLE_TARGET_ALPHA;
+    p->alpha=1.0;p->alpha_blend=1u;p->pixel_write_mask=15u;
+    const double xy[3][2]={{cx,cy},{vx[i],vy[i]},{vx[(i+1)%count],vy[(i+1)%count]}};
+    for(unsigned v=0;v<3u;v++){
+      p->triangle[v][0]=xy[v][0];p->triangle[v][1]=xy[v][1];
+      p->triangle[v][2]=((rgb>>16)&255u)/255.0;
+      p->triangle[v][3]=((rgb>>8)&255u)/255.0;
+      p->triangle[v][4]=(rgb&255u)/255.0;p->triangle[v][5]=1.0;
+    }
+    if(!gml_render_native_triangle_valid(op)) goto circle_done;
+  }
+  /* Validate the complete fan before materializing any deferred predecessor. */
+  gml_render_flush_pending_fill(r);
+  GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+  if(r->pending_fill || r->pending_underlay || !target || !r->resident_application_pass)
+    goto circle_done;
+  GmlRenderImageRef next=gml_render_application_scene_next_image_ref(r,target);
+  if(next.resource_class!=GML_RENDER_RESOURCE_SURFACE || next.content_version>UINT64_MAX-(unsigned)count)
+    goto circle_done;
+  for(int i=0;i<count;i++){
+    operations[i].target.image=next;operations[i].target.image.content_version+=(unsigned)i+1u;
+    operations[i].target.storage_version=1u;
+  }
+  result=gml_render_application_scene_enqueue_primitives(r,operations,(uint32_t)count);
+  /* Radius and centre admission guarantee visible coverage. Opaque fragments
+   * preserve an existing full-target opacity proof without asserting a new one. */
+  if(result) r->fb_all_transparent=0;
+circle_done:
+  free(operations);return result;
+}
+
 static int resident_filled_circle(GmlRender *render,double cx,double cy,
                                   double rx,double ry,uint32_t color){
   GmlFlatSpans spans={0};
   int covered,result;
+  if(resident_opaque_surface_circle(render,cx,cy,rx,ry,color)) return 1;
   if(!resident_flat_eligible(render) || !isfinite(cx) || !isfinite(cy) ||
      !isfinite(rx) || !isfinite(ry) || rx<0.0 || ry<0.0) return 0;
   spans.render=render;
