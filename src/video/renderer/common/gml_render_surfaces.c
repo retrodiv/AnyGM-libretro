@@ -676,7 +676,9 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
     ((operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST &&
       (operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION ||
        operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_POINT ||
-       operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_ROTATED_POINT)) ||
+       operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_ROTATED_POINT ||
+       (operation->payload.quad.shape==GML_RENDER_QUAD_GENERAL &&
+        operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC))) ||
      (operation->payload.quad.sampling.filter==GML_RENDER_FILTER_BOX &&
       operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_BOX_FUNCTION) ||
      operation->payload.quad.sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR ||
@@ -1080,12 +1082,14 @@ int gml_render_can_begin_borrowed_screen(const GmlRender *r,const uint32_t *pixe
        (entry->pixels!=r->app_interp_phase[index] && entry->pixels!=r->classic_interp_phase[index]))
       owned_interpolation=0;
   }
-  return r && pixels && r->base_scene_resource && r->classic && r->win &&
-    (!anygm_policy_classic_modern_presentation(r->win) ||
+  int modern_borrowed=r && r->win && !r->classic && !r->interp &&
+    !r->app_draw_enable && anygm_policy_has_modern_function_values(r->win) && owned_root;
+  return r && pixels && r->base_scene_resource && r->win &&
+    (modern_borrowed || (r->classic && (!anygm_policy_classic_modern_presentation(r->win) ||
      owned_interpolation || owned_root ||
      (r->classic_phase_resource && r->classic_phase_y==r->classic_phase_resource_pixels &&
       r->app_w==r->classic_phase_resource_width && r->app_h==r->classic_phase_resource_height &&
-      same_scene_image(gml_render_resource_image_ref(r->base_scene_resource),r->classic_phase_base_image))) &&
+      same_scene_image(gml_render_resource_image_ref(r->base_scene_resource),r->classic_phase_base_image))))) &&
     r->scene_device_enabled &&
     device && device->observe_on_demand && device->observe_on_demand(device->context) &&
     r->app_surface==r->base_scene_resource_pixels && r->app_surface!=r->app_surface_owned &&
@@ -2887,6 +2891,20 @@ static int resident_surface_nearest_function(GmlRender *r,int surf,double dx,dou
      gml_render_resident_classic_phase_present(r,dx,dy,dw,dh,colour,alpha)) return 1;
   return resident_surface_nearest_selection(r,surf,dx,dy,dw,dh,colour,alpha,automatic,NULL,0);
 }
+int gml_render_cpu_backend_resident_surface_stretched(GmlRender *r,int surf,
+  double x,double y,double width,double height,uint32_t colour,double alpha){
+  if(!r || !r->win || r->classic || r->interp || !r->resident_application_pass ||
+     !anygm_policy_has_modern_function_values(r->win) || surf!=0 ||
+     r->target_id>=0 || r->target_sp || r->surface_canvas || r->aspect_fullwidth ||
+     (r->world_transform_active && !r->gui_pass_active) ||
+     (gml_render_gui_transform_active(r) &&
+      (r->gui_scale_x!=1.0 || r->gui_scale_y!=1.0 ||
+       r->gui_maximise_xoffset!=0.0 || r->gui_maximise_yoffset!=0.0)) ||
+     r->cam_x!=0.0 || r->cam_y!=0.0 || gml_d3_is_active(r) || r->fog_flat ||
+     r->active_shader>=0 || r->alphablend || r->blendmode ||
+     r->color_write_mask!=15u || colour!=0xFFFFFFu || alpha!=1.0) return 0;
+  return resident_surface_nearest_function(r,surf,x,y,width,height,colour,alpha,0);
+}
 /* A view mirror temporarily names a registered base image as surface zero.
  * Its pointer is a storage identity,not proof that the host shadow is current.
  * Reuse only the exact registered extent,after all suspended source writes. */
@@ -4058,6 +4076,63 @@ failed:
   gml_render_resource_destroy(snapshot);return NULL;
 }
 
+/* Large multiply passes retain one placed quad. Sampling and raster coverage
+ * belong to the device; preparing one packet per CPU texel is not bounded by
+ * the number of draws. Feedback retains the existing snapshot owner below. */
+static int resident_surface_rotated_multiply(GmlRender *r,int surf,
+  const uint32_t *pixels,int sw,int sh,const double px[4],const double py[4]){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  if(pixels==r->fb || r->interp || r->blendmode!=3) return 0;
+  if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
+  gml_render_flush_pending_fill(r);
+  if(r->pending_fill || !r->resident_application_pass) return 0;
+  GmlRenderResource *sample=surf==0?(pixels==r->app_surface_owned?
+    gml_render_application_resource_ensure(r):gml_render_base_resource_lookup(r,pixels,NULL,NULL)):
+    gml_render_surface_resource_ensure(r,surf);
+  GmlRenderResourceSource source={0};
+  if(!sample || !gml_render_resource_prepare_device_source(sample,device,&source) ||
+     source.width!=(unsigned)sw || source.height!=(unsigned)sh ||
+     source.pixel_format!=GML_RENDER_PIXEL_ARGB8888) return 0;
+  int preserve=r->target_sp>0;
+  GmlRenderDrawStateSnapshot state={.colour=0xFFFFFFFFu,.alpha=255u,
+    .write_mask=r->color_write_mask,.sampler_count=1u,
+    .coverage_policy=preserve?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA,
+    .rgb_equation=GML_RENDER_BLEND_ADD,.alpha_equation=GML_RENDER_BLEND_ADD,
+    .rgb_source_factor=GML_RENDER_BLEND_DESTINATION_COLOUR,
+    .rgb_destination_factor=GML_RENDER_BLEND_ZERO,
+    .alpha_source_factor=preserve?GML_RENDER_BLEND_ZERO:GML_RENDER_BLEND_ONE,
+    .alpha_destination_factor=preserve?GML_RENDER_BLEND_ONE:GML_RENDER_BLEND_ZERO};
+  state.samplers[0]=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_NEAREST,
+    GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,(uint32_t)sw,(uint32_t)sh},
+    GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC,0u};
+  for(unsigned attempt=0;attempt<2u;attempt++){
+    if(!gml_render_application_scene_prepare_begin(r)) break;
+    r->pending_scene_batch->preparing=GML_SCENE_PREPARING_SURFACE;
+    GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+    GmlRenderDrawOp op={.opcode=GML_RENDER_OP_TEXTURED_QUAD,.scene_family=GML_RENDER_SCENE_SURFACE,
+      .reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT,.source_count=1u,.sources=&source.image};
+    int accepted=target!=NULL;
+    if(accepted){
+      GmlRenderImageRef image=gml_render_application_scene_next_image_ref(r,target);
+      accepted=image.content_version!=UINT64_MAX;
+      op.target=(GmlRenderTargetRef){image,1u,(uint32_t)r->fbw,(uint32_t)r->fbh,
+        GML_RENDER_PIXEL_ARGB8888,{0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
+      op.target.image.content_version++;
+      GmlRenderQuad *q=&op.payload.quad;
+      q->shape=GML_RENDER_QUAD_GENERAL;q->sampling=state.samplers[0];q->filtered_draw_alpha=1.0;
+      for(unsigned corner=0;corner<4u;corner++){
+        q->x[corner]=px[corner];q->y[corner]=py[corner];
+        q->u[corner]=corner==1u || corner==2u?1.0:0.0;
+        q->v[corner]=corner>=2u?1.0:0.0;q->corner_colour[corner]=0xFFFFFFFFu;
+      }
+      if(accepted) accepted=gml_render_application_scene_enqueue(r,&op,&state,&source);
+    }
+    if(gml_render_application_scene_prepare_finish(r,accepted)) return 1;
+    if(attempt || !gml_render_application_scene_flush(r)) break;
+  }
+  return 0;
+}
+
 /* Resolve only affine coverage/selected texels. No source pixel is inspected,
  * and the original CPU colour/filter/blend writer remains below the facade. */
 static int resident_surface_rotated_function(GmlRender *r,int surf,double x,double y,
@@ -4103,10 +4178,12 @@ static int resident_surface_rotated_function(GmlRender *r,int surf,double x,doub
   double ax=x-r->cam_x,ay=y-r->cam_y;
   render_modern_cardinal_anchor(r,rotation,xs,ys,c,sn,&ax,&ay);
   double local[4][2]={{0,0},{sw*xs,0},{sw*xs,sh*ys},{0,sh*ys}};
+  double placed_x[4],placed_y[4];
   double minx=1e30,miny=1e30,maxx=-1e30,maxy=-1e30;
   for(unsigned i=0;i<4u;i++){
     double px=ax+local[i][0]*c+local[i][1]*sn;
     double py=ay-local[i][0]*sn+local[i][1]*c;
+    placed_x[i]=px;placed_y[i]=py;
     if(!isfinite(px) || !isfinite(py) || fabs(px)>1000000 || fabs(py)>1000000) return 0;
     if(px<minx) minx=px;
     if(px>maxx) maxx=px;
@@ -4121,6 +4198,9 @@ static int resident_surface_rotated_function(GmlRender *r,int surf,double x,doub
   if(y1>r->fbh) y1=r->fbh;
   if(x1<=x0 || y1<=y0) return 1;
   if((uint64_t)(unsigned)(x1-x0)*(unsigned)(y1-y0)>16777216u) return 0;
+  if((uint64_t)(unsigned)(x1-x0)*(unsigned)(y1-y0)>GML_SCENE_SURFACE_RUN_LIMIT &&
+     r->blendmode==3 && !r->interp && colour==0xFFFFFFu && alpha==1.0 &&
+     resident_surface_rotated_multiply(r,surf,pixels,sw,sh,placed_x,placed_y)) return 1;
   ResidentSurfacePointRun *runs=malloc(GML_SCENE_SURFACE_RUN_LIMIT*sizeof *runs);
   if(!runs) return 0;
   uint32_t count=0;int result=0;GmlRenderResource *snapshot=NULL;uint32_t *snapshot_shadow=NULL;

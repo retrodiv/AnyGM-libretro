@@ -27,6 +27,10 @@ static uint64_t frame_digest(const AnygmFrameOutput *output){
 
 int main(int argc,char **argv){
   AnygmSyntheticContent fixture={0};
+  if(argc==2 && !strcmp(argv[1],"--keep-manual-single-view")){
+    if(!anygm_synthetic_manual_single_view_content_create(&fixture)) return 1;
+    puts(fixture.path);return 0;
+  }
   unsigned borrowed_variant=0u;
   char borrowed_tail=0;
   if(argc==3 && !strcmp(argv[1],"--keep-classic-viewport")){

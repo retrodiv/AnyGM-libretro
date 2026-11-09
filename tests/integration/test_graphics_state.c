@@ -2132,6 +2132,56 @@ static int classic_step_composition_scene_case(void){
 }
 
 /* Call-order proof; actual pixels are covered by the real-device paired control. */
+static int modern_manual_single_view_case(void){
+  Session plain={0},selected={0};
+  CurrentContextWitness witness={1u,0u};
+  AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
+  anygm_test_graphics_reset();
+  REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,
+      anygm_synthetic_manual_single_view_content_create) &&
+    session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,
+      anygm_synthetic_manual_single_view_content_create),"manual single-view fixtures load");
+  context.userdata=&witness;context.is_current=graphics_context_is_current;
+  REQUIRE(anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK,
+    "manual single-view context adopts");
+  gml_render_dispatch_diagnostics_enable(&selected.engine->render,1);
+  gml_rng_seed(&plain.engine->vm,0x13579u);gml_rng_seed(&selected.engine->vm,0x13579u);
+  int matching=1;
+  for(unsigned frame=0;frame<4u && matching;frame++){
+    matching=advance(plain.engine,1,NULL) && advance(selected.engine,1,NULL) &&
+      plain.engine->width==selected.engine->width && plain.engine->height==selected.engine->height &&
+      plain.engine->output_width==selected.engine->output_width &&
+      plain.engine->output_height==selected.engine->output_height &&
+      !selected.engine->render.app_surface_owned;
+    size_t cpu_size=gml_vm_state_size(&plain.engine->vm),gpu_size=gml_vm_state_size(&selected.engine->vm);
+    uint8_t *cpu=malloc(cpu_size),*gpu=malloc(gpu_size);size_t cw=0,gw=0;
+    matching=matching && cpu && gpu && cpu_size==gpu_size &&
+      gml_vm_state_save(&plain.engine->vm,cpu,cpu_size,&cw) &&
+      gml_vm_state_save(&selected.engine->vm,gpu,gpu_size,&gw) &&
+      cpu_size && cw==cpu_size && gw==gpu_size && !memcmp(cpu,gpu,cw);
+    free(cpu);free(gpu);
+    if(!matching) fprintf(stderr,"manual world frame=%u owned=%d extent=%u,%u/%u,%u output=%u,%u/%u,%u vm=%zu,%zu written=%zu,%zu\n",frame,selected.engine->render.app_surface_owned!=NULL,plain.engine->width,plain.engine->height,selected.engine->width,selected.engine->height,plain.engine->output_width,plain.engine->output_height,selected.engine->output_width,selected.engine->output_height,cpu_size,gpu_size,cw,gw);
+  }
+  GmlRenderDispatchMetrics dispatch={0};
+  int counted=gml_render_dispatch_metrics(&selected.engine->render,&dispatch);
+  GmlGpuCounters counters={0};gml_gpu_counters(selected.engine->gpu,&counters);
+  matching=matching && counted &&
+    !dispatch.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_SCENE] &&
+    !dispatch.cpu[GML_RENDER_SCENE_SURFACE][GML_RENDER_DISPATCH_NO_SCENE] &&
+    !counters.scene_readbacks &&
+    dispatch.gpu[GML_RENDER_SCENE_PRIMITIVE]>0u && !dispatch.failed && !dispatch.unclassified;
+  if(!matching) fprintf(stderr,"manual single-view CPU primitives=%llu GPU primitives=%llu bytecode=%d\n",
+    (unsigned long long)dispatch.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_SCENE],
+    (unsigned long long)dispatch.gpu[GML_RENDER_SCENE_PRIMITIVE],selected.engine->win.bytecode);
+  if(!matching) fprintf(stderr,"manual single-view CPU surfaces=%llu reads=%llu refused=%llu failed=%llu unclassified=%llu\n",
+    (unsigned long long)dispatch.cpu[GML_RENDER_SCENE_SURFACE][GML_RENDER_DISPATCH_NO_SCENE],
+    (unsigned long long)counters.scene_readbacks,(unsigned long long)counters.scene_batches_refused,
+    (unsigned long long)dispatch.failed,(unsigned long long)dispatch.unclassified);
+  session_close(&selected);session_close(&plain);
+  REQUIRE(matching,"manual single-view world keeps borrowed storage and exact VM with resident draws");
+  return 1;
+}
+
 static int classic_integer_surface_calls_case(void){
   Session selected={0};
   CurrentContextWitness witness={1u,0u};
@@ -6004,6 +6054,7 @@ int main(void){
      scene_state_preserves_completed_device_case},
     {"scene state size queries do not observe pixels",scene_size_query_is_metadata_only_case},
     {"final scene seal is included in frame profiling",final_scene_seal_profile_case},
+    {"manual single-view world keeps borrowed storage",modern_manual_single_view_case},
     {"Classic samples preserve borrowed storage and same-run state",classic_sample_root_state_case},
     {"resident Pre-Draw screen retains CPU state",resident_pre_draw_screen_case},
     {"independent Step numbered clear preserves CPU state",independent_step_clear_case},

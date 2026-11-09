@@ -1978,6 +1978,8 @@ static int prim_try_fast_surface_quad(GmlRender *R){
   d3_transform_point(R,&x0,&y0,&z0); d3_transform_point(R,&x1,&y1,&z1);
   if(fabs(z0-z1)>eps || x1<=x0 || y1<=y0) return 0;
   int surface=(int)(encoded&0xFFFFu);
+  if(gml_render_cpu_backend_resident_surface_stretched(
+       R,surface,x0,y0,x1-x0,y1-y0,0xFFFFFFu,alpha)) return 1;
   return gml_render_cpu_backend_surface_stretched(
     R,surface,x0,y0,x1-x0,y1-y0,0xFFFFFFu,alpha);
 }

@@ -119,7 +119,9 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
   half_gui=!rendered_source_origin &&
     gml_gpu_opengl_half_gui_point_valid(op,state,source_width,source_height);
   native_uv=quad->shape==GML_RENDER_QUAD_GENERAL &&
-    quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN;
+    (quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN ||
+     (op->scene_family==GML_RENDER_SCENE_SURFACE &&
+      quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC));
   rotated=!native_uv &&
     (quad->shape==GML_RENDER_QUAD_CARDINAL || quad->shape==GML_RENDER_QUAD_GENERAL);
   warped=quad->shape==GML_RENDER_QUAD_WARPED;
@@ -310,7 +312,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
       vertex[19+span]=(float)quad->span_x[span];
       vertex[23+span]=(float)quad->span_y[span];
     }
-    if(!rotated && state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
+    if(!rotated && !native_uv && state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
        quad->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION &&
        quad->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_TILED_POINT &&
        quad->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_ROTATED_POINT &&

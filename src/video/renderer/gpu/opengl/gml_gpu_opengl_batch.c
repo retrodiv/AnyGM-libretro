@@ -203,6 +203,50 @@ static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
   return -1;
 }
 
+/* Native affine multiply keeps one placed quad and samples the physical source. */
+static int native_surface_multiply(const GmlRenderDrawOp *op,
+  const GmlRenderDrawStateSnapshot *state,const GlSceneImage *source){
+  const GmlRenderQuad *q=&op->payload.quad;
+  const GmlRenderSamplingPolicy *sampling=&q->sampling;
+  int blend=qualified_blend(state);
+  if(!source || !source->width || !source->height || source->width>4096u || source->height>4096u ||
+     source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+     op->scene_family!=GML_RENDER_SCENE_SURFACE || op->source_count!=1u || !op->sources ||
+     (op->sources[0].resource_class!=GML_RENDER_RESOURCE_SURFACE &&
+      op->sources[0].resource_class!=GML_RENDER_RESOURCE_APPLICATION &&
+      op->sources[0].resource_class!=GML_RENDER_RESOURCE_SCREEN) ||
+     same_logical(op->sources[0],op->target.image) ||
+     op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+     op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+     !op->target.width || !op->target.height || op->target.width>16384u || op->target.height>16384u ||
+     (op->target.image.resource_class!=GML_RENDER_RESOURCE_SURFACE &&
+      op->target.image.resource_class!=GML_RENDER_RESOURCE_APPLICATION &&
+      op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN) ||
+     !full_region(op->target.region,op->target.width,op->target.height) ||
+     !((!state->clip.width && !state->clip.height) ||
+       full_region(state->clip,op->target.width,op->target.height)) ||
+     q->shape!=GML_RENDER_QUAD_GENERAL || q->span_active || q->filtered_draw_alpha!=1.0 ||
+     sampling->quantisation!=GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
+     sampling->filter!=GML_RENDER_FILTER_NEAREST || sampling->logical_margin_mask ||
+     sampling->edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
+     !full_region(sampling->source_region,source->width,source->height) ||
+     state->colour!=0xFFFFFFFFu || state->alpha!=255u || !state->write_mask || state->write_mask>15u ||
+     state->alpha_test_enabled || state->alpha_test_reference || state->source_alpha_key ||
+     state->source_palette.enabled || (blend!=22 && blend!=23) || state->sampler_count!=1u ||
+     state->samplers[0].filter!=sampling->filter ||
+     state->samplers[0].quantisation!=sampling->quantisation ||
+     state->samplers[0].edge_rule!=sampling->edge_rule || state->samplers[0].logical_margin_mask ||
+     !same_region(state->samplers[0].source_region,sampling->source_region)) return 0;
+  for(unsigned corner=0;corner<4u;corner++){
+    if(!isfinite(q->x[corner]) || !isfinite(q->y[corner]) ||
+       fabs(q->x[corner])>1000000.0 || fabs(q->y[corner])>1000000.0 ||
+       q->u[corner]!=(double)(corner==1u || corner==2u) || q->v[corner]!=(double)(corner>=2u) ||
+       q->corner_colour[corner]!=0xFFFFFFFFu) return 0;
+  }
+  return fabs(q->x[0]+q->x[2]-q->x[1]-q->x[3])<1e-8 &&
+         fabs(q->y[0]+q->y[2]-q->y[1]-q->y[3])<1e-8;
+}
+
 /* Preserve the placed point quad and physical affine map. Native nearest sampling
  * and fixed source-over fill need neither inverse maps nor a predecessor copy. */
 static int native_numbered_point(const GmlRenderDrawOp *op,
@@ -252,6 +296,9 @@ static int native_numbered_point(const GmlRenderDrawOp *op,
 
 static uint32_t scene_filter(const GmlRenderQuad *quad,
                              const GmlRenderDrawStateSnapshot *state,uint32_t family){
+  if(family==GML_RENDER_SCENE_SURFACE && quad->shape==GML_RENDER_QUAD_GENERAL &&
+     quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC)
+    return state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA?149u:147u;
   if(quad->sampling.quantisation==GML_RENDER_QUANTISE_POSITIONED_SAMPLE){
     int blend=qualified_blend(state);
     unsigned filtered=quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR;
@@ -1167,12 +1214,18 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
   const GmlRenderDrawStateSnapshot *state,const GlSceneImage *source){
   const GmlRenderQuad *quad=&op->payload.quad;
   GmlRenderRect crop=quad->sampling.source_region;
+  int numbered=op->target.image.resource_class==GML_RENDER_RESOURCE_SURFACE &&
+    state->write_mask==7u && !state->alpha_test_enabled && !state->alpha_test_reference &&
+    !state->coverage_policy && qualified_blend(state)==3;
+  int screen=op->target.image.resource_class==GML_RENDER_RESOURCE_SCREEN &&
+    state->write_mask==15u && state->alpha_test_enabled<=1u && state->alpha_test_reference<=255u &&
+    state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA && qualified_blend(state)==1;
   if(!source || !source->width || !source->height || source->rendered_origin ||
      source->width>16384u || source->height>16384u ||
      source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
      op->scene_family!=GML_RENDER_SCENE_SPRITE || op->source_count!=1u || !op->sources ||
      op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS ||
-     op->target.image.resource_class!=GML_RENDER_RESOURCE_SURFACE ||
+     (!numbered && !screen) ||
      op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
      op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
      quad->shape!=GML_RENDER_QUAD_GENERAL || quad->span_active ||
@@ -1182,10 +1235,8 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
      quad->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
      quad->sampling.logical_margin_mask || !valid_region(crop,source->width,source->height) ||
      crop.width>4096u || crop.height>4096u ||
-     state->write_mask!=7u || state->alpha!=255u || state->colour!=0xFFFFFFFFu ||
-     state->alpha_test_enabled || state->alpha_test_reference || state->source_alpha_key ||
+     state->alpha!=255u || state->colour!=0xFFFFFFFFu || state->source_alpha_key ||
      state->source_palette.enabled ||
-     state->coverage_policy || qualified_blend(state)!=3 ||
      !isfinite(quad->filtered_draw_alpha) || quad->filtered_draw_alpha<=0.0 ||
      quad->filtered_draw_alpha>1.0) return 0;
   for(unsigned corner=0;corner<4u;corner++){
@@ -1744,6 +1795,15 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       GlSceneImage *source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
       const GmlRenderSamplingPolicy *sampling=&op->payload.quad.sampling;
       int blend=qualified_blend(state);
+      if(op->scene_family==GML_RENDER_SCENE_SURFACE &&
+         op->payload.quad.shape==GML_RENDER_QUAD_GENERAL &&
+         sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC){
+        if(!backend->gl.BlendFuncSeparate || !backend->gl.BlendEquationSeparate ||
+           !native_surface_multiply(op,state,source) ||
+           !gml_render_gpu_opengl_draw_textured_quad(op,state,source->width,source->height,
+                                                     source->rendered_origin,probe)) return 0;
+        continue;
+      }
       if(sampling->quantisation==GML_RENDER_QUANTISE_POSITIONED_SAMPLE){
         if(!backend->gl.BlendFuncSeparate || !backend->gl.BlendEquationSeparate ||
            !positioned_sample_valid(op,state,source) ||

@@ -129,6 +129,11 @@ void gml_render_cpu_backend_draw_map_point(const GmlRender *render,double *x,dou
 int gml_render_cpu_backend_surface_stretched(GmlRender *render,int surface,
                                          double x,double y,double width,double height,
                                          uint32_t blend,double alpha);
+/* Optional scene admission for the already resolved plain 2D surface quad.
+ * A refusal leaves the original CPU scaler and its state untouched. */
+int gml_render_cpu_backend_resident_surface_stretched(GmlRender *render,int surface,
+                                         double x,double y,double width,double height,
+                                         uint32_t blend,double alpha);
 /* The colour modulation the active vertex program applies to every vertex colour it passes on, as
  * red, green, blue and alpha factors. Answers zero when no such program is set, so callers keep
  * their unmodulated path. Reads shader state and touches no draw target. */

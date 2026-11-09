@@ -222,6 +222,7 @@ EXECUTOR_ROW = re.compile(
 # Stop traversal here: following resource replay would make CPU kernels appear
 # GPU-capable merely because the resource owner also implements device submission.
 DISPATCH_PORTS = {
+    "gml_render_cpu_backend_resident_surface_stretched",
     "gml_render_cpu_backend_native_triangles",
     "gml_render_cpu_backend_native_textured_triangles",
     "gml_render_cpu_backend_vertex_spans",
@@ -250,6 +251,7 @@ DISPATCH_CPU_BOUNDARIES = {
     "surface_pixels", "surface_pixels_observe", "surface_pixels_access",
 }
 DISPATCH_ADDITIONAL = {
+    "gml_render_cpu_backend_resident_surface_stretched",
     "gml_render_cpu_backend_native_triangles",
     "gml_render_cpu_backend_native_textured_triangles",
     "gml_render_cpu_backend_vertex_spans",

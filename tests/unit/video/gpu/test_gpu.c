@@ -2366,6 +2366,7 @@ static int scene_nearest_surface_function_case(void){
 }
 static int scene_native_masked_rotation_case(void){
   const uint8_t pixels[16]={32,64,128,64,128,64,32,128,16,192,48,255,192,48,16,0};
+  for(unsigned owner=0;owner<3u;owner++)
   for(unsigned api=0;api<2u;api++) for(unsigned geometry=0;geometry<3u;geometry++)
   for(unsigned invalid=0;invalid<10u;invalid++){
     anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
@@ -2386,10 +2387,16 @@ static int scene_native_masked_rotation_case(void){
        .rgb_equation=GML_RENDER_BLEND_ADD,.alpha_equation=GML_RENDER_BLEND_ADD}};
     states[1].samplers[0]=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_NEAREST,
       GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,2u,2u},GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN,0u};
+    if(owner){
+      states[1].write_mask=15u;
+      states[1].alpha_source_factor=GML_RENDER_BLEND_ONE;
+      states[1].coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+      states[1].alpha_test_enabled=owner==2u;states[1].alpha_test_reference=owner==2u?127u:0u;
+    }
     GmlRenderDrawOp ops[3]={0};
     for(unsigned index=0;index<3u;index++){
       GmlRenderDrawOp *op=&ops[index];op->sequence=index+1u;
-      op->target=(GmlRenderTargetRef){.image={GML_RENDER_RESOURCE_SURFACE,182u,1u,index+1u},
+      op->target=(GmlRenderTargetRef){.image={owner?GML_RENDER_RESOURCE_SCREEN:GML_RENDER_RESOURCE_SURFACE,182u,1u,index+1u},
         .storage_version=1u,.width=8u,.height=8u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,
         .region={0,0,8u,8u}};
       if(!index){op->opcode=GML_RENDER_OP_CLEAR;op->payload.clear_colour=0xA5403050u;continue;}
@@ -2420,7 +2427,7 @@ static int scene_native_masked_rotation_case(void){
           REQUIRE(isfinite(vertices[vertex*GL_SCENE_VERTEX_FLOATS+field]),"native attributes stay finite at cardinal angles");
       }
     }
-    if(invalid==1u) states[1].write_mask=15u;
+    if(invalid==1u) states[1].write_mask=owner?7u:15u;
     if(invalid==2u) q->x[2]+=1.0;
     if(invalid==3u) q->u[0]=.25;
     if(invalid==4u) q->sampling.filter=states[1].samplers[0].filter=GML_RENDER_FILTER_HARDWARE_BILINEAR;
@@ -2435,7 +2442,7 @@ static int scene_native_masked_rotation_case(void){
       !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls(),
       "unqualified native suffix refuses before its clear prefix");
     else REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
-      anygm_test_graphics_scene_draw_calls()==1u && !anygm_test_graphics_scene_copies() &&
+      anygm_test_graphics_scene_draw_calls()==(owner?2:1) && !anygm_test_graphics_scene_copies() &&
       !anygm_test_graphics_read_pixels(),"native masked rotations group without destination snapshots");
     gml_gpu_destroy(gpu,1);
   }
@@ -2506,6 +2513,78 @@ static int scene_rotated_surface_point_case(void){
         !anygm_test_graphics_read_pixels(),"rotated point batches at capacity with grouped alpha stamps");
     }
     gml_gpu_destroy(gpu,1);free(ops);
+  }
+  return 1;
+}
+
+static int scene_native_surface_multiply_case(void){
+  const uint32_t pixels[]={0x001267B9u,0x552679B3u,0xAAC39526u,0xFF7193C5u};
+  for(unsigned api=0;api<2u;api++) for(unsigned origin=0;origin<2u;origin++)
+  for(unsigned opaque=0;opaque<2u;opaque++) for(unsigned invalid=0;invalid<11u;invalid++){
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"native multiply context");
+    gml_gpu_device_services(gpu,&device);
+    GmlRenderImageRef source={GML_RENDER_RESOURCE_SURFACE,183u,1u,1u};
+    GmlRenderImageUpload upload={.image=source,.storage_width=2u,.storage_height=2u,
+      .region={0,0,2u,2u},.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+      .stride_bytes=8u,.byte_capacity=sizeof pixels,.bytes=pixels};
+    REQUIRE(device.upload(device.context,&upload),"native multiply source");
+    if(origin){
+      source.content_version++;
+      GmlRenderDrawOp clear={.opcode=GML_RENDER_OP_CLEAR,
+        .target={source,1u,2u,2u,GML_RENDER_PIXEL_ARGB8888,{0,0,2u,2u}}};
+      clear.payload.clear_colour=0x804080C0u;
+      GmlRenderDrawBatch initial={&clear,1u,NULL,0u};
+      REQUIRE(device.submit(device.context,&initial).status==GML_RENDER_EXEC_ACCEPTED,
+              "native multiply rendered source");
+    }
+    GmlRenderDrawStateSnapshot state={.colour=0xFFFFFFFFu,.alpha=255u,.write_mask=15u,
+      .coverage_policy=opaque?GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA:0u,.sampler_count=1u,
+      .rgb_equation=GML_RENDER_BLEND_ADD,.alpha_equation=GML_RENDER_BLEND_ADD,
+      .rgb_source_factor=GML_RENDER_BLEND_DESTINATION_COLOUR,.rgb_destination_factor=GML_RENDER_BLEND_ZERO,
+      .alpha_source_factor=opaque?GML_RENDER_BLEND_ONE:GML_RENDER_BLEND_ZERO,
+      .alpha_destination_factor=opaque?GML_RENDER_BLEND_ZERO:GML_RENDER_BLEND_ONE};
+    state.samplers[0]=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_NEAREST,
+      GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,2u,2u},GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC,0u};
+    GmlRenderDrawOp ops[2]={0};
+    for(unsigned index=0;index<2u;index++){
+      ops[index].target=(GmlRenderTargetRef){{opaque?GML_RENDER_RESOURCE_SCREEN:GML_RENDER_RESOURCE_SURFACE,
+        184u,1u,index+1u},1u,256u,224u,GML_RENDER_PIXEL_ARGB8888,{0,0,256u,224u}};
+    }
+    ops[0].opcode=GML_RENDER_OP_CLEAR;ops[0].payload.clear_colour=0x78273859u;
+    ops[1].opcode=GML_RENDER_OP_TEXTURED_QUAD;ops[1].scene_family=GML_RENDER_SCENE_SURFACE;
+    ops[1].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;ops[1].source_count=1u;ops[1].sources=&source;
+    GmlRenderQuad *q=&ops[1].payload.quad;q->shape=GML_RENDER_QUAD_GENERAL;
+    q->sampling=state.samplers[0];q->filtered_draw_alpha=1.0;
+    const double x[]={20,220,200,0},y[]={40,20,200,220};
+    for(unsigned corner=0;corner<4u;corner++){
+      q->x[corner]=x[corner];q->y[corner]=y[corner];q->u[corner]=corner==1u || corner==2u;
+      q->v[corner]=corner>=2u;q->corner_colour[corner]=0xFFFFFFFFu;
+    }
+    float vertices[6u*GL_SCENE_VERTEX_FLOATS];
+    REQUIRE(gml_render_gpu_opengl_draw_textured_quad(&ops[1],&state,2u,2u,origin,vertices) &&
+      vertices[0]==20.0f && vertices[1]==40.0f && vertices[2]==0.0f &&
+      vertices[3]==(origin?1.0f:0.0f),"native multiply uses placed vertices and physical source orientation");
+    if(invalid==1u) q->u[0]=.25;
+    if(invalid==2u) q->x[2]+=1.0;
+    if(invalid==3u) q->sampling.filter=GML_RENDER_FILTER_HARDWARE_BILINEAR;
+    if(invalid==4u) state.samplers[0].source_region.width=1;
+    if(invalid==5u) state.rgb_source_factor=GML_RENDER_BLEND_ONE;
+    if(invalid==6u) ops[1].target.pixel_format=GML_RENDER_PIXEL_RGBA8888;
+    if(invalid==7u) q->filtered_draw_alpha=.5;
+    if(invalid==8u) state.write_mask=0;
+    if(invalid==9u) state.alpha_test_enabled=1;
+    if(invalid==10u) q->span_active=1;
+    int clears=anygm_test_graphics_clear_calls(),draws=anygm_test_graphics_scene_draw_calls();
+    GmlRenderDrawBatch batch={ops,2u,&state,1u};
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    REQUIRE(invalid?(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+      anygm_test_graphics_clear_calls()==clears && anygm_test_graphics_scene_draw_calls()==draws):
+      (result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==2u &&
+       anygm_test_graphics_scene_draw_calls()>draws && !anygm_test_graphics_scene_copies() &&
+       !anygm_test_graphics_read_pixels()),"native multiply prewrite admission and refusal");
+    gml_gpu_destroy(gpu,1);
   }
   return 1;
 }
@@ -6952,6 +7031,7 @@ int main(int argc,char **argv){
     {"scene_nearest_surface_fringe",scene_nearest_surface_fringe_case},
     {"scene_nearest_surface_function",scene_nearest_surface_function_case},
     {"scene_rotated_surface_point",scene_rotated_surface_point_case},
+    {"scene_native_surface_multiply",scene_native_surface_multiply_case},
     {"scene_native_masked_rotation",scene_native_masked_rotation_case},
     {"scene_tiled_surface_packets",scene_tiled_surface_packets_case},
     {"scene_gui_tinted_text",scene_gui_tinted_text_case},

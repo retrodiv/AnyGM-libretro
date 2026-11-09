@@ -1604,6 +1604,16 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
       state.coverage_policy=preserve?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
     }
   }
+  int native_opaque=native_geometry && r->target_id<0 && !r->target_sp &&
+    r->fb_opaque_known && r->fb_all_opaque;
+  if(native_geometry && r->target_id<0 && !r->target_sp){
+    state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+    state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+    state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+  }
   state.samplers[0]=operation.payload.quad.sampling;
   if(runtime_geometry){
     if(!resident_runtime_nearest_packets(r,page,&operation,&state,&source,runtime_geometry)) return 0;
@@ -1620,6 +1630,10 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
                                      &operation,&state,&source,NULL,0u,NULL,0u)) return 0;
   } else if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
   r->fb_all_transparent=0;
+  if(native_opaque){
+    r->fb_opaque_known=r->fb_all_opaque=1;
+    if(r->fb==r->app_surface) r->app_surface_opaque=1;
+  }
   if(((family==GML_RENDER_SCENE_TEXT && draw_alpha<1.0) || checkpoint_alpha_sprite ||
      (integer_atlas && r->alphablend && (inverse_sprite || destination_factor_sprite || full_axis_preset || draw_alpha<1.0 || !page->scene_binary_alpha || adjacent_alpha))) &&
      (state.write_mask&8u) &&
@@ -4228,14 +4242,22 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
      page->tx<0 || page->ty<0 ||
      (int64_t)page->tx+page->sw>sprite->w ||
      (int64_t)page->ty+page->sh>sprite->h) return 0;
-  if(phase>=0.001 && fabs(phase-360.0)>=0.001){
-    /* A masked nearest draw keeps its CPU placement while the device owns
+  int native_axis=family==GML_RENDER_SCENE_SPRITE && !r->classic && !r->interp &&
+    r->target_id<0 && !r->target_sp && !r->fog_flat && !r->gui_pass_active &&
+    r->active_shader<0 && r->alphablend && !r->blendmode && r->color_write_mask==15u &&
+    anygm_policy_has_modern_layer_semantics(r->win) &&
+    fabs((double)page->sw*xs*(double)page->sh*ys)>=131072.0;
+  if((phase>=0.001 && fabs(phase-360.0)>=0.001) || native_axis){
+    /* A qualified nearest draw keeps its CPU placement while the device owns
      * rasterization and sampling. Do not tessellate it into CPU coverage rows. */
     if(family==GML_RENDER_SCENE_SPRITE && !r->classic && !r->interp &&
        anygm_policy_has_modern_layer_semantics(r->win) && !r->fog_flat &&
-       !r->gui_pass_active && r->active_shader<0 && !r->alpha_test_enable &&
-       r->alphablend && !r->blendmode && r->color_write_mask==7u &&
-       r->target_id>0 && gml_render_target_preserves_alpha(r) &&
+       !r->gui_pass_active && r->active_shader<0 &&
+       r->alphablend && !r->blendmode &&
+       ((r->color_write_mask==7u && !r->alpha_test_enable &&
+         r->target_id>0 && gml_render_target_preserves_alpha(r)) ||
+        (r->color_write_mask==15u && r->target_id<0 && !r->target_sp &&
+         !gml_render_target_preserves_alpha(r))) &&
        page->sw<=4096 && page->sh<=4096 && r->atlas &&
        page->atlas>=0 && page->atlas<r->n_atlas &&
        r->atlas[page->atlas].w<=16384 && r->atlas[page->atlas].h<=16384){
@@ -4797,9 +4819,20 @@ static int resident_filtered_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
     if(rotation==0.0 && !r->classic && r->alphablend && !r->blendmode &&
        ((r->target_id<0 && !r->target_sp) || (r->target_id==0 && r->target_sp>0)) &&
        !gml_render_target_preserves_alpha(r) &&
-       fabs((double)page->sw*xs*(double)page->sh*ys)>=131072.0)
+       fabs((double)page->sw*xs*(double)page->sh*ys)>=131072.0){
+      if(r->target_id<0 && !r->target_sp && !r->fog_flat && !r->gui_pass_active &&
+         r->active_shader<0 && r->color_write_mask==15u &&
+         anygm_policy_has_modern_layer_semantics(r->win))
+        return resident_nearest_texture_function(r,sprite,page,x,y,xs,ys,0.0,
+          blend,alpha,GML_RENDER_SCENE_SPRITE);
       return resident_modern_nearest_rotation(r,sprite,page,x,y,xs,ys,0.0,blend,alpha);
+    }
     if(rotation!=0.0 && anygm_policy_has_modern_layer_semantics(r->win)){
+      if(!r->classic && r->target_id<0 && !r->target_sp && !r->fog_flat &&
+         !r->gui_pass_active && r->active_shader<0 && r->alphablend &&
+         !r->blendmode && r->color_write_mask==15u)
+        return resident_nearest_texture_function(r,sprite,page,x,y,xs,ys,rotation,
+          blend,alpha,GML_RENDER_SCENE_SPRITE);
       if(r->target_id<0 && r->target_sp==0)
         return resident_modern_screen_binary_rotation(r,sprite,page,x,y,xs,ys,rotation,blend,alpha);
       return resident_modern_nearest_rotation(r,sprite,page,x,y,xs,ys,rotation,blend,alpha);
