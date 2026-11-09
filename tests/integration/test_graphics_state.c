@@ -2168,15 +2168,34 @@ static int modern_manual_single_view_case(void){
   matching=matching && counted &&
     !dispatch.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_SCENE] &&
     !dispatch.cpu[GML_RENDER_SCENE_SURFACE][GML_RENDER_DISPATCH_NO_SCENE] &&
-    !counters.scene_readbacks &&
+    !counters.scene_readbacks && !counters.scene_rgb_queries &&
     dispatch.gpu[GML_RENDER_SCENE_PRIMITIVE]>0u && !dispatch.failed && !dispatch.unclassified;
   if(!matching) fprintf(stderr,"manual single-view CPU primitives=%llu GPU primitives=%llu bytecode=%d\n",
     (unsigned long long)dispatch.cpu[GML_RENDER_SCENE_PRIMITIVE][GML_RENDER_DISPATCH_NO_SCENE],
     (unsigned long long)dispatch.gpu[GML_RENDER_SCENE_PRIMITIVE],selected.engine->win.bytecode);
-  if(!matching) fprintf(stderr,"manual single-view CPU surfaces=%llu reads=%llu refused=%llu failed=%llu unclassified=%llu\n",
+  if(!matching) fprintf(stderr,"manual single-view CPU surfaces=%llu reads=%llu queries=%llu refused=%llu failed=%llu unclassified=%llu\n",
     (unsigned long long)dispatch.cpu[GML_RENDER_SCENE_SURFACE][GML_RENDER_DISPATCH_NO_SCENE],
-    (unsigned long long)counters.scene_readbacks,(unsigned long long)counters.scene_batches_refused,
+    (unsigned long long)counters.scene_readbacks,(unsigned long long)counters.scene_rgb_queries,
+    (unsigned long long)counters.scene_batches_refused,
     (unsigned long long)dispatch.failed,(unsigned long long)dispatch.unclassified);
+  if(matching){
+    size_t capacity[2]={anygm_state_size(plain.engine),anygm_state_size(selected.engine)};
+    size_t written[2]={0};void *state[2]={malloc(capacity[0]),malloc(capacity[1])};
+    matching=capacity[0] && capacity[1] && state[0] && state[1] &&
+      anygm_state_save(plain.engine,state[0],capacity[0],&written[0])==ANYGM_OK &&
+      anygm_state_save(selected.engine,state[1],capacity[1],&written[1])==ANYGM_OK &&
+      advance(plain.engine,2,NULL) && advance(selected.engine,2,NULL) &&
+      anygm_state_load(plain.engine,state[0],written[0])==ANYGM_OK &&
+      anygm_state_load(selected.engine,state[1],written[1])==ANYGM_OK &&
+      advance(plain.engine,1,NULL) && advance(selected.engine,1,NULL);
+    size_t cs=gml_vm_state_size(&plain.engine->vm),gs=gml_vm_state_size(&selected.engine->vm);
+    uint8_t *cpu=malloc(cs),*gpu=malloc(gs);size_t cw=0,gw=0;
+    matching=matching && cpu && gpu && cs==gs && cs &&
+      gml_vm_state_save(&plain.engine->vm,cpu,cs,&cw) &&
+      gml_vm_state_save(&selected.engine->vm,gpu,gs,&gw) && cw==cs && gw==gs && !memcmp(cpu,gpu,cs);
+    free(cpu);free(gpu);free(state[0]);free(state[1]);
+    if(!matching) fprintf(stderr,"manual single-view same-run state continuation failed\n");
+  }
   session_close(&selected);session_close(&plain);
   REQUIRE(matching,"manual single-view world keeps borrowed storage and exact VM with resident draws");
   return 1;

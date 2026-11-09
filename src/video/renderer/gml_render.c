@@ -1553,6 +1553,11 @@ int gml_render_defer_resident_underlay(GmlRender *r){
   else if(r->classic && r->app_surface==r->base_scene_resource_pixels &&
           r->app_w==r->base_scene_resource_width &&
           r->app_h==r->base_scene_resource_height) resource=r->base_scene_resource;
+  else if(!r->classic && r->win && anygm_policy_has_modern_function_values(r->win)){
+    int width=0,height=0;
+    resource=gml_render_base_resource_lookup(r,r->app_surface,&width,&height);
+    if(width!=r->app_w || height!=r->app_h) resource=NULL;
+  }
   if(!resource) return 0;
   /* Early classic integer presentation uses the same leading-edge samples. Interpolation at
    * 1:1 still selects that single texel. Temporal phase planes, filtered enlargement and

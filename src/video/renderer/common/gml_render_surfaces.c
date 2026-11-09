@@ -2903,6 +2903,18 @@ int gml_render_cpu_backend_resident_surface_stretched(GmlRender *r,int surf,
      r->cam_x!=0.0 || r->cam_y!=0.0 || gml_d3_is_active(r) || r->fog_flat ||
      r->active_shader>=0 || r->alphablend || r->blendmode ||
      r->color_write_mask!=15u || colour!=0xFFFFFFu || alpha!=1.0) return 0;
+  /* A terminal opaque identity copy is the existing automatic underlay
+   * recipe. Retain it for presentation instead of copying and then querying
+   * whether the identical screen and source are empty. Later draws keep the
+   * established deferred-presentation materialization boundary. */
+  if(r->presentation_deferral_enabled && !r->pending_underlay && !r->pending_presentation &&
+     r->fbw>0 && r->fbh>0 && x==0.0 && y==0.0 && width==r->fbw && height==r->fbh &&
+     r->app_w==r->fbw && r->app_h==r->fbh && r->app_surface!=r->fb &&
+     (!r->alpha_test_enable || r->alpha_test_ref<255u) && surface_known_opaque(r,0)){
+    gml_render_set_pending_underlay(r,0,0,r->fbw,r->fbh);
+    if(gml_render_defer_resident_underlay(r)) return 1;
+    gml_render_cancel_pending_underlay(r);
+  }
   return resident_surface_nearest_function(r,surf,x,y,width,height,colour,alpha,0);
 }
 /* A view mirror temporarily names a registered base image as surface zero.

@@ -2617,6 +2617,25 @@ boundary; the numbered resource fixture additionally checks that refusal.
 
 ### Native modern sprite and manual compositor scope
 
+A modern opaque, full-size identity application-surface strip can retain the
+existing terminal underlay record. The source may be an owned application image
+or a matching registered borrowed SCREEN. The renderer uses the current device
+source and its unchanged leading-edge recipe, so the final copy and equal-image
+empty-screen check are redundant. Other placements and states keep their prior
+owner. A later draw materializes that record through the existing CPU boundary;
+SCREEN lookup follows the recorded source pixels through the resource registry,
+including retained images, rather than assuming the current GUI target is the
+source.
+
+The manual single-view integration control requires exact VM bytes, zero ordinary
+reads and RGB queries, and same-execution state save/load/continuation. The
+identity-underlay matrix also includes modern owned and borrowed sources. The
+retained-source materialization guard checks captured and previously written
+fills, explicit observation and a subsequent CPU pixel. Actual GL/GLES controls
+retain the preceding executor's RGB images. State formats and CPU pixel kernels
+are unchanged; these controls carry no original-runner or throughput claim.
+
+
 An opaque rendered full-source unit surface draw onto SCREEN may use the
 existing raw image copy. Admission requires equal full extents, white tint,
 full draw alpha, an ordinary source-over state, all-channel writes, no source
@@ -2928,7 +2947,7 @@ and aspect-forced paths retain their existing selection.
 | `src/video/renderer/common/gml_render_sprites.c::resident_large_unit_texel` | `CPU` | HELPER | `107524e49f18eaaea2623cba44491952d4389b54f7a5f762903f1681ba4e4be5` | Metadata predicate for the bounded complete modern one-texel source. It samples no pixels, changes no placement and submits no drawing work. The existing physical filtered owner supplies the one-quad executor. |
 | `src/video/renderer/common/gml_render_primitives.c::gml_render_cpu_backend_native_triangles` | `gml_render_cpu_backend_native_triangles` | PARTIAL | `c26a2fb8e2d82bda6e3d1aefb7058ed700980fc6798dea63a87abc4923788aa8` | R03-VERTEX-NATIVE-ZERO-ALPHA resolves placement into native triangle packets atomically; no CPU coverage rows or image observation. Modern SCREEN/unbound owned-application uniform-RGB source-over triangles preserve certified destination opacity. Positive-alpha and mixed-zero variants share admission; other vertex variants retain their existing paths. |
 | `src/video/renderer/common/gml_render_primitives.c::gml_render_cpu_backend_native_textured_triangles` | `gml_render_cpu_backend_native_textured_triangles` | PARTIAL | `20d602b365523c5911687ab1f6130991354edd65e9c92a2ce20797b8c4e6325d` | R03-NATIVE-TEXTURED-TRIANGLES admits complete modern normal-blend local/page texture triangles with device fill and filtering; other states retain counted CPU fallback. |
-| `src/video/renderer/common/gml_render_surfaces.c::gml_render_cpu_backend_resident_surface_stretched` | `gml_render_cpu_backend_resident_surface_stretched` | PARTIAL | `a6e2db91d8022cde2440696b15f8f02b82a41491d64ee31f2abb4fe5749f25bd` | Bounded modern manual application-surface compositor: nearest, opaque white replacement on the base target, identity GUI mapping, no shader, depth, fog or canvas. Reuses the existing full-source surface executor; refusal retains the CPU owner. The manual single-view fixture requires exact VM bytes and no ordinary image reads. |
+| `src/video/renderer/common/gml_render_surfaces.c::gml_render_cpu_backend_resident_surface_stretched` | `gml_render_cpu_backend_resident_surface_stretched` | PARTIAL | `a7d80be362e864cfcc52e56f416b2339bf60330a2a09de168e12876154122cd1` | Bounded modern manual application-surface compositor: nearest, opaque white replacement on the base target, identity GUI mapping, no shader, depth, fog or canvas. Reuses the existing full-source surface executor; refusal retains the CPU owner. The manual single-view fixture requires exact VM bytes and no ordinary image reads. |
 <!-- D8-DISPATCH:END -->
 
 ## Drawing API dispatch inventory (D8 foundation)

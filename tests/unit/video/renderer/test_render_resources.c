@@ -5285,20 +5285,21 @@ static int resident_flat_primitive_public_order(void){
 }
 
 static int resident_classic_identity_filtered_underlay(void){
-  static const int generations[]={530,600,700,800,810};
-  for(unsigned generation=0;generation<5u;generation++)
+  static const int generations[]={530,600,700,800,810,0};
+  for(unsigned generation=0;generation<6u;generation++)
   for(unsigned owned=0;owned<2u;owned++)
   for(unsigned interpolate=0;interpolate<2u;interpolate++)
   for(unsigned enlarged=0;enlarged<2u;enlarged++)
   for(unsigned replace=0;replace<2u;replace++)
   for(unsigned cutoff=0;cutoff<3u;cutoff++){
     GmlRender *render=calloc(1,sizeof *render);
-    GmlWin content={.classic_version=generations[generation]};
+    GmlWin content={.classic_version=generations[generation],.bytecode=generation==5u?17:0};
     uint32_t source[16]={0},screen[64]={0};
     FakeDevice fake={0};
     GmlRenderDeviceServices device=service(&fake);
     CHECK(render && !gml_render_init(render,NULL));
-    render->classic=1;render->win=&content;render->interp=(int)interpolate;
+    render->classic=generation<5u;render->win=&content;render->interp=(int)interpolate;
+    if(generation==5u) render->app_draw_enable=0;
     render->presentation_deferral_enabled=1;
     gml_render_bind_device(render,&device);
     if(owned){
@@ -5320,7 +5321,7 @@ static int resident_classic_identity_filtered_underlay(void){
     gml_render_set_pending_fill(render,0xFF203040u);
     gml_render_set_pending_underlay(render,0,0,extent,extent);
     int accepted=gml_render_defer_resident_underlay(render);
-    int expected=generation<3u && (!interpolate || !enlarged);
+    int expected=generation==5u || (generation<3u && (!interpolate || !enlarged));
     if(accepted!=expected)
       fprintf(stderr,"classic underlay generation=%d owned=%u interpolate=%u enlarged=%u accepted=%d expected=%d\n",
         generations[generation],owned,interpolate,enlarged,accepted,expected);
@@ -8213,6 +8214,44 @@ static int resident_borrowed_application_screen_handoff(void){
     CHECK(gml_surface_pixels_read(r,0,&width,&height)==world && width==16 && height==12 &&
           !r->app_surface_owned && fake.readbacks==2);
     gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
+static int resident_deferred_borrowed_screen_materialization(void){
+  for(unsigned written_target=0;written_target<2u;written_target++)
+  for(unsigned suffix=0;suffix<2u;suffix++){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={.bytecode=17};
+    FakeDevice fake={.on_demand=1,.readback_colour=0xFF315779u};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t world[16*12]={0},screen[16*12]={0};
+    CHECK(r && !gml_render_init(r,NULL));r->win=&content;
+    r->presentation_deferral_enabled=1;r->app_draw_enable=0;
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(r,&device);gml_render_set_scene_device(r,1);
+    gml_render_application_surface_bind(r,world,16,12,1);
+    CHECK(gml_render_begin_resident_base(r,world,16,12,0,0));
+    gml_render_set_pending_fill(r,0xFF315779u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_begin_resident_base(r,screen,16,12,0,0));
+    gml_render_set_pending_fill(r,0xFF112233u);
+    if(written_target) gml_render_flush_pending_fill(r);
+    gml_render_application_surface_publish(r);gml_render_gui_begin(r,16,12);r->alphablend=0;
+    CHECK(gml_render_cpu_backend_resident_surface_stretched(r,0,0,0,16,12,0xFFFFFFu,1.0));
+    CHECK(r->pending_presentation && !r->pending_underlay && !fake.readbacks &&
+      !world[0] && !screen[0] && r->presentation.source_pixels==world &&
+      r->presentation.resident_image.resource_class==GML_RENDER_RESOURCE_SCREEN);
+    /* A CPU suffix observes an already-written target before resolving its
+     * retained source. An unwritten captured fill needs only the source. */
+    if(suffix) gml_render_cpu_point(r,5,5,0x0000FFu);
+    else gml_render_flush_deferred_presentation(r);
+    if(r->pending_presentation || screen[0]!=fake.readback_colour ||
+       screen[16*12-1]!=fake.readback_colour || world[0]!=fake.readback_colour || fake.readbacks!=(int)(1u+(suffix && written_target)))
+      fprintf(stderr,"deferred borrowed materialization: written=%u suffix=%u pending=%d screen=%08x,%08x world=%08x reads=%d\n",
+        written_target,suffix,r->pending_presentation,screen[0],screen[16*12-1],world[0],fake.readbacks);
+    CHECK(!r->pending_presentation && screen[0]==fake.readback_colour &&
+      screen[16*12-1]==fake.readback_colour && world[0]==fake.readback_colour && fake.readbacks==(int)(1u+(suffix && written_target)));
+    if(suffix) CHECK((screen[5*16+5]&0xFFFFFFu)==0xFF0000u);
+    gml_render_gui_end(r);gml_render_free(r);free(r);
   }
   return 1;
 }
@@ -20266,6 +20305,7 @@ int main(void){
     int passed;
     if(!strcmp(selected,"large-rotated-multiply")) passed=resident_large_rotated_multiply();
     else if(!strcmp(selected,"borrowed-screen-handoff")) passed=resident_borrowed_application_screen_handoff();
+    else if(!strcmp(selected,"deferred-borrowed-screen")) passed=resident_deferred_borrowed_screen_materialization();
     else if(!strcmp(selected,"surface-capture-pending-fill")) passed=runtime_surface_capture_observes_pending_fill();
     else if(!strcmp(selected,"surface-sprite-append")) passed=runtime_sprite_surface_append_lifetime();
     else if(!strcmp(selected,"skip-cpu-draws")) passed=skip_cpu_draw_policy_preserves_observers();
@@ -20435,6 +20475,7 @@ int main(void){
   passed+=resident_line_coverage_public_order();
   passed+=resident_line_function_transaction();
   passed+=resident_borrowed_application_screen_handoff();
+  passed+=resident_deferred_borrowed_screen_materialization();
   passed+=resident_outline_coverage_public_order();
   passed+=resident_atlas_uv_refusal_preserves_queued_prefix();
   passed+=resident_application_sprite_cpu_fallback();
@@ -20637,6 +20678,6 @@ int main(void){
   passed+=skip_cpu_draw_policy_preserves_observers();
   passed+=resident_numbered_rotated_native_quad();
   passed+=resident_unit_texel_magnification();
-  printf("render resource cases: passed=%d failed=%d\n",passed,322-passed);
-  return passed==322?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,323-passed);
+  return passed==323?EXIT_SUCCESS:EXIT_FAILURE;
 }

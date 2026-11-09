@@ -6,6 +6,7 @@
 #include "gml_render_presentation_axis.h"
 #include "gml_render_cpu_backend.h"
 #include "gml_render_resources.h"
+#include "gml_render_surfaces_internal.h"
 #include "gml_render_cpu_shader_pass.h"
 #include "gml_render_cpu_plan.h"
 
@@ -83,7 +84,7 @@ void gml_render_cpu_present_image(GmlRender *r){
      * silently turn a pending presentation into an empty completed frame. */
     if(record.resident_image.resource_class){
       GmlRenderResource *resource=record.resident_image.resource_class==GML_RENDER_RESOURCE_SCREEN
-        ?r->base_scene_resource:r->app_surface_resource;
+        ?gml_render_base_resource_lookup(r,record.source_pixels,NULL,NULL):r->app_surface_resource;
       GmlRenderImageRef current=gml_render_resource_image_ref(resource);
       if(current.resource_class!=record.resident_image.resource_class ||
          current.identity!=record.resident_image.identity ||
