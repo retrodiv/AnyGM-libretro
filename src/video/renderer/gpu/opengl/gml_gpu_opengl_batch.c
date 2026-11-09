@@ -2561,7 +2561,9 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   if(count>GL_SCENE_MAX_QUADS) return 0;
   int plain_native=(filter==21u || filter==22u || filter==25u || filter==26u ||
                     filter==79u || filter==80u || filter==82u ||
-                    filter==GL_SCENE_NATIVE_POINT_FILTER) &&
+                    filter==GL_SCENE_NATIVE_POINT_FILTER ||
+                    filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER ||
+                    filter==GL_SCENE_NATIVE_POINT_STAMP_FILTER) &&
     !source_alpha_key && (!palette || !palette->enabled);
   if(plain_native) for(uint32_t quad=0;quad<count;quad++){
     const float *vertex=scene->vertices+(size_t)quad*6u*GL_SCENE_VERTEX_FLOATS;
@@ -2672,14 +2674,14 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
     backend->gl.BlendEquationSeparate(rgb_equation,alpha_equation);
     backend->gl.Enable(GL_BLEND);
   } else backend->gl.Disable(GL_BLEND);
-  int stamp_alpha=native_texture_stamp || filter==133u || filter==130u || filter==104u || filter==107u || filter==99u || filter==77u || filter==75u || filter==9u || filter==12u || filter==21u || filter==23u ||
+  int stamp_alpha=native_texture_stamp || filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==133u || filter==130u || filter==104u || filter==107u || filter==99u || filter==77u || filter==75u || filter==9u || filter==12u || filter==21u || filter==23u ||
                   filter==25u || filter==32u || filter==35u || filter==39u || filter==40u ||
                   filter==46u || filter==47u || filter==53u || filter==60u ||
                   filter==66u || filter==69u || filter==71u || filter==80u ||
                   filter==86u || filter==93u || filter==110u || filter==112u ||
                   filter==138u || filter==141u || filter==143u || filter==148u || filter==152u ||
                   filter==156u || filter==158u || filter==161u || filter==162u || filter==168u;
-  int skip_alpha=opaque && (native_texture_stamp || filter==21u || filter==25u || filter==32u || filter==66u || filter==80u);
+  int skip_alpha=opaque && (native_texture_stamp || filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==21u || filter==25u || filter==32u || filter==66u || filter==80u);
   target->alpha_opaque=0;
   backend->gl.ColorMask((write_mask&1u)!=0u,(write_mask&2u)!=0u,(write_mask&4u)!=0u,
                         (!stamp_alpha || filter==110u) && (write_mask&8u)!=0u);
@@ -2731,7 +2733,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
     backend->gl.VertexAttribDivisor((GLuint)attributes[index],1u);
   }
   backend->gl.DrawArraysInstanced(GL_TRIANGLES,0,6,(GLsizei)count);
-  if(stamp_alpha && !skip_alpha && (write_mask&8u) && filter!=66u && filter!=21u && filter!=25u && filter!=32u && filter!=80u){
+  if(stamp_alpha && !skip_alpha && (write_mask&8u) && filter!=GL_SCENE_NATIVE_POINT_OPAQUE_FILTER && filter!=53u && filter!=66u && filter!=21u && filter!=25u && filter!=32u && filter!=80u){
     /* The CPU screen writer keeps alpha opaque at every covered texel,
      * even when its prior alpha is unknown. Reuse the sampled vertices and
      * the same sampler and cutout in an alpha-only pass, preserving that recipe's coverage. */
@@ -2767,8 +2769,8 @@ restore_stream_state:
     (!(write_mask&8u) || stamp_alpha || (blend==1 && filter!=15u && filter!=17u));
   /* Constant RGB programs cannot change selector for the separate alpha stamp.
    * Submit that existing kernel through the same stream with complete state. */
-  if(!skip_alpha && (filter==66u || filter==21u || filter==25u || filter==32u || filter==80u) && (write_mask&8u))
-    if(!flush_quads(backend,target,source,filter==21u?22u:filter==25u?26u:filter==32u?33u:filter==80u?82u:72u,0,count,8u,alpha_test,
+  if(!skip_alpha && (filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==53u || filter==66u || filter==21u || filter==25u || filter==32u || filter==80u) && (write_mask&8u))
+    if(!flush_quads(backend,target,source,filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER?GL_SCENE_NATIVE_POINT_STAMP_FILTER:filter==53u?55u:filter==21u?22u:filter==25u?26u:filter==32u?33u:filter==80u?82u:72u,0,count,8u,alpha_test,
                     source_alpha_key,palette)) return 0;
   if(native_flags&GL_SCENE_NATIVE_WHITE_TINT) backend->white_tint_quads+=count;
   if(native_flags&GL_SCENE_NATIVE_ZERO_ALPHA_BLEND) backend->zero_alpha_blend_quads+=count;
@@ -3255,6 +3257,11 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       operation_filter=scene_filter(&op->payload.quad,state,op->scene_family);
       if(operation_filter==27u && native_numbered_point(op,state,source))
         operation_filter=GL_SCENE_NATIVE_POINT_FILTER;
+      if(op->payload.quad.shape==GML_RENDER_QUAD_GENERAL &&
+         op->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN &&
+         op->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST)
+        operation_filter=state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA
+          ?GL_SCENE_NATIVE_POINT_OPAQUE_FILTER:GL_SCENE_NATIVE_POINT_FILTER;
     }
     int disc=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_DISC;

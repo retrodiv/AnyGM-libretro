@@ -143,7 +143,11 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
                                mode==25?"#define GML_SCENE_CONSTANT_FILTER 25\n#define GML_SCENE_PLAIN_NATIVE 1\n":
                                mode==26?"#define GML_SCENE_CONSTANT_FILTER 26\n#define GML_SCENE_PLAIN_NATIVE 1\n":
                                mode==27?"#define GML_SCENE_CONSTANT_FILTER 25\n#define GML_SCENE_PLAIN_NATIVE 1\n#define GML_SCENE_WHITE_TINT 1\n":
-                               mode==28?"#define GML_SCENE_CONSTANT_FILTER 25\n#define GML_SCENE_PLAIN_NATIVE 1\n#define GML_SCENE_WHITE_TINT 1\n#define GML_SCENE_ZERO_ALPHA_BLEND 1\n":"",
+                               mode==28?"#define GML_SCENE_CONSTANT_FILTER 25\n#define GML_SCENE_PLAIN_NATIVE 1\n#define GML_SCENE_WHITE_TINT 1\n#define GML_SCENE_ZERO_ALPHA_BLEND 1\n":
+                               mode==29?"#define GML_SCENE_CONSTANT_FILTER 53\n":
+                               mode==30?"#define GML_SCENE_CONSTANT_FILTER 55\n":
+                               mode==31?"#define GML_SCENE_CONSTANT_FILTER 147\n":
+                               mode==32?"#define GML_SCENE_CONSTANT_FILTER 149\n":"",
                                GML_GPU_OPENGL_SCENE_FRAGMENT_BODY);
   if(vertex_length<0 || (size_t)vertex_length>=sizeof vertex_source ||
      fragment_length<0 || (size_t)fragment_length>=sizeof fragment_source){
@@ -252,10 +256,14 @@ GlSceneProgram *gml_gpu_opengl_scene_draw_program(GmlGpuBackend *backend,uint32_
                                                    char *error,size_t error_capacity){
   GlScene *scene=&backend->scene;
   GlSceneProgram *program=&scene->main_program;
-  if(filter==GL_SCENE_NATIVE_POINT_FILTER) filter=79u;
+  if(filter==GL_SCENE_NATIVE_POINT_FILTER || filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER) filter=79u;
+  if(filter==GL_SCENE_NATIVE_POINT_STAMP_FILTER) filter=82u;
   int mode=0;
   int plain_native=native_flags&GL_SCENE_NATIVE_PLAIN;
-  if(plain_native && filter==25u && (native_flags&GL_SCENE_NATIVE_ZERO_ALPHA_BLEND)){
+  if(filter==53u || filter==55u || filter==147u || filter==149u){
+    unsigned index=filter==53u?27u:filter==55u?28u:filter==147u?29u:30u;
+    program=&scene->compact_programs[index];mode=(int)index+2;
+  }else if(plain_native && filter==25u && (native_flags&GL_SCENE_NATIVE_ZERO_ALPHA_BLEND)){
     program=&scene->compact_programs[26];mode=28;
   }else if(plain_native && filter==25u && (native_flags&GL_SCENE_NATIVE_WHITE_TINT)){
     program=&scene->compact_programs[25];mode=27;

@@ -18,6 +18,8 @@ enum {
   GL_SCENE_MAX_QUADS=2048,
   GL_SCENE_WHITE_TEXELS=16384,
   GL_SCENE_NATIVE_POINT_FILTER=171,
+  GL_SCENE_NATIVE_POINT_OPAQUE_FILTER=172,
+  GL_SCENE_NATIVE_POINT_STAMP_FILTER=173,
   GL_SCENE_NATIVE_TEXTURE_NEAREST_FILTER=180,
   GL_SCENE_NATIVE_TEXTURE_LINEAR_FILTER=181,
   GL_SCENE_NATIVE_TEXTURE_STAMP_NEAREST_FILTER=182,
@@ -30,7 +32,7 @@ enum {
   GL_SCENE_STREAM_BYTES=20*GL_SCENE_MAX_QUADS*GL_SCENE_INSTANCE_FLOATS*sizeof(float)
 };
 
-_Static_assert(GL_SCENE_NATIVE_POINT_FILTER<GL_SCENE_NATIVE_TEXTURE_NEAREST_FILTER,
+_Static_assert(GL_SCENE_NATIVE_POINT_STAMP_FILTER<GL_SCENE_NATIVE_TEXTURE_NEAREST_FILTER,
                "Native texture selectors must not alias the point sampler");
 _Static_assert(GL_SCENE_NATIVE_TEXTURE_NEAREST_FILTER==180 &&
                GL_SCENE_NATIVE_TEXTURE_SURFACE_LINEAR_FILTER==185,
@@ -166,7 +168,7 @@ typedef struct GlScene {
   GLint checkpoint_u_image,checkpoint_u_previous,checkpoint_u_alpha;
   uint32_t checkpoint_mask_width,checkpoint_mask_height;
   int checkpoint_program_failed;
-  GlSceneProgram main_program,filtered_program,compact_programs[27];
+  GlSceneProgram main_program,filtered_program,compact_programs[31];
   GLuint vertex_buffer,vertex_array,instance_buffer,instance_array;
   GLuint upload_buffer;
   size_t instance_bytes_used;

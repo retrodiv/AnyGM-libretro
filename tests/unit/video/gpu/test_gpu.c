@@ -1846,14 +1846,14 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
 }
 
 static int scene_hot_constant_programs_case(void){
-  const unsigned filters[]={32u,33u,153u,21u,22u,25u,26u};
-  for(unsigned api=0;api<2u;api++)for(unsigned selected=0;selected<7u;selected++)
+  const unsigned filters[]={32u,33u,153u,21u,22u,25u,26u,53u,55u,147u,149u};
+  for(unsigned api=0;api<2u;api++)for(unsigned selected=0;selected<sizeof filters/sizeof filters[0];selected++)
   for(unsigned failure=0;failure<2u;failure++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
     anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
     REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"hot program context created");
     char prefix[64],error[192];
-    int plain=selected>=3u;
+    int plain=selected>=3u && selected<7u;
     snprintf(prefix,sizeof prefix,"#define GML_SCENE_CONSTANT_FILTER %u\n",filters[selected]);
     if(failure){
       anygm_test_graphics_fail_compile_containing(prefix);
@@ -2443,7 +2443,8 @@ static int scene_native_masked_rotation_case(void){
       "unqualified native suffix refuses before its clear prefix");
     else REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
       anygm_test_graphics_scene_draw_calls()==(owner?2:1) && !anygm_test_graphics_scene_copies() &&
-      !anygm_test_graphics_read_pixels(),"native masked rotations group without destination snapshots");
+      !anygm_test_graphics_read_pixels() && anygm_test_graphics_scene_filter()==GL_NEAREST,
+      "native nearest rotations group without destination snapshots or linear filtering");
     gml_gpu_destroy(gpu,1);
   }
   return 1;
