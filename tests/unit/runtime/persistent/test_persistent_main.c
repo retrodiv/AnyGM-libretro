@@ -31,6 +31,7 @@ int main(int argc,char **argv){
     {"deactivated_instance_reference",expect_deactivated_instance_reference},
     {"destroy_callback_reference",expect_destroy_callback_reference},
     {"destroy_callback_population",expect_destroy_callback_population},
+    {"indexed_instance_queries",expect_indexed_instance_queries},
     {"bounding_box_far_edges_by_generation",expect_bounding_box_far_edges_by_generation},
     {"rectangular_mask_edge_contacts",expect_rectangular_mask_edge_contacts},
     {"studio_transformed_mask_bounds",expect_studio_transformed_mask_bounds},

@@ -37,6 +37,7 @@ int expect_retired_builtin_script_shadow(void);
 int expect_deactivated_instance_reference(void);
 int expect_destroy_callback_reference(void);
 int expect_destroy_callback_population(void);
+int expect_indexed_instance_queries(void);
 int expect_bounding_box_far_edges_by_generation(void);
 int expect_bounding_box_far_edges_at_a_fractional_position(void);
 int expect_studio_transformed_mask_bounds(void);

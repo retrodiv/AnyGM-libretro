@@ -384,6 +384,70 @@ int expect_destroy_callback_reference(void){
   return ok;
 }
 
+static int indexed_query_is(GmlVM *vm,int object,int count,uint32_t first_id){
+  GmlInstance *first=gml_find_instance(vm,object);
+  int actual=gml_instance_number(vm,object);
+  if(actual==count && (first?first->id:0u)==first_id) return 1;
+  fprintf(stderr,"indexed query object=%d count=%d/%d first=%u/%u\n",
+    object,actual,count,first?first->id:0u,first_id);
+  return 0;
+}
+
+int expect_indexed_instance_queries(void){
+  char path[]="/tmp/gml-query-index-XXXXXX";int fd=mkstemp(path),ok=0;
+  if(fd<0) return 0;
+  close(fd);
+  AnygmHostServices host={.struct_size=sizeof host,.abi_version=ANYGM_HOST_SERVICES_VERSION};
+  anygm_stdio_vfs_services_init(&host);
+  enum { POPULATION=404 };
+  GmlcObject objects[4]={{0}};GmlcRoom room={0};GmlcRoomInstance instances[POPULATION]={{0}};
+  int order=0;GmlcProject project={0};char error[256]={0};
+  project.host=&host;project.name="indexed-instance-query";
+  project.objects=objects;project.n_objects=project.cap_objects=4;
+  project.rooms=&room;project.n_rooms=project.cap_rooms=1;
+  project.room_order=&order;project.n_room_order=1;
+  for(int i=0;i<4;i++){
+    objects[i].id=objects[i].name=i==0?"query_root":i==1?"query_first_child":
+      i==2?"query_second_child":"query_unrelated";
+    objects[i].sprite_id=objects[i].mask_id=-1;objects[i].parent_id=i==1 || i==2?0:-1;
+  }
+  for(int i=0;i<POPULATION;i++){
+    instances[i].id=instances[i].name="query_member";instances[i].instance_id=100000+i;
+    instances[i].object_id=i==0?2:i==1?1:i==2?0:3;
+    instances[i].sx=instances[i].sy=1.0;instances[i].color=0xFFFFFFFFu;
+  }
+  room.id=room.name="query_room";room.width=64;room.height=48;room.speed=60;
+  room.instances=instances;room.n_instances=room.cap_instances=POPULATION;
+  if(!gmlc_package_write_structural(&project,path,error,sizeof error)){unlink(path);return 0;}
+  GmlWin win={0};GmlVM vm={0};
+  if(anygm_stdio_load_win(&win,path)){unlink(path);return 0;}
+  if(gml_vm_init(&vm,&win,&host)){gml_win_free(&win);unlink(path);return 0;}
+  gml_room_enter(&vm,0);
+  ok=indexed_query_is(&vm,0,3,100000) && indexed_query_is(&vm,1,1,100001) &&
+    indexed_query_is(&vm,2,1,100000) && indexed_query_is(&vm,3,POPULATION-3,100003);
+  vm.inst[0].marked=1;ok=ok && indexed_query_is(&vm,0,2,100001);
+  vm.inst[1].active=0;vm.inst[1].deactivated=1;
+  ok=ok && indexed_query_is(&vm,0,1,100002);
+  vm.inst[1].active=1;vm.inst[1].deactivated=0;vm.inst[0].marked=0;
+  gml_instance_change(&vm,&vm.inst[0],3,0);
+  ok=ok && indexed_query_is(&vm,0,2,100001) && indexed_query_is(&vm,3,POPULATION-2,100000);
+  ok=ok && gml_object_set_parent(&vm,1,3) && indexed_query_is(&vm,0,1,100002) &&
+    indexed_query_is(&vm,3,POPULATION-1,100000) && gml_object_set_parent(&vm,1,0);
+  GmlInstance *added=gml_instance_create(&vm,0,0,1);
+  ok=ok && added && indexed_query_is(&vm,0,3,100001) && indexed_query_is(&vm,1,2,100001);
+  /* Restore states made here after warming the descendant index and changing
+   * both pool membership and hierarchy. Derived indexes must rebuild. */
+  size_t capacity=gml_vm_state_size(&vm),written=0,used=0;void *state=malloc(capacity);
+  ok=ok && state && gml_vm_state_save(&vm,state,capacity,&written);
+  if(ok){
+    gml_instance_destroy(&vm,&vm.inst[1]);
+    ok=indexed_query_is(&vm,0,2,100002) && gml_object_set_parent(&vm,1,3) &&
+      indexed_query_is(&vm,0,1,100002) && gml_vm_state_load(&vm,state,written,&used) &&
+      used==written && indexed_query_is(&vm,0,3,100001) && indexed_query_is(&vm,1,2,100001);
+  }
+  free(state);gml_vm_free(&vm);gml_win_free(&win);unlink(path);return ok;
+}
+
 int expect_destroy_callback_population(void){
   /* Query the receiver's family while its Destroy event is still executing. */
   uint8_t data[36]={0};

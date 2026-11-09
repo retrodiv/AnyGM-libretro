@@ -237,11 +237,23 @@ int gml_object_index_by_name(GmlVM *vm, const char *name){
   for(int i=0;i<vm->n_objects;i++) if(vm->objects[i].name && !strcmp(vm->objects[i].name,name)) return i;
   return -1;
 }
+static const int *object_descendants(GmlVM *vm,int target,int *count);
 GmlInstance *gml_find_instance(GmlVM *vm, int obj){
   if(obj>=100000){
     for(int i=0;i<vm->inst_count;i++)
       if(vm->inst[i].active && !vm->inst[i].marked && (int)vm->inst[i].id==obj) return &vm->inst[i];
     return NULL;
+  }
+  if(obj>=0 && obj<vm->n_objects && vm->obj_head && vm->inst_next){
+    int count=0,best=vm->inst_count;
+    const int *family=object_descendants(vm,obj,&count);
+    if(family){
+      for(int member=0;member<count;member++)
+        for(int i=vm->obj_head[family[member]];i>=0;i=vm->inst_next[i])
+          if(i<best && vm->inst[i].active && !vm->inst[i].marked) best=i;
+      /* Type lists are insertion ordered; object lookup retains pool order. */
+      return best<vm->inst_count?&vm->inst[best]:NULL;
+    }
   }
   for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active && !vm->inst[i].marked && gml_object_is(vm,vm->inst[i].obj,obj)) return &vm->inst[i];
   return NULL;
@@ -262,6 +274,16 @@ int gml_instance_number(GmlVM *vm, int target){
   }
   /* Family counts include deactivated instances, so only zero is an exact shortcut here. */
   if(target>=0 && target<vm->n_objects && vm->obj_alive && vm->obj_alive[target]==0) return 0;
+  if(target>=0 && target<vm->n_objects && vm->obj_head && vm->inst_next){
+    int count=0;
+    const int *family=object_descendants(vm,target,&count);
+    if(family){
+      for(int member=0;member<count;member++)
+        for(int i=vm->obj_head[family[member]];i>=0;i=vm->inst_next[i])
+          if(vm->inst[i].active && !vm->inst[i].marked) n++;
+      return n;
+    }
+  }
   for(int i=0;i<vm->inst_count;i++)
     if(vm->inst[i].active && !vm->inst[i].marked && gml_object_is(vm,vm->inst[i].obj,target)) n++;
   return n;
