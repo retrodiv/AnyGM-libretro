@@ -3432,6 +3432,28 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       continue;
     }
     if(op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
+      const GmlRenderPrimitiveRect *solid=&op->payload.primitive;
+      /* A plain complete opaque rectangle is the existing resolved region fill. Drain earlier
+       * commands before it, retain all special rectangles, and let that owner certify RGBA. */
+      if(solid->kind==GML_RENDER_PRIMITIVE_RECTANGLE && primitive_blend==0 &&
+         solid->alpha==1.0 &&
+         !(solid->rectangle_flags&~GML_RENDER_RECTANGLE_TARGET_ALPHA) &&
+         full_region(solid->region,target->width,target->height)){
+        if(pending_count){
+          if(!flush_quads(backend,target,pending_source,pending_filter,pending_blend,
+              pending_count,pending_write_mask,pending_alpha_test,pending_source_alpha_key,
+              &pending_palette)){mark_uncertain(&result,target);break;}
+          pending_count=0;result.accepted_prefix=index;
+        }
+        GmlRenderDrawOp clear=*op;
+        clear.opcode=GML_RENDER_OP_CLEAR;
+        clear.payload.clear_colour=solid->colour;
+        if(!gml_render_gpu_opengl_clear(backend,&clear,target)){
+          mark_uncertain(&result,target);break;
+        }
+        target->valid=1;target->rendered_origin=1;
+        result.accepted_prefix=index+1u;continue;
+      }
       if(particle || alpha_rect || rectangle || native_triangle){
         const GmlRenderPrimitiveRect *p=&op->payload.primitive;
         uint32_t additive_rgb=0u;

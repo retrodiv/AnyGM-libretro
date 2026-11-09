@@ -2294,6 +2294,78 @@ static int scene_classic_inverse_rect_batch_case(void){
   return scene_source_free_alpha_batch_case(GML_RENDER_PRIMITIVE_CLASSIC_INVERSE_RECT);
 }
 
+static int scene_full_opaque_rectangle_clear_case(void){
+  for(unsigned embedded=0;embedded<2u;embedded++)for(unsigned variant=0;variant<9u;variant++){
+    anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();
+    GmlGpuContext context=fake_context(embedded?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    GmlRenderDeviceServices device={0};
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"solid full rectangle context");
+    gml_gpu_device_services(gpu,&device);
+    GmlRenderDrawOp ops[2]={0};
+    ops[0].opcode=GML_RENDER_OP_CLEAR;
+    ops[0].target=(GmlRenderTargetRef){
+      .image={variant==1u?GML_RENDER_RESOURCE_SURFACE:GML_RENDER_RESOURCE_SCREEN,3u,1u,1u},
+      .storage_version=1u,.width=12u,.height=8u,
+      .pixel_format=GML_RENDER_PIXEL_ARGB8888,.region={0,0,12u,8u}};
+    ops[0].payload.clear_colour=0x00112233u;
+    ops[1]=ops[0];ops[1].target.image.content_version++;
+    ops[1].opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;
+    ops[1].scene_family=GML_RENDER_SCENE_PRIMITIVE;
+    ops[1].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    GmlRenderPrimitiveRect *p=&ops[1].payload.primitive;
+    *p=(GmlRenderPrimitiveRect){.kind=GML_RENDER_PRIMITIVE_RECTANGLE,
+      .region={0,0,12u,8u},.authored_region={-2,-3,16u,14u},
+      .colour=0xFF4D739Bu,.alpha=1.0,.alpha_blend=1u,
+      .corner_colour={0xFF4D739Bu,0xFF4D739Bu,0xFF4D739Bu,0xFF4D739Bu}};
+    if(variant==1u) p->rectangle_flags=GML_RENDER_RECTANGLE_TARGET_ALPHA;
+    if(variant==2u) p->alpha_blend=0u;
+    if(variant==3u) p->alpha=.5;
+    if(variant==4u) p->rectangle_flags=GML_RENDER_RECTANGLE_OUTLINE;
+    if(variant==5u){p->rectangle_flags=GML_RENDER_RECTANGLE_GRADIENT;p->corner_colour[1]^=0x00010000u;}
+    if(variant==6u){p->region.x=1;p->region.width=11u;}
+    if(variant==7u) p->rectangle_flags=2u<<GML_RENDER_RECTANGLE_BLEND_SHIFT;
+    if(variant==8u) p->rectangle_flags=GML_RENDER_RECTANGLE_CLASSIC;
+    GmlRenderDrawBatch batch={ops,2u,NULL,0u};
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==2u,
+      "solid rectangle and exclusions retain their established executor");
+    int optimized=variant<3u;
+    REQUIRE(anygm_test_graphics_clear_calls()==(optimized?2:1) &&
+      (optimized?anygm_test_graphics_scene_draw_calls()==0:
+                 anygm_test_graphics_scene_draw_calls()>0),
+      "only plain opaque complete rectangles reuse the existing region fill");
+    if(optimized){
+      float red=0,green=0,blue=0,alpha=0;int x=0,y=0,w=0,h=0;
+      anygm_test_graphics_clear_colour(&red,&green,&blue,&alpha);
+      anygm_test_graphics_scissor(&x,&y,&w,&h);
+      GlSceneImage *image=gml_gpu_opengl_scene_image(gpu->backend,ops[1].target.image);
+      REQUIRE(red==77.0f/255.0f && green==115.0f/255.0f && blue==155.0f/255.0f &&
+        alpha==1.0f && x==0 && y==0 && w==12 && h==8 && image && image->alpha_opaque,
+        "solid fill preserves RGBA, full placement and certified opacity");
+    }
+    if(variant==0u){
+      GmlRenderDrawOp ordered[3];
+      for(unsigned draw=0;draw<3u;draw++){
+        ordered[draw]=ops[1];ordered[draw].target.image.content_version+=draw+1u;
+        if(draw!=1u){
+          ordered[draw].payload.primitive.region=(GmlRenderRect){1,1,1u,1u};
+          ordered[draw].payload.primitive.colour=draw?0xFF987654u:0xFF123456u;
+          for(unsigned c=0;c<4u;c++) ordered[draw].payload.primitive.corner_colour[c]=
+            ordered[draw].payload.primitive.colour;
+        }
+      }
+      GmlRenderDrawBatch sequence={ordered,3u,NULL,0u};
+      result=device.submit(device.context,&sequence);
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+        anygm_test_graphics_clear_calls()==3 && anygm_test_graphics_scene_draw_calls()==2,
+        "queued partial draws drain before a full fill and resume after it");
+    }
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_rectangle_function_batch_case(void){
   enum { QUADS=2049 };
   static const unsigned expected_factors[12][4]={
@@ -7144,6 +7216,7 @@ int main(int argc,char **argv){
     {"scene_classic_alpha_rect_batch",scene_classic_alpha_rect_batch_case},
     {"scene_studio_alpha_rect_batch",scene_studio_alpha_rect_batch_case},
     {"scene_rectangle_function_batch",scene_rectangle_function_batch_case},
+    {"scene_full_opaque_rectangle_clear",scene_full_opaque_rectangle_clear_case},
     {"scene_classic_inverse_rect_batch",scene_classic_inverse_rect_batch_case},
     {"scene_hardware_additive_batch",scene_hardware_additive_batch_case},
     {"scene_hardware_background_batch",scene_hardware_background_batch_case},

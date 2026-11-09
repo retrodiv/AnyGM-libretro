@@ -5189,6 +5189,8 @@ void gml_render_flush_rotated_batch(GmlRender *r){
     if(bounds_area>=1000000ull) thread_count=8;
     else if(bounds_area>=200000ull) thread_count=4;
   }
+  int available=gml_render_row_thread_count(r,max_y);
+  if(thread_count>available) thread_count=available;
   if(thread_count>1){
     atomic_init(&rows.next_row,0);
     rows.row_count=max_y;

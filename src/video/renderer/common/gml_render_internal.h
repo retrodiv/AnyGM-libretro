@@ -746,6 +746,7 @@ typedef void (*GmlRowBandFn)(void *ctx,int row_start,int row_end,int slot);
 #define GML_ROW_BAND_MIN_PIXELS_HOT 8192ull
 #define GML_ROW_BAND_HOT_DISPATCHES 4
 int gml_render_row_bands_profitable(GmlRender *r,unsigned long long visible_pixels);
+int gml_render_row_thread_count(GmlRender *r,int height);
 
 const char *render_setting(const GmlRender *r,const char *name);
 int rprof_enabled(void);

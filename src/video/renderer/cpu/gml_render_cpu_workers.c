@@ -13,8 +13,8 @@ GML_THREAD_BRIDGE_IMPL
 
 /* Persistent row-worker pool shared by the full-screen software compositor passes. Creating and
  * joining 15-31 OS threads for every frame is particularly expensive on Windows and dominated
- * fast-forward at high resolutions. The renderer is single-caller, so one small global pool can
- * safely serve every renderer instance, growing lazily and shutting down with renderer teardown. */
+ * fast-forward at high resolutions. The renderer is single-caller; its instance-owned pool grows
+ * lazily and shuts down with renderer teardown. */
 typedef struct GmlRowPool GmlRowPool;
 typedef struct { GmlRowPool *pool; int slot; unsigned seen_epoch; } GmlRowWorker;
 struct GmlRowPool {
@@ -63,9 +63,10 @@ static void *gml_rowband_worker(void *p){
   GmlRowWorker *w=(GmlRowWorker*)p;
   GmlRowPool *pool=w->pool;
   gml_row_band_active=1;
+  int active=1;
   for(;;){
     unsigned epoch=w->seen_epoch;
-    int spins=pool->spin_budget;
+    int spins=active?pool->spin_budget:0;
     for(;;){
       if(__atomic_load_n(&pool->stop,__ATOMIC_ACQUIRE)) return NULL;
       epoch=__atomic_load_n(&pool->epoch,__ATOMIC_ACQUIRE);
@@ -88,9 +89,10 @@ static void *gml_rowband_worker(void *p){
      * otherwise call belong to a caller that has long returned. */
     if(__atomic_load_n(&pool->stop,__ATOMIC_ACQUIRE)) return NULL;
     w->seen_epoch=epoch;
-    if(w->slot>=pool->nt) continue;          /* this handover wanted fewer bands than there are workers */
-    pool->fn(pool->ctx,(int)((long)pool->H*w->slot/pool->nt),
-             (int)((long)pool->H*(w->slot+1)/pool->nt),w->slot);
+    active=w->slot<pool->nt;
+    if(active)
+      pool->fn(pool->ctx,(int)((long)pool->H*w->slot/pool->nt),
+               (int)((long)pool->H*(w->slot+1)/pool->nt),w->slot);
     if(__atomic_sub_fetch(&pool->remaining,1,__ATOMIC_ACQ_REL)==0){
       gml_mutex_lock(&pool->mutex);
       gml_cond_broadcast(&pool->done_cond);
@@ -147,14 +149,16 @@ void gml_run_row_bands_n(GmlRender *r,int H,int nt,GmlRowBandFn fn,void *ctx){
   if(nt<=1 || gml_row_band_active){ fn(ctx,0,H,0); return; }
   int actual=gml_row_pool_ensure(r,nt);
   GmlRowPool *p=(GmlRowPool*)r->row_pool;
-  nt=actual;
+  if(actual<nt) nt=actual;
   if(nt<=1){ fn(ctx,0,H,0); return; }
   gml_row_band_active=1;
   if(p->hot_frame!=r->frame){ p->hot_frame=r->frame; p->hot_count=0; }
   if(p->hot_count<GML_ROW_BAND_HOT_DISPATCHES) p->hot_count++;
   gml_mutex_lock(&p->mutex);
   p->fn=fn; p->ctx=ctx; p->H=H; p->nt=nt;
-  __atomic_store_n(&p->remaining,nt-1,__ATOMIC_RELEASE);
+  /* Every published worker acknowledges the descriptor, including those without a band.
+   * Otherwise the caller could replace it while an inactive worker still reads its bounds. */
+  __atomic_store_n(&p->remaining,p->nworkers,__ATOMIC_RELEASE);
   __atomic_add_fetch(&p->epoch,1,__ATOMIC_ACQ_REL);
   gml_cond_broadcast(&p->start_cond);
   gml_mutex_unlock(&p->mutex);
@@ -184,10 +188,13 @@ int gml_render_row_bands_profitable(GmlRender *r,unsigned long long visible_pixe
 }
 /* An explicit band count can make compositor scheduling reproducible across hosts.
  * GML_ROW_THREADS=1 composites on the calling thread alone. */
-void gml_run_row_bands(GmlRender *r,int H,GmlRowBandFn fn,void *ctx){
+int gml_render_row_thread_count(GmlRender *r,int H){
   int nt=1;
   if(H>=128){ nt=gml_ncpu(); if(nt>GML_ROW_THREADS_AUTO)nt=GML_ROW_THREADS_AUTO; if(nt<1)nt=1; }
   const char *pinned=render_setting(r,"GML_ROW_THREADS");
   if(pinned){ nt=atoi(pinned); if(nt<1) nt=1; if(nt>GML_ROW_THREADS_MAX) nt=GML_ROW_THREADS_MAX; }
-  gml_run_row_bands_n(r,H,nt,fn,ctx);
+  return nt;
+}
+void gml_run_row_bands(GmlRender *r,int H,GmlRowBandFn fn,void *ctx){
+  gml_run_row_bands_n(r,H,gml_render_row_thread_count(r,H),fn,ctx);
 }

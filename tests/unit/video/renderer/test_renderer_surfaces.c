@@ -21,6 +21,38 @@
   } \
 }while(0)
 
+typedef struct {
+  atomic_uint slots;
+  atomic_uint rows[131];
+} RowBandControl;
+
+static void row_band_control(void *context,int first,int last,int slot){
+  RowBandControl *control=context;
+  atomic_fetch_or_explicit(&control->slots,1u<<(unsigned)slot,memory_order_relaxed);
+  for(int row=first;row<last;row++)
+    atomic_fetch_add_explicit(&control->rows[row],1u,memory_order_relaxed);
+}
+
+static int row_band_requested_count_case(void){
+  GmlRender render={0};
+  REQUIRE(gml_render_init(&render,NULL)==0,"row-band control renderer");
+  const int counts[]={4,2,3,1,2};
+  for(unsigned pass=0;pass<512u;pass++){
+    int requested=counts[pass%(sizeof counts/sizeof counts[0])];
+    RowBandControl control;
+    atomic_init(&control.slots,0u);
+    for(int row=0;row<131;row++) atomic_init(&control.rows[row],0u);
+    gml_run_row_bands_n(&render,131,requested,row_band_control,&control);
+    REQUIRE(atomic_load_explicit(&control.slots,memory_order_relaxed)==
+      (1u<<(unsigned)requested)-1u,"a grown pool respects the smaller requested handover");
+    for(int row=0;row<131;row++)
+      REQUIRE(atomic_load_explicit(&control.rows[row],memory_order_relaxed)==1u,
+        "resized row handovers write each row exactly once");
+  }
+  gml_render_free(&render);
+  return 0;
+}
+
 static uint64_t pixel_hash_update(uint64_t hash,const uint32_t *pixels,size_t count){
   for(size_t index=0;index<count;index++){
     uint32_t value=pixels[index];
@@ -2311,6 +2343,7 @@ int main(void){
   REQUIRE(suspended_clear_read_back_case()==0,"suspended clear read-back case");
   REQUIRE(dispatch_surface_coverage_case()==0,"resolved CPU surface dispatch coverage");
   REQUIRE(mapped_multiply_exact_case()==0,"mapped surface multiply exact fast/general control");
+  REQUIRE(row_band_requested_count_case()==0,"row-band requested count control");
   puts("renderer surfaces: ok");
   return 0;
 }
