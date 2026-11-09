@@ -2183,11 +2183,16 @@ static int scene_general_program_demand_case(void){
       !gpu->backend->scene.main_program.program,
       "a shader-free clear remains available when shader compilation would fail");
     anygm_test_graphics_fail_compile(0);
-    GlSceneProgram *program=gml_gpu_opengl_scene_draw_program(gpu->backend,34u,0,NULL,0);
+    GlSceneProgram *specialized=gml_gpu_opengl_scene_draw_program(gpu->backend,34u,0,NULL,0);
+    REQUIRE(specialized && specialized!=&gpu->backend->scene.main_program &&
+      specialized->program && !gpu->backend->scene.main_program.program,
+      "a specialized coverage draw leaves the general program uncompiled");
+    /* The direct-texture sampler still requires the general program. */
+    GlSceneProgram *program=gml_gpu_opengl_scene_draw_program(gpu->backend,29u,0,NULL,0);
     REQUIRE(program==&gpu->backend->scene.main_program && program->program,
       "a general draw builds its required program on demand");
     unsigned compiled=anygm_test_graphics_compile_calls();
-    REQUIRE(gml_gpu_opengl_scene_draw_program(gpu->backend,34u,0,NULL,0)==program &&
+    REQUIRE(gml_gpu_opengl_scene_draw_program(gpu->backend,29u,0,NULL,0)==program &&
       anygm_test_graphics_compile_calls()==compiled,"the demanded general program is reused");
     anygm_test_graphics_forbid_calls();gml_gpu_context_lost(gpu);
     REQUIRE(!anygm_test_graphics_calls_after_forget(),"loss forgets demanded programs without calls");
