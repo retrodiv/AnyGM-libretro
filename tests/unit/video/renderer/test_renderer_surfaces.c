@@ -50,6 +50,102 @@ static uint32_t destination_colour_expected(uint32_t source,uint32_t destination
   return result;
 }
 
+typedef struct {
+  int width,height,source_width,source_height,numbered,feedback,interp;
+  unsigned mask,colour;
+  double x,y,xs,ys,angle,alpha;
+} MappedMultiplyControl;
+
+static int mapped_multiply_result(const MappedMultiplyControl *control,int fast,
+                                  uint32_t *result,uint64_t *draws,int *workers){
+  GmlRender render={0};
+  size_t count=(size_t)control->width*control->height;
+  uint32_t *base=calloc(count,sizeof *base);
+  REQUIRE(base && gml_render_init(&render,NULL)==0,"mapped multiply fixture");
+  gml_render_begin(&render,base,control->width,control->height,.25,-.5);
+  int sw=control->feedback?control->width:control->source_width;
+  int sh=control->feedback?control->height:control->source_height;
+  int source=gml_surface_create(&render,sw,sh);
+  REQUIRE(source>0,"mapped multiply source");
+  uint32_t *pixels=surface_pixels(&render,source,NULL,NULL);
+  uint32_t pattern=0x13579BDFu;
+  for(int i=0;i<sw*sh;i++){
+    pattern=pattern*1664525u+1013904223u;
+    pixels[i]=i%4?pattern:pattern&0xFFFFFFu;
+  }
+  int destination=0;
+  if(control->numbered || control->feedback){
+    destination=control->feedback?source:gml_surface_create(&render,control->width,control->height);
+    REQUIRE(destination>0 && gml_surface_set_target(&render,destination),
+      "mapped multiply numbered target");
+  }
+  if(!control->feedback){
+    pattern=0x2468ACE1u;
+    for(size_t i=0;i<count;i++){
+      pattern=pattern*1664525u+1013904223u;render.fb[i]=pattern;
+    }
+  }
+  render.interp=control->interp;render.blendmode=3;render.alphablend=1;
+  render.color_write_mask=control->mask;
+  gml_render_dispatch_diagnostics_enable(&render,1);
+  gml_render_cpu_draw_surface_ext_mapped(&render,source,control->x,control->y,
+    control->xs,control->ys,control->angle,control->colour,control->alpha,fast);
+  memcpy(result,render.fb,count*sizeof *result);
+  GmlRenderDispatchMetrics metrics={0};
+  REQUIRE(gml_render_dispatch_metrics(&render,&metrics) && !render.dispatch_cpu_depth,
+    "mapped multiply dispatch scope closes");
+  *draws=0;
+  for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+    *draws+=metrics.cpu[GML_RENDER_SCENE_SURFACE][reason];
+  *workers=render.row_pool!=NULL;
+  if(destination) gml_surface_reset_target(&render);
+  if(destination && destination!=source) gml_surface_free(&render,destination);
+  gml_surface_free(&render,source);gml_render_free(&render);free(base);
+  return 0;
+}
+
+static int mapped_multiply_exact_case(void){
+  static const double transforms[][5]={
+    {-3.25,2.5,3.2,2.25,340},{14.5,-7.25,-1.5,2.25,17.25},
+    {2,3,1.0/3.0,.75,90},{17.25,19.5,2.5,-1.25,180},
+    {0,0,1,1,0},{1000,1000,3.2,3.2,340}
+  };
+  enum { W=48,H=37,LARGE_W=768,LARGE_H=512 };
+  uint32_t *reference=malloc((size_t)LARGE_W*LARGE_H*sizeof *reference);
+  uint32_t *selected=malloc((size_t)LARGE_W*LARGE_H*sizeof *selected);
+  REQUIRE(reference && selected,"mapped multiply comparison storage");
+  unsigned checks=0;
+  for(unsigned transform=0;transform<sizeof transforms/sizeof transforms[0];transform++)
+  for(unsigned mask=0;mask<16u;mask++)for(int target=0;target<2;target++)
+  for(int interp=0;interp<2;interp++)for(unsigned tint=0;tint<2u;tint++){
+    const double *t=transforms[transform];
+    MappedMultiplyControl control={W,H,13,11,target,0,interp,mask,
+      tint?0x7351B9u:0xFFFFFFu,t[0],t[1],t[2],t[3],t[4],.61};
+    uint64_t before=0,after=0;int unused=0;
+    REQUIRE(!mapped_multiply_result(&control,0,reference,&before,&unused) &&
+      !mapped_multiply_result(&control,1,selected,&after,&unused),
+      "mapped multiply comparison completes");
+    REQUIRE(!memcmp(reference,selected,(size_t)W*H*sizeof *reference) && before==after,
+      "mapped multiply fast/general ARGB and actual-write diagnostics match");
+    checks++;
+  }
+  for(int feedback=0;feedback<2;feedback++){
+    MappedMultiplyControl control={LARGE_W,LARGE_H,257,193,feedback,feedback,0,15,
+      0xFFFFFFu,-12.25,43.5,3.2,3.2,340,1};
+    uint64_t before=0,after=0;int workers=0,unused=0;
+    REQUIRE(!mapped_multiply_result(&control,0,reference,&before,&unused) &&
+      !mapped_multiply_result(&control,1,selected,&after,&workers),
+      "large mapped multiply and source feedback complete");
+    REQUIRE(workers && !memcmp(reference,selected,(size_t)LARGE_W*LARGE_H*sizeof *reference) &&
+      before==after && after==1u,
+      "existing row workers preserve exact mapping, feedback snapshots and one counted draw");
+    checks++;
+  }
+  free(reference);free(selected);
+  printf("mapped multiply: exact ARGB/dispatch controls=%u\n",checks);
+  return 0;
+}
+
 enum { DISPATCH_SURFACE_CONTROLS=19 };
 static int dispatch_surface_control(int kind,int diagnostics,uint64_t *hash,
                                      GmlRenderDispatchMetrics *metrics){
@@ -88,7 +184,7 @@ static int dispatch_surface_control(int kind,int diagnostics,uint64_t *hash,
   if(kind==12) draw_alpha=0.0;
   if(kind==18){width=height=target_extent;}
   if(kind==8)
-    gml_render_cpu_draw_surface_ext_mapped(&render,source,8,8,2,2,45,0xffffffu,0.5);
+    gml_render_cpu_draw_surface_ext_mapped(&render,source,8,8,2,2,45,0xffffffu,0.5,1);
   else
     draw_surface_region(&render,source,0,0,extent,extent,x,y,width,height,0xffffffu,draw_alpha);
   REQUIRE(gml_render_dispatch_metrics(&render,metrics) && !render.dispatch_cpu_depth,
@@ -2177,6 +2273,7 @@ int main(void){
   REQUIRE(replace_and_classic_present_case()==0,"replace and classic present case");
   REQUIRE(suspended_clear_read_back_case()==0,"suspended clear read-back case");
   REQUIRE(dispatch_surface_coverage_case()==0,"resolved CPU surface dispatch coverage");
+  REQUIRE(mapped_multiply_exact_case()==0,"mapped surface multiply exact fast/general control");
   puts("renderer surfaces: ok");
   return 0;
 }

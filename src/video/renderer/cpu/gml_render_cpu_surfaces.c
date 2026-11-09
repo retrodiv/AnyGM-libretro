@@ -1445,8 +1445,46 @@ int gml_render_cpu_backend_surface_stretched(GmlRender *r,int surf,double dx,dou
 /* draw_surface_ext rotates around its (x,y) origin, unlike a stretched surface call. Keep this
  * portable software path independent of shaders/GPU APIs; it also provides the fixed-function
  * multiply blend used by surface light masks. */
+typedef struct {
+  GmlRender *render;
+  const uint32_t *source;
+  int sw,sh,x0,x1,y0;
+  int red,green,blue,white;
+  double ax,ay,c,sn,xs,ys;
+  atomic_int *coverage;
+} MappedMultiplyBand;
+
+/* The general inverse map and multiply expression are unchanged. Immutable
+ * source pixels and disjoint destination rows permit the existing worker pool;
+ * coverage is one draw flag, so each band marks it once if it wrote. */
+static void mapped_multiply_band(void *context,int first,int last,int slot){
+  (void)slot;
+  MappedMultiplyBand *band=context;
+  GmlRender *r=band->render;
+  int written=0;
+  for(int py=band->y0+first;py<band->y0+last;py++){
+    for(int px=band->x0;px<band->x1;px++){
+      double rx=px+0.5-band->ax,ry=py+0.5-band->ay;
+      double u=(rx*band->c-ry*band->sn)/band->xs;
+      double v=(rx*band->sn+ry*band->c)/band->ys;
+      if(u<0.0 || v<0.0 || u>=(double)band->sw || v>=(double)band->sh) continue;
+      uint32_t source=band->source[(size_t)(int)floor(v)*band->sw+(int)floor(u)];
+      int red=(source>>16)&255,green=(source>>8)&255,blue=source&255;
+      if(!band->white){
+        red=red*band->red/255;green=green*band->green/255;blue=blue*band->blue/255;
+      }
+      uint32_t *destination=r->fb+(size_t)py*r->fbw+px;
+      uint32_t old=*destination;
+      *destination=color_write_merge(r,old,blend_multiply_pixel(r,old,red,green,blue));
+      written=1;
+    }
+  }
+  if(written) gml_render_dispatch_cpu_coverage_write(band->coverage);
+}
+
 static void draw_surface_ext_mapped_impl(GmlRender *r,int surf,double x,double y,
-                                           double xs,double ys,double rr,uint32_t blend,double alpha){
+                                           double xs,double ys,double rr,uint32_t blend,double alpha,
+                                           int allow_fast){
   int sw=0,sh=0; const uint32_t *src=surface_pixels_observe(r,surf,&sw,&sh);
   if(!r||!r->fb||!src||sw<=0||sh<=0||xs==0.0||ys==0.0||
      (alpha<=0.0 && !destination_colour_blend_active(r))) return;
@@ -1485,6 +1523,24 @@ static void draw_surface_ext_mapped_impl(GmlRender *r,int surf,double x,double y
   const struct GmlShaderPal *slut=lut_active(r),*sgrid=grid_active(r);
   /* A four-colour quantiser is bound for a whole-surface pass, not for sprite draws. */
   const struct GmlShaderPal *squant=quantise4_active(r);
+  uintptr_t source_address=(uintptr_t)src,target_address=(uintptr_t)r->fb;
+  size_t source_bytes=(size_t)sw*sh*sizeof *src;
+  size_t target_bytes=(size_t)r->fbw*r->fbh*sizeof *r->fb;
+  int separate=source_address<=target_address
+    ?target_address-source_address>=source_bytes
+    :source_address-target_address>=target_bytes;
+  if(allow_fast && separate && !r->interp && r->blendmode==3 &&
+     !destination_colour_blend_active(r) && !sremap && !squant && !slut && !sgrid){
+    MappedMultiplyBand band={r,src,sw,sh,x0,x1,y0,bR,bG,bB,
+      (blend&0xFFFFFFu)==0xFFFFFFu,ax,ay,c,sn,xs,ys,
+      gml_render_dispatch_cpu_scope_coverage(r)};
+    unsigned long long pixels=(unsigned long long)(x1-x0)*(unsigned)(y1-y0);
+    if(gml_render_row_bands_profitable(r,pixels))
+      gml_run_row_bands(r,y1-y0,mapped_multiply_band,&band);
+    else mapped_multiply_band(&band,0,y1-y0,0);
+    r->fb_opaque_known=0;
+    free(copy);return;
+  }
   for(int py=y0;py<y1;py++) for(int px=x0;px<x1;px++){
     double rx=px+0.5-ax,ry=py+0.5-ay;
     double u=(rx*c-ry*sn)/xs,v=(rx*sn+ry*c)/ys;
@@ -1549,10 +1605,10 @@ static void draw_surface_ext_mapped_impl(GmlRender *r,int surf,double x,double y
 }
 void gml_render_cpu_draw_surface_ext_mapped(GmlRender *r,int surf,double x,double y,
                                            double xs,double ys,double rotation,
-                                           uint32_t blend,double alpha){
+                                           uint32_t blend,double alpha,int allow_fast){
   GmlRenderDispatchCpuScope scope;
   gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_SURFACE);
-  draw_surface_ext_mapped_impl(r,surf,x,y,xs,ys,rotation,blend,alpha);
+  draw_surface_ext_mapped_impl(r,surf,x,y,xs,ys,rotation,blend,alpha,allow_fast);
   gml_render_dispatch_cpu_scope_end(r,&scope);
 }
 void gml_render_cpu_draw_surface_part_mapped(GmlRender *r,int surf,double sx,double sy,double sw,double sh,

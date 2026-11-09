@@ -163,7 +163,10 @@ ifneq (,$(findstring linux,$(ANYGM_TARGET_TRIPLE)))
 ifeq (,$(findstring android,$(ANYGM_TARGET_TRIPLE)))
 # Pin sqrtf/atan2f to an older glibc symbol version than a newer aarch64-linux
 # cross toolchain binds by default.
-CORE_PLATFORM_LDFLAGS += -Wl,--wrap=sqrtf -Wl,--wrap=atan2f
+GLIBC_MATH_WRAP_LDFLAGS := -Wl,--wrap=sqrtf -Wl,--wrap=atan2f
+CORE_PLATFORM_LDFLAGS += $(GLIBC_MATH_WRAP_LDFLAGS)
+TEST_PLATFORM_LDFLAGS += $(GLIBC_MATH_WRAP_LDFLAGS)
+TEST_PLATFORM_OBJECTS += $(BUILD_DIR)/obj/src/host/anygm_libm_compat.o
 endif
 endif
 endif
@@ -182,7 +185,7 @@ VENDORED_WW2OGG_OBJECTS := $(filter $(BUILD_DIR)/obj/src/third_party/ww2ogg/%,$(
 WWISE_ADAPTER_OBJECT := $(BUILD_DIR)/obj/src/audio/banks/gml_wwise.o
 PXTONE_ADAPTER_OBJECT := $(BUILD_DIR)/obj/src/audio/codecs/gml_pxtone.o
 CORE_OBJECTS := $(RUNTIME_OBJECTS) $(LIBRETRO_OBJECTS)
-UNIT_RUNTIME_OBJECTS := $(filter-out $(CORE_RUNTIME_OBJECTS),$(RUNTIME_OBJECTS)) $(TEST_HOST_OBJECTS)
+UNIT_RUNTIME_OBJECTS := $(filter-out $(CORE_RUNTIME_OBJECTS),$(RUNTIME_OBJECTS)) $(TEST_HOST_OBJECTS) $(TEST_PLATFORM_OBJECTS)
 RUNTIME_LIBRARY := $(BUILD_DIR)/libanygm_runtime.a
 ifeq ($(STATIC_LINKING),1)
 CORE_TARGET := $(CORE_BASENAME).a
@@ -324,7 +327,7 @@ ifneq (,$(filter osx ios tvos,$(platform)))
 CXX_RUNTIME_LDLIBS := -lc++
 endif
 define link_runtime_test
-	$(CC) $(1) $(CFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS)
+	$(CC) $(1) $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS)
 endef
 
 $(TEST_DIR)/test_rng: tests/unit/runtime/test_rng.c $(UNIT_RUNTIME_OBJECTS)

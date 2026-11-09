@@ -17,8 +17,10 @@ void gml_render_cpu_draw_surface_part_mapped(GmlRender *render, int surface,
                                               double x, double y, double xs, double ys,
                                               uint32_t blend, double alpha,
                                               const GmlRenderShaderGeometry *geometry);
+/* The explicit general execution retains the original scalar kernel for exact controls. */
 void gml_render_cpu_draw_surface_ext_mapped(GmlRender *render, int surface,
                                               double x, double y, double xs, double ys,
-                                              double rotation, uint32_t blend, double alpha);
+                                              double rotation, uint32_t blend, double alpha,
+                                              int allow_fast);
 
 #endif

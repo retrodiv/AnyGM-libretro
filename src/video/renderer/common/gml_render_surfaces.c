@@ -4361,7 +4361,7 @@ void gml_draw_surface_ext(GmlRender *r,int surf,double x,double y,
   if(!gml_render_cpu_draw_barrier(r)) return;
   gml_render_draw_map_point(r,&x,&y);
   gml_render_draw_map_scale(r,&xs,&ys);
-  gml_render_cpu_draw_surface_ext_mapped(r,surf,x,y,xs,ys,rr,blend,alpha);
+  gml_render_cpu_draw_surface_ext_mapped(r,surf,x,y,xs,ys,rr,blend,alpha,1);
 }
 const uint32_t *gml_surface_pixels_read(GmlRender *r, int id, int *w, int *h){
   if(!r) return NULL;
