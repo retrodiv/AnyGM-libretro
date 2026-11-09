@@ -312,6 +312,29 @@ uint64_t state_hash_bytes(const void *data,size_t size){
   return hash;
 }
 
+static void state_write_override_identity(CoreW *writer,const char *text){
+  if(!strstr(text,"statereserve|")){
+    cw_u64(writer,state_hash_bytes(text,strlen(text)));
+    return;
+  }
+  /* Allocation policy does not change simulation. Retain the exact bytes and order of
+   * every other normalized directive, so existing content identities remain unchanged. */
+  char filtered[sizeof(((AnygmEngine *)0)->content_overrides_text)];
+  _Static_assert(sizeof(((AnygmEngine *)0)->launch_overrides_text)<=sizeof filtered,
+                 "override identity scratch covers the launch envelope");
+  size_t used=0;
+  for(const char *line=text;*line;){
+    const char *end=strchr(line,'\n');
+    size_t length=end?(size_t)(end-line)+1u:strlen(line);
+    if(strncmp(line,"statereserve|",13)){
+      if(length>sizeof filtered-used){ writer->ok=0;return; }
+      memcpy(filtered+used,line,length);used+=length;
+    }
+    line+=length;
+  }
+  if(used) cw_u64(writer,state_hash_bytes(filtered,used));
+}
+
 static uint64_t state_current_config_fingerprint(AnygmEngine *engine){
   uint8_t encoded[24]={0};
   CoreW writer={encoded,sizeof encoded,0,1};
@@ -322,13 +345,11 @@ static uint64_t state_current_config_fingerprint(AnygmEngine *engine){
    * was and lets its states keep loading. */
   cw_u32(&writer,engine->config.god_mode);
   if(engine_boot_cheats_active(engine)>0 && engine->content_overrides_text[0])
-    cw_u64(&writer,state_hash_bytes(engine->content_overrides_text,
-                                    strlen(engine->content_overrides_text)));
+    state_write_override_identity(&writer,engine->content_overrides_text);
   /* The launch envelope governs future internal content changes even if a
    * payload-specific layer replaced all its current assignments. */
   if(engine->config.content_overrides && engine->launch_overrides_text[0])
-    cw_u64(&writer,state_hash_bytes(engine->launch_overrides_text,
-                                    strlen(engine->launch_overrides_text)));
+    state_write_override_identity(&writer,engine->launch_overrides_text);
   return writer.ok?state_hash_bytes(encoded,writer.pos):0;
 }
 

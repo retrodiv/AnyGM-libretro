@@ -51,6 +51,7 @@ typedef struct LibretroAdapter {
   size_t fixed_state_capacity;
   size_t startup_resume_capacity;
   bool state_capacity_growth_reported;
+  bool state_snapshot_failure_reported;
   bool variable_state_supported;
   bool pixel_format_accepted;
   bool can_dupe;

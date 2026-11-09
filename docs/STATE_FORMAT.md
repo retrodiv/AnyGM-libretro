@@ -596,15 +596,17 @@ so newly sized saves retain the exact completed picture while older compact ring
 loadable.
 
 An ordinary complete-capacity session reserves at least 4 MiB because a cold load can precede the
-render and language-level tables populated by gameplay. References to grid/list/map creation or
-explicit array allocation/resizing select a 32-MiB simulation reserve in both ordinary and
-compact-frame rings: deferred initialization can exceed the four-MiB reserve before the first
-gameplay snapshot. These are conservative reference flags and a selected growth policy, not a
-proof that arbitrary language allocations fit. Without those flags a compact large-frame path
-retains its one-MiB minimum. Frame-free hints raise either floor when required; selecting a compact
-picture never removes the simulation reserve. This adapter capacity policy changes neither
-the logical size in the canonical header nor the portable state format. Explicit portable hosts
-may still request the frame-free resume representation directly.
+runtime graph it will later save. A compact startup ring retains its one-MiB minimum. Current
+encoded state, remembered peaks and known mutable render allocations raise these allocations
+through the existing headroom calculation. A reference to a container constructor does not by
+itself select a larger reserve. Content with measured deferred growth may declare
+`statereserve|bytes` in its anchor or existing payload-hashed configuration. Enabled declarations
+contribute their maximum as a minimum allocation; they cannot reduce ordinary sizing or resize
+an existing fixed ring. The declaration follows content-override disabling but is excluded from
+simulation identity; changing only that minimum keeps existing states loadable. It adds no
+state-format fields and does not bound arbitrary future allocations. If a loaded session rejects
+a snapshot, the adapter logs it and sends one frontend notification for that session; it never
+reports a successful push or grows a fixed frontend's size answer to hide the rejection.
 
 `make contract-check` exercises acknowledged growth, fixed declined and unsupported frontends,
 compact startup rings, exact-when-fitting and frame-free fallback representations, Reset under all

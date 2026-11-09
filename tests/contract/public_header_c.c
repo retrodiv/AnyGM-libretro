@@ -20,6 +20,7 @@ int anygm_public_header_c_probe(void){
                          AnygmContentInfo*)=anygm_load_prepare;
   AnygmResult (*start)(AnygmEngine*)=anygm_load_start;
   size_t (*resume_size)(AnygmEngine*)=anygm_state_resume_size;
+  size_t (*state_reserve)(const AnygmEngine*)=anygm_state_capacity_reserve;
   AnygmResult (*resume_save)(AnygmEngine*,void*,size_t,size_t*)=anygm_state_save_for_resume;
   services.struct_size=sizeof services;
   source.struct_size=sizeof source;
@@ -29,6 +30,7 @@ int anygm_public_header_c_probe(void){
   (void)prepare;
   (void)start;
   (void)resume_size;
+  (void)state_reserve;
   (void)resume_save;
   return (int)(services.struct_size+source.struct_size+content.struct_size+graphics.struct_size);
 }

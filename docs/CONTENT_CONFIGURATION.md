@@ -135,6 +135,9 @@ before accepting the state transactionally.
 
 Effective override text and the launch-anchor envelope contribute to the
 active state configuration fingerprint. Replaced default assignments do not.
+The allocation-only `statereserve` declaration is excluded: changing a buffer
+minimum does not change simulation identity. Its enabled values contribute their
+maximum across layers, so a later lower minimum cannot withdraw a larger one.
 Programs, parameters, ordered pipelines and patch declarations contribute to derived-content
 cache identity; bindings do not change declaration identity. Neither programs, patch bytes nor
 machine paths are serialized. Reset retains parsed configuration

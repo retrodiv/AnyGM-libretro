@@ -15,7 +15,7 @@ extern "C" {
  * runtime library version, and every publishable metadata file declares the literal "Git" instead
  * of a number, so no copy can promise a value that has gone stale. CONTRIBUTING.md owns the single
  * increment step. */
-#define ANYGM_VERSION "0.1.720"
+#define ANYGM_VERSION "0.1.721"
 #define ANYGM_API_VERSION 7u
 #define ANYGM_HOST_SERVICES_VERSION 2u
 #define ANYGM_STATE_SCHEMA 44u
@@ -633,6 +633,9 @@ size_t anygm_state_resume_size(AnygmEngine *engine);
  * a bounded advisory hint, just like anygm_state_capacity_hint; the current buffer requirement is
  * always anygm_state_resume_size. */
 size_t anygm_state_resume_capacity_hint(const AnygmEngine *engine);
+/* A content-declared minimum allocation, independent of the current encoded size.
+ * It can only raise a host's ordinary reserve; zero means no declaration. */
+size_t anygm_state_capacity_reserve(const AnygmEngine *engine);
 enum {
   ANYGM_STATE_CAPACITY_DYNAMIC_SURFACES = 1u << 0,
   ANYGM_STATE_CAPACITY_DYNAMIC_CONTAINERS = 1u << 1

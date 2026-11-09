@@ -117,7 +117,7 @@ static void negotiate_serialization(void){
       (quirks&RETRO_SERIALIZATION_QUIRK_FRONT_VARIABLE_SIZE)!=0;
 }
 
-static size_t fixed_state_capacity(size_t actual,bool compact_startup,uint32_t flags){
+static size_t fixed_state_capacity(size_t actual,bool compact_startup,size_t reserve){
   const size_t margin=512u*1024u;
   /* Before the first frame, a cold ordinary raster can still understate the render and run-time
    * tables that gameplay will populate. Fixed frontends cannot enlarge the ring they allocate
@@ -125,12 +125,9 @@ static size_t fixed_state_capacity(size_t actual,bool compact_startup,uint32_t f
    * small. A deliberately compact large-frame ring starts at one MiB, then its frame-free hint
    * and any known mutable render allocations raise it only as required. */
   size_t floor=compact_startup?1u*1024u*1024u:4u*1024u*1024u;
-  /* Deferred container initialization can outgrow four MiB of required simulation state even
-   * with a small authored raster. Reserve 32 MiB before a fixed frontend allocates its ring.
-   * Required simulation growth is independent of completed-frame compaction: the compact ring
-   * needs the same reserve. This is a bounded policy, not a bound on arbitrary allocations. */
-  if(flags&ANYGM_STATE_CAPACITY_DYNAMIC_CONTAINERS)
-    floor=32u*1024u*1024u;
+  /* A measured content requirement may raise this floor. Merely referencing a container
+   * constructor says nothing about the live graph's eventual size. */
+  if(reserve>floor) floor=reserve;
   if(actual>(SIZE_MAX-margin)/2u) return SIZE_MAX;
   size_t capacity=actual*2u+margin;
   return capacity<floor?floor:capacity;
@@ -373,6 +370,7 @@ bool libretro_content_start(void){
   g_libretro.fixed_state_capacity=0;
   g_libretro.startup_resume_capacity=0;
   g_libretro.state_capacity_growth_reported=false;
+  g_libretro.state_snapshot_failure_reported=false;
   /* Preparation consulted one-shot setting names. Clear them before the first frame so live names
    * always find a free cache slot. */
   memset(g_libretro.setting_cache,0,sizeof g_libretro.setting_cache);
@@ -489,6 +487,7 @@ void retro_unload_game(void){
   g_libretro.fixed_state_capacity=0;
   g_libretro.startup_resume_capacity=0;
   g_libretro.state_capacity_growth_reported=false;
+  g_libretro.state_snapshot_failure_reported=false;
   g_libretro.frame_failure_reports=0;
   g_libretro.frame_profile_enabled=false;
   g_libretro.frame_profile_previous_valid=false;
@@ -829,7 +828,8 @@ size_t retro_serialize_size(void){
   if(!g_libretro.fixed_state_capacity ||
      (g_libretro.variable_state_supported && actual>g_libretro.fixed_state_capacity)){
     size_t previous=g_libretro.fixed_state_capacity;
-    g_libretro.fixed_state_capacity=fixed_state_capacity(actual,compact_startup,capacity_flags);
+    g_libretro.fixed_state_capacity=fixed_state_capacity(
+      actual,compact_startup,anygm_state_capacity_reserve(g_libretro.engine));
     /* Acknowledged growth is unusual enough to report once without flooding repeated queries. */
     if(previous && !g_libretro.state_capacity_growth_reported){
       g_libretro.state_capacity_growth_reported=true;
@@ -876,6 +876,15 @@ bool retro_serialize(void *data,size_t size){
     result=anygm_state_save(g_libretro.engine,data,size,&written);
   }
   if(result!=ANYGM_OK || written>size){
+    if(!g_libretro.state_snapshot_failure_reported){
+      g_libretro.state_snapshot_failure_reported=true;
+      libretro_log(RETRO_LOG_WARN,
+        "State snapshot rejected (offered %llu bytes, writer position %llu); no state was recorded.\n",
+        (unsigned long long)size,(unsigned long long)written);
+      struct retro_message message={"A state snapshot could not be recorded.",300};
+      if(g_libretro.environment)
+        g_libretro.environment(RETRO_ENVIRONMENT_SET_MESSAGE,&message);
+    }
     state_profile_report(&timing,"save",size,written,false);
     return false;
   }

@@ -3326,6 +3326,11 @@ size_t anygm_state_resume_size(AnygmEngine *engine){
   return engine_state_resume_size(engine);
 }
 
+size_t anygm_state_capacity_reserve(const AnygmEngine *engine){
+  if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED) return 0;
+  return engine_overrides_state_reserve(engine);
+}
+
 size_t anygm_state_resume_capacity_hint(const AnygmEngine *engine){
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED) return 0;
   size_t hint=engine->state_resume_peak_hint;

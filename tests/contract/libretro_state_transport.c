@@ -21,6 +21,8 @@ static size_t stub_resume_state_bytes;
 static size_t stub_hint_bytes;
 static size_t stub_resume_hint_bytes;
 static uint32_t stub_capacity_flags;
+static size_t stub_capacity_reserve;
+static unsigned snapshot_failure_messages;
 static size_t last_load_bytes;
 static unsigned complete_saves;
 static unsigned resume_saves;
@@ -35,6 +37,12 @@ static int stub_text_consumed;
 static unsigned text_acknowledgements;
 
 static bool environment_callback(unsigned command,void *data){
+  if(command==RETRO_ENVIRONMENT_SET_MESSAGE){
+    const struct retro_message *message=(const struct retro_message *)data;
+    if(message && message->msg && strstr(message->msg,"snapshot could not be recorded"))
+      snapshot_failure_messages++;
+    return true;
+  }
   if(command==RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS){
     uint64_t *quirks=(uint64_t *)data;
     serialization_query_seen=quirks &&
@@ -111,6 +119,10 @@ size_t anygm_state_resume_capacity_hint(const AnygmEngine *engine){
 uint32_t anygm_state_capacity_flags(const AnygmEngine *engine){
   (void)engine;
   return stub_capacity_flags;
+}
+size_t anygm_state_capacity_reserve(const AnygmEngine *engine){
+  (void)engine;
+  return stub_capacity_reserve;
 }
 AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written){
   (void)engine;
@@ -194,6 +206,8 @@ static int begin_frontend(int variable_support){
   stub_hint_bytes=0;
   stub_resume_hint_bytes=0;
   stub_capacity_flags=0;
+  stub_capacity_reserve=0;
+  snapshot_failure_messages=0;
   stub_resume_state_bytes=0;
   complete_saves=0;
   resume_saves=0;
@@ -231,12 +245,13 @@ static int fixed_frontend_reuses_the_measured_capacity(int negotiation_result){
   return 1;
 }
 
-/* A cold container graph can grow beyond the ordinary reserve during initialization. The
- * reservation must exist before that growth, including when variable sizing is unsupported. */
-static int deferred_containers_keep_a_larger_fixed_reserve(int negotiation_result,int compact){
+/* A measured deferred graph can exceed the ordinary reserve. Its explicit minimum must
+ * exist before that growth, including when variable sizing is unsupported. */
+static int measured_growth_keeps_a_larger_fixed_reserve(int negotiation_result,int compact){
   stub_state_bytes=320u*1024u;
   if(!begin_frontend(negotiation_result)) return 0;
   stub_capacity_flags=ANYGM_STATE_CAPACITY_DYNAMIC_CONTAINERS;
+  stub_capacity_reserve=32u*1024u*1024u;
   stub_hint_bytes=compact?16u*1024u*1024u:512u*1024u;
   const size_t capacity=retro_serialize_size();
   int ok=capacity==32u*1024u*1024u;
@@ -255,6 +270,38 @@ static int deferred_containers_keep_a_larger_fixed_reserve(int negotiation_resul
   retro_unload_game();
   retro_deinit();
   return ok;
+}
+
+static int container_mentions_keep_default_capacity(int negotiation_result,int compact){
+  stub_state_bytes=64u*1024u;
+  if(!begin_frontend(negotiation_result)) return 0;
+  stub_capacity_flags=ANYGM_STATE_CAPACITY_DYNAMIC_CONTAINERS;
+  stub_capacity_reserve=1;
+  stub_hint_bytes=(compact?16u:2u)*1024u*1024u;
+  size_t expected=(compact?1024u:4608u)*1024u;
+  int ok=retro_serialize_size()==expected;
+  retro_unload_game();retro_deinit();
+  return ok;
+}
+
+/* Unexpected fixed-session growth must be an observable rejection, never a false
+ * successful push or a larger size answer that the frontend silently refuses first. */
+static int rejected_snapshot_is_reported_once(int negotiation_result){
+  stub_state_bytes=64u*1024u;
+  if(!begin_frontend(negotiation_result)) return 0;
+  stub_hint_bytes=16u*1024u*1024u;
+  size_t capacity=retro_serialize_size();
+  if(capacity!=1024u*1024u) return 0;
+  retro_run();
+  stub_state_bytes=stub_resume_state_bytes=2u*1024u*1024u;
+  uint8_t *state=malloc(capacity);
+  if(!state) return 0;
+  int ok=retro_serialize_size()==capacity && !retro_serialize(state,capacity) &&
+         !retro_serialize(state,capacity) && snapshot_failure_messages==1 &&
+         g_libretro.state_snapshot_failure_reported && !complete_saves && !resume_saves;
+  free(state);retro_unload_game();
+  ok=ok && !g_libretro.state_snapshot_failure_reported;
+  retro_deinit();return ok;
 }
 
 static int stable_transport(int negotiation_result){
@@ -654,12 +701,20 @@ int main(void){
      !stable_transport(1) || !stable_transport(0) || !stable_transport(-1) ||
      !fixed_ordinary_ring_covers_expected_runtime_growth(0) ||
      !fixed_ordinary_ring_covers_expected_runtime_growth(-1) ||
-     !deferred_containers_keep_a_larger_fixed_reserve(1,0) ||
-     !deferred_containers_keep_a_larger_fixed_reserve(0,0) ||
-     !deferred_containers_keep_a_larger_fixed_reserve(-1,0) ||
-     !deferred_containers_keep_a_larger_fixed_reserve(1,1) ||
-     !deferred_containers_keep_a_larger_fixed_reserve(0,1) ||
-     !deferred_containers_keep_a_larger_fixed_reserve(-1,1) ||
+     !measured_growth_keeps_a_larger_fixed_reserve(1,0) ||
+     !measured_growth_keeps_a_larger_fixed_reserve(0,0) ||
+     !measured_growth_keeps_a_larger_fixed_reserve(-1,0) ||
+     !measured_growth_keeps_a_larger_fixed_reserve(1,1) ||
+     !measured_growth_keeps_a_larger_fixed_reserve(0,1) ||
+     !measured_growth_keeps_a_larger_fixed_reserve(-1,1) ||
+     !container_mentions_keep_default_capacity(1,0) ||
+     !container_mentions_keep_default_capacity(0,0) ||
+     !container_mentions_keep_default_capacity(-1,0) ||
+     !container_mentions_keep_default_capacity(1,1) ||
+     !container_mentions_keep_default_capacity(0,1) ||
+     !container_mentions_keep_default_capacity(-1,1) ||
+     !rejected_snapshot_is_reported_once(0) ||
+     !rejected_snapshot_is_reported_once(-1) ||
      !growth_follows_frontend_acknowledgement(1) ||
      !growth_follows_frontend_acknowledgement(0) ||
      !growth_follows_frontend_acknowledgement(-1) ||

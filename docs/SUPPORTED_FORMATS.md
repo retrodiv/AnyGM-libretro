@@ -72,6 +72,15 @@ that branches on `os_type` accordingly takes the branch written for the declared
 declared value is returned without changing any other condition. It does not establish
 permission to run the content or override its license terms.
 
+`statereserve|33554432` declares a measured minimum state-buffer allocation in bytes.
+Use it in a content anchor or a payload's existing SHA-256 override section when deferred
+initialization needs more simulation state than the cold load contains. Values are positive
+decimal integers through 1073741824. All enabled declarations contribute their maximum;
+a lower declaration cannot reduce the normal allocation or an earlier higher minimum.
+Content overrides must be enabled. This declaration does not change the state format, promise
+arbitrary future growth, or make a fixed frontend resize an already allocated ring.
+It affects allocation only, so changing it does not invalidate a state's simulation identity.
+
 `gamepad|keyboard` selects keyboard emulation for this content even when it contains optional
 joystick or gamepad functions. RetroPad directions and action buttons use the existing keyboard
 mapping; native pad connection, button and axis reads return inactive values. This is useful for

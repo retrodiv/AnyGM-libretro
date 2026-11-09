@@ -706,6 +706,23 @@ static int boot_line_is_menu(const char *code){
          !strncmp(code,"mtoggle|",8) || !strncmp(code,"mrange|",7) || !strncmp(code,"mwarp|",6);
 }
 
+static int state_reserve_parse(const char *code,size_t *bytes){
+  if(strncmp(code,"statereserve|",13)) return 0;
+  const char *scan=code+13;
+  const size_t limit=(size_t)1u<<30;
+  size_t value=0;
+  if(!*scan) return 0;
+  for(;*scan;scan++){
+    if(*scan<'0' || *scan>'9') return 0;
+    unsigned digit=(unsigned)(*scan-'0');
+    if(value>(limit-digit)/10u) return 0;
+    value=value*10u+digit;
+  }
+  if(!value) return 0;
+  *bytes=value;
+  return 1;
+}
+
 /* Content keyboard bindings use pad button names and Win32 virtual-key numbers.
  * Auto removes only this key's declaration, retaining the ordinary keyboard mapping. */
 static int keyboard_binding_parse(const char *code,int *virtual_key,int *button,unsigned *port){
@@ -837,6 +854,14 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
                      "directive %d: ostype| takes one non-negative os_type value",line_number);
             return 0;
           }
+        } else if(!strncmp(slot->code,"statereserve|",13)){
+          size_t bytes=0;
+          if(!state_reserve_parse(slot->code,&bytes)){
+            snprintf(error,error_capacity,
+                     "directive %d: statereserve| takes positive decimal bytes up to 1073741824",
+                     line_number);
+            return 0;
+          }
         } else if(!strncmp(slot->code,"gamepad|",8)){
           if(strcmp(slot->code+8,"keyboard") && strcmp(slot->code+8,"auto")){
             snprintf(error,error_capacity,
@@ -895,8 +920,19 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
   }
   return 1;
 }
-int engine_boot_cheats_active(AnygmEngine *engine){
+int engine_boot_cheats_active(const AnygmEngine *engine){
   return engine->config.content_overrides?engine->boot_cheat_count:0;
+}
+size_t engine_overrides_state_reserve(const AnygmEngine *engine){
+  size_t reserve=0;
+  int active=engine_boot_cheats_active(engine);
+  for(int i=0;i<active;i++){
+    size_t bytes=0;
+    if(engine->boot_cheats[i].enabled &&
+       state_reserve_parse(engine->boot_cheats[i].code,&bytes) && bytes>reserve)
+      reserve=bytes;
+  }
+  return reserve;
 }
 static void cheat_monitor_declaration(const CheatSlot *slots,int count,
                                       double *height,double *minimum,double *maximum){

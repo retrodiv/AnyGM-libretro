@@ -14,6 +14,7 @@ int anygm_public_header_cpp_probe(){
   auto prepare=&anygm_load_prepare;
   auto start=&anygm_load_start;
   auto resume_size=&anygm_state_resume_size;
+  auto state_reserve=&anygm_state_capacity_reserve;
   auto resume_save=&anygm_state_save_for_resume;
   services.struct_size=sizeof services;
   graphics.struct_size=sizeof graphics;
@@ -22,6 +23,7 @@ int anygm_public_header_cpp_probe(){
   (void)prepare;
   (void)start;
   (void)resume_size;
+  (void)state_reserve;
   (void)resume_save;
   if(anygm_create(&services,&engine)!=ANYGM_OK) return 0;
   /* A context with no callbacks is refused rather than adopted, and the engine stays usable. */
