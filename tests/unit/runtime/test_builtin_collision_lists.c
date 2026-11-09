@@ -39,6 +39,24 @@ int main(void){
     ok &= found.t==V_REAL && found.d==0;
     GmlVal size=gml_builtin_call(&vm,"ds_list_size",&list,1);
     ok &= size.t==V_REAL && size.d==3;
+
+    /* The first line hit is selected by sampled distance, with slot order only breaking ties.
+     * Keep the farther instance in the earlier slot so a candidate-major implementation cannot
+     * accidentally change the language-visible result while caching candidate geometry. */
+    GmlVal line[]={vreal(9),vreal(10),vreal(20),vreal(10),vreal(-3),vreal(0),vreal(1)};
+    id=gml_builtin_fast_id(&vm,"collision_line");
+    found=cached && id>=0 ? gml_builtin_call_fast_id(&vm,id,"collision_line",line,7)
+                           : gml_builtin_call(&vm,"collision_line",line,7);
+    ok &= id>=0 && found.t==V_REAL && found.d==100002;
+    line[0]=vreal(20); line[2]=vreal(9);
+    found=cached && id>=0 ? gml_builtin_call_fast_id(&vm,id,"collision_line",line,7)
+                           : gml_builtin_call(&vm,"collision_line",line,7);
+    ok &= found.t==V_REAL && found.d==100001;
+    line[0]=vreal(9); line[2]=vreal(20);
+    instances[1].x=instances[2].x;
+    found=cached && id>=0 ? gml_builtin_call_fast_id(&vm,id,"collision_line",line,7)
+                           : gml_builtin_call(&vm,"collision_line",line,7);
+    ok &= found.t==V_REAL && found.d==100001;
     vm.render=NULL; vm.inst=NULL; vm.inst_count=0; vm.cur_self=NULL;
     gml_vm_free(&vm);
   }

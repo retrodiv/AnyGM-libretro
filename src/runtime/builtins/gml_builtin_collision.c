@@ -663,19 +663,53 @@ static GmlInstance *instance_at_point_ex(GmlVM *vm, double px, double py, int ob
 GmlInstance *instance_at_point(GmlVM *vm, double px, double py, int obj){
   return instance_at_point_ex(vm,px,py,obj,NULL);
 }
+static int line_sample_range(double start,double finish,double lower,double upper,
+                             int steps,int *first,int *last){
+  double delta=finish-start;
+  if(delta==0.0) return start>=lower && start<=upper;
+  double a=(lower-start)/delta,b=(upper-start)/delta;
+  if(a>b){ double swap=a; a=b; b=swap; }
+  double low=fmax(0.0,a),high=fmin(1.0,b);
+  if(low>high) return 0;
+  /* The final inclusive comparisons below remain authoritative. Widen the converted sample range
+   * by one index on each side so floating-point division at an exact edge can only add a rejected
+   * candidate, never omit a point the established point-by-point loop would have tested. */
+  int begin=(int)ceil(low*(double)steps)-1;
+  int end=(int)floor(high*(double)steps)+1;
+  if(begin<0) begin=0;
+  if(end>steps) end=steps;
+  if(begin>*first) *first=begin;
+  if(end<*last) *last=end;
+  return *first<=*last;
+}
 static int line_hits_instance(GmlVM *vm, GmlInstance *o,
                               double x1, double y1, double x2, double y2,
                               int obj, GmlInstance *skip, int precise, int steps,
-                              double *first_d2){
-  if(!o || !o->active || o->marked) return 0;
-  for(int k=0;k<=steps;k++){
+                              double *first_d2, int *first_step){
+  if(!o || !o->active || o->marked || o==skip ||
+     !target_matches_instance(vm,vm->cur_self,o,obj)) return 0;
+  double ol,ot,orr,ob;
+  if(!inst_bbox(vm,o,o->x,o->y,&ol,&ot,&orr,&ob)) return 0;
+  GmlRender *render=(GmlRender*)vm->render;
+  int sprite=inst_mask_sprite_index(o),round_origin=0;
+  GmlRenderSpriteMetrics metrics;
+  int refine=precise && render && gml_render_sprite_metrics(render,sprite,&metrics);
+  if(refine) round_origin=vm->win&&anygm_policy_uses_classic_runtime(vm->win);
+  int first=0,last=steps;
+  if(!line_sample_range(x1,x2,ol,orr,steps,&first,&last) ||
+     !line_sample_range(y1,y2,ot,ob,steps,&first,&last)) return 0;
+  for(int k=first;k<=last;k++){
     double t=(double)k/(double)steps;
     double px=x1+(x2-x1)*t, py=y1+(y2-y1)*t;
-    if(point_hits_instance_prec(vm,o,px,py,obj,skip,precise)){
+    if(px<ol || px>orr || py<ot || py>ob) continue;
+    if(refine && !mask_hit_world(render,o,&metrics,sprite,o->x,o->y,round_origin,
+                                 (int)floor(px),(int)floor(py))) continue;
+    {
       if(first_d2){
         double dx=px-x1, dy=py-y1;
         *first_d2=dx*dx+dy*dy;
       }
+      if(first_step) *first_step=k;
       return 1;
     }
   }
@@ -689,26 +723,26 @@ GmlInstance *collision_line_query(GmlVM *vm, double x1, double y1, double x2, do
   int *cand=NULL; int cn=-1;
   if(gml_colgrid_mode(vm)!=0)
     cn=gml_colgrid_collect(vm, fmin(x1,x2), fmin(y1,y2), fmax(x1,x2), fmax(y1,y2), &cand);
-  GmlInstance *hit=NULL;
-  for(int k=0;k<=steps && !hit;k++){
-    double t=(double)k/(double)steps, px=x1+(x2-x1)*t, py=y1+(y2-y1)*t;
-    if(cn>=0){
-      for(int c=0;c<cn;c++){ GmlInstance *o=&vm->inst[cand[c]];
-        if(point_hits_instance_prec(vm,o,px,py,obj,skip,precise)){ hit=o; break; } }
-    } else {
-      for(int i=0;i<vm->inst_count;i++){
-        GmlInstance *o=&vm->inst[i];
-        if(point_hits_instance_prec(vm,o,px,py,obj,skip,precise)){ hit=o; break; }
-      }
+  GmlInstance *hit=NULL; int hit_step=INT_MAX;
+  int candidate_count=cn>=0?cn:vm->inst_count;
+  for(int candidate=0;candidate<candidate_count;candidate++){
+    int index=cn>=0?cand[candidate]:candidate;
+    if(index<0 || index>=vm->inst_count) continue;
+    int first_step=INT_MAX;
+    if(line_hits_instance(vm,&vm->inst[index],x1,y1,x2,y2,obj,skip,precise,steps,
+                          NULL,&first_step) && first_step<hit_step){
+      hit=&vm->inst[index]; hit_step=first_step;
+      if(hit_step==0) break;
     }
   }
   if(gml_colgrid_mode(vm)==2){
-    GmlInstance *lin=NULL;
-    for(int k=0;k<=steps && !lin;k++){
-      double t=(double)k/(double)steps, px=x1+(x2-x1)*t, py=y1+(y2-y1)*t;
-      for(int i=0;i<vm->inst_count;i++){
-        GmlInstance *o=&vm->inst[i];
-        if(point_hits_instance_prec(vm,o,px,py,obj,skip,precise)){ lin=o; break; }
+    GmlInstance *lin=NULL; int lin_step=INT_MAX;
+    for(int i=0;i<vm->inst_count;i++){
+      int first_step=INT_MAX;
+      if(line_hits_instance(vm,&vm->inst[i],x1,y1,x2,y2,obj,skip,precise,steps,
+                            NULL,&first_step) && first_step<lin_step){
+        lin=&vm->inst[i]; lin_step=first_step;
+        if(lin_step==0) break;
       }
     }
     if(lin!=hit){ 
@@ -732,7 +766,7 @@ int collision_line_list_query(GmlVM *vm, double x1, double y1, double x2, double
     for(int c=0;c<cn;c++){
       int i=cand[c]; if(i<0 || i>=vm->inst_count) continue;
       double d2=0;
-      if(line_hits_instance(vm,&vm->inst[i],x1,y1,x2,y2,obj,skip,precise,steps,&d2)){
+      if(line_hits_instance(vm,&vm->inst[i],x1,y1,x2,y2,obj,skip,precise,steps,&d2,NULL)){
         if(!col_list_add(vm,ordered?NULL:list,ordered,&hits,&nhit,&cap,i,x1,y1)) break;
         if(ordered && nhit>0) hits[nhit-1].d2=d2;
       }
@@ -740,7 +774,7 @@ int collision_line_list_query(GmlVM *vm, double x1, double y1, double x2, double
   } else {
     for(int i=0;i<vm->inst_count;i++){
       double d2=0;
-      if(line_hits_instance(vm,&vm->inst[i],x1,y1,x2,y2,obj,skip,precise,steps,&d2)){
+      if(line_hits_instance(vm,&vm->inst[i],x1,y1,x2,y2,obj,skip,precise,steps,&d2,NULL)){
         if(!col_list_add(vm,ordered?NULL:list,ordered,&hits,&nhit,&cap,i,x1,y1)) break;
         if(ordered && nhit>0) hits[nhit-1].d2=d2;
       }
