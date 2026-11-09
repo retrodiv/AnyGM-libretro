@@ -2132,15 +2132,15 @@ static int classic_step_composition_scene_case(void){
 }
 
 /* Call-order proof; actual pixels are covered by the real-device paired control. */
-static int modern_manual_single_view_case(void){
+static int modern_manual_single_view_variant(int inset){
   Session plain={0},selected={0};
   CurrentContextWitness witness={1u,0u};
   AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
   anygm_test_graphics_reset();
   REQUIRE(session_open_fixture_with_scene(&plain,ANYGM_SCENE_RENDERER_CPU,
-      anygm_synthetic_manual_single_view_content_create) &&
+      (inset?anygm_synthetic_manual_inset_view_content_create:anygm_synthetic_manual_single_view_content_create)) &&
     session_open_fixture_with_scene(&selected,ANYGM_SCENE_RENDERER_OPENGL,
-      anygm_synthetic_manual_single_view_content_create),"manual single-view fixtures load");
+      (inset?anygm_synthetic_manual_inset_view_content_create:anygm_synthetic_manual_single_view_content_create)),"manual single-view fixtures load");
   context.userdata=&witness;context.is_current=graphics_context_is_current;
   REQUIRE(anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK,
     "manual single-view context adopts");
@@ -2200,6 +2200,9 @@ static int modern_manual_single_view_case(void){
   REQUIRE(matching,"manual single-view world keeps borrowed storage and exact VM with resident draws");
   return 1;
 }
+
+static int modern_manual_single_view_case(void){return modern_manual_single_view_variant(0);}
+static int modern_manual_inset_view_case(void){return modern_manual_single_view_variant(1);}
 
 static int classic_integer_surface_calls_case(void){
   Session selected={0};
@@ -6074,6 +6077,7 @@ int main(void){
     {"scene state size queries do not observe pixels",scene_size_query_is_metadata_only_case},
     {"final scene seal is included in frame profiling",final_scene_seal_profile_case},
     {"manual single-view world keeps borrowed storage",modern_manual_single_view_case},
+    {"manual inset-view world keeps borrowed storage",modern_manual_inset_view_case},
     {"Classic samples preserve borrowed storage and same-run state",classic_sample_root_state_case},
     {"resident Pre-Draw screen retains CPU state",resident_pre_draw_screen_case},
     {"independent Step numbered clear preserves CPU state",independent_step_clear_case},

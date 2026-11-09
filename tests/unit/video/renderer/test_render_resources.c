@@ -8218,6 +8218,44 @@ static int resident_borrowed_application_screen_handoff(void){
   return 1;
 }
 
+static int resident_manual_point_surface(void){
+  for(unsigned opaque=0;opaque<2u;opaque++)
+  for(unsigned cutoff=0;cutoff<3u;cutoff++){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={.bytecode=17};
+    FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+    uint32_t world[16*12]={0},screen[16*12]={0};
+    CHECK(r && !gml_render_init(r,NULL));r->win=&content;r->app_draw_enable=0;
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(r,&device);gml_render_set_scene_device(r,1);
+    gml_render_application_surface_bind(r,world,16,12,(int)opaque);
+    CHECK(gml_render_begin_resident_base(r,world,16,12,0,0));
+    gml_render_set_pending_fill(r,opaque?0xFF315779u:0x70315779u);
+    gml_render_flush_pending_fill(r);
+    CHECK(gml_render_begin_resident_base(r,screen,16,12,0,0));
+    gml_render_set_pending_fill(r,0xFF112233u);
+    gml_render_application_surface_publish(r);gml_render_gui_begin(r,16,12);r->alphablend=0;
+    r->alpha_test_enable=1;r->alpha_test_ref=cutoff==0u?0u:cutoff==1u?127u:255u;
+    CHECK(gml_render_cpu_backend_resident_surface_stretched(r,0,1,2,13,9,0xFFFFFFu,1.0));
+    CHECK(gml_render_scene_submit_pending(r));
+    int physical=opaque && cutoff<2u;
+    CHECK(fake.last_filter==(physical?GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT:GML_RENDER_FILTER_NEAREST));
+    CHECK(fake.last_quad.x[0]==1.0 && fake.last_quad.y[0]==2.0 &&
+      fake.last_quad.x[2]==14.0 && fake.last_quad.y[2]==11.0 &&
+      fake.last_quad.u[0]==0.0 && fake.last_quad.u[2]==1.0 &&
+      fake.last_quad.v[0]==0.0 && fake.last_quad.v[2]==1.0 && !fake.readbacks);
+    if(physical) CHECK(fake.last_quad.source_opaque &&
+      fake.last_quad.inverse_x[0]==13.0 && fake.last_quad.inverse_y[1]==9.0);
+    gml_render_gui_end(r);r->alphablend=1;
+    fake.supported_operations=UINT64_C(1)<<GML_RENDER_OP_RECOVER_EMPTY_SCREEN;
+    CHECK(gml_render_recover_empty_screen(r,screen,16,12,0,0,16,12,0) &&
+      fake.last_opcode==GML_RENDER_OP_RECOVER_EMPTY_SCREEN && !fake.rgb_queries && !fake.readbacks);
+    gml_render_application_surface_bind(r,screen,16,12,(int)opaque);
+    CHECK(!gml_render_recover_empty_screen(r,screen,16,12,0,0,16,12,0));
+    gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int resident_deferred_borrowed_screen_materialization(void){
   for(unsigned written_target=0;written_target<2u;written_target++)
   for(unsigned suffix=0;suffix<2u;suffix++){
@@ -20306,6 +20344,7 @@ int main(void){
     if(!strcmp(selected,"large-rotated-multiply")) passed=resident_large_rotated_multiply();
     else if(!strcmp(selected,"borrowed-screen-handoff")) passed=resident_borrowed_application_screen_handoff();
     else if(!strcmp(selected,"deferred-borrowed-screen")) passed=resident_deferred_borrowed_screen_materialization();
+    else if(!strcmp(selected,"manual-point-surface")) passed=resident_manual_point_surface();
     else if(!strcmp(selected,"surface-capture-pending-fill")) passed=runtime_surface_capture_observes_pending_fill();
     else if(!strcmp(selected,"surface-sprite-append")) passed=runtime_sprite_surface_append_lifetime();
     else if(!strcmp(selected,"skip-cpu-draws")) passed=skip_cpu_draw_policy_preserves_observers();
@@ -20476,6 +20515,7 @@ int main(void){
   passed+=resident_line_function_transaction();
   passed+=resident_borrowed_application_screen_handoff();
   passed+=resident_deferred_borrowed_screen_materialization();
+  passed+=resident_manual_point_surface();
   passed+=resident_outline_coverage_public_order();
   passed+=resident_atlas_uv_refusal_preserves_queued_prefix();
   passed+=resident_application_sprite_cpu_fallback();
@@ -20678,6 +20718,6 @@ int main(void){
   passed+=skip_cpu_draw_policy_preserves_observers();
   passed+=resident_numbered_rotated_native_quad();
   passed+=resident_unit_texel_magnification();
-  printf("render resource cases: passed=%d failed=%d\n",passed,323-passed);
-  return passed==323?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,324-passed);
+  return passed==324?EXIT_SUCCESS:EXIT_FAILURE;
 }

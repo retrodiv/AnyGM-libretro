@@ -1452,7 +1452,8 @@ static int recovery_quad_valid(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
   GlSceneImage *source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
   const GmlRenderQuad *q=&op->payload.quad;
   if(!source || !source->rendered_origin || source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
-     op->sources[0].resource_class!=GML_RENDER_RESOURCE_APPLICATION ||
+     (op->sources[0].resource_class!=GML_RENDER_RESOURCE_APPLICATION &&
+      op->sources[0].resource_class!=GML_RENDER_RESOURCE_SCREEN) ||
      op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN ||
      op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
      same_logical(source->ref,op->target.image) ||

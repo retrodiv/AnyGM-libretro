@@ -147,7 +147,8 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
                                mode==29?"#define GML_SCENE_CONSTANT_FILTER 53\n":
                                mode==30?"#define GML_SCENE_CONSTANT_FILTER 55\n":
                                mode==31?"#define GML_SCENE_CONSTANT_FILTER 147\n":
-                               mode==32?"#define GML_SCENE_CONSTANT_FILTER 149\n":"",
+                               mode==32?"#define GML_SCENE_CONSTANT_FILTER 149\n":
+                               mode==33?"#define GML_SCENE_CONSTANT_FILTER 30\n":"",
                                GML_GPU_OPENGL_SCENE_FRAGMENT_BODY);
   if(vertex_length<0 || (size_t)vertex_length>=sizeof vertex_source ||
      fragment_length<0 || (size_t)fragment_length>=sizeof fragment_source){
@@ -236,7 +237,7 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
      (mode==14 && (scene->u_point_map_x<0 || scene->u_point_map_y<0 ||
        scene->u_point_origin<0)) ||
      (mode && (scene->a_position01<0 || scene->a_position23<0 ||
-       (mode!=8 && mode!=30 && (scene->a_colour[0]<0 || scene->a_colour[1]<0 || scene->a_colour[2]<0 ||
+       (mode!=8 && mode!=30 && mode!=33 && (scene->a_colour[0]<0 || scene->a_colour[1]<0 || scene->a_colour[2]<0 ||
                     scene->a_colour[3]<0)) || scene->u_extent<0 ||
        ((mode!=20 && mode!=21) && scene->u_image<0) ||
        ((mode==1 || mode==4) && scene->u_filter<0)))){
@@ -260,7 +261,9 @@ GlSceneProgram *gml_gpu_opengl_scene_draw_program(GmlGpuBackend *backend,uint32_
   if(filter==GL_SCENE_NATIVE_POINT_STAMP_FILTER) filter=82u;
   int mode=0;
   int plain_native=native_flags&GL_SCENE_NATIVE_PLAIN;
-  if(filter==53u || filter==55u || filter==147u || filter==149u){
+  if(filter==30u){
+    program=&scene->compact_programs[31];mode=33;
+  }else if(filter==53u || filter==55u || filter==147u || filter==149u){
     unsigned index=filter==53u?27u:filter==55u?28u:filter==147u?29u:30u;
     program=&scene->compact_programs[index];mode=(int)index+2;
   }else if(plain_native && filter==25u && (native_flags&GL_SCENE_NATIVE_ZERO_ALPHA_BLEND)){

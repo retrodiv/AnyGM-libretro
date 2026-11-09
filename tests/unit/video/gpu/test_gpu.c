@@ -1092,11 +1092,13 @@ static int scene_content_source_orientation_case(void){
 }
 
 static int scene_empty_screen_recovery_case(void){
-  for(unsigned embedded=0;embedded<2u;embedded++){
+  for(unsigned embedded=0;embedded<2u;embedded++)
+  for(unsigned borrowed=0;borrowed<2u;borrowed++){
     GmlGpu *gpu;
     GmlGpuContext context=fake_context(embedded?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
     GmlRenderDeviceServices device={0};
     GmlRenderImageRef source={GML_RENDER_RESOURCE_APPLICATION,0u,1u,1u};
+    if(borrowed) source.resource_class=GML_RENDER_RESOURCE_SCREEN;
     GmlRenderDrawStateSnapshot state={0};
     GmlRenderDrawOp operations[2]={0};
     GmlRenderDrawBatch batch={operations,2u,&state,1u};
@@ -1846,7 +1848,7 @@ static int scene_hardware_filtered_batch_case(unsigned kind){
 }
 
 static int scene_hot_constant_programs_case(void){
-  const unsigned filters[]={32u,33u,153u,21u,22u,25u,26u,53u,55u,147u,149u};
+  const unsigned filters[]={32u,33u,153u,21u,22u,25u,26u,53u,55u,147u,149u,30u};
   for(unsigned api=0;api<2u;api++)for(unsigned selected=0;selected<sizeof filters/sizeof filters[0];selected++)
   for(unsigned failure=0;failure<2u;failure++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
@@ -1862,7 +1864,8 @@ static int scene_hot_constant_programs_case(void){
       anygm_test_graphics_fail_compile_containing(NULL);
     }
     for(unsigned epoch=0;epoch<2u;epoch++){
-      if(filters[selected]==55u) anygm_test_graphics_withhold_attribute_prefix("in_Colour");
+      if(filters[selected]==55u || filters[selected]==30u)
+        anygm_test_graphics_withhold_attribute_prefix("in_Colour");
       GlSceneProgram *program=gml_gpu_opengl_scene_draw_program(gpu->backend,filters[selected],plain,error,sizeof error);
       const char *fragment=anygm_test_graphics_shader_source(1);
       REQUIRE(program && fragment && strstr(fragment,prefix),

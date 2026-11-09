@@ -1507,7 +1507,7 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
       "window_set_size(320,180);\n":translated_world?
       "window_set_size(64,48);\n"
       "application_surface_draw_enable(false);\n"
-      "view_xport[0]=1; view_yport[0]=2;\n":explicit_gui_size==19?
+      "view_xport[0]=1; view_yport[0]=2;\n":(explicit_gui_size==19 || explicit_gui_size==20)?
       "window_set_size(256,224); application_surface_draw_enable(false);\n"
       "global.fixture_frame=0; global.fixture_surface=surface_create(64,64);\n":explicit_gui_size==16?
       "window_set_size(128,96);\n"
@@ -1539,7 +1539,12 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
       "draw_clear(c_blue); draw_set_color(c_white);\n"
       "draw_rectangle(w/4,h/4,3*w/4-1,3*h/4-1,false);\n":translated_world?
       "draw_surface(application_surface,0,0);\n"
-      "draw_set_color(c_white); draw_rectangle(3,3,6,6,false);\n":explicit_gui_size==19?
+      "draw_set_color(c_white); draw_rectangle(3,3,6,6,false);\n":explicit_gui_size==20?
+      "draw_set_color(c_white); draw_set_alpha(1); draw_enable_alphablend(false);\n"
+      "draw_primitive_begin_texture(5,surface_get_texture(application_surface));\n"
+      "draw_vertex_texture(0,0,0,0); draw_vertex_texture(255,0,1,0);\n"
+      "draw_vertex_texture(0,223,0,1); draw_vertex_texture(255,223,1,1);\n"
+      "draw_primitive_end(); draw_enable_alphablend(true);\n":explicit_gui_size==19?
       "draw_set_color(c_white); draw_set_alpha(1); draw_enable_alphablend(false);\n"
       "draw_primitive_begin_texture(5,surface_get_texture(application_surface));\n"
       "draw_vertex_texture(0,0,0,0); draw_vertex_texture(256,0,1,0);\n"
@@ -1586,7 +1591,7 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
   if(explicit_gui_size==16 && !write_text(draw,"draw_clear(c_red);\n")){
     anygm_synthetic_content_destroy(fixture); return 0;
   }
-  if(explicit_gui_size==19 && !write_text(draw,
+  if((explicit_gui_size==19 || explicit_gui_size==20) && !write_text(draw,
       "global.fixture_frame+=1; draw_clear($857ab1);\n"
       "draw_sprite_ext(spr_fixture,0,-64,-64,48,48,0,c_white,0.7);\n"
       "draw_sprite_ext(spr_fixture,0,96,80,3,4,31,c_white,0.55);\n"
@@ -1615,7 +1620,7 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
   project.room_order=&order; project.n_room_order=1;
   if(explicit_gui_size==3 || explicit_gui_size==4 || explicit_gui_size==5 ||
      explicit_gui_size==6 || explicit_gui_size==7 || explicit_gui_size==8 ||
-     automatic_gui || forced_owned || explicit_gui_size==19){
+     automatic_gui || forced_owned || (explicit_gui_size==19 || explicit_gui_size==20)){
     uint8_t pixels[8u*8u*4u];
     for(int y=0;y<8;y++) for(int x=0;x<8;x++){
       size_t pixel=((size_t)y*8u+(size_t)x)*4u;
@@ -1645,7 +1650,7 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
   object.events=events; object.n_events=object.cap_events=2;
   events[0].event_type=0; events[0].source_path=create;
   events[1].event_type=8; events[1].event_number=64; events[1].source_path=gui;
-  if(explicit_gui_size==2 || empty_indirect || explicit_gui_size==16 || translated_world || explicit_gui_size==19){
+  if(explicit_gui_size==2 || empty_indirect || explicit_gui_size==16 || translated_world || (explicit_gui_size==19 || explicit_gui_size==20)){
     object.n_events=object.cap_events=3;
     events[2].event_type=8; events[2].source_path=draw;
   }
@@ -1654,7 +1659,7 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
   room.view_enabled=1; room.n_views=1; room.views[0].visible=1;
   room.views[0].wview=room.views[0].wport=64;
   room.views[0].hview=room.views[0].hport=48;
-  if(explicit_gui_size==19){
+  if((explicit_gui_size==19 || explicit_gui_size==20)){
     room.width=room.views[0].wview=room.views[0].wport=256;
     room.height=room.views[0].hview=room.views[0].hport=224;
   }
@@ -1695,8 +1700,8 @@ int anygm_synthetic_window_gui_content_create(AnygmSyntheticContent *fixture){
   return synthetic_window_gui_content_create(fixture,0);
 }
 
-int anygm_synthetic_manual_single_view_content_create(AnygmSyntheticContent *fixture){
-  if(!synthetic_window_gui_content_create(fixture,19)) return 0;
+static int synthetic_manual_single_view_content_create(AnygmSyntheticContent *fixture,int inset){
+  if(!synthetic_window_gui_content_create(fixture,inset?20:19)) return 0;
   /* This authored fixture uses the instruction and 4/4 reference layout shared
    * by bytecode 15 and 17. Select the latter's real loader/presentation policy. */
   FILE *file=fopen(fixture->path,"r+b");unsigned char header[18];
@@ -1706,6 +1711,13 @@ int anygm_synthetic_manual_single_view_content_create(AnygmSyntheticContent *fix
   if(file && fclose(file)) ok=0;
   if(!ok) anygm_synthetic_content_destroy(fixture);
   return ok;
+}
+
+int anygm_synthetic_manual_single_view_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_manual_single_view_content_create(fixture,0);
+}
+int anygm_synthetic_manual_inset_view_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_manual_single_view_content_create(fixture,1);
 }
 
 int anygm_synthetic_window_query_gui_content_create(AnygmSyntheticContent *fixture){

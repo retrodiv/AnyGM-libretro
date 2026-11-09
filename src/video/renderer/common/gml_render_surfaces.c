@@ -2651,6 +2651,7 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
   const ResidentSurfaceSelection *selection,int resolved_canvas);
 static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,double dy,
   double dw,double dh,uint32_t blend,double alpha,int resolved_canvas);
+enum { RESIDENT_SURFACE_MANUAL_POINT=3 };
 
 static int recover_classic_empty_screen(GmlRender *r,uint32_t *pixels,int width,int height,
                                         double x,double y,double w,double h,int zero_camera){
@@ -2700,13 +2701,20 @@ int gml_render_recover_empty_screen(GmlRender *r,uint32_t *pixels,int width,int 
   GmlRenderDrawStateSnapshot state={0};
   GmlRenderImageRef ref;
   double left,top;
+  GmlRenderResource *borrowed=NULL;
+  if(r && r->win && anygm_policy_has_modern_function_values(r->win) &&
+     r->app_surface!=r->app_surface_owned){
+    int actual_width=0,actual_height=0;
+    borrowed=gml_render_base_resource_lookup(r,r->app_surface,&actual_width,&actual_height);
+    if(actual_width!=r->app_w || actual_height!=r->app_h) borrowed=NULL;
+  }
   /* Plain Studio full-source magnification uses leading-edge point samples here.
    * Full-width recovery is admitted only when the source and screen are identical rasters;
    * the CPU aspect correction cannot change that rectangle. Other geometry retains its owner. */
   if(!r || r->classic || !r->resident_application_pass ||
      !gml_render_scene_target_matches(r) || r->fb!=pixels || r->fbw!=width ||
      r->fbh!=height || r->target_sp || r->target_id!=-1 ||
-     !r->app_surface_published || r->app_surface!=r->app_surface_owned ||
+     !r->app_surface_published || (r->app_surface!=r->app_surface_owned && !borrowed) ||
      r->app_surface==pixels || r->app_w<=0 || r->app_h<=0 ||
      r->pending_fill || r->pending_underlay || r->pending_presentation ||
      r->active_shader>=0 || gml_render_gui_transform_active(r) ||
@@ -2737,7 +2745,7 @@ int gml_render_recover_empty_screen(GmlRender *r,uint32_t *pixels,int width,int 
      r->interp && w>r->app_w && h>r->app_h && !r->app_surface_opaque) return 0;
   if(!isfinite(left) || !isfinite(top) || left< -16384.0 || top< -16384.0 ||
      left>=width || top>=height || left+w<=0.0 || top+h<=0.0) return 0;
-  application=gml_render_application_resource_ensure(r);
+  application=borrowed?borrowed:gml_render_application_resource_ensure(r);
   target=gml_render_scene_target_resource_ensure(r);
   if(!application || !target || !gml_render_application_scene_flush(r) ||
      (!gml_render_resource_device_source_view(application,device,&source) &&
@@ -2915,6 +2923,15 @@ int gml_render_cpu_backend_resident_surface_stretched(GmlRender *r,int surf,
     if(gml_render_defer_resident_underlay(r)) return 1;
     gml_render_cancel_pending_underlay(r);
   }
+  /* The manual strip has continuous full-source UVs. Reuse the physical
+   * point-presentation owner for an opaque integral rectangle, including a
+   * partial screen. Its placed extent remains the CPU fast strip's extent. */
+  if(x==floor(x) && y==floor(y) && width==floor(width) && height==floor(height) &&
+     width>0.0 && height>0.0 && width<=16384.0 && height<=16384.0 &&
+     r->app_w>0 && r->app_h>0 && r->app_w<=4096 && r->app_h<=4096 &&
+     (!r->alpha_test_enable || r->alpha_test_ref<255u) && surface_known_opaque(r,0) &&
+     resident_surface_filtered_resolved(r,surf,x,y,width,height,colour,alpha,
+       RESIDENT_SURFACE_MANUAL_POINT)) return 1;
   return resident_surface_nearest_function(r,surf,x,y,width,height,colour,alpha,0);
 }
 /* A view mirror temporarily names a registered base image as surface zero.
@@ -3296,7 +3313,8 @@ static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,do
        (surf==r->surface_canvas || r->target_id==r->surface_canvas)) ||
      r->pending_presentation ||
      resident_surface_shader_selected(r) ||
-     (!r->alphablend && resolved_canvas!=2) || (r->blendmode && !destination_blend && !raw_replace) ||
+     (!r->alphablend && resolved_canvas!=2 && resolved_canvas!=RESIDENT_SURFACE_MANUAL_POINT) ||
+     (r->blendmode && !destination_blend && !raw_replace) ||
      (r->color_write_mask!=15u && resolved_canvas!=2) ||
      (destination_blend?(r->blend_equation<1 || r->blend_equation>5 ||
                          r->blend_equation_alpha<1 || r->blend_equation_alpha>5):
@@ -3338,7 +3356,8 @@ static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,do
   /* The preserved first-generation GUI leaf selects pixel-centre point samples
    * for opaque, white content-owned application presentation. Other ordinary
    * surface requests keep their floor/lround geometry and filter selection. */
-  point_presentation=resolved_canvas!=2 && surf==0 && r->win &&
+  point_presentation=resolved_canvas==RESIDENT_SURFACE_MANUAL_POINT ||
+    (resolved_canvas!=2 && surf==0 && r->win &&
     anygm_policy_uses_first_generation_studio(r->win) &&
     gml_render_gui_transform_active(r) && !r->target_sp && r->target_id<0 &&
     !r->interp && !destination_blend && alpha>=1.0 &&
@@ -3346,7 +3365,7 @@ static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,do
     (!r->app_draw_enable ||
      (fabs(dw-(double)source_width*r->gui_scale_x)<=.001 &&
       fabs(dh-(double)source_height*r->gui_scale_y)<=.001 &&
-      (fabs(dw-lround(dw))>=.001 || fabs(dh-lround(dh))>=.001)));
+      (fabs(dw-lround(dw))>=.001 || fabs(dh-lround(dh))>=.001))));
   /* This established opaque GUI presentation leaf does not inspect sampled
    * alpha. Other old owners keep their cutoff fence; the ordinary function
    * executor below carries and tests its raw surface alpha explicitly. */
