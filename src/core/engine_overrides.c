@@ -708,9 +708,16 @@ static int boot_line_is_menu(const char *code){
 
 /* Content keyboard bindings use pad button names and Win32 virtual-key numbers.
  * Auto removes only this key's declaration, retaining the ordinary keyboard mapping. */
-static int keyboard_binding_parse(const char *code,int *virtual_key,int *button){
+static int keyboard_binding_parse(const char *code,int *virtual_key,int *button,unsigned *port){
   if(strncmp(code,"keybind|",8)) return 0;
   const char *scan=code+8;
+  if(*scan<'0' || *scan>'9') return 0;
+  unsigned selected=0;
+  while(*scan>='0' && *scan<='9'){
+    selected=selected*10u+(unsigned)(*scan++-'0');
+    if(selected>ANYGM_MAX_GAMEPADS) return 0;
+  }
+  if(!selected || *scan++!='|') return 0;
   if(*scan<'0' || *scan>'9') return 0;
   unsigned key=0;
   while(*scan>='0' && *scan<='9'){
@@ -730,7 +737,7 @@ static int keyboard_binding_parse(const char *code,int *virtual_key,int *button)
   };
   for(size_t i=0;i<sizeof names/sizeof names[0];i++){
     if(strcmp(scan,names[i].name)) continue;
-    *virtual_key=(int)key;*button=names[i].button;
+    *virtual_key=(int)key;*button=names[i].button;*port=selected-1u;
     return 1;
   }
   return 0;
@@ -752,9 +759,9 @@ static int boot_same_target(const CheatSlot *left,const CheatSlot *right){
     size_t length=strlen(singletons[i]);
     if(!strncmp(left->code,singletons[i],length) && !strncmp(right->code,singletons[i],length)) return 1;
   }
-  int left_key,right_key,left_button,right_button;
-  if(keyboard_binding_parse(left->code,&left_key,&left_button) &&
-     keyboard_binding_parse(right->code,&right_key,&right_button))
+  int left_key,right_key,left_button,right_button;unsigned left_port,right_port;
+  if(keyboard_binding_parse(left->code,&left_key,&left_button,&left_port) &&
+     keyboard_binding_parse(right->code,&right_key,&right_button,&right_port))
     return left_key==right_key;
   if(boot_line_is_menu(left->code) && boot_line_is_menu(right->code)){
     char l[6][128],r[6][128];
@@ -837,11 +844,11 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
             return 0;
           }
         } else if(!strncmp(slot->code,"keybind|",8)){
-          int virtual_key,button;
-          if(!keyboard_binding_parse(slot->code,&virtual_key,&button)){
+          int virtual_key,button;unsigned port;
+          if(!keyboard_binding_parse(slot->code,&virtual_key,&button,&port)){
             snprintf(error,error_capacity,
-                     "directive %d: keybind| takes a virtual key from 2 to 255 and a RetroPad button or auto",
-                     line_number);
+                     "directive %d: keybind| takes a RetroPad port from 1 to %u, a virtual key from 2 to 255 and a button or auto",
+                     line_number,(unsigned)ANYGM_MAX_GAMEPADS);
             return 0;
           }
         } else if(!strncmp(slot->code,"introskip|",10) || !strncmp(slot->code,"introauto|",10)){
@@ -1597,15 +1604,34 @@ int engine_overrides_keyboard_emulation(AnygmEngine *engine){
   return 0;
 }
 /* Binding declarations never select input ownership or alter physical keyboard state. */
-int engine_overrides_key_binding(AnygmEngine *engine,int virtual_key){
+int engine_overrides_key_binding(AnygmEngine *engine,int virtual_key,unsigned *port){
+  if(port) *port=0;
   int active=engine_boot_cheats_active(engine);
   for(int i=0;i<active;i++){
-    int key,button;
+    int key,button;unsigned selected;
     if(engine->boot_cheats[i].enabled &&
-       keyboard_binding_parse(engine->boot_cheats[i].code,&key,&button) && key==virtual_key)
+       keyboard_binding_parse(engine->boot_cheats[i].code,&key,&button,&selected) && key==virtual_key){
+      if(port && button>=0) *port=selected;
       return button;
+    }
   }
   return -1;
+}
+/* Only explicitly bound ports add keyboard sources beyond the ordinary first pad. */
+unsigned engine_overrides_keyboard_bindings(AnygmEngine *engine,
+                                           unsigned buttons[ANYGM_MAX_GAMEPADS]){
+  if(buttons) memset(buttons,0,sizeof(unsigned)*ANYGM_MAX_GAMEPADS);
+  unsigned ports=0;
+  int active=engine_boot_cheats_active(engine);
+  for(int i=0;i<active;i++){
+    int key,button;unsigned port;
+    if(engine->boot_cheats[i].enabled &&
+       keyboard_binding_parse(engine->boot_cheats[i].code,&key,&button,&port) && button>=0){
+      ports|=1u<<port;
+      if(buttons) buttons[port]|=1u<<(unsigned)button;
+    }
+  }
+  return ports;
 }
 void introskip_hook(AnygmEngine *engine){
   if(engine->introskip_enabled < 0){

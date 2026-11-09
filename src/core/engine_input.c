@@ -26,8 +26,8 @@ static void dbg_key_log(AnygmEngine *engine,int vk, int edge, int cur, int prev,
   engine_logf(engine,ANYGM_LOG_DEBUG,"[key] f%ld vk=%d edge=%d cur=%d prev=%d -> %d\n",engine->vm.frame,vk,edge,cur,prev,out);
 }
 /* map a GM virtual-key code to a RetroPad button id (-1 = unmapped) */
-static int vk_to_pad(AnygmEngine *engine,int vk){
-  int declared=engine_overrides_key_binding(engine,vk);
+static int vk_to_pad(AnygmEngine *engine,int vk,unsigned *port){
+  int declared=engine_overrides_key_binding(engine,vk,port);
   if(declared>=0) return declared;
   if(anygm_policy_uses_classic_runtime(&engine->win)){
     switch(vk){
@@ -83,6 +83,14 @@ static int engine_input_key(void *userdata,int vk, int edge){
         any |= engine->pad_current[0][i];
         anyp |= engine->pad_previous[0][i];
       }
+      unsigned buttons[ANYGM_MAX_GAMEPADS];
+      engine_overrides_keyboard_bindings(engine,buttons);
+      for(unsigned port=1;port<ANYGM_MAX_GAMEPADS;port++)
+        for(unsigned button=0;button<NPAD;button++)
+          if(buttons[port]&(1u<<button)){
+            any|=engine->pad_current[port][button];
+            anyp|=engine->pad_previous[port][button];
+          }
     }
     for(int i = 2; i < NKEY; i++){
       if(engine->key_cleared[i]) continue;   /* cleared: not down again until it comes up first */
@@ -114,8 +122,9 @@ static int engine_input_key(void *userdata,int vk, int edge){
   int key_c = event_key_state_for_vk(engine,vk, 0);
   int key_p = event_key_state_for_vk(engine,vk, 1);
   if(!engine_pad_reserved_for_pad_api(engine)){
-    int b = vk_to_pad(engine,vk);
-    if(b >= 0){ pad_c=engine->pad_current[0][b]; pad_p=engine->pad_previous[0][b]; }
+    unsigned port=0;
+    int b = vk_to_pad(engine,vk,&port);
+    if(b >= 0){ pad_c=engine->pad_current[port][b]; pad_p=engine->pad_previous[port][b]; }
   }
   /* A simulated press cancelled by its own frame's release is not readable in that frame: the
    * carry hands it to the following one, where the key events run. Reading it in both frames

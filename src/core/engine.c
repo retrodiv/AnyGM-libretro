@@ -1192,18 +1192,20 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   memcpy(engine->pad_previous, engine->pad_current, sizeof(engine->pad_current));
   memcpy(engine->key_previous, engine->key_current, sizeof(engine->key_current));
   memcpy(engine->axis_previous, engine->axis_current, sizeof(engine->axis_current));
-  /* Unreported native rows stay at rest. Explicit keyboard ownership additionally needs
-   * the first raw row when the host exposes no native pads. */
+  /* Native rows remain count-bound. Explicit keyboard ownership retains the ordinary
+   * first pad and any ports named by content keyboard bindings. */
   unsigned pads=engine->input.connected_gamepads;
   if(pads>ANYGM_MAX_GAMEPADS) pads=ANYGM_MAX_GAMEPADS;
-  if(!pads && engine_input_keyboard_emulation_selected(engine)) pads=1u;
+  unsigned keyboard_ports=engine_input_keyboard_emulation_selected(engine)?
+    1u|engine_overrides_keyboard_bindings(engine,NULL):0u;
   for(unsigned device=0;device<ANYGM_MAX_GAMEPADS;device++){
+    int retained=device<pads || (keyboard_ports&(1u<<device));
     for (int b = 0; b < NPAD; b++)
       engine->pad_current[device][b]=
-        device<pads && engine->input.gamepad_buttons[device][b] ? 1 : 0;
+        retained && engine->input.gamepad_buttons[device][b] ? 1 : 0;
     for(int axis=0;axis<4;axis++)
       engine->axis_current[device][axis]=
-        device<pads ? engine->input.gamepad_axes[device][axis] : 0.0;
+        retained ? engine->input.gamepad_axes[device][axis] : 0.0;
   }
   engine_input_poll_keyboard(engine);
   engine_input_poll_mouse(engine);

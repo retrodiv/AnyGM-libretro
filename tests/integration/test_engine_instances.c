@@ -2810,12 +2810,12 @@ static int declared_keyboard_binding_policy(void){
   engine_input_bind(&engine);
   engine.pad_current[0][ANYGM_PAD_FACE_BOTTOM]=1;
   char error[256];
-  int ok=engine_boot_overrides_parse("keybind|65|b\n",engine.boot_cheats,
+  int ok=engine_boot_overrides_parse("keybind|1|65|b\n",engine.boot_cheats,
       &engine.boot_cheat_count,error,sizeof error) &&
     !engine.vm.input.key(engine.vm.input.userdata,65,0) &&
     engine.vm.input.gamepad(engine.vm.input.userdata,0,32769,0);
-  ok=ok && engine_boot_overrides_parse("gamepad|keyboard\nkeybind|65|a\n"
-      "keybind|83|a\nkeybind|065|b\n",engine.boot_cheats,
+  ok=ok && engine_boot_overrides_parse("gamepad|keyboard\nkeybind|1|65|a\n"
+      "keybind|1|83|a\nkeybind|1|065|b\n",engine.boot_cheats,
       &engine.boot_cheat_count,error,sizeof error) && engine.boot_cheat_count==3;
   if(ok){
     ok=engine.vm.input.key(engine.vm.input.userdata,65,1) &&
@@ -2836,18 +2836,140 @@ static int declared_keyboard_binding_policy(void){
     ok=ok && !engine.vm.input.key(engine.vm.input.userdata,83,0);
     engine.config.content_overrides=1;
     engine.pad_current[0][ANYGM_PAD_FACE_BOTTOM]=1;
-    ok=ok && engine_boot_overrides_parse("gamepad|keyboard\nkeybind|65|b\n"
-        "keybind|65|auto\n",engine.boot_cheats,&engine.boot_cheat_count,error,sizeof error) &&
+    ok=ok && engine_boot_overrides_parse("gamepad|keyboard\nkeybind|1|65|b\n"
+        "keybind|1|65|auto\n",engine.boot_cheats,&engine.boot_cheat_count,error,sizeof error) &&
       engine.boot_cheat_count==2 && !engine.vm.input.key(engine.vm.input.userdata,65,0) &&
       engine.vm.input.key(engine.vm.input.userdata,90,0);
   }
-  static const char *invalid[]={"keybind|0|b","keybind|1|b","keybind|256|b",
-    "keybind|-2|b","keybind|2x|b","keybind|65|unknown","keybind|65|b|a",
-    "keybind||b","keybind|65|"};
+  static const char *invalid[]={"keybind|1|0|b","keybind|1|1|b","keybind|1|256|b",
+    "keybind|1|-2|b","keybind|1|2x|b","keybind|1|65|unknown","keybind|1|65|b|a",
+    "keybind|1||b","keybind|1|65|"};
   for(unsigned i=0;ok && i<sizeof invalid/sizeof invalid[0];i++)
     ok=!engine_boot_overrides_parse(invalid[i],engine.boot_cheats,
         &engine.boot_cheat_count,error,sizeof error);
   if(!ok) fputs("declared keyboard binding violated ownership, layering or key edges\n",stderr);
+  return ok;
+}
+
+static int declared_keyboard_port_binding_policy(void){
+  AnygmEngine engine={0};
+  engine.config.content_overrides=1;
+  engine.win.classic_version=800;
+  engine_input_bind(&engine);
+  int ok=1;
+  char program[160],error[256];
+  for(unsigned port=0;ok && port<ANYGM_MAX_GAMEPADS;port++){
+    snprintf(program,sizeof program,"gamepad|keyboard\nkeybind|%u|87|right\n",port+1u);
+    ok=engine_boot_overrides_parse(program,engine.boot_cheats,
+        &engine.boot_cheat_count,error,sizeof error);
+    for(unsigned source=0;ok && source<ANYGM_MAX_GAMEPADS;source++){
+      memset(engine.pad_current,0,sizeof engine.pad_current);
+      memset(engine.pad_previous,0,sizeof engine.pad_previous);
+      engine.pad_current[source][ANYGM_PAD_RIGHT]=1;
+      ok=engine.vm.input.key(&engine,87,0)==(source==port) &&
+         engine.vm.input.key(&engine,87,1)==(source==port) &&
+         engine.vm.input.key(&engine,39,0)==(source==0) &&
+         engine.vm.input.key(&engine,1,0)==(source==0 || source==port) &&
+         !engine.vm.input.gamepad(&engine,(int)source,32784,0);
+      engine.pad_previous[source][ANYGM_PAD_RIGHT]=1;
+      ok=ok && !engine.vm.input.key(&engine,87,1);
+      engine.pad_current[source][ANYGM_PAD_RIGHT]=0;
+      ok=ok && engine.vm.input.key(&engine,87,2)==(source==port);
+    }
+    memset(engine.pad_previous,0,sizeof engine.pad_previous);
+    engine.event_key_current['w']=1;
+    ok=ok && engine.vm.input.key(&engine,87,0);
+    engine.event_key_current['w']=0;
+  }
+  ok=ok && engine_boot_overrides_parse("gamepad|keyboard\nkeybind|2|65|left\n"
+      "keybind|3|65|right\n",engine.boot_cheats,&engine.boot_cheat_count,error,sizeof error) &&
+      engine.boot_cheat_count==2;
+  memset(engine.pad_current,0,sizeof engine.pad_current);
+  engine.pad_current[1][ANYGM_PAD_LEFT]=1;
+  ok=ok && !engine.vm.input.key(&engine,65,0);
+  engine.pad_current[2][ANYGM_PAD_RIGHT]=1;
+  ok=ok && engine.vm.input.key(&engine,65,0);
+  ok=ok && engine_boot_overrides_parse("gamepad|keyboard\nkeybind|2|65|left\n"
+      "keybind|1|65|auto\n",engine.boot_cheats,&engine.boot_cheat_count,error,sizeof error);
+  ok=ok && !engine.vm.input.key(&engine,65,0);
+  engine.pad_current[0][ANYGM_PAD_FACE_BOTTOM]=1;
+  ok=ok && engine.vm.input.key(&engine,65,0);
+  /* A declaration selects a source, never native-versus-keyboard ownership. */
+  uint32_t address=0;const char *name="gamepad_button_check";
+  uint8_t kind=GML_REF_FUNCTION;
+  engine.win.ref_addr=&address;engine.win.ref_name=&name;
+  engine.win.ref_kind=&kind;engine.win.n_refs=1;
+  engine.config.gamepad_connected=ANYGM_GAMEPAD_AUTO;
+  engine.input.connected_gamepads=ANYGM_MAX_GAMEPADS;
+  memset(engine.pad_current,0,sizeof engine.pad_current);
+  engine.pad_current[1][ANYGM_PAD_RIGHT]=1;
+  ok=ok && engine_boot_overrides_parse("keybind|2|87|right\n",engine.boot_cheats,
+      &engine.boot_cheat_count,error,sizeof error) &&
+      !engine.vm.input.key(&engine,87,0) &&
+      engine.vm.input.gamepad(&engine,1,32784,0);
+  engine.config.content_overrides=0;
+  engine.config.gamepad_connected=0;
+  ok=ok && !engine.vm.input.key(&engine,87,0) &&
+      !engine.vm.input.key(&engine,1,0);
+  engine.config.content_overrides=1;
+  static const char *invalid[]={"keybind|0|87|up","keybind|5|87|up",
+    "keybind|-1|87|up","keybind||87|up","keybind|2|87|up|3",
+    "keybind|2|87|auto|2","keybind|65|b"};
+  for(unsigned i=0;ok && i<sizeof invalid/sizeof invalid[0];i++)
+    ok=!engine_boot_overrides_parse(invalid[i],engine.boot_cheats,
+        &engine.boot_cheat_count,error,sizeof error);
+  if(!ok) fputs("declared keyboard ports lost isolation, edges or ordinary input\n",stderr);
+  return ok;
+}
+
+static int declared_keyboard_port_transport_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_content_create(&fixture)) return 0;
+  AnygmHostServices services={0};services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL;
+  AnygmContentSource source={0};source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;source.path=fixture.path;
+  source.cache_directory=source.save_directory=fixture.directory;
+  int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+    anygm_load(engine,&source,NULL)==ANYGM_OK;
+  AnygmInputFrame input={0};input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  AnygmFrameOutput output={0};output.struct_size=sizeof output;
+  if(ok){
+    char error[256];
+    ok=engine_boot_overrides_parse("gamepad|keyboard\nkeybind|4|87|right\n",
+        engine->boot_cheats,&engine->boot_cheat_count,error,sizeof error);
+    input.gamepad_buttons[3][ANYGM_PAD_RIGHT]=1;
+    input.gamepad_buttons[1][ANYGM_PAD_LEFT]=1;
+    ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+       engine->pad_current[3][ANYGM_PAD_RIGHT] &&
+       !engine->pad_current[1][ANYGM_PAD_LEFT] &&
+       engine->vm.input.key(engine,87,1) &&
+       !engine->vm.input.gamepad_connected(engine,3) &&
+       !engine->vm.input.gamepad(engine,3,32784,0);
+    uint8_t *state=NULL;size_t state_size=0;
+    ok=ok && save_state(engine,&state,&state_size);
+    input.gamepad_buttons[3][ANYGM_PAD_RIGHT]=0;
+    ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+       engine->vm.input.key(engine,87,2);
+    ok=ok && anygm_state_load(engine,state,state_size)==ANYGM_OK &&
+       engine->vm.input.key(engine,87,0);
+    /* The first post-restore call presents the restored completed frame. */
+    ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+       anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+       engine->vm.input.key(engine,87,2);
+    free(state);
+    ok=ok && engine_boot_overrides_parse("gamepad|keyboard\nkeybind|1|87|auto\n",
+        engine->boot_cheats,&engine->boot_cheat_count,error,sizeof error);
+    input.gamepad_buttons[3][ANYGM_PAD_RIGHT]=1;
+    ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+       !engine->pad_current[3][ANYGM_PAD_RIGHT] &&
+       !engine->vm.input.key(engine,87,0);
+  }
+  if(!ok) fputs("explicit keyboard port transport exposed unbound rows or lost a bound row\n",stderr);
+  anygm_destroy(engine);anygm_synthetic_content_destroy(&fixture);
   return ok;
 }
 
@@ -3961,6 +4083,10 @@ int main(int argc,char **argv){
       return zero_count_native_pad_silence_policy()?0:1;
     if(!strcmp(argv[2],"input_declared_keyboard_binding"))
       return declared_keyboard_binding_policy()?0:1;
+    if(!strcmp(argv[2],"input_declared_keyboard_ports"))
+      return declared_keyboard_port_binding_policy()?0:1;
+    if(!strcmp(argv[2],"input_declared_keyboard_port_transport"))
+      return declared_keyboard_port_transport_policy()?0:1;
     if(!strcmp(argv[2],"instance_variable_diagnostic"))
       return instance_variable_diagnostic_policy()?0:1;
     if(!strcmp(argv[2],"simulated_key_lifetime"))
@@ -4002,6 +4128,7 @@ int main(int argc,char **argv){
           "background_color|view_surface_room_lifetime|view_surface_frame_mirror|"
           "view_surface_actual_target|multi_view_application_canvas|game_change|"
           "input_binding_ownership|input_zero_native_count|input_declared_keyboard_binding|"
+          "input_declared_keyboard_ports|input_declared_keyboard_port_transport|"
           "instance_variable_diagnostic|"
           "simulated_key_lifetime|simulated_key_frame_lifetime|"
           "bridged_key_press_delivery|bridged_key_hold|bridged_key_restore|undefined_placement|"
@@ -4054,6 +4181,8 @@ int main(int argc,char **argv){
   if(!input_binding_ownership_policy()) return 1;
   if(!zero_count_native_pad_silence_policy()) return 1;
   if(!declared_keyboard_binding_policy()) return 1;
+  if(!declared_keyboard_port_binding_policy()) return 1;
+  if(!declared_keyboard_port_transport_policy()) return 1;
   if(!instance_variable_diagnostic_policy()) return 1;
   if(!simulated_key_lifetime_policy()) return 1;
   if(!simulated_key_frame_lifetime_policy()) return 1;

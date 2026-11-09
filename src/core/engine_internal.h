@@ -479,7 +479,9 @@ void room_skip_hook(AnygmEngine *engine);
 void introskip_hook(AnygmEngine *engine);
 int  engine_overrides_declared_os_type(AnygmEngine *engine);
 int  engine_overrides_keyboard_emulation(AnygmEngine *engine);
-int  engine_overrides_key_binding(AnygmEngine *engine,int virtual_key);
+int  engine_overrides_key_binding(AnygmEngine *engine,int virtual_key,unsigned *port);
+unsigned engine_overrides_keyboard_bindings(AnygmEngine *engine,
+                                            unsigned buttons[ANYGM_MAX_GAMEPADS]);
 
 int ensure_classic_phase(AnygmEngine *engine,size_t pixels);
 int ensure_primary_buffers(AnygmEngine *engine);

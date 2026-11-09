@@ -80,13 +80,19 @@ content whose default or menu controls require a keyboard despite containing pad
 in charge. These singleton declarations follow ordinary content-override layering, disabling and
 save-state identity. They do not edit the frontend option or the content's own controller settings.
 
-`keybind|65|b` assigns RetroPad B to virtual key 65 during keyboard emulation. The virtual
-key is a decimal Win32 key number from 2 to 255; button names are `b`, `a`, `y`, `x`,
+`keybind|2|87|up` assigns Up on RetroPad port 2 to virtual key 87 during keyboard emulation.
+The port is a decimal number from 1 to 4; the virtual key is a decimal Win32 key number
+from 2 to 255. Button names are `b`, `a`, `y`, `x`,
 `start`, `select`, `up`, `down`, `left`, `right`, `l`, `r`, `l2`, `r2`, `l3` and `r3`.
 Only the named key changes; other default aliases and physical keyboard input remain intact.
-Bindings do not select keyboard emulation or affect native pad input. Declare
+Each key names one source port and button. Directions on other ports do not activate that
+key; physical keyboard input still reaches it independently. Only the declared buttons on
+additional ports contribute to the keyboard's any-key check. Bindings do not select
+keyboard emulation or affect native pad input. Declare
 `gamepad|keyboard` as well when content contains native pad references. Declarations layer
-by virtual key; `keybind|65|auto` withdraws that key's binding and restores its default.
+by virtual key; `keybind|1|65|auto` withdraws that key's binding and restores its default
+mapping on port 1. The port is explicit in every declaration; the old three-field syntax
+is rejected. Update content declarations when updating a core that used that syntax.
 These content-only declarations share ordinary override disabling and save-state identity.
 
 `call|script_name` invokes the named zero-argument GMS script exactly once,
