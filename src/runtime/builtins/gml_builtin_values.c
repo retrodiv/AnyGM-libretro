@@ -153,6 +153,9 @@ GmlVal gml_builtin_try_values_math(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"distance_to_point")){ GmlInstance*s=vm->cur_self; if(!s)return vreal(0);
     return vreal(point_to_instance_distance(vm,s,N(a,n,0),N(a,n,1))); }
   if(!strcmp(nm,"point_distance")) return vreal(hypot(N(a,n,2)-N(a,n,0),N(a,n,3)-N(a,n,1)));
+  if(!strcmp(nm,"point_distance_3d"))
+    return vreal(hypot(hypot(N(a,n,3)-N(a,n,0),N(a,n,4)-N(a,n,1)),
+                       N(a,n,5)-N(a,n,2)));
   /* Standard-GML pure predicates/getters require explicit dispatch rather than
    * the silent catch-all -> 0. GM colours are r + (g<<8) + (b<<16); HSV is 0-255 (see
    * make_color_hsv above: 6 sectors -> *42.5). */

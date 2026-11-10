@@ -12,6 +12,7 @@
  * either.
  */
 #include "gml_vm.h"
+#include "gml_builtin.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -29,6 +30,21 @@ int main(void){
   GmlVM vm;
   memset(&vm,0,sizeof vm);
   int ok=1;
+
+  /* Independent Euclidean-distance controls: all three axes, translation,
+   * symmetry, coincidence, and cached dispatch must agree. */
+  GmlVal points[]={vreal(-5),vreal(7),vreal(-11),vreal(-2),vreal(11),vreal(1)};
+  ok &= expect("three-axis distance",gml_builtin_call(&vm,"point_distance_3d",points,6),13);
+  GmlVal reversed[]={points[3],points[4],points[5],points[0],points[1],points[2]};
+  ok &= expect("distance is symmetric",gml_builtin_call(&vm,"point_distance_3d",reversed,6),13);
+  GmlVal vertical[]={vreal(2),vreal(3),vreal(-4),vreal(2),vreal(3),vreal(5)};
+  ok &= expect("z axis contributes",gml_builtin_call(&vm,"point_distance_3d",vertical,6),9);
+  GmlVal coincident[]={vreal(2),vreal(3),vreal(5),vreal(2),vreal(3),vreal(5)};
+  ok &= expect("coincident points",gml_builtin_call(&vm,"point_distance_3d",coincident,6),0);
+  int distance_id=gml_builtin_fast_id(&vm,"point_distance_3d");
+  if(distance_id<0){ fprintf(stderr,"point_distance_3d: missing cached dispatch\n"); ok=0; }
+  else ok &= expect("cached three-axis distance",
+      gml_builtin_call_fast_id(&vm,distance_id,"point_distance_3d",points,6),13);
 
   /* ---- logarithms and the exponent ---- */
   GmlVal four[]={vreal(4)};
