@@ -16769,7 +16769,9 @@ static int resident_flat_fog_sprite_function(void){
   const int generations[]={530,700,800,13,15,17};
   for(unsigned generation=0;generation<6u;generation++)
   for(unsigned kind=0;kind<4u;kind++) for(unsigned gui=0;gui<2u;gui++)
-  for(unsigned interpolation=0;interpolation<2u;interpolation++){
+  for(unsigned interpolation=0;interpolation<2u;interpolation++)
+  for(unsigned preset=0;preset<2u;preset++){
+    if(preset && (generation!=5u || kind || gui || interpolation)) continue;
     GmlRender *r=calloc(1,sizeof *r);GmlWin content={0};
     FakeDevice fake={.on_demand=1,.readback_colour=0x7F25C080u};
     GmlRenderDeviceServices device=service(&fake);uint32_t screen[W*H]={0},shadow[W*H];
@@ -16801,13 +16803,15 @@ static int resident_flat_fog_sprite_function(void){
     CHECK(gml_render_scene_submit_pending(r));memcpy(shadow,r->fb,sizeof shadow);
     int submitted=fake.submits;
     r->interp=(int)interpolation;r->fog_flat=1;r->fog_flat_rgb=0x315A9Cu;
+    r->blendmode=preset?3:0;
     double map_x=1,map_y=1;gml_render_draw_map_scale(r,&map_x,&map_y);
     for(unsigned draw=0;draw<8u;draw++)
       gml_draw_sprite_ext(r,0,0,12/map_x,12/map_y,-1/map_x,1/map_y,0,0x103070u,1);
     CHECK(r->resident_application_pass && !fake.readbacks && !fake.rgb_queries);
     CHECK(gml_render_scene_submit_pending(r) && fake.submits==submitted+1);
     CHECK(fake.last_batch_operations>=8u && fake.last_quad.corner_colour[0]==0xFF315A9Cu);
-    CHECK(!memcmp(shadow,r->fb,sizeof shadow) && r->fog_flat && r->interp==(int)interpolation);
+    CHECK(!memcmp(shadow,r->fb,sizeof shadow) && r->fog_flat && r->interp==(int)interpolation &&
+      r->blendmode==(preset?3:0));
     gml_render_free(r);free(r);
   }
   return 1;
@@ -20426,6 +20430,7 @@ int main(void){
     else if(!strcmp(selected,"wide-nearest-rows")) passed=resident_large_screen_axis_row_metadata();
     else if(!strcmp(selected,"large-rotated-rows")) passed=resident_large_rotated_sample_row_metadata();
     else if(!strcmp(selected,"numbered-rotated-native-quad")) passed=resident_numbered_rotated_native_quad();
+    else if(!strcmp(selected,"flat-fog-sprite")) passed=resident_flat_fog_sprite_function();
     else if(!strcmp(selected,"bounded-axis-screen")) passed=resident_bounded_axis_screen_sprite();
     else if(!strcmp(selected,"large-screen-byte-axis")) passed=resident_large_screen_byte_axis();
     else if(!strcmp(selected,"shaded-plane-authority")) passed=shaded_plane_preserves_device_target();

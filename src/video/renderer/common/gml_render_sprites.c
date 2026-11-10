@@ -823,9 +823,10 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   int whole_background=(physical_sprite_page==8 || physical_sprite_page==10) &&
     family==GML_RENDER_SCENE_BACKGROUND;
   int selected_unwrapped=selected_background || sprite_part_function || (tile_function && !quarter_tile);
-  int full_axis_preset=physical_sprite_page==15 && family==GML_RENDER_SCENE_SPRITE &&
-    r && !r->fog_flat && r->blendmode>=3 && r->blendmode<=11 &&
-    r->blendmode!=6 && r->blendmode!=7 && r->blendmode!=8;
+  int full_axis_preset=family==GML_RENDER_SCENE_SPRITE && r &&
+    ((physical_sprite_page==15 && !r->fog_flat && r->blendmode>=3 && r->blendmode<=11 &&
+      r->blendmode!=6 && r->blendmode!=7 && r->blendmode!=8) ||
+     (physical_sprite_page==22 && r->fog_flat && r->blendmode==3));
   int preset_atlas=selected_unwrapped || whole_background || full_axis_preset || quarter_tile;
   int background_replace=(selected_unwrapped || whole_background) && r && r->blendmode==6;
   int background_masked=preset_atlas && r && r->alphablend &&
@@ -4215,13 +4216,14 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     !fog_axis && r->blendmode==6;
   /* The existing scalar rotation ignores flat fog and keeps preset three
    * on its source-over arm. Qualify its modern SCREEN placement as one
-   * native quad; axis sprites retain their different fog-colour owner. */
-  int fog_rotated_alias=r && r->fog_flat && !fog_axis &&
+   * native quad; the point alias retains its existing fog-colour owner. */
+  int fog_sourceover_alias=r && r->fog_flat &&
     family==GML_RENDER_SCENE_SPRITE && !r->classic && !r->interp &&
     !r->gui_pass_active && r->active_shader<0 && r->alphablend &&
     r->blendmode==3 && r->color_write_mask==15u &&
     r->target_id<0 && !r->target_sp && !gml_render_target_preserves_alpha(r) &&
     anygm_policy_has_modern_layer_semantics(r->win);
+  int fog_rotated_alias=fog_sourceover_alias && !fog_axis;
   int axis_preset=r && family==GML_RENDER_SCENE_SPRITE && !r->fog_flat &&
     r->blendmode>=3 && r->blendmode<=11 && r->blendmode!=6 &&
     r->blendmode!=7 && r->blendmode!=8 && isfinite(rotation) &&
@@ -4233,7 +4235,7 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
      (family==GML_RENDER_SCENE_SPRITE?resident_sprite_program_blocks(r):r->active_shader>=0) ||
      (r->fog_flat && family!=GML_RENDER_SCENE_SPRITE) || gml_d3_is_active(r) ||
      r->color_write_mask>15u || r->blendmode<0 ||
-     (r->blendmode>2 && !fog_rotated_normal && !fog_rotated_alias && !axis_preset &&
+     (r->blendmode>2 && !fog_rotated_normal && !fog_sourceover_alias && !axis_preset &&
       !(family==GML_RENDER_SCENE_SPRITE && !r->fog_flat && (r->blendmode==7 || r->blendmode==8))) ||
      r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
      gml_render_classic_vertical_phase_blocks_scene(r) || r->rotated_batch_count || r->rotated_batch_building ||
