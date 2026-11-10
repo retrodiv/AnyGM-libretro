@@ -797,9 +797,10 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   int replacement_sprite=physical_sprite_page==20;
   int flat_fog_sprite=r && r->fog_flat && family==GML_RENDER_SCENE_SPRITE &&
     (physical_sprite_page==22 || replacement_sprite);
-  /* The preserved rotation leaf treats this preset as ordinary source-over,
-   * unlike its point replacement branch. Resolve the packet, not public state. */
-  int fog_rotated_normal=r && r->fog_flat && r->blendmode==6 &&
+  /* The preserved rotation leaf treats these presets as ordinary source-over.
+   * Resolve the packet without changing public draw state. */
+  int fog_rotated_normal=r && r->fog_flat &&
+    (r->blendmode==6 || (r->blendmode==3 && native_geometry)) &&
     rotated_sprite_function && family==GML_RENDER_SCENE_SPRITE;
   int scaled_sprite=physical_sprite_page==15 || physical_sprite_page==22 || rotated_sprite_function || runtime_function || sprite_part_function || tiled_sprite_function || replacement_sprite;
   int destination_factor_sprite=r && scaled_sprite && !runtime_function &&
@@ -4212,6 +4213,15 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     (fabs(fmod(rotation,360.0))<0.001 || fabs(fabs(fmod(rotation,360.0))-360.0)<0.001);
   int fog_rotated_normal=r && r->fog_flat && family==GML_RENDER_SCENE_SPRITE &&
     !fog_axis && r->blendmode==6;
+  /* The existing scalar rotation ignores flat fog and keeps preset three
+   * on its source-over arm. Qualify its modern SCREEN placement as one
+   * native quad; axis sprites retain their different fog-colour owner. */
+  int fog_rotated_alias=r && r->fog_flat && !fog_axis &&
+    family==GML_RENDER_SCENE_SPRITE && !r->classic && !r->interp &&
+    !r->gui_pass_active && r->active_shader<0 && r->alphablend &&
+    r->blendmode==3 && r->color_write_mask==15u &&
+    r->target_id<0 && !r->target_sp && !gml_render_target_preserves_alpha(r) &&
+    anygm_policy_has_modern_layer_semantics(r->win);
   int axis_preset=r && family==GML_RENDER_SCENE_SPRITE && !r->fog_flat &&
     r->blendmode>=3 && r->blendmode<=11 && r->blendmode!=6 &&
     r->blendmode!=7 && r->blendmode!=8 && isfinite(rotation) &&
@@ -4223,7 +4233,7 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
      (family==GML_RENDER_SCENE_SPRITE?resident_sprite_program_blocks(r):r->active_shader>=0) ||
      (r->fog_flat && family!=GML_RENDER_SCENE_SPRITE) || gml_d3_is_active(r) ||
      r->color_write_mask>15u || r->blendmode<0 ||
-     (r->blendmode>2 && !fog_rotated_normal && !axis_preset &&
+     (r->blendmode>2 && !fog_rotated_normal && !fog_rotated_alias && !axis_preset &&
       !(family==GML_RENDER_SCENE_SPRITE && !r->fog_flat && (r->blendmode==7 || r->blendmode==8))) ||
      r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
      gml_render_classic_vertical_phase_blocks_scene(r) || r->rotated_batch_count || r->rotated_batch_building ||
@@ -4251,9 +4261,9 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     /* A qualified nearest draw keeps its CPU placement while the device owns
      * rasterization and sampling. Do not tessellate it into CPU coverage rows. */
     if(family==GML_RENDER_SCENE_SPRITE && !r->classic && !r->interp &&
-       anygm_policy_has_modern_layer_semantics(r->win) && !r->fog_flat &&
+       anygm_policy_has_modern_layer_semantics(r->win) && (!r->fog_flat || fog_rotated_alias) &&
        !r->gui_pass_active && r->active_shader<0 &&
-       r->alphablend && !r->blendmode &&
+       r->alphablend && (!r->blendmode || fog_rotated_alias) &&
        ((r->color_write_mask==7u && !r->alpha_test_enable &&
          r->target_id>0 && gml_render_target_preserves_alpha(r)) ||
         (r->color_write_mask==15u && r->target_id<0 && !r->target_sp &&
@@ -4268,6 +4278,7 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
       if(placed>=0) return !placed || resident_atlas_crop_from_page_impl(r,page,
         0,0,page->sw,page->sh,0,0,1,1,family,colour,alpha,16,NULL,NULL,0u,0,NULL,&placement);
     }
+    if(fog_rotated_alias) return 0;
     enum { CAPACITY=2048 };
     GmlRenderRotatedCoverageRegion *regions=malloc(CAPACITY*sizeof *regions);
     uint32_t count=0;
