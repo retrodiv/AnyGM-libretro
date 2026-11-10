@@ -3,6 +3,8 @@
  */
 #include "persistent_test_fixture.h"
 
+#include "gml_builtin.h"
+#include "gml_particle.h"
 #include "gml_vm_internal.h"
 #include "gml_value_internal.h"
 #include "gml_render.h"
@@ -10,6 +12,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct SequenceFixtureWriter {
@@ -303,8 +306,20 @@ int expect_sequence_asset_keys_and_parameters(void){
                 framebuffer[4*32+3]);
         ok=0;
       }
+
+      GmlVal position[]={vreal(element.id),vreal(8)};
+      gml_builtin_call(&vm,"layer_sequence_x",position,2);
+      memset(framebuffer,0,sizeof framebuffer);
+      gml_render_begin(&render,framebuffer,32,32,0,0);
+      gml_vm_draw(&vm);
+      if(framebuffer[4*32+3]!=0 || framebuffer[4*32+8]!=UINT32_C(0xFF00FF00)){
+        fputs("sequence element move did not reach the layer sprite draw\n",stderr);
+        ok=0;
+      }
       gml_vm_frame_cleanup(&vm);
       gml_varmap_free(&vm.globals);
+      gml_builtin_state_destroy(vm.builtins);
+      vm.builtins=NULL;
       vm.render=NULL; vm.rtl=NULL; vm.n_rtl=0; vm.rte=NULL; vm.n_rte=0;
     }
   }
@@ -337,5 +352,74 @@ int expect_sequence_asset_keys_and_parameters(void){
     ok=0;
   }
   gml_vm_sequences_clear(&vm);
+  return ok;
+}
+
+static double sequence_call(GmlVM *vm,const char *name,GmlVal *args,int count,
+                            int cached,int *ok){
+  GmlVal result;
+  if(cached){
+    int id=gml_builtin_fast_id(vm,name);
+    if(id<0){ *ok=0; return NAN; }
+    result=gml_builtin_call_fast_id(vm,id,name,args,count);
+  } else result=gml_builtin_call(vm,name,args,count);
+  if(result.t!=V_REAL){ *ok=0; return NAN; }
+  return result.d;
+}
+
+int expect_layer_sequence_controls(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlWin win={.bytecode=17};
+    GmlVM vm={.win=&win,.room_index=-1,.pending_room=-1,.next_creation_seq=1};
+    vm.particles=gml_particle_state_create(&vm);
+    if(!vm.particles) return 0;
+    gml_vm_software3d_reset(&vm);
+    vm.sequences=calloc(1,sizeof *vm.sequences);
+    if(!vm.sequences){ gml_vm_free(&vm); return 0; }
+    vm.n_sequences=1;
+    vm.sequences[0]=(GmlSequence){.length=8.25,.speed=.5,.speed_type=1};
+    GmlVal create[]={vreal(0),vreal(3.25),vreal(4.5),vreal(0)};
+    GmlVal args[]={gml_builtin_call(&vm,"layer_sequence_create",create,4),vreal(10.75)};
+    GmlVal sibling=gml_builtin_call(&vm,"layer_sequence_create",create,4);
+    ok &= args[0].d>0 && sibling.d>0 && args[0].d!=sibling.d;
+    ok &= sequence_call(&vm,"layer_sequence_get_length",args,1,cached,&ok)==8.25;
+    ok &= sequence_call(&vm,"layer_sequence_get_x",args,1,cached,&ok)==3.25;
+    ok &= sequence_call(&vm,"layer_sequence_get_y",args,1,cached,&ok)==4.5;
+    ok &= sequence_call(&vm,"layer_sequence_is_paused",args,1,cached,&ok)==0;
+    gml_vm_frame_advance_layers(&vm);
+    sequence_call(&vm,"layer_sequence_pause",args,1,cached,&ok);
+    sequence_call(&vm,"layer_sequence_x",args,2,cached,&ok);
+    gml_vm_frame_advance_layers(&vm);
+    ok &= sequence_call(&vm,"layer_sequence_get_headpos",args,1,cached,&ok)==.5;
+    ok &= sequence_call(&vm,"layer_sequence_get_headpos",&sibling,1,cached,&ok)==1;
+
+    size_t size=gml_vm_state_size(&vm),written=0,used=0;
+    void *snapshot=malloc(size);
+    int saved=snapshot && gml_vm_state_save(&vm,snapshot,size,&written);
+    sequence_call(&vm,"layer_sequence_play",args,1,cached,&ok);
+    gml_vm_frame_advance_layers(&vm);
+    ok &= sequence_call(&vm,"layer_sequence_get_headpos",args,1,cached,&ok)==1;
+    int restored=saved && gml_vm_state_load(&vm,snapshot,written,&used) && used==written;
+    if(!restored) fprintf(stderr,"sequence snapshot: saved=%d bytes=%zu restored=%zu\n",
+                          saved,written,used);
+    ok &= restored;
+    free(snapshot);
+    gml_vm_frame_advance_layers(&vm);
+    ok &= sequence_call(&vm,"layer_sequence_is_paused",args,1,cached,&ok)==1;
+    ok &= sequence_call(&vm,"layer_sequence_get_headpos",args,1,cached,&ok)==.5;
+    ok &= sequence_call(&vm,"layer_sequence_get_x",args,1,cached,&ok)==10.75;
+    ok &= sequence_call(&vm,"layer_sequence_get_y",args,1,cached,&ok)==4.5;
+    args[1]=vreal(8.25);
+    gml_builtin_call(&vm,"layer_sequence_headpos",args,2);
+    sequence_call(&vm,"layer_sequence_play",args,1,cached,&ok);
+    ok &= sequence_call(&vm,"layer_sequence_get_headpos",args,1,cached,&ok)==0;
+    gml_vm_frame_advance_layers(&vm);
+    ok &= sequence_call(&vm,"layer_sequence_get_headpos",args,1,cached,&ok)==.5;
+    gml_builtin_call(&vm,"layer_sequence_destroy",args,1);
+    ok &= sequence_call(&vm,"layer_sequence_get_headpos",args,1,cached,&ok)==-1;
+    gml_vm_free(&vm);
+  }
+  if(!ok) fputs("sequence element controls, playback, or state restoration mismatch\n",stderr);
   return ok;
 }

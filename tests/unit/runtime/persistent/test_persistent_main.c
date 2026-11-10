@@ -63,6 +63,7 @@ int main(int argc,char **argv){
     {"frame_clock_ignores_host_time",expect_frame_clock_ignores_host_time},
     {"frame_clock_long_wait_continues",expect_frame_clock_long_wait_continues},
     {"sequence_asset_keys_and_parameters",expect_sequence_asset_keys_and_parameters},
+    {"layer_sequence_controls",expect_layer_sequence_controls},
     {"hash_layer_gpu",expect_hash_layer_gpu_gap_closure},
     {"array_functions",expect_array_function_gap_closure},
     {"array_2d_nested_rows",expect_array_2d_preserves_nested_rows},

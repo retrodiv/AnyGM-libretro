@@ -290,7 +290,8 @@ void gml_vm_frame_advance_layers(GmlVM *vm){
    * divided by the room rate; type 1 is frames per step. */
   for(int i=0;i<vm->n_rte;i++){
     GmlRtElem *e=&vm->rte[i];
-    if(!e->used || e->type!=9 || e->sprite<0 || e->sprite>=vm->n_sequences) continue;
+    if(!e->used || e->type!=9 || e->sequence_paused ||
+       e->sprite<0 || e->sprite>=vm->n_sequences) continue;
     const GmlSequence *s=&vm->sequences[e->sprite];
     e->image_index+=sequence_head_rate(vm,s);
   }

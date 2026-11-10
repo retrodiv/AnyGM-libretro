@@ -218,6 +218,37 @@ int builtin_layer_exact(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out
     if(n>1){ if(e && e->type==9) e->image_index=N(a,n,1); *out=vreal(0); }
     else *out=vreal((e && e->type==9)?e->image_index:0);
     return 1; }
+  if(!strcmp(nm,"layer_sequence_get_headpos") || !strcmp(nm,"layer_sequence_get_length") ||
+     !strcmp(nm,"layer_sequence_get_x") || !strcmp(nm,"layer_sequence_get_y") ||
+     !strcmp(nm,"layer_sequence_is_paused") || !strcmp(nm,"layer_sequence_pause") ||
+     !strcmp(nm,"layer_sequence_play") || !strcmp(nm,"layer_sequence_x")){
+    *out=vreal(-1);
+    double id=N(a,n,0);
+    if(n<1 || !isfinite(id) || id<0 || id>INT_MAX || floor(id)!=id) return 1;
+    GmlRtElem *sequence=gml_rt_elem_find(vm,(int)id);
+    if(!sequence || sequence->type!=9) return 1;
+    if(!strcmp(nm,"layer_sequence_get_headpos")) *out=vreal(sequence->image_index);
+    else if(!strcmp(nm,"layer_sequence_get_length")){
+      if(sequence->sprite>=0 && sequence->sprite<vm->n_sequences)
+        *out=vreal(vm->sequences[sequence->sprite].length);
+    } else if(!strcmp(nm,"layer_sequence_get_x")) *out=vreal(sequence->x);
+    else if(!strcmp(nm,"layer_sequence_get_y")) *out=vreal(sequence->y);
+    else if(!strcmp(nm,"layer_sequence_is_paused")) *out=vreal(sequence->sequence_paused!=0);
+    else if(!strcmp(nm,"layer_sequence_pause")){
+      sequence->sequence_paused=1;
+      *out=vreal(0);
+    } else if(!strcmp(nm,"layer_sequence_play")){
+      sequence->sequence_paused=0;
+      if(sequence->sprite>=0 && sequence->sprite<vm->n_sequences &&
+         sequence->image_index>=vm->sequences[sequence->sprite].length)
+        sequence->image_index=0;
+      *out=vreal(0);
+    } else if(n>=2 && isfinite(N(a,n,1))){
+      sequence->x=N(a,n,1);
+      *out=vreal(0);
+    }
+    return 1;
+  }
   if(!strcmp(nm,"layer_sprite_create")){
     GmlRtLayer *l=rt_layer_resolve(vm,a,n);
     if(!l){ *out=vreal(-1); return 1; }

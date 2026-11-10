@@ -155,7 +155,9 @@ typedef struct { int id, used, layer, type;         /* type: 7=tile, 3=sprite, 1
   int sprite; double x, y; int sx, sy, w, h;        /* sx/sy/w/h = source region (tiles) */
   double xs, ys, alpha; int visible; uint32_t blend;
   int htiled, vtiled, stretch;                      /* background-element extras */
-  char name[64];                                    /* room-authored sprite asset name */
+  /* Room-authored elements use the name. Type 9 elements are created unnamed,
+   * so their existing serialized metadata slot holds the pause flag instead. */
+  union { char name[64]; unsigned char sequence_paused; };
   double image_index, image_speed, image_angle; } GmlRtElem;
 /* Per-instance input bridge. Runtime code receives a complete VM context and
  * never reaches process-global host callbacks. Hosts may leave callbacks
