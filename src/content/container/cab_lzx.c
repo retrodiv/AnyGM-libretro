@@ -190,7 +190,9 @@ int cab_lzx21_decompress(const uint8_t *in, size_t in_len, uint8_t *out, size_t 
         if (read_lengths(len_lens, 0, NUM_SECONDARY_LENGTHS, &b) < 0) return -1;
         if (huff_build(&lenh, len_lens, NUM_SECONDARY_LENGTHS) < 0) return -1;
       } else if (block_type == 3) {
-        if (b.bitcnt & 15) { b.bitbuf <<= (b.bitcnt & 15); b.bitcnt -= (b.bitcnt & 15); }
+        /* Stored blocks always consume padding, even at a word boundary. */
+        int padding = b.bitcnt & 15;
+        (void)bits_read(&b, padding ? padding : 16);
         /* consume 12 raw bytes for R0,R1,R2 from the aligned input */
         size_t consumed = (size_t)b.bitcnt / 16 * 2; /* bytes still buffered */
         size_t bp = b.pos - consumed;

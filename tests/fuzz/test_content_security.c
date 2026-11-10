@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "anygm.h"
+#include "cab_lzx.h"
 #include "content_router.h"
 #include "classic_test_fixture.h"
 #include "embedded_cab.h"
@@ -43,6 +44,72 @@ typedef struct ZipEntry {
 static int fail(const char *message){
   fprintf(stderr,"content security: %s\n",message);
   return 0;
+}
+
+/* Authored LZX-21 fixture: a two-symbol verbatim tree followed by stored bytes. */
+typedef struct LzxFixtureBits {
+  uint8_t bytes[256];
+  unsigned count;
+} LzxFixtureBits;
+
+static int lzx_fixture_put(LzxFixtureBits *bits,uint32_t value,unsigned width){
+  if(width>32 || width>sizeof bits->bytes*8-bits->count) return 0;
+  for(unsigned i=width;i>0;i--){
+    unsigned shift=15-(bits->count&15);
+    if((value>>(i-1))&1u)
+      bits->bytes[(bits->count/16)*2+shift/8]|=(uint8_t)(1u<<(shift&7));
+    bits->count++;
+  }
+  return 1;
+}
+
+static int lzx_fixture_pretree(LzxFixtureBits *bits){
+  for(unsigned i=0;i<20;i++)
+    if(!lzx_fixture_put(bits,i==0 || i==16,4)) return 0;
+  return 1;
+}
+
+static int lzx_stored_block_alignment_cases(void){
+  const unsigned literal_counts[]={15,16,31,32};
+  int ok=1;
+  for(size_t sample=0;sample<sizeof literal_counts/sizeof literal_counts[0];sample++){
+    unsigned count=literal_counts[sample];
+    LzxFixtureBits bits={{0},0};
+    if(!lzx_fixture_put(&bits,0,1) || !lzx_fixture_put(&bits,1,3) ||
+       !lzx_fixture_put(&bits,0,16) || !lzx_fixture_put(&bits,count,8) ||
+       !lzx_fixture_pretree(&bits)) return fail("cannot author LZX verbatim fixture");
+    for(unsigned i=0;i<256;i++)
+      if(!lzx_fixture_put(&bits,i==65 || i==66,1)) return 0;
+    if(!lzx_fixture_pretree(&bits)) return 0;
+    for(unsigned i=0;i<400;i++) if(!lzx_fixture_put(&bits,0,1)) return 0;
+    if(!lzx_fixture_pretree(&bits)) return 0;
+    for(unsigned i=0;i<249;i++) if(!lzx_fixture_put(&bits,0,1)) return 0;
+    for(unsigned i=0;i<count;i++) if(!lzx_fixture_put(&bits,i&1,1)) return 0;
+    if(!lzx_fixture_put(&bits,3,3) || !lzx_fixture_put(&bits,0,16) ||
+       !lzx_fixture_put(&bits,4,8)) return 0;
+    /* Stored blocks consume 1..16 bits, including a whole word when aligned. */
+    if(!lzx_fixture_put(&bits,0,16-(bits.count&15))) return 0;
+    size_t length=bits.count/8;
+    for(unsigned i=0;i<3;i++){
+      bits.bytes[length++]=1;
+      for(unsigned j=0;j<3;j++) bits.bytes[length++]=0;
+    }
+    memcpy(bits.bytes+length,"test",4); length+=4;
+    uint8_t expected[64],actual[64];
+    for(unsigned i=0;i<count;i++) expected[i]=(uint8_t)('A'+(i&1));
+    memcpy(expected+count,"test",4);
+    memset(actual,0xcd,sizeof actual);
+    int decoded=cab_lzx21_decompress(bits.bytes,length,actual,count+4);
+    if(decoded || memcmp(actual,expected,count+4) || actual[count+4]!=0xcd){
+      fprintf(stderr,"content security: stored-block padding after %u literals corrupts output\n",count);
+      ok=0;
+    }
+    if(cab_lzx21_decompress(bits.bytes,length-1,actual,count+4)==0)
+      ok=fail("truncated stored-block data was accepted");
+    if(cab_lzx21_decompress(bits.bytes,length,actual,count+3)==0)
+      ok=fail("stored-block data exceeded the requested output extent");
+  }
+  return ok;
 }
 
 static void fixture_log(void *userdata,int level,const char *message){
@@ -2523,7 +2590,8 @@ int main(void){
   ZipEntry bad_crc=safe;
   bad_crc.corrupt_crc=1;
 
-  int ok=cache_producer_change_case(&services,root) &&
+  int ok=lzx_stored_block_alignment_cases() &&
+         cache_producer_change_case(&services,root) &&
          embedded_cabinet_cases(&services,root) &&
          embedded_lzx_cabinet_cases(&services,root) &&
          embedded_nsis_cases(&services,root) &&
