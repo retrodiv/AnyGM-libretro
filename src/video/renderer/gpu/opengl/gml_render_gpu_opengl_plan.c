@@ -408,7 +408,10 @@ int gml_gpu_opengl_prepare_presentation(GmlGpuBackend *backend,const GmlGpuConte
            gml_gpu_opengl_upload_source(backend,&plan.images[0],counters,&source_texture,0) &&
            gml_gpu_opengl_prepare_automatic_draw(backend,source_texture,error,error_capacity);
   if(prepared){
-    if(counters) counters->draw_calls++;
+    unsigned draws=1u;
+    if(backend->api==GML_GPU_API_OPENGLES3)
+      draws+=gml_gpu_opengl_prepare_native_surface_draws(backend,source_texture);
+    if(counters) counters->draw_calls+=draws;
     prepared=gml_gpu_opengl_scene_wait(backend);
   }
   /* The ordinary bounded mirror cache owns the tiny source until eviction or context loss.

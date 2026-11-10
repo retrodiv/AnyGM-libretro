@@ -3391,6 +3391,37 @@ cleanup:
   return outcome;
 }
 
+unsigned gml_gpu_opengl_prepare_native_surface_draws(GmlGpuBackend *backend,GLuint source_texture){
+  GlSceneImage target={.texture=backend->readback_texture,
+    .framebuffer=backend->readback_framebuffer,.width=1u,.height=1u,
+    .pixel_format=GML_RENDER_PIXEL_ARGB8888};
+  GlSceneImage source={.texture=source_texture,.width=1u,.height=1u,
+    .pixel_format=GML_RENDER_PIXEL_ARGB8888,.rendered_origin=1};
+  static const float corner[6][2]={{0,0},{2,0},{0,2},{0,0},{0,2},{0,2}};
+  if(!source_texture || !target.texture || !target.framebuffer || !backend->scene.vertices)
+    return 0;
+  /* The private draw uses the native triangle stream and the same blend, sampler
+   * and write-mask states as an ordinary textured draw on a numbered surface. */
+  for(unsigned i=0;i<6u;i++){
+    float *vertex=backend->scene.vertices+i*GL_SCENE_VERTEX_FLOATS;
+    memset(vertex,0,GL_SCENE_VERTEX_FLOATS*sizeof *vertex);
+    vertex[0]=vertex[2]=corner[i][0];
+    vertex[1]=vertex[3]=corner[i][1];
+    vertex[4]=vertex[5]=vertex[6]=vertex[7]=vertex[8]=1.0f;
+  }
+  unsigned draws=0;
+  const uint32_t filters[]={GL_SCENE_NATIVE_TEXTURE_SURFACE_NEAREST_FILTER,
+                            GL_SCENE_NATIVE_TEXTURE_SURFACE_LINEAR_FILTER};
+  for(unsigned i=0;i<sizeof filters/sizeof filters[0];i++)
+    if(flush_quads(backend,&target,&source,filters[i],3,1u,15u,0,0u,NULL)) draws++;
+  /* Restore the cached preparation source's nearest sampling state. */
+  backend->gl.BindTexture(GL_TEXTURE_2D,source_texture);
+  backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+  backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+  backend->gl.BindTexture(GL_TEXTURE_2D,0);
+  return draws;
+}
+
 int gml_gpu_opengl_prepare_automatic_draw(GmlGpuBackend *backend,GLuint source_texture,
                                           char *error,size_t error_capacity){
   GmlRenderDrawOp operation={0};
