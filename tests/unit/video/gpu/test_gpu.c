@@ -7216,6 +7216,63 @@ static int full_host_clear_discard_case(void){
   return 1;
 }
 
+static int bounded_host_extent_case(void){
+  uint32_t source[4]={0xff010203u,0xff040506u,0xff070809u,0xff0a0b0cu};
+  const char *optional[]={"glGetFramebufferAttachmentParameteriv","glGetTexLevelParameteriv",
+    "glGenRenderbuffers","glBindRenderbuffer","glRenderbufferStorage",
+    "glFramebufferRenderbuffer","glDeleteRenderbuffers"};
+  for(unsigned variant=0;variant<22u;variant++){
+    anygm_test_graphics_reset();anygm_test_graphics_version(4u,3u);
+    anygm_test_graphics_host_extent(64u,64u,variant>=2u && variant<=8u?variant-1u:0u);
+    void (*bind_renderbuffer)(GLenum,GLuint)=(void*)anygm_test_graphics_proc(NULL,"glBindRenderbuffer");
+    bind_renderbuffer(GL_RENDERBUFFER,77u);
+    if(variant>=9u && variant<16u)anygm_test_graphics_withhold(optional[variant-9u]);
+    if(variant==16u)anygm_test_graphics_version(3u,0u);
+    if(variant==17u)anygm_test_graphics_host_extent(8u,8u,0u);
+    GmlGpuContext context=fake_context(variant==1u?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
+    if(variant==18u)context.get_current_framebuffer=default_host_framebuffer;
+    GmlGpu *gpu=gml_gpu_create();REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"extent context adopted");
+    GmlRenderPlan plan;uint32_t output[64];
+    REQUIRE(build_canvas_plan(&plan,source,2u,2u,8u,8u,1,1,6u,6u),"extent plan built");
+    if(variant==19u)plan.operations[0].destination.width=7u;
+    if(variant==20u){plan.target=GML_PLAN_TARGET_READBACK;plan.readback_pixels=output;plan.readback_pitch_pixels=8u;}
+    if(variant==21u){plan.target_width=4096u;plan.target_height=2160u;plan.operations[0].destination=(GmlPlanRect){0,0,4096u,2160u};}
+    REQUIRE(gml_gpu_execute_plan(gpu,&plan),"extent refusal retains ordinary execution");
+    REQUIRE(gml_gpu_execute_plan(gpu,&plan),"extent repeat executes");
+    AnygmTestGraphicsHostExtent work=anygm_test_graphics_host_extent_work();
+    REQUIRE(!work.attachment && work.bound==77u,"borrowed attachment and renderbuffer binding restored");
+    REQUIRE(gpu->backend->host_extent_passes==(variant<2u?2u:0u),"only qualified host passes acquire an extent");
+    if(variant<2u){
+      REQUIRE(work.allocations==1u && work.allocated_width==9u && work.allocated_height==9u &&
+        work.attaches==2u && work.detaches==2u,"bounded R8 resource reused with black filtering fringe");
+      REQUIRE(!anygm_test_graphics_read_pixels(),"extent has no pixel observation");
+      unsigned cached=gpu->backend->host_extent_renderbuffer;
+      REQUIRE(cached,"extent cache owned by context");
+      anygm_test_graphics_fail_terminal_draw_at((unsigned)anygm_test_graphics_draw_calls()+1u);
+      REQUIRE(!gml_gpu_execute_plan(gpu,&plan) && !anygm_test_graphics_host_extent_work().attachment,
+        "failed drawing still detaches the temporary host attachment");
+      anygm_test_graphics_fail_terminal_draw_at(0u);
+      anygm_test_graphics_host_extent(64u,64u,0u);
+      plan.target_width=10u;plan.operations[0].destination.width=10u;
+      REQUIRE(gml_gpu_execute_plan(gpu,&plan) && gpu->backend->host_extent_width==11u &&
+        anygm_test_graphics_host_extent_work().deletes==1u,"geometry change retires old extent");
+      REQUIRE(gml_gpu_context_reset(gpu,&context) && !gpu->backend->host_extent_renderbuffer &&
+        anygm_test_graphics_host_extent_work().deletes==1u,"lost context forgets cached names without deleting");
+      REQUIRE(gml_gpu_execute_plan(gpu,&plan),"replacement context recreates extent");
+      if(variant==1u){
+        anygm_test_graphics_forbid_calls();gml_gpu_destroy(gpu,0);
+        REQUIRE(!anygm_test_graphics_calls_after_forget(),"noncurrent destruction forgets extent without driver calls");
+        continue;
+      }
+    }
+    unsigned owned=gpu->backend->host_extent_renderbuffer!=0u;
+    unsigned deletes=anygm_test_graphics_host_extent_work().deletes;
+    gml_gpu_destroy(gpu,1);
+    REQUIRE(anygm_test_graphics_host_extent_work().deletes==deletes+owned,"current context deletes its own extent");
+  }
+  return 1;
+}
+
 static int upload_and_reuse_case(void){
   enum { SOURCE_WIDTH=4,SOURCE_HEIGHT=3,TARGET=16 };
   uint32_t source[SOURCE_WIDTH*SOURCE_HEIGHT];
@@ -7968,6 +8025,7 @@ int main(int argc,char **argv){
     {"unbound_context_access",unbound_context_access_case},
     {"completed_frame_snapshot",completed_frame_snapshot_case},
     {"full_host_clear_discard",full_host_clear_discard_case},
+    {"bounded_host_extent",bounded_host_extent_case},
     {"integer_presentation_shift",integer_presentation_shift_case},
     {"destroy_without_context",lifecycle_destroy_without_context_case},
     {"missing_entry_point",missing_entry_point_case},

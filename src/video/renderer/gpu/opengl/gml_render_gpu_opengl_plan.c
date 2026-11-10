@@ -6,6 +6,86 @@
 
 #include <string.h>
 
+/* A frontend may lend a much larger texture than the published native picture.
+ * On tiled devices a whole-attachment clear then visits that unpublished padding.
+ * An unused second attachment bounds the framebuffer's effective extent, while
+ * preserving the original colour attachment, clear, draw and completed-frame copy.
+ * Keep one cleared pixel beyond the picture for the frontend's linear filtering. */
+static int begin_host_extent(GmlGpuBackend *backend,uintptr_t framebuffer,
+                             const GmlRenderPlan *plan){
+  GmlGlApi *gl=&backend->gl;
+  uint64_t width=(uint64_t)plan->target_width+1u,height=(uint64_t)plan->target_height+1u;
+  if(!framebuffer || plan->target!=GML_PLAN_TARGET_HOST_FRAMEBUFFER ||
+     plan->operation_count!=2u || plan->operations[0].opcode!=GML_PLAN_OP_CLEAR_XRGB ||
+     plan->operations[1].opcode!=GML_PLAN_OP_BLIT_OPAQUE_NEAREST ||
+     !gl->InvalidateFramebuffer || !gl->ClearBufferfv || !gl->GetIntegerv ||
+     !gl->GetFramebufferAttachmentParameteriv || !gl->GetTexLevelParameteriv ||
+     !gl->GenRenderbuffers || !gl->BindRenderbuffer || !gl->RenderbufferStorage ||
+     !gl->FramebufferRenderbuffer || !gl->DeleteRenderbuffers ||
+     !plan->target_width || !plan->target_height || width>(4u*1024u*1024u)/height) return 0;
+  const GmlPlanRect *clear=&plan->operations[0].destination;
+  if(clear->x || clear->y || clear->width!=plan->target_width ||
+     clear->height!=plan->target_height) return 0;
+  /* Do not absorb a failure from an earlier operation into an optional refusal. */
+  if(gl->GetError()!=GL_NO_ERROR) return -1;
+  GLint type=0,draw=0,name=0,level=0,previous_texture=0;
+  GLint host_width=0,host_height=0,previous_renderbuffer=0;
+  gl->GetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT1,
+                                         GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE,&type);
+  gl->GetIntegerv(GL_DRAW_BUFFER1,&draw);
+  if(gl->GetError()!=GL_NO_ERROR) goto refused;
+  if(type || draw) return 0;
+  gl->GetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,
+                                         GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE,&type);
+  if(gl->GetError()!=GL_NO_ERROR) goto refused;
+  if(type!=GL_TEXTURE) return 0;
+  gl->GetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,
+                                         GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME,&name);
+  gl->GetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,
+                                         GL_FRAMEBUFFER_ATTACHMENT_TEXTURE_LEVEL,&level);
+  if(gl->GetError()!=GL_NO_ERROR) goto refused;
+  /* An array, cube or multisample attachment cannot be rebound as a 2D texture;
+   * restore the borrowed binding and retain the ordinary path in that case. */
+  gl->GetIntegerv(GL_TEXTURE_BINDING_2D,&previous_texture);
+  gl->BindTexture(GL_TEXTURE_2D,(GLuint)name);
+  if(gl->GetError()==GL_NO_ERROR){
+    gl->GetTexLevelParameteriv(GL_TEXTURE_2D,level,GL_TEXTURE_WIDTH,&host_width);
+    gl->GetTexLevelParameteriv(GL_TEXTURE_2D,level,GL_TEXTURE_HEIGHT,&host_height);
+  }
+  gl->BindTexture(GL_TEXTURE_2D,(GLuint)previous_texture);
+  if(gl->GetError()!=GL_NO_ERROR) goto refused;
+  if(host_width<(int64_t)plan->target_width || host_height<(int64_t)plan->target_height)
+    return 0;
+  uint64_t area=(uint64_t)plan->target_width*plan->target_height;
+  if((uint64_t)host_width*(uint64_t)host_height<=area+area/4u) return 0;
+  if(!backend->host_extent_renderbuffer || backend->host_extent_width!=width ||
+     backend->host_extent_height!=height){
+    GLuint next=0;
+    gl->GetIntegerv(GL_RENDERBUFFER_BINDING,&previous_renderbuffer);
+    gl->GenRenderbuffers(1,&next);
+    if(!next) goto refused;
+    gl->BindRenderbuffer(GL_RENDERBUFFER,next);
+    gl->RenderbufferStorage(GL_RENDERBUFFER,GL_R8,(GLsizei)width,(GLsizei)height);
+    gl->BindRenderbuffer(GL_RENDERBUFFER,(GLuint)previous_renderbuffer);
+    if(gl->GetError()!=GL_NO_ERROR){gl->DeleteRenderbuffers(1,&next);goto refused;}
+    if(backend->host_extent_renderbuffer)
+      gl->DeleteRenderbuffers(1,&backend->host_extent_renderbuffer);
+    backend->host_extent_renderbuffer=next;
+    backend->host_extent_width=(uint32_t)width;
+    backend->host_extent_height=(uint32_t)height;
+  }
+  gl->FramebufferRenderbuffer(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT1,GL_RENDERBUFFER,
+                              backend->host_extent_renderbuffer);
+  if(gl->CheckFramebufferStatus(GL_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE &&
+     gl->GetError()==GL_NO_ERROR){backend->host_extent_passes++;return 1;}
+  gl->FramebufferRenderbuffer(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT1,GL_RENDERBUFFER,0);
+refused:
+  /* Only the optional setup ran since the clean error check above. Its failure
+   * changes no pixels and leaves the existing executor available. */
+  while(gl->GetError()!=GL_NO_ERROR){}
+  return 0;
+}
+
 static GmlPlanAxis identity_axis(uint32_t extent){
   GmlPlanAxis axis;
   memset(&axis,0,sizeof axis);
@@ -71,6 +151,11 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
   } else {
     /* Handle zero is a valid target: some frontends hand over the default framebuffer. */
     backend->gl.BindFramebuffer(GL_FRAMEBUFFER,(GLuint)framebuffer);
+  }
+  int bounded_host=begin_host_extent(backend,framebuffer,plan);
+  if(bounded_host<0){
+    gml_gpu_opengl_record_error(error,error_capacity,"graphics extent setup found an earlier error");
+    return 0;
   }
   /* A full initial clear overwrites every published pixel. Discard the obsolete attachment
    * before it, so tiled devices need not load a larger frontend allocation's previous frame.
@@ -178,6 +263,10 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
     }
   }
 
+  if(bounded_host){
+    backend->gl.BindFramebuffer(GL_FRAMEBUFFER,(GLuint)framebuffer);
+    backend->gl.FramebufferRenderbuffer(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT1,GL_RENDERBUFFER,0);
+  }
   backend->gl.ActiveTexture(GL_TEXTURE2);
   backend->gl.BindTexture(GL_TEXTURE_2D,0);
   backend->gl.ActiveTexture(GL_TEXTURE1);

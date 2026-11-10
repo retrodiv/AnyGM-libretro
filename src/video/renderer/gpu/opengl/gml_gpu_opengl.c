@@ -69,6 +69,8 @@ void gml_gpu_opengl_forget(GmlGpuBackend *backend){
   backend->completed_width=backend->completed_height=0;
   backend->completed_generation=0;
   backend->completed_valid=backend->completed_attached=0;
+  backend->host_extent_renderbuffer=0;
+  backend->host_extent_width=backend->host_extent_height=0;
 }
 
 static void delete_objects(GmlGpuBackend *backend){
@@ -93,6 +95,8 @@ static void delete_objects(GmlGpuBackend *backend){
   if(backend->completed_framebuffer)
     backend->gl.DeleteFramebuffers(1,&backend->completed_framebuffer);
   if(backend->completed_texture) backend->gl.DeleteTextures(1,&backend->completed_texture);
+  if(backend->host_extent_renderbuffer && backend->gl.DeleteRenderbuffers)
+    backend->gl.DeleteRenderbuffers(1,&backend->host_extent_renderbuffer);
   if(backend->vertex_array && backend->gl.DeleteVertexArrays)
     backend->gl.DeleteVertexArrays(1,&backend->vertex_array);
 }
@@ -226,6 +230,7 @@ void gml_gpu_opengl_scene_work_counters(const GmlGpuBackend *backend,GmlGpuCount
   counters->scene_white_tint_quads=backend?backend->white_tint_quads:0;
   counters->scene_zero_alpha_blend_quads=backend?backend->zero_alpha_blend_quads:0;
   counters->identity_map_draws=backend?backend->identity_map_draws:0;
+  counters->host_extent_passes=backend?backend->host_extent_passes:0;
   counters->scene_upload_policy=backend?
     (backend->scene.upload_policy<0?2u:backend->scene.upload_policy>0?1u:0u):0u;
   counters->scene_upload_client_ns=backend?backend->scene.upload_client_ns:0;

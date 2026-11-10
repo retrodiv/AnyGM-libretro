@@ -21,6 +21,15 @@
  * fakes of one driver drift and the one that drifts is always the one nobody is reading. */
 
 void anygm_test_graphics_reset(void);
+/* Optional borrowed oversized 2D target. Failure modes: occupied attachment,
+ * active second draw buffer, storage, completeness, name allocation, 2D binding,
+ * or attachment query. Zero uses the ordinary successful driver replies. */
+typedef struct AnygmTestGraphicsHostExtent {
+  unsigned width,height,allocations,deletes,attaches,detaches,attachment,bound;
+  unsigned allocated_width,allocated_height,failure;
+} AnygmTestGraphicsHostExtent;
+void anygm_test_graphics_host_extent(unsigned width,unsigned height,unsigned failure);
+AnygmTestGraphicsHostExtent anygm_test_graphics_host_extent_work(void);
 /* Staging failures: zero disables; one allocation, two mapping, three unmapping. */
 void anygm_test_graphics_fail_unpack(unsigned phase);
 typedef struct AnygmTestGraphicsUnpack {

@@ -122,6 +122,17 @@ typedef void GLvoid;
 #define GL_ONE_MINUS_DST_COLOR 0x0307
 #define GL_ACTIVE_UNIFORMS 0x8B86
 #define GL_COLOR_ATTACHMENT0 0x8CE0
+#define GL_COLOR_ATTACHMENT1 0x8CE1
+#define GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE 0x8CD0
+#define GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME 0x8CD1
+#define GL_FRAMEBUFFER_ATTACHMENT_TEXTURE_LEVEL 0x8CD2
+#define GL_TEXTURE 0x1702
+#define GL_TEXTURE_WIDTH 0x1000
+#define GL_TEXTURE_HEIGHT 0x1001
+#define GL_DRAW_BUFFER1 0x8826
+#define GL_RENDERBUFFER 0x8D41
+#define GL_RENDERBUFFER_BINDING 0x8CA7
+#define GL_R8 0x8229
 #define GL_FRAMEBUFFER_COMPLETE 0x8CD5
 #define GL_INT 0x1404
 #define GL_UNSIGNED_INT 0x1405
@@ -269,6 +280,14 @@ typedef struct GmlGlApi {
   void     (*FramebufferTexture2D)(GLenum target,GLenum attachment,GLenum textarget,GLuint texture,
                                    GLint level);
   GLenum   (*CheckFramebufferStatus)(GLenum target);
+  /* Optional bounded extent for an oversized, borrowed presentation attachment. */
+  void     (*GetFramebufferAttachmentParameteriv)(GLenum target,GLenum attachment,GLenum name,GLint *value);
+  void     (*GetTexLevelParameteriv)(GLenum target,GLint level,GLenum name,GLint *value);
+  void     (*GenRenderbuffers)(GLsizei count,GLuint *names);
+  void     (*BindRenderbuffer)(GLenum target,GLuint name);
+  void     (*RenderbufferStorage)(GLenum target,GLenum format,GLsizei width,GLsizei height);
+  void     (*FramebufferRenderbuffer)(GLenum target,GLenum attachment,GLenum type,GLuint name);
+  void     (*DeleteRenderbuffers)(GLsizei count,const GLuint *names);
   void     (*ReadPixels)(GLint x,GLint y,GLsizei width,GLsizei height,GLenum format,GLenum type,
                          void *pixels);
   /* Asynchronous read-back: the result of a draw is fetched into a buffer object the device fills

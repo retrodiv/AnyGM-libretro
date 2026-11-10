@@ -72,6 +72,7 @@ typedef struct FakeDriver {
   unsigned invalidates, invalidate_attachment, invalidate_framebuffer, invalidate_prior_clears;
   unsigned version_major,version_minor;
   unsigned full_attachment_clears;
+  AnygmTestGraphicsHostExtent host_extent;
   GLfloat clear_colour[4];
   GLint draw_calls;
   GLint scene_draw_calls;
@@ -220,6 +221,8 @@ static void fake_GetIntegerv(GLenum name,GLint *value){
                    name==GL_ACTIVE_TEXTURE?(GLint)(GL_TEXTURE0+g_fake.active_unit):
                    name==GL_TEXTURE_BINDING_2D?(GLint)(g_fake.active_unit<FAKE_TEXTURE_UNITS?
                      g_fake.bound_texture[g_fake.active_unit]:0):
+                   name==GL_RENDERBUFFER_BINDING?(GLint)g_fake.host_extent.bound:
+                   name==GL_DRAW_BUFFER1?(g_fake.host_extent.failure==2u?GL_COLOR_ATTACHMENT1:0):
                    name==GL_PIXEL_UNPACK_BUFFER_BINDING?(GLint)g_fake.unpack.bound:
                    name==GL_UNPACK_ALIGNMENT?g_fake.unpack_alignment:
                    name==GL_UNPACK_ROW_LENGTH?g_fake.unpack_row_length:
@@ -334,6 +337,7 @@ static void fake_DeleteTextures(GLsizei n,const GLuint *names){
 }
 static void fake_BindTexture(GLenum target,GLuint name){
   (void)target; note_call();
+  if(name==4095u && g_fake.host_extent.failure==6u){g_fake.pending_error=0x0502u;return;}
   if(g_fake.active_unit<FAKE_TEXTURE_UNITS) g_fake.bound_texture[g_fake.active_unit]=name;
 }
 static void fake_ActiveTexture(GLenum unit){ note_call(); g_fake.active_unit=unit-GL_TEXTURE0; }
@@ -516,7 +520,49 @@ static void fake_DeleteFramebuffers(GLsizei n,const GLuint *names){ (void)names;
 static void fake_FramebufferTexture2D(GLenum target,GLenum attachment,GLenum textarget,GLuint texture,GLint level){
   (void)target;(void)attachment;(void)textarget;(void)level; note_call(); g_fake.attached_texture=texture; g_fake.framebuffer_attachments++;
 }
-static GLenum fake_CheckFramebufferStatus(GLenum target){ (void)target; note_call(); return GL_FRAMEBUFFER_COMPLETE; }
+static GLenum fake_CheckFramebufferStatus(GLenum target){
+  (void)target;note_call();
+  return g_fake.framebuffer==7u && g_fake.host_extent.attachment &&
+    g_fake.host_extent.failure==4u?0u:GL_FRAMEBUFFER_COMPLETE;
+}
+static void fake_GetFramebufferAttachmentParameteriv(GLenum target,GLenum attachment,GLenum name,GLint *value){
+  (void)target;note_call();*value=0;
+  if(g_fake.framebuffer!=7u || !g_fake.host_extent.width)return;
+  if(g_fake.host_extent.failure==7u){g_fake.pending_error=0x0502u;return;}
+  if(attachment==GL_COLOR_ATTACHMENT1){
+    if(name==GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE)
+      *value=g_fake.host_extent.failure==1u || g_fake.host_extent.attachment?GL_RENDERBUFFER:0;
+  }else if(attachment==GL_COLOR_ATTACHMENT0){
+    if(name==GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE)*value=GL_TEXTURE;
+    if(name==GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME)*value=4095;
+  }
+}
+static void fake_GetTexLevelParameteriv(GLenum target,GLint level,GLenum name,GLint *value){
+  (void)target;(void)level;note_call();*value=0;
+  if(g_fake.active_unit<FAKE_TEXTURE_UNITS && g_fake.bound_texture[g_fake.active_unit]==4095u)
+    *value=(GLint)(name==GL_TEXTURE_WIDTH?g_fake.host_extent.width:g_fake.host_extent.height);
+}
+static void fake_GenRenderbuffers(GLsizei count,GLuint *names){
+  note_call();
+  for(GLsizei i=0;i<count;i++)names[i]=g_fake.host_extent.failure==5u?0u:g_fake.next_name++;
+}
+static void fake_BindRenderbuffer(GLenum target,GLuint name){
+  (void)target;note_call();g_fake.host_extent.bound=name;
+}
+static void fake_RenderbufferStorage(GLenum target,GLenum format,GLsizei width,GLsizei height){
+  (void)target;note_call();g_fake.host_extent.allocations++;
+  if(g_fake.host_extent.failure==3u || format!=GL_R8){g_fake.pending_error=0x0505u;return;}
+  g_fake.host_extent.allocated_width=(unsigned)width;g_fake.host_extent.allocated_height=(unsigned)height;
+}
+static void fake_FramebufferRenderbuffer(GLenum target,GLenum attachment,GLenum type,GLuint name){
+  (void)target;(void)type;note_call();
+  if(g_fake.framebuffer!=7u || attachment!=GL_COLOR_ATTACHMENT1){g_fake.pending_error=0x0502u;return;}
+  g_fake.host_extent.attachment=name;
+  if(name)g_fake.host_extent.attaches++;else g_fake.host_extent.detaches++;
+}
+static void fake_DeleteRenderbuffers(GLsizei count,const GLuint *names){
+  (void)names;note_call();g_fake.host_extent.deletes+=(unsigned)count;g_fake.deletes_issued+=count;
+}
 /* Rows from the bottom, bytes R,G,B,A: the red byte carries the device row and the green byte the
  * column, so a reader that forgets to flip or reorder is caught. */
 /* A pack buffer bound means the read is asynchronous: the pattern goes into the fixture's own
@@ -1068,6 +1114,13 @@ void (*anygm_test_graphics_proc(void *userdata,const char *name))(void){
     {"glDeleteFramebuffers",(void*)fake_DeleteFramebuffers},
     {"glFramebufferTexture2D",(void*)fake_FramebufferTexture2D},
     {"glCheckFramebufferStatus",(void*)fake_CheckFramebufferStatus},
+    {"glGetFramebufferAttachmentParameteriv",(void*)fake_GetFramebufferAttachmentParameteriv},
+    {"glGetTexLevelParameteriv",(void*)fake_GetTexLevelParameteriv},
+    {"glGenRenderbuffers",(void*)fake_GenRenderbuffers},
+    {"glBindRenderbuffer",(void*)fake_BindRenderbuffer},
+    {"glRenderbufferStorage",(void*)fake_RenderbufferStorage},
+    {"glFramebufferRenderbuffer",(void*)fake_FramebufferRenderbuffer},
+    {"glDeleteRenderbuffers",(void*)fake_DeleteRenderbuffers},
     {"glReadPixels",(void*)fake_ReadPixels},
     {"glMapBufferRange",(void*)fake_MapBufferRange},
     {"glUnmapBuffer",(void*)fake_UnmapBuffer},
@@ -1092,6 +1145,10 @@ uintptr_t anygm_test_graphics_framebuffer(void *userdata){
 
 
 void anygm_test_graphics_withhold(const char *name){ g_fake.withhold=name; }
+void anygm_test_graphics_host_extent(unsigned width,unsigned height,unsigned failure){
+  g_fake.host_extent.width=width;g_fake.host_extent.height=height;g_fake.host_extent.failure=failure;
+}
+AnygmTestGraphicsHostExtent anygm_test_graphics_host_extent_work(void){return g_fake.host_extent;}
 void anygm_test_graphics_fail_compile(int failing){ g_fake.compile_fails=failing; }
 void anygm_test_graphics_fail_compile_containing(const char *text){
   g_fake.compile_fail_contains=text;

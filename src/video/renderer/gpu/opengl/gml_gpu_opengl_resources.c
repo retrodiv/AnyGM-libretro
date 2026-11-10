@@ -325,6 +325,13 @@ void gml_gpu_opengl_scene_reset(GmlGpuBackend *backend,const GmlGpuContext *cont
   GL_SCENE_LOAD(InvalidateFramebuffer,"glInvalidateFramebuffer");
   GL_SCENE_LOAD(ClearBufferfv,"glClearBufferfv");
   GL_SCENE_LOAD(BlitFramebuffer,"glBlitFramebuffer");
+  GL_SCENE_LOAD(GetFramebufferAttachmentParameteriv,"glGetFramebufferAttachmentParameteriv");
+  GL_SCENE_LOAD(GetTexLevelParameteriv,"glGetTexLevelParameteriv");
+  GL_SCENE_LOAD(GenRenderbuffers,"glGenRenderbuffers");
+  GL_SCENE_LOAD(BindRenderbuffer,"glBindRenderbuffer");
+  GL_SCENE_LOAD(RenderbufferStorage,"glRenderbufferStorage");
+  GL_SCENE_LOAD(FramebufferRenderbuffer,"glFramebufferRenderbuffer");
+  GL_SCENE_LOAD(DeleteRenderbuffers,"glDeleteRenderbuffers");
   GL_SCENE_LOAD(BlendFuncSeparate,"glBlendFuncSeparate");
   GL_SCENE_LOAD(BlendEquationSeparate,"glBlendEquationSeparate");
   GL_SCENE_LOAD(Flush,"glFlush");
@@ -351,6 +358,9 @@ void gml_gpu_opengl_scene_reset(GmlGpuBackend *backend,const GmlGpuContext *cont
     backend->gl.GetIntegerv(GL_MAJOR_VERSION,&major);
     backend->gl.GetIntegerv(GL_MINOR_VERSION,&minor);
     scene->supports_sample_mask=major>3 || (major==3 && minor>=1);
+    /* Texture-level dimension queries first become core in ES 3.1. A resolver
+     * may return a name for an unsupported entry point, so presence is insufficient. */
+    if(!scene->supports_sample_mask) backend->gl.GetTexLevelParameteriv=NULL;
   }
   /* ES 3 has attachment invalidation. Desktop 3.3 need not expose its later core API. */
   if(backend->api==GML_GPU_API_OPENGL_CORE){

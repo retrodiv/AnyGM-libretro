@@ -259,7 +259,7 @@ void engine_graphics_report(AnygmEngine *engine){
     "checkpoint_masks=%llu checkpoint_mask_bytes=%llu "
     "rgb_query_refusals=%llu screen_cpu_reads=%llu screen_cpu_materializations=%llu "
     "target_attachments=%llu target_reuses=%llu white_unit_clears=%llu white_tint_quads=%llu zero_alpha_blend_quads=%llu identity_map_draws=%llu "
-    "upload_policy=%u upload_client_ns=%llu upload_staged_ns=%llu\n",
+    "host_extent_passes=%llu upload_policy=%u upload_client_ns=%llu upload_staged_ns=%llu\n",
     engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL?"OpenGL":"CPU",
     counters.scene_batches_accepted?"OpenGL":"CPU",
     counters.scene_batches_accepted?"accepted":
@@ -296,6 +296,7 @@ void engine_graphics_report(AnygmEngine *engine){
     (unsigned long long)counters.scene_white_tint_quads,
     (unsigned long long)counters.scene_zero_alpha_blend_quads,
     (unsigned long long)counters.identity_map_draws,
+    (unsigned long long)counters.host_extent_passes,
     counters.scene_upload_policy,
     (unsigned long long)counters.scene_upload_client_ns,
     (unsigned long long)counters.scene_upload_staged_ns);

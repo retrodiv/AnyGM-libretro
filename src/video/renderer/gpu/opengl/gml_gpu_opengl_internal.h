@@ -228,6 +228,7 @@ enum { GL_SCENE_NATIVE_PLAIN=1,GL_SCENE_NATIVE_WHITE_TINT=2,GL_SCENE_NATIVE_ZERO
 
 struct GmlGpuBackend {
   uint64_t target_attachments,target_reuses,white_unit_clears,white_tint_quads,zero_alpha_blend_quads,identity_map_draws;
+  uint64_t host_extent_passes;
   GmlGlApi gl;
   int loaded;
   GmlGpuApi api;
@@ -265,6 +266,9 @@ struct GmlGpuBackend {
   uint32_t completed_width,completed_height;
   uint64_t completed_generation;
   int completed_valid,completed_attached;
+  /* One unused R8 attachment bounds tiled presentation work; never content or state. */
+  GLuint host_extent_renderbuffer;
+  uint32_t host_extent_width,host_extent_height;
   GlScene scene;
 };
 
