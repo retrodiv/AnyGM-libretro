@@ -124,8 +124,11 @@ filtered glyphs. Their RGB and
 required alpha programs keep the existing formulas and placed quad; mapped
 sources and logical margins retain their separate program owners.
 
-Unmapped native point-surface draws with white RGB at every vertex also omit
-identity byte-tint arithmetic. Their sampled RGBA8 value, raw draw alpha,
+Unmapped native point-surface draws, rounded integer sprites and opaque native
+surface multiplication with white RGB at every vertex also omit identity
+byte-tint arithmetic. The latter two use separate compact programs for selectors
+38 and 149 only when the source has no key, palette or logical margin. The opaque
+surface program permits colour attributes to be optimized out. Their sampled RGBA8 value, raw draw alpha,
 cutout, blending and placed quad are unchanged; nonwhite tints keep the existing
 integer tint body and required alpha passes retain their original program.
 

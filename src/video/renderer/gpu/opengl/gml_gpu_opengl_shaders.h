@@ -731,9 +731,13 @@
   "    if(sample_filter>50 && sample_filter<=64 && sampled.a==0u && v_span_y.x!=1.0 && v_span_y.x!=4.0) discard;\n" \
   "    if(rule<44 && (sampled.a==0u || (rule<41 && v_colour.a<=0.0 && sample_filter<=50)) && !(sample_filter>50 && (v_span_y.x==1.0 || v_span_y.x==4.0))) discard;\n" \
   "    if(rule==41 || rule==48){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
+  "#ifdef GML_SCENE_WHITE_TINT\n" \
+  "    uvec3 rgb=flat_rgb?uvec3(255u):sampled.rgb;\n" \
+  "#else\n" \
   "    uvec3 tint=uvec3(floor(v_colour.rgb*255.0+0.5));\n" \
   "    uint bias=(rule==38 || rule==40 || rule==43 || rule==45 || rule==47 || rule==50)?127u:0u;\n" \
   "    uvec3 rgb=flat_rgb?tint:(sampled.rgb*tint+uvec3(bias))/255u;\n" \
+  "#endif\n" \
   "    float alpha=(rule==42 || rule==43 || rule>=49)?1.0:float(sampled.a)*v_colour.a/255.0;\n" \
   "    if(sample_filter==83) alpha=float(sampled.a)*v_colour.a/255.0;\n" \
   "    if(sample_filter>50 && v_span_y.x>0.0 && v_span_y.x<3.0) alpha=float(sampled.a)/255.0;\n" \
@@ -823,13 +827,21 @@
   "    if(u_filter==150 || u_filter==154){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
   "    vec2 extent=vec2(textureSize(u_image,0));\n" \
   "    vec2 uv=clamp(v_texcoord,(v_clamp.xy+vec2(0.5))/extent,(v_clamp.zw+vec2(0.5))/extent);\n" \
+  "#ifdef GML_SCENE_PLAIN_NATIVE\n" \
+  "    vec4 sampled=source_texture(uv);\n" \
+  "#else\n" \
   "    int margin=int(floor(v_margin+0.5));\n" \
   "    vec4 sampled=margin!=0?hardware_physical_sprite_sample(v_texcoord,ivec2(v_clamp.xy),ivec2(v_clamp.zw),margin):source_texture(uv);\n" \
+  "#endif\n" \
   "    if(u_alpha_test>=0 && sampled.a*255.0<=float(u_alpha_test)) discard;\n" \
   "    uvec4 bytes=uvec4(floor(clamp(sampled,0.0,1.0)*255.0+vec4(0.5)));\n" \
+  "#ifdef GML_SCENE_WHITE_TINT\n" \
+  "    uvec3 tinted=bytes.rgb;\n" \
+  "#else\n" \
   "    uvec3 tint=uvec3(floor(v_colour.rgb*255.0+vec3(0.5)));\n" \
   "    uint bias=((u_filter>=151 && u_filter<=154)||u_filter>=157)?127u:0u;\n" \
   "    uvec3 tinted=(bytes.rgb*tint+uvec3(bias))/255u;\n" \
+  "#endif\n" \
   "    float alpha=float(bytes.a)*v_colour.a/255.0;\n" \
   "    vec3 rgb=u_filter>=155?floor(vec3(tinted)*alpha)/255.0:vec3(tinted)/255.0;\n" \
   "    o_color=vec4(rgb,(u_filter==149 || u_filter==153)?1.0:alpha); return;\n" \

@@ -157,7 +157,9 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
                                mode==39?"#define GML_SCENE_CONSTANT_FILTER 39\n":
                                mode==40?"#define GML_SCENE_CONSTANT_FILTER 41\n":
                                mode==41?"#define GML_SCENE_CONSTANT_FILTER 31\n":
-                               mode==42?"#define GML_SCENE_CONSTANT_FILTER 40\n":"",
+                               mode==42?"#define GML_SCENE_CONSTANT_FILTER 40\n":
+                               mode==43?"#define GML_SCENE_CONSTANT_FILTER 149\n#define GML_SCENE_PLAIN_NATIVE 1\n#define GML_SCENE_WHITE_TINT 1\n":
+                               mode==44?"#define GML_SCENE_CONSTANT_FILTER 38\n#define GML_SCENE_PLAIN_NATIVE 1\n#define GML_SCENE_WHITE_TINT 1\n":"",
                                GML_GPU_OPENGL_SCENE_FRAGMENT_BODY);
   if(vertex_length<0 || (size_t)vertex_length>=sizeof vertex_source ||
      fragment_length<0 || (size_t)fragment_length>=sizeof fragment_source){
@@ -248,7 +250,7 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
      ((mode==34 || mode==35) && (scene->u_recovery_screen<0 ||
        scene->u_recovery_application<0 || scene->u_recovery_rect<0)) ||
      (mode && (scene->a_position01<0 || scene->a_position23<0 ||
-       (mode!=8 && mode!=30 && mode!=33 && mode!=34 && mode!=35 && mode!=38 && mode!=40 &&
+       (mode!=8 && mode!=30 && mode!=33 && mode!=34 && mode!=35 && mode!=38 && mode!=40 && mode!=43 &&
         (scene->a_colour[0]<0 || scene->a_colour[1]<0 || scene->a_colour[2]<0 ||
                     scene->a_colour[3]<0)) || scene->u_extent<0 ||
        ((mode!=20 && mode!=21 && mode!=36 && mode!=37 && mode!=38 && mode!=41) && scene->u_image<0) ||
@@ -273,7 +275,10 @@ GlSceneProgram *gml_gpu_opengl_scene_draw_program(GmlGpuBackend *backend,uint32_
   if(filter==GL_SCENE_NATIVE_POINT_STAMP_FILTER) filter=82u;
   int mode=0;
   int plain_native=native_flags&GL_SCENE_NATIVE_PLAIN;
-  if(filter==40u){
+  if(plain_native && (filter==38u || filter==149u) && (native_flags&GL_SCENE_NATIVE_WHITE_TINT)){
+    unsigned index=filter==149u?41u:42u;
+    program=&scene->compact_programs[index];mode=(int)index+2;
+  }else if(filter==40u){
     program=&scene->compact_programs[40];mode=42;
   }else if(filter==31u){
     program=&scene->compact_programs[39];mode=41;

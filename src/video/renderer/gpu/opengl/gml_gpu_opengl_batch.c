@@ -2642,6 +2642,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   if(!count) return 1;
   if(count>GL_SCENE_MAX_QUADS) return 0;
   int plain_native=(filter==21u || filter==22u || filter==25u || filter==26u ||
+                    filter==38u || filter==149u ||
                     filter==79u || filter==80u || filter==82u ||
                     filter==GL_SCENE_NATIVE_POINT_FILTER ||
                     filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER ||
@@ -2660,7 +2661,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
     if(cleared) return cleared>0;
   }
   int native_flags=plain_native?GL_SCENE_NATIVE_PLAIN:0;
-  if(plain_native && filter==25u){
+  if(plain_native && (filter==25u || filter==38u || filter==149u)){
     native_flags|=GL_SCENE_NATIVE_WHITE_TINT;
     for(size_t vertex=0;vertex<(size_t)count*6u;vertex++){
       const float *colour=scene->vertices+vertex*GL_SCENE_VERTEX_FLOATS+4u;
@@ -2671,7 +2672,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   }
   /* Source-over RGB with zero source alpha leaves every destination byte intact.
    * Keep positive alpha cutoffs and the separately selected alpha stamp unchanged. */
-  if((native_flags&GL_SCENE_NATIVE_WHITE_TINT) && blend==1 && alpha_test<=0){
+  if(filter==25u && (native_flags&GL_SCENE_NATIVE_WHITE_TINT) && blend==1 && alpha_test<=0){
     native_flags|=GL_SCENE_NATIVE_ZERO_ALPHA_BLEND;
     for(size_t vertex=0;vertex<(size_t)count*6u;vertex++){
       float alpha=scene->vertices[vertex*GL_SCENE_VERTEX_FLOATS+7u];
