@@ -391,6 +391,30 @@ static void scaled_band(void *context,int row_start,int row_end,int slot){
     }
 }
 
+/* The synchronous handover borrows this prepared stack list until every band returns. */
+typedef struct {int destination,source,length;} GmlSurfacePointRun;
+typedef struct {
+  GmlRender *r;
+  const uint32_t *src;
+  const GmlSurfacePointRun *runs;
+  int count,sw,sh,H,x0,y0,py0;
+} GmlPointSurfaceBand;
+static void point_surface_band_rows(void *context,int row_start,int row_end,int slot){
+  GmlPointSurfaceBand *band=context;
+  GmlRender *r=band->r;const uint32_t *src=band->src;
+  const GmlSurfacePointRun *runs=band->runs;
+  int count=band->count,sw=band->sw,sh=band->sh,H=band->H;
+  int x0=band->x0,y0=band->y0;
+  (void)slot;
+  for(int py=band->py0+row_start;py<band->py0+row_end;py++){
+    int sy=surface_point_index(py,sh,H);
+    for(int run=0;run<count;run++)
+      memcpy(r->fb+(size_t)(y0+py)*r->fbw+x0+runs[run].destination,
+             src+(size_t)sy*sw+runs[run].source,
+             (size_t)runs[run].length*sizeof(*src));
+  }
+}
+
 static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, int sw, int sh,
                                            int x0, int y0, int W, int H,
                                            int source_all_opaque){
@@ -527,7 +551,7 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
    * then copy those exact texels. A bounded stack list leaves other reductions with the general
    * mapper; conservative opacity never lets a transparent sampled texel enter this copy path. */
   if(!r->interp && W<=sw){
-    struct { int destination,source,length; } runs[32];
+    GmlSurfacePointRun runs[32];
     int count=0,complete=1;
     for(int px=px0;px<px1;px++){
       int sx=surface_point_index(px,sw,W);
@@ -552,13 +576,12 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
       }
       if(sampled_all_opaque){
         gml_render_dispatch_cpu_scope_write(r);
-        for(int py=py0;py<py1;py++){
-          int sy=surface_point_index(py,sh,H);
-          for(int run=0;run<count;run++)
-            memcpy(r->fb+(size_t)(y0+py)*r->fbw+x0+runs[run].destination,
-                   src+(size_t)sy*sw+runs[run].source,
-                   (size_t)runs[run].length*sizeof(*src));
-        }
+        GmlPointSurfaceBand band={.r=r,.src=src,.runs=runs,.count=count,
+          .sw=sw,.sh=sh,.H=H,.x0=x0,.y0=y0,.py0=py0};
+        if(gml_render_row_bands_profitable(r,
+             (unsigned long long)(px1-px0)*(unsigned long long)(py1-py0)))
+          gml_run_row_bands(r,py1-py0,point_surface_band_rows,&band);
+        else point_surface_band_rows(&band,0,py1-py0,0);
         if(rect_covers_target(r,x0+px0,y0+py0,x0+px1,y0+py1)){
           r->fb_opaque_known=1;
           r->fb_all_opaque=1;
@@ -789,6 +812,74 @@ static void draw_surface_interp_phase(GmlRender *r,uint32_t *plane,const uint32_
         if(rb<0) rb=0; else if(rb>255) rb=255;
         *dp=0xFF000000u|((uint32_t)rr<<16)|((uint32_t)rg<<8)|(uint32_t)rb;
       }
+    }
+  }
+}
+
+typedef struct {
+  GmlRender *r;
+  const uint32_t *src;
+  int sw,sx_start,sy_start,cx0,cy0,cw,src_all_opaque,replace;
+  atomic_int *coverage;
+} GmlWhiteSurfaceBand;
+static void white_surface_band_rows(void *context,int row_start,int row_end,int slot){
+  GmlWhiteSurfaceBand *band=context;
+  GmlRender *r=band->r;
+  const uint32_t *src=band->src;
+  int sw=band->sw,sx_start=band->sx_start,sy_start=band->sy_start;
+  int cx0=band->cx0,cy0=band->cy0,cw=band->cw;
+  int src_all_opaque=band->src_all_opaque,replace=band->replace;
+  (void)slot;
+  for(int yy=row_start;yy<row_end;yy++){
+    const uint32_t *sp=src+(size_t)(sy_start+yy)*sw+sx_start;
+    uint32_t *dp=r->fb+(size_t)(cy0+yy)*r->fbw+cx0;
+    if(src_all_opaque){
+      gml_render_dispatch_cpu_coverage_write(band->coverage);
+      memcpy(dp,sp,(size_t)cw*sizeof(uint32_t));
+      continue;
+    }
+    if(row_all_transparent32(sp,cw)) continue;
+    if(row_all_opaque32(sp,cw)){
+      gml_render_dispatch_cpu_coverage_write(band->coverage);
+      memcpy(dp,sp,(size_t)cw*sizeof(uint32_t));
+      continue;
+    }
+    for(int xx=0; xx<cw; ){
+      uint32_t sa8=sp[xx]>>24;
+      int run=1;
+      while(xx+run<cw && (sp[xx+run]>>24)==sa8) run++;
+      if(sa8) gml_render_dispatch_cpu_coverage_write(band->coverage);
+      if(sa8==255){
+        memcpy(dp+xx,sp+xx,(size_t)run*sizeof(uint32_t));
+      } else if(sa8){
+        if(replace){
+          /* Mode 6 copies each source texel, including partial coverage, without
+           * destination blending. Zero-coverage runs retain the existing skip. */
+          memcpy(dp+xx,sp+xx,(size_t)run*sizeof(uint32_t));
+        } else if(r->classic && r->app_surface==src){
+          /* The classic automatic present models an alphaless backbuffer: whatever
+           * coverage arithmetic our application surface accumulated, its colour reaches
+           * the screen untouched. Content cannot name surface 0 in that generation, so
+           * this composite is always the engine's own. */
+          for(int k=0;k<run;k++) dp[xx+k]=sp[xx+k]|0xFF000000u;
+        } else if(r->win && anygm_policy_uses_first_generation_studio(r->win) &&
+           r->app_surface==src){
+          uint32_t inverse=255u-sa8;
+          for(int k=0;k<run;k++){
+            uint32_t source=sp[xx+k],destination=dp[xx+k];
+            uint32_t sr=(source>>16)&255u,sg=(source>>8)&255u,sb=source&255u;
+            uint32_t dr=(destination>>16)&255u,dg=(destination>>8)&255u,db=destination&255u;
+            dp[xx+k]=0xFF000000u|
+              (((sr*sa8+dr*inverse+127u)/255u)<<16)|
+              (((sg*sa8+dg*inverse+127u)/255u)<<8)|
+              ((sb*sa8+db*inverse+127u)/255u);
+          }
+        } else {
+          uint32_t af=(uint32_t)((sa8*256u)/255u);
+          if(af) blend_fast8_src_run(dp+xx,sp+xx,run,af,blend_fast8_rounds(r));
+        }
+      }
+      xx+=run;
     }
   }
 }
@@ -1056,58 +1147,13 @@ static void draw_surface_region_impl(GmlRender *r, int surf, double sx0d, double
         /* Surface pixels carry coverage in the high byte. When alpha is zero after a transparent
          * clear, skip uncovered pixels
          * instead of stamping opaque black over the world. */
-        for(int yy=0; yy<ch; yy++){
-          const uint32_t *sp=src+(size_t)(sy_start+yy)*sw+sx_start;
-          uint32_t *dp=r->fb+(size_t)(cy0+yy)*r->fbw+cx0;
-          if(src_all_opaque){
-            gml_render_dispatch_cpu_scope_write(r);
-            memcpy(dp,sp,(size_t)cw*sizeof(uint32_t));
-            continue;
-          }
-          if(row_all_transparent32(sp,cw)) continue;
-          if(row_all_opaque32(sp,cw)){
-            gml_render_dispatch_cpu_scope_write(r);
-            memcpy(dp,sp,(size_t)cw*sizeof(uint32_t));
-            continue;
-          }
-          for(int xx=0; xx<cw; ){
-            uint32_t sa8=sp[xx]>>24;
-            int run=1;
-            while(xx+run<cw && (sp[xx+run]>>24)==sa8) run++;
-            if(sa8) gml_render_dispatch_cpu_scope_write(r);
-            if(sa8==255){
-              memcpy(dp+xx,sp+xx,(size_t)run*sizeof(uint32_t));
-            } else if(sa8){
-              if(replace){
-                /* Mode 6 copies each source texel, including partial coverage, without
-                 * destination blending. Zero-coverage runs retain the existing skip. */
-                memcpy(dp+xx,sp+xx,(size_t)run*sizeof(uint32_t));
-              } else if(r->classic && r->app_surface==src){
-                /* The classic automatic present models an alphaless backbuffer: whatever
-                 * coverage arithmetic our application surface accumulated, its colour reaches
-                 * the screen untouched. Content cannot name surface 0 in that generation, so
-                 * this composite is always the engine's own. */
-                for(int k=0;k<run;k++) dp[xx+k]=sp[xx+k]|0xFF000000u;
-              } else if(r->win && anygm_policy_uses_first_generation_studio(r->win) &&
-                 r->app_surface==src){
-                uint32_t inverse=255u-sa8;
-                for(int k=0;k<run;k++){
-                  uint32_t source=sp[xx+k],destination=dp[xx+k];
-                  uint32_t sr=(source>>16)&255u,sg=(source>>8)&255u,sb=source&255u;
-                  uint32_t dr=(destination>>16)&255u,dg=(destination>>8)&255u,db=destination&255u;
-                  dp[xx+k]=0xFF000000u|
-                    (((sr*sa8+dr*inverse+127u)/255u)<<16)|
-                    (((sg*sa8+dg*inverse+127u)/255u)<<8)|
-                    ((sb*sa8+db*inverse+127u)/255u);
-                }
-              } else {
-                uint32_t af=(uint32_t)((sa8*256u)/255u);
-                if(af) blend_fast8_src_run(dp+xx,sp+xx,run,af,blend_fast8_rounds(r));
-              }
-            }
-            xx+=run;
-          }
-        }
+        GmlWhiteSurfaceBand band={.r=r,.src=src,.sw=sw,
+          .sx_start=sx_start,.sy_start=sy_start,.cx0=cx0,.cy0=cy0,.cw=cw,
+          .src_all_opaque=src_all_opaque,.replace=replace,
+          .coverage=gml_render_dispatch_cpu_scope_coverage(r)};
+        if(gml_render_row_bands_profitable(r,(unsigned long long)cw*(unsigned long long)ch))
+          gml_run_row_bands(r,ch,white_surface_band_rows,&band);
+        else white_surface_band_rows(&band,0,ch,0);
       } else {
         double ia=1.0-alpha;
         for(int yy=0; yy<ch; yy++){

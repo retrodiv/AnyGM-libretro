@@ -850,9 +850,17 @@ static int scene_source_region_case(void){
     REQUIRE(gml_gpu_opengl_scene_source_region_ready(image,&operation),
             "complete source supports the pre-existing consumers");
     full.image.content_version++;ref=full.image;
-    REQUIRE(service.upload_source_region(service.context,&full,(GmlRenderRect){0,0,8u,8u}) &&
-      service.upload_source_region(service.context,&full,(GmlRenderRect){8,0,1u,8u}) &&
-      service.upload_source_region(service.context,&full,(GmlRenderRect){9,0,1u,8u}),
+    REQUIRE(service.upload_source_region(service.context,&full,(GmlRenderRect){0,0,8u,8u}),
+      "new versions begin bounded region unions");
+    image=gml_gpu_opengl_scene_image(gpu->backend,ref);
+    GLuint prefix_texture=image->texture;
+    unsigned uninitialized=anygm_test_graphics_texture_with_format(0);
+    REQUIRE(service.upload_source_region(service.context,&full,(GmlRenderRect){8,0,1u,8u}) &&
+      image->texture!=prefix_texture,
+      "growing atlas source unions receive distinct native texture storage");
+    REQUIRE(anygm_test_graphics_texture_with_format(0)==uninitialized,
+      "source growth leaves no second uninitialized texture reservation");
+    REQUIRE(service.upload_source_region(service.context,&full,(GmlRenderRect){9,0,1u,8u}),
       "new versions build bounded region unions");
     image=gml_gpu_opengl_scene_image(gpu->backend,ref);
     REQUIRE(image && image->source_partial && image->source_upload_bytes==864u,

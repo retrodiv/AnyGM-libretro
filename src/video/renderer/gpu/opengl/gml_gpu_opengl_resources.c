@@ -798,7 +798,22 @@ static int scene_upload_image(GmlGpuBackend *backend,const GmlRenderImageUpload 
     }
     upload_bytes=scene->scratch;
   }
-  if(first){
+  /* Region preparation supplies the complete defined atlas union. A distinct
+   * native object lets queued readers retain the old storage during growth.
+   * Mutable targets and complete-source consumers keep their current ownership. */
+  if(source_region && !first && !resize && slot->source_partial &&
+     transfer->image.resource_class==GML_RENDER_RESOURCE_ATLAS &&
+     !slot->target && !slot->framebuffer && !slot->rendered_origin &&
+     !slot->content_source_texture && !slot->content_source_framebuffer &&
+     slot->pixel_format==transfer->pixel_format && scene_same_version(slot->ref,transfer->image)){
+    GLuint fresh=0,old=slot->texture;
+    backend->gl.GenTextures(1,&fresh);
+    if(!fresh) return 0;
+    backend->gl.DeleteTextures(1,&old);
+    slot->texture=fresh;
+    first=1;
+  }
+  if(first && !slot->texture){
     backend->gl.GenTextures(1,&slot->texture);
     if(!slot->texture) return 0;
   }

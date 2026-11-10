@@ -2214,7 +2214,7 @@ static void check_exact_cardinal_copy_rows(void){
   for(unsigned generation=0;generation<2u;generation++)
   for(unsigned direction=0;direction<4u;direction++)
   for(unsigned phase=0;phase<4u;phase++)
-  for(unsigned policy=0;policy<6u;policy++){
+  for(unsigned policy=0;policy<10u;policy++){
     double offset=phase==0u?0.0:phase==1u?.5:nextafter(.5,phase==2u?0.0:1.0);
     for(size_t pixel=0;pixel<(size_t)SIDE*SIDE;pixel++){
       pixels[pixel*4u]=(uint8_t)(pixel*13u+17u);
@@ -2224,6 +2224,12 @@ static void check_exact_cardinal_copy_rows(void){
     }
     if(policy==1u || policy==2u)
       pixels[((size_t)200*SIDE+250u)*4u+3u]=policy==1u?0u:127u;
+    if(policy>=6u) for(unsigned y=0;y<SIDE;y++) for(unsigned x=0;x<SIDE;x++){
+      unsigned covered=policy==6u?((x/7u+y/11u)&1u):
+        policy==7u?(x%23u>=5u && x%23u<17u):policy==8u?(y%13u>=3u):1u;
+      pixels[((size_t)y*SIDE+x)*4u+3u]=covered?255u:0u;
+    }
+    if(policy==9u) pixels[((size_t)200*SIDE+250u)*4u+3u]=1u;
     size_t hidden=(direction==2u?(size_t)SIDE*SIDE-1u:0u)*4u+3u;
     GmlRenderDispatchMetrics expected_metrics={0};
     for(unsigned pass=0;pass<3u;pass++){
@@ -2255,7 +2261,7 @@ static void check_exact_cardinal_copy_rows(void){
       gml_render_cpu_backend_dispatch_end(render,&scope);
       expect(render->rotated_batch_count==1,"cardinal control keeps its queued exact draw");
       gml_render_flush_rotated_batch(render);
-      expect(page.alpha_runs_built==(policy<=2u),
+      expect(page.alpha_runs_built==(policy<=2u || policy>=6u),
              "exact cardinal admission uses the established complete-opacity proof");
       GmlRenderDispatchMetrics metrics={0};gml_render_dispatch_metrics(render,&metrics);
       if(!pass){memcpy(reference,actual,(size_t)W*H*sizeof *actual);expected_metrics=metrics;}
@@ -2270,6 +2276,86 @@ static void check_exact_cardinal_copy_rows(void){
   }
   free(pixels);free(reference);free(actual);
   fprintf(stderr,"exact cardinal copy reference controls: %u\n",controls);
+}
+
+/* Both surface loops retain their pixel bodies. Use whole ARGB targets and
+ * actual-write accounting to exercise empty rows, opacity runs and replacement. */
+static void check_surface_copy_row_bands(void){
+  enum {W=1025,H=514};
+  size_t count=(size_t)W*H;
+  uint32_t *target=malloc(count*sizeof *target),*reference=malloc(count*sizeof *reference);
+  uint32_t *application=malloc(count*sizeof *application);
+  expect(target && reference && application,"surface row-band fixture allocation");
+  if(!target || !reference || !application){free(target);free(reference);free(application);return;}
+  unsigned controls=0;
+  for(unsigned generation=0;generation<2u;generation++)
+  for(unsigned application_source=0;application_source<2u;application_source++)
+  for(unsigned policy=0;policy<4u;policy++){
+    GmlRenderDispatchMetrics expected={0};
+    for(unsigned parallel=0;parallel<2u;parallel++){
+      GmlRender *render=calloc(1,sizeof *render);GmlWin content={0};
+      AnygmHostServices host={0};StretchBandSettings settings={parallel?"4":"1","0"};
+      expect(render && !gml_render_init(render,NULL),"surface row-band renderer init");
+      if(!render)continue;
+      host.struct_size=sizeof host;host.userdata=&settings;host.development_setting=stretch_band_setting;
+      content.host=&host;content.bytecode=generation?17:14;render->win=&content;
+      render->fb=render->base_fb=target;
+      render->fbw=render->base_fbw=W;render->fbh=render->base_fbh=H;
+      render->target_id=-1;render->active_shader=render->lut_pal_sprite=-1;
+      render->alphablend=1;render->alpha=1;render->interp=0;render->color_write_mask=15u;
+      render->blendmode=policy==2u?6:0;
+      render->blend_equation=render->blend_equation_alpha=1;
+      int source=application_source?0:gml_surface_create(render,W,H);
+      uint32_t *pixels=application;
+      if(application_source){
+        render->app_surface=application;render->app_w=W;render->app_h=H;
+        render->app_surface_opaque=policy==0u;
+      }else{
+        expect(source>0,"surface row-band numbered source");
+        pixels=surface_pixels(render,source,NULL,NULL);
+      }
+      expect(pixels!=NULL,"surface row-band writable source");
+      if(!pixels){gml_render_free(render);free(render);continue;}
+      for(unsigned y=0;y<H;y++) for(unsigned x=0;x<W;x++){
+        size_t index=(size_t)y*W+x;
+        unsigned alpha=policy==0u?255u:policy==3u?0u:
+          y%7u==0u?0u:y%7u==1u?255u:x%17u<4u?0u:x%17u<11u?127u:255u;
+        pixels[index]=(alpha<<24)|((uint32_t)(index*2654435761u)&0xFFFFFFu);
+        target[index]=(uint32_t)(index*2246822519u+37u);
+      }
+      if(!application_source){
+        /* The fixture authors these bytes directly, so replace the creation
+         * clear's metadata with the authored source's actual coverage. */
+        GmlSurface *surface=&render->surface[source-1];
+        surface->dirty=1;surface->opaque_known=policy==0u || policy==3u;
+        surface->all_opaque=policy==0u;surface->all_transparent=policy==3u;
+      }
+      gml_render_dispatch_diagnostics_enable(render,1);
+      gml_draw_surface_stretched(render,source,-3.25,1.4,
+        policy==0u?W-1:W,policy==0u?H-1:H,0xFFFFFFu,1.0);
+      gml_render_maybe_prepare_draw(render);
+      GmlRenderDispatchMetrics actual={0};gml_render_dispatch_metrics(render,&actual);
+      expect((dispatch_cpu_total(&actual)>0)==(policy!=3u),
+        "surface row-band fixture exercises its declared write policy");
+      if(!parallel){memcpy(reference,target,count*sizeof *target);expected=actual;}
+      else{
+        expect(!memcmp(reference,target,count*sizeof *target),
+          "surface copies preserve complete ARGB across row-band counts");
+        expect(!memcmp(&expected,&actual,sizeof actual),
+          "surface row bands preserve actual-write dispatch accounting");
+        if(policy!=3u){
+          if(!render->row_pool)fprintf(stderr,"surface row-band admission: generation=%u application=%u policy=%u\n",
+            generation,application_source,policy);
+          expect(render->row_pool!=NULL,
+            "large certified point and white surface copies use the requested row workers");
+        }
+      }
+      render->app_surface=NULL;render->app_w=render->app_h=0;
+      gml_render_free(render);free(render);controls++;
+    }
+  }
+  free(application);free(reference);free(target);
+  fprintf(stderr,"surface row-band ARGB/reference controls: %u\n",controls);
 }
 
 static void check_dispatch_rotated_queue(void){
@@ -2702,6 +2788,7 @@ int main(void) {
   check_dispatch_atlas_textures();
   check_dispatch_rotated_queue();
   check_exact_cardinal_copy_rows();
+  check_surface_copy_row_bands();
   check_named_palette_sampler();
   check_grid_uniform_dependencies();
   check_opaque_stretched_underlay();

@@ -4958,7 +4958,7 @@ typedef struct {
   double ax, ay, cosine, sine, inv_xscale, inv_yscale;
   double local_x_offset, local_y_offset;
   int x0, x1, y0, y1, use_quad_span, white, vector_pixels, round_blend;
-  int copy_cardinal;
+  int copy_cardinal,copy_binary_cardinal;
   int blend_r, blend_g, blend_b;
   int64_t delta_x, delta_y;
   uint32_t alpha_lut[256];
@@ -5003,7 +5003,7 @@ static void GML_HOT_RENDER exact_rotated_band_rows(
                    band->local_y_offset;
     int64_t lx_fp=(int64_t)floor(local_x*(double)RFP_ONE);
     int64_t ly_fp=(int64_t)floor(local_y*(double)RFP_ONE);
-    if(band->copy_cardinal){
+    if(band->copy_cardinal || band->copy_binary_cardinal){
       /* Keep this row's existing fixed20 origin and quad span. An exact unit
        * cardinal step selects a bounded contiguous or strided source interval. */
       int source_x=floor_fixed20(lx_fp),source_y=floor_fixed20(ly_fp);
@@ -5024,6 +5024,18 @@ static void GML_HOT_RENDER exact_rotated_band_rows(
         const uint32_t *source=band->argb+(size_t)sy*tpag->sw+sx;
         uint32_t *destination=row+rx0+(int)first;
         int run=(int)(last-first);
+        if(!band->copy_cardinal){
+          /* The immutable crop contains only zero or full coverage. Its zero
+           * texels preserve every destination byte, including hidden RGB. */
+          ptrdiff_t stride=horizontal?step:(ptrdiff_t)step*tpag->sw;
+          int written=0;
+          for(int pixel=0;pixel<run;pixel++){
+            uint32_t packed=source[(ptrdiff_t)pixel*stride];
+            if(packed>>24){destination[pixel]=packed;written=1;}
+          }
+          if(written)gml_render_dispatch_cpu_coverage_write(band->dispatch_written);
+          continue;
+        }
         if(horizontal && step>0) memcpy(destination,source,(size_t)run*sizeof *source);
         else if(horizontal)
           copy_argb_force_opaque_reverse(destination+run-1,source-(run-1),run);
@@ -6056,8 +6068,11 @@ static void GML_HOT_RENDER blit_rotated_impl(GmlRender *r, GmlSprite *spr, GmlTp
       memcpy(band.alpha_lut,a16_lut,sizeof a16_lut);
       if(white && a16_lut[255]==65536u &&
          (((dlx_fp==RFP_ONE || dlx_fp==-RFP_ONE) && !dly_fp) ||
-          ((dly_fp==RFP_ONE || dly_fp==-RFP_ONE) && !dlx_fp)))
+          ((dly_fp==RFP_ONE || dly_fp==-RFP_ONE) && !dlx_fp))){
         band.copy_cardinal=tpag_fully_opaque_argb(r,t,a)==immutable_argb;
+        band.copy_binary_cardinal=!band.copy_cardinal && t->alpha_scanned &&
+          !t->alpha_partial && a16_lut[0]==0u;
+      }
       GmlRotatedBatchItem *item=rotated_batch_append(r,3);
       if(item){
         item->draw.exact=band;
