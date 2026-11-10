@@ -26,7 +26,8 @@ enum {
   GML_PHYS_JOINT_DISTANCE,
   GML_PHYS_JOINT_FRICTION,
   GML_PHYS_JOINT_WELD,
-  GML_PHYS_JOINT_PULLEY
+  GML_PHYS_JOINT_PULLEY,
+  GML_PHYS_JOINT_GEAR
 };
 
 /* Prismatic and wheel x2/y2 hold the unit axis in body A's local frame.
@@ -37,7 +38,9 @@ enum {
  * Other parameter layouts: distance (length, collide), friction (force,
  * torque, collide), weld (frequency, damping ratio, collide), and pulley
  * (ratio, collide, initial length A, initial length B). Lengths are in pixels.
- * Pulley x1/y1 and x2/y2 are the two fixed world anchors. */
+ * Pulley x1/y1 and x2/y2 are the two fixed world anchors.
+ * Gear x1/x2 hold source joint IDs. Its parameters contain the ratio followed
+ * by creation-time x, y and angle for the two bodies of each source, A then B. */
 typedef struct {
   int live, type, value_count;
   uint32_t id;

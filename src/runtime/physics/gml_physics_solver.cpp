@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -140,6 +141,44 @@ extern "C" void gml_physics_solver_mass(GmlPhysicsBody *body,
   body->center_x=cx/scale; body->center_y=cy/scale;
 }
 
+/* Box2D derives the coupling constant when it constructs the gear. Give it
+ * the authored source poses for that calculation, then restore the current
+ * poses before any solve or contact detection. */
+static void create_gear(b2World &world,const GmlPhysicsJoint &gear,double scale,
+                        b2Body *a,b2Body *b,b2Joint *first,b2Joint *second) {
+  if (!first || !second || first->GetBodyB()!=a || second->GetBodyB()!=b ||
+      a->GetType()!=b2_dynamicBody || b->GetType()!=b2_dynamicBody ||
+      a==second->GetBodyA() || b==first->GetBodyA()) return;
+  b2Body *const bodies[]={first->GetBodyA(),a,second->GetBodyA(),b};
+  b2Vec2 positions[4];
+  float angles[4];
+  bool moved[4];
+  for (int i=0;i<4;i++) {
+    const double *pose=gear.params+1+3*i;
+    if (!bodies[i]->IsEnabled() || !spatial(pose[0],scale) || !spatial(pose[1],scale)) return;
+    positions[i]=bodies[i]->GetPosition();
+    angles[i]=bodies[i]->GetAngle();
+    moved[i]=false;
+  }
+  /* The supported shared ground has no independent solver motion. */
+  if (bodies[0]==bodies[2] && bodies[0]->GetType()==b2_dynamicBody) return;
+  for (int i=0;i<4;i++) {
+    if (i==2 && bodies[0]==bodies[2]) continue;
+    const double *pose=gear.params+1+3*i;
+    b2Vec2 position(float(pose[0]*scale),float(pose[1]*scale));
+    float angle=float(pose[2]*radians);
+    moved[i]=position!=positions[i] || angle!=angles[i];
+    if (moved[i]) bodies[i]->SetTransform(position,angle);
+  }
+  b2GearJointDef def;
+  def.bodyA=a; def.bodyB=b;
+  def.joint1=first; def.joint2=second;
+  def.ratio=float(gear.params[0]);
+  world.CreateJoint(&def);
+  for (int i=0;i<4;i++)
+    if (moved[i]) bodies[i]->SetTransform(positions[i],angles[i]);
+}
+
 extern "C" int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,
                                          const GmlPhysicsFixture *fixtures,int fixture_count,
                                          const GmlPhysicsJoint *joints,int joint_count,
@@ -221,6 +260,15 @@ extern "C" int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,
   for (int i=0;i<joint_count;i++)
     if (joints[i].live && joints[i].initialized) ordered_joints.push_back(&joints[i]);
   std::sort(ordered_joints.begin(),ordered_joints.end(),[](const GmlPhysicsJoint *a,const GmlPhysicsJoint *b){return a->id<b->id;});
+  const bool has_gear=std::any_of(ordered_joints.begin(),ordered_joints.end(),
+                                [](const GmlPhysicsJoint *joint){return joint->type==GML_PHYS_JOINT_GEAR;});
+  using GearSource=std::pair<uint32_t,b2Joint *>;
+  std::vector<GearSource> gear_sources;
+  auto find_source=[&gear_sources](double id) -> b2Joint * {
+    auto at=std::lower_bound(gear_sources.begin(),gear_sources.end(),id,
+                            [](const GearSource &entry,double key){return entry.first<key;});
+    return at!=gear_sources.end() && at->first==id?at->second:nullptr;
+  };
   for (auto *j:ordered_joints) {
     const double values[]={j->a,j->b,j->anchor_ax,j->anchor_ay,j->anchor_bx,
                            j->anchor_by,j->reference_angle,j->x2,j->y2};
@@ -245,7 +293,8 @@ extern "C" int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,
       def.maxMotorTorque=nonnegative(j->params[1]);
       def.motorSpeed=float(j->params[2]*radians); def.enableMotor=j->params[3]!=0;
       def.collideConnected=j->params[4]!=0;
-      world.CreateJoint(&def);
+      b2Joint *native_joint=world.CreateJoint(&def);
+      if (has_gear) gear_sources.emplace_back(j->id,native_joint);
     } else if (j->type==GML_PHYS_JOINT_PRISMATIC || j->type==GML_PHYS_JOINT_WHEEL) {
       const b2Vec2 local_a(float(j->anchor_ax*scale),float(j->anchor_ay*scale));
       const b2Vec2 local_b(float(j->anchor_bx*scale),float(j->anchor_by*scale));
@@ -264,7 +313,8 @@ extern "C" int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,
         def.maxMotorForce=nonnegative(j->params[3]);
         def.motorSpeed=float(j->params[4]); def.enableMotor=j->params[5]!=0;
         def.collideConnected=j->params[6]!=0;
-        world.CreateJoint(&def);
+        b2Joint *native_joint=world.CreateJoint(&def);
+        if (has_gear) gear_sources.emplace_back(j->id,native_joint);
       } else {
         b2WheelJointDef def;
         def.bodyA=a; def.bodyB=b;
@@ -278,6 +328,8 @@ extern "C" int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,
         def.collideConnected=j->params[5]!=0;
         world.CreateJoint(&def);
       }
+    } else if (j->type==GML_PHYS_JOINT_GEAR) {
+      create_gear(world,*j,scale,a,b,find_source(j->x1),find_source(j->x2));
     } else if (j->type==GML_PHYS_JOINT_ROPE) {
       b2DistanceJointDef def;
       def.bodyA=a; def.bodyB=b;

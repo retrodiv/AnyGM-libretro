@@ -36,6 +36,16 @@ static GmlPhysicsJoint *phys_joint_find(GmlVM *vm, int id){
     if(vm->builtins->phys_joint[i].live && vm->builtins->phys_joint[i].id==(uint32_t)id) return &vm->builtins->phys_joint[i];
   return NULL;
 }
+void gml_physics_drop_joint(GmlVM *vm,GmlPhysicsJoint *joint){
+  joint->live=0;
+  if(joint->type!=GML_PHYS_JOINT_REVOLUTE && joint->type!=GML_PHYS_JOINT_PRISMATIC) return;
+  for(int i=0;i<GML_PHYS_JOINT_MAX;i++){
+    GmlPhysicsJoint *gear=&vm->builtins->phys_joint[i];
+    if(gear->live && gear->type==GML_PHYS_JOINT_GEAR &&
+       (gear->x1==joint->id || gear->x2==joint->id)) gear->live=0;
+  }
+}
+
 static GmlPhysicsJoint *phys_joint_new(GmlVM *vm, int type){
   if(!vm) return NULL;
   for(int i=0;i<GML_PHYS_JOINT_MAX;i++) if(!vm->builtins->phys_joint[i].live){
@@ -259,6 +269,35 @@ GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
     gml_physics_initialize_joint(vm,j);
     return vreal((double)j->id);
   }
+  if(!strcmp(nm,"physics_joint_gear_create")){
+    double first=N(a,n,2),second=N(a,n,3),ratio=N(a,n,4);
+    if(n<5 || !(first>0 && first<=INT_MAX && second>0 && second<=INT_MAX) ||
+       !isfinite(ratio) || fabs(ratio)>1e12 || gml_physics_world_scale(vm)<=0) return vreal(-1);
+    const GmlPhysicsJoint *j1=phys_joint_find(vm,(int)first);
+    const GmlPhysicsJoint *j2=phys_joint_find(vm,(int)second);
+    if(!j1 || !j2 || !j1->initialized || !j2->initialized ||
+       (j1->type!=GML_PHYS_JOINT_REVOLUTE && j1->type!=GML_PHYS_JOINT_PRISMATIC) ||
+       (j2->type!=GML_PHYS_JOINT_REVOLUTE && j2->type!=GML_PHYS_JOINT_PRISMATIC)) return vreal(-1);
+    double a_id=N(a,n,0),b_id=N(a,n,1);
+    if(a_id==-1 && vm->cur_self) a_id=vm->cur_self->id;
+    if(a_id==-2 && vm->cur_other) a_id=vm->cur_other->id;
+    if(b_id==-1 && vm->cur_self) b_id=vm->cur_self->id;
+    if(b_id==-2 && vm->cur_other) b_id=vm->cur_other->id;
+    if(a_id!=j1->b || b_id!=j2->b || a_id==b_id || a_id==j2->a || b_id==j1->a)
+      return vreal(-1);
+    double pose[12];
+    int shared_ground=j1->a==j2->a;
+    if(!gml_physics_capture_gear_pose(vm,j1,shared_ground,pose) ||
+       !gml_physics_capture_gear_pose(vm,j2,shared_ground,pose+6)) return vreal(-1);
+    GmlPhysicsJoint *gear=phys_joint_new(vm,GML_PHYS_JOINT_GEAR);
+    if(!gear) return vreal(-1);
+    gear->a=a_id; gear->b=b_id; gear->x1=j1->id; gear->x2=j2->id;
+    gear->params[0]=ratio;
+    memcpy(gear->params+1,pose,sizeof pose);
+    gear->value_count=13;
+    gear->initialized=1;
+    return vreal(gear->id);
+  }
   if(!strcmp(nm,"physics_joint_enable_motor")){
     double id=N(a,n,0);
     if(n<2 || !(id>0 && id<=INT_MAX)) return vreal(0);
@@ -274,13 +313,13 @@ GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   if(!strcmp(nm,"physics_joint_delete")){
     GmlPhysicsJoint *j=phys_joint_find(vm,(int)N(a,n,0));
-    if(j) j->live=0;
+    if(j) gml_physics_drop_joint(vm,j);
     return vreal(0);
   }
   if(!strcmp(nm,"physics_joint_set_value")){
     GmlPhysicsJoint *j=phys_joint_find(vm,(int)N(a,n,0));
     int idx=(int)N(a,n,1);
-    if(j && idx>=0 && idx<24){ j->params[idx]=N(a,n,2); if(idx>=j->value_count) j->value_count=idx+1; }
+    if(j && j->type!=GML_PHYS_JOINT_GEAR && idx>=0 && idx<24){ j->params[idx]=N(a,n,2); if(idx>=j->value_count) j->value_count=idx+1; }
     return vreal(0);
   }
   if(!strcmp(nm,"physics_mass_properties")){

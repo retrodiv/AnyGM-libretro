@@ -1003,7 +1003,7 @@ int gml_builtin_state_read_physics(GmlBuiltinState *state,
     joint->type=gml_vm_state_read_i32(reader);
     joint->value_count=gml_vm_state_read_i32(reader);
     if(joint->value_count<0 || joint->value_count>24 || joint->type<1 ||
-       joint->type>GML_PHYS_JOINT_PULLEY ||
+       joint->type>GML_PHYS_JOINT_GEAR ||
        !joint->id || joint->id>=state->phys_next_id){
       gml_vm_state_reader_fail(reader,"bad physics joint description",joint->id);
       return 0;

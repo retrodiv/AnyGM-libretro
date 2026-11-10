@@ -225,6 +225,8 @@ void gml_physics_initialize_body(GmlVM *vm,GmlInstance *instance);
 uint32_t gml_physics_bind_fixture(GmlVM *vm,const GmlPhysicsFixture *fixture,
                                  GmlInstance *instance,double xoffset,double yoffset);
 void gml_physics_initialize_joint(GmlVM *vm,GmlPhysicsJoint *joint);
+int gml_physics_capture_gear_pose(GmlVM *vm,const GmlPhysicsJoint *source,int shared_ground,double pose[6]);
+void gml_physics_drop_joint(GmlVM *vm,GmlPhysicsJoint *joint);
 void gml_physics_apply(GmlVM *vm,GmlInstance *instance,double x,double y,
                        double fx,double fy,int impulse,int local);
 void gml_physics_apply_torque(GmlVM *vm,GmlInstance *instance,double torque,int impulse);

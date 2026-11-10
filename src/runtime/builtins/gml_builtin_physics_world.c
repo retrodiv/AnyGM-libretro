@@ -157,6 +157,22 @@ void gml_physics_initialize_joint(GmlVM *vm,GmlPhysicsJoint *j){
   j->initialized=1;
 }
 
+int gml_physics_capture_gear_pose(GmlVM *vm,const GmlPhysicsJoint *source,int shared_ground,double pose[6]){
+  double scale=gml_physics_world_scale(vm),limit=fmin(1e12,1e6/scale);
+  const double ids[]={source->a,source->b};
+  for(int i=0;i<2;i++){
+    GmlInstance *in=gml_vm_instance_by_id(vm,ids[i]);
+    if(!in || !gml_physics_body_enabled(vm,in)) return 0;
+    GmlPhysicsBody body;
+    read_body(vm,in,&body);
+    if(fabs(body.x)>limit || fabs(body.y)>limit || fabs(body.angle)>1e12 ||
+       (i==1 && (body.kinematic || !(body.mass>0))) ||
+       (i==0 && shared_ground && !body.kinematic && body.mass>0)) return 0;
+    pose[3*i]=body.x; pose[3*i+1]=body.y; pose[3*i+2]=body.angle;
+  }
+  return 1;
+}
+
 void gml_physics_apply(GmlVM *vm,GmlInstance *in,double x,double y,
                        double fx,double fy,int impulse,int local){
   if(!gml_physics_body_enabled(vm,in) || !isfinite(x) || !isfinite(y) ||
@@ -265,7 +281,8 @@ void gml_physics_step(GmlVM *vm){
   }
   for(int i=0;i<GML_PHYS_JOINT_MAX;i++){
     GmlPhysicsJoint *j=&vm->builtins->phys_joint[i];
-    if(j->live && (!gml_vm_instance_by_id(vm,j->a) || !gml_vm_instance_by_id(vm,j->b))) j->live=0;
+    if(j->live && (!gml_vm_instance_by_id(vm,j->a) || !gml_vm_instance_by_id(vm,j->b)))
+      gml_physics_drop_joint(vm,j);
   }
   int count=0;
   for(int i=0;i<vm->inst_count;i++)

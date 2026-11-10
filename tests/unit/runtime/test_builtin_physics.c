@@ -404,6 +404,80 @@ static void motor_joint_constructors(void){
   puts("motor joints: prismatic limit, wheel suspension, motor switches and restore passed");
 }
 
+static double gear_source(GmlVM *vm,int slot,int prismatic,double x){
+  if(prismatic){
+    const double args[]={vm->inst[0].id,vm->inst[slot].id,x,0,1,0,-100,100,0,0,0,0,0};
+    GmlVal values[13];
+    for(int i=0;i<13;i++) values[i]=vreal(args[i]);
+    return gml_builtin_call(vm,"physics_joint_prismatic_create",values,13).d;
+  }
+  return CALL(vm,"physics_joint_revolute_create",vm->inst[0].id,vm->inst[slot].id,
+              x,0,-90,90,0,0,0,0,0).d;
+}
+
+static void gear_joint_constructor(void){
+  const char *name="physics_joint_gear_create";
+  for(int cached=0;cached<2;cached++) for(int pair=0;pair<4;pair++){
+    int first_prismatic=(pair&2)!=0,second_prismatic=(pair&1)!=0;
+    double ratio=pair&1?2:-.5;
+    const char *first_coordinate=first_prismatic?"phy_position_x":"phy_rotation";
+    const char *second_coordinate=second_prismatic?"phy_position_x":"phy_rotation";
+    const char *first_speed=first_prismatic?"phy_linear_velocity_x":"phy_angular_velocity";
+    const double first_unit=first_prismatic?.1:acos(-1)/180;
+    const double second_unit=second_prismatic?.1:acos(-1)/180;
+    GmlVM vm;GmlWin win;setup(&vm,&win);
+    CALL(&vm,"physics_world_gravity",0,0);
+    bind_box(&vm,0,0,0,2,2,0);
+    bind_box(&vm,1,20,0,2,2,1);
+    bind_box(&vm,2,60,0,2,2,1);
+    double source_a=gear_source(&vm,1,first_prismatic,20);
+    double source_b=gear_source(&vm,2,second_prismatic,60);
+    assert(source_a>0 && source_b>0);
+    double initial_a=first_prismatic?24:12,initial_b=second_prismatic?64:-7;
+    assert(gml_physics_variable_set(&vm,&vm.inst[1],first_coordinate,vreal(initial_a)));
+    assert(gml_physics_variable_set(&vm,&vm.inst[2],second_coordinate,vreal(initial_b)));
+    vm.cur_self=&vm.inst[1];vm.cur_other=&vm.inst[2];
+    int id=gml_builtin_fast_id(&vm,name);
+    assert(id>=0);
+    GmlVal args[]={vreal(-1),vreal(-2),vreal(source_a),vreal(source_b),vreal(ratio)};
+    assert(gml_builtin_call(&vm,name,args,4).d==-1);
+    args[3]=vreal(source_a);
+    assert(gml_builtin_call(&vm,name,args,5).d==-1);
+    args[3]=vreal(source_b);
+    GmlVal gear=cached?gml_builtin_call_fast_id(&vm,id,name,args,5):
+                       gml_builtin_call(&vm,name,args,5);
+    assert(gear.t==V_REAL && gear.d>0);
+
+    /* Perturb an already coupled body before the first native solve. Capturing
+     * the constant at the first step would make this displacement permanent. */
+    assert(gml_physics_variable_set(&vm,&vm.inst[1],first_coordinate,vreal(initial_a+5)));
+    assert(gml_physics_variable_set(&vm,&vm.inst[1],first_speed,vreal(18)));
+    step(&vm,6);
+    double observed_a=get(&vm,1,first_coordinate),observed_b=get(&vm,2,second_coordinate);
+    assert(fabs((observed_a-initial_a)*first_unit+
+                ratio*(observed_b-initial_b)*second_unit)<.0001);
+    assert(fabs(observed_b-initial_b)>.01);
+
+    size_t size=gml_vm_state_size(&vm),written=0,used=0;
+    void *snapshot=malloc(size);
+    assert(snapshot && gml_vm_state_save(&vm,snapshot,size,&written));
+    step(&vm,12);
+    double final_a=get(&vm,1,first_coordinate),final_b=get(&vm,2,second_coordinate);
+    assert(fabs((final_a-initial_a)*first_unit+ratio*(final_b-initial_b)*second_unit)<.0001);
+    assert(fabs(final_b-observed_b)>.01);
+    assert(gml_vm_state_load(&vm,snapshot,written,&used) && used==written);
+    step(&vm,12);
+    assert(get(&vm,1,first_coordinate)==final_a && get(&vm,2,second_coordinate)==final_b);
+
+    CALL(&vm,"physics_joint_delete",source_a);
+    for(int i=0;i<GML_PHYS_JOINT_MAX;i++)
+      assert(!vm.builtins->phys_joint[i].live || vm.builtins->phys_joint[i].id!=gear.d);
+    step(&vm,1);
+    free(snapshot);gml_vm_free(&vm);
+  }
+  puts("gear joint: all source pairs, signed ratios, fixed coupling, deletion and restore passed");
+}
+
 static int allow_contact(void *context,int a,int b){
   assert(a==0 && b==0); return *(int *)context;
 }
@@ -460,6 +534,7 @@ int main(void){
   if(!bound_fixture_properties()) return EXIT_FAILURE;
   direct_joint_constructors();
   motor_joint_constructors();
+  gear_joint_constructor();
   puts("physics: units, fixture lifetime, offsets, rotation, contacts, joints and restore passed");
   return 0;
 }
