@@ -291,7 +291,30 @@
   "  fragment_colour=vec4(changed,0.0,0.0,1.0);\n" \
   "}\n"
 
-#define GML_GPU_OPENGL_SCENE_FRAGMENT_BODY \
+#define GML_GPU_OPENGL_SCENE_POINT_MAP_RULES(indent) \
+  indent "if(v_span_y.w==2.0) at=ivec2(v_span_x.zw)+p*ivec2(v_span_y.yz)/dest;\n" \
+  indent "else if(v_span_y.w==1.0) at=ivec2(floor(v_span_x.zw+vec2(p)*v_span_y.yz/vec2(dest)));\n" \
+  indent "if(v_span_x.x==1.0) at.x=(2*p.x*size.x+dest.x)/(2*dest.x);\n" \
+  indent "if(v_span_x.x==2.0) at.x=(2*p.x+1)*size.x/(2*dest.x);\n" \
+  indent "if(v_span_x.y==1.0) at.y=(2*p.y*size.y+dest.y)/(2*dest.y);\n" \
+  indent "if(v_span_x.y==2.0) at.y=(2*p.y+1)*size.y/(2*dest.y);\n" \
+  indent "if(v_span_x.x==3.0) at.x=((2*p.x+1)*size.x-1)/(2*dest.x);\n" \
+  indent "if(v_span_x.y==3.0) at.y=((2*p.y+1)*size.y-1)/(2*dest.y);\n"
+
+#define GML_GPU_OPENGL_SCENE_POINT_MAPPING \
+  "      ivec2 at=p*size/dest;\n" \
+  GML_GPU_OPENGL_SCENE_POINT_MAP_RULES("      ")
+
+#define GML_GPU_OPENGL_SCENE_IDENTITY_POINT_MAPPING \
+  "      // Equal extents make every in-bounds point-phase rule the identity.\n" \
+  "      ivec2 at=p;\n" \
+  "      if(any(notEqual(size,dest)) || v_span_y.w!=0.0 ||\n" \
+  "         any(lessThan(p,ivec2(0))) || any(greaterThanEqual(p,dest))){\n" \
+  "        at=p*size/dest;\n" \
+  GML_GPU_OPENGL_SCENE_POINT_MAP_RULES("        ") \
+  "      }\n"
+
+#define GML_GPU_OPENGL_SCENE_FRAGMENT_PREFIX \
   "uniform sampler2D u_image;\n" \
   "uniform sampler2D u_previous;\n" \
   "uniform ivec2 u_region_origin;\n" \
@@ -708,27 +731,9 @@
   "      ivec2 dest=ivec2(abs(v_map.zw)),size=textureSize(u_image,0);\n" \
   "      ivec2 p=ivec2(int(gl_FragCoord.x),int(v_step.y)-1-int(gl_FragCoord.y))-ivec2(v_map.xy);\n" \
   "      if(v_map.z<0.0) p.x=dest.x-1-p.x;\n" \
-  "      if(v_map.w<0.0) p.y=dest.y-1-p.y;\n" \
-  "#if defined(GML_SCENE_CONSTANT_FILTER) && (GML_SCENE_CONSTANT_FILTER==53 || GML_SCENE_CONSTANT_FILTER==55)\n" \
-  "      // Equal extents make every in-bounds point-phase rule the identity.\n" \
-  "      ivec2 at=p;\n" \
-  "      if(any(notEqual(size,dest)) || v_span_y.w!=0.0 ||\n" \
-  "         any(lessThan(p,ivec2(0))) || any(greaterThanEqual(p,dest))){\n" \
-  "        at=p*size/dest;\n" \
-  "#else\n" \
-  "      ivec2 at=p*size/dest;\n" \
-  "#endif\n" \
-  "        if(v_span_y.w==2.0) at=ivec2(v_span_x.zw)+p*ivec2(v_span_y.yz)/dest;\n" \
-  "        else if(v_span_y.w==1.0) at=ivec2(floor(v_span_x.zw+vec2(p)*v_span_y.yz/vec2(dest)));\n" \
-  "        if(v_span_x.x==1.0) at.x=(2*p.x*size.x+dest.x)/(2*dest.x);\n" \
-  "        if(v_span_x.x==2.0) at.x=(2*p.x+1)*size.x/(2*dest.x);\n" \
-  "        if(v_span_x.y==1.0) at.y=(2*p.y*size.y+dest.y)/(2*dest.y);\n" \
-  "        if(v_span_x.y==2.0) at.y=(2*p.y+1)*size.y/(2*dest.y);\n" \
-  "        if(v_span_x.x==3.0) at.x=((2*p.x+1)*size.x-1)/(2*dest.x);\n" \
-  "        if(v_span_x.y==3.0) at.y=((2*p.y+1)*size.y-1)/(2*dest.y);\n" \
-  "#if defined(GML_SCENE_CONSTANT_FILTER) && (GML_SCENE_CONSTANT_FILTER==53 || GML_SCENE_CONSTANT_FILTER==55)\n" \
-  "      }\n" \
-  "#endif\n" \
+  "      if(v_map.w<0.0) p.y=dest.y-1-p.y;\n"
+
+#define GML_GPU_OPENGL_SCENE_FRAGMENT_SUFFIX \
   "      if(v_span_y.w>0.0 && (any(lessThan(at,ivec2(0))) || any(greaterThanEqual(at,size)))) discard;\n" \
   "      at=clamp(at,ivec2(0),size-ivec2(1));\n" \
   "      if(v_step.x!=0.0) at.y=size.y-1-at.y;\n" \
@@ -1165,6 +1170,18 @@
   "    o_color=vec4(floor(o_color.rgb*255.0*o_color.a),floor(o_color.a*255.0))/255.0;\n" \
   "  }\n" \
   "}\n"
+
+/* Keep the ordinary source bytes stable; only the two surface programs select the
+ * bounded identity mapper. Both forms share the same point-phase expressions. */
+#define GML_GPU_OPENGL_SCENE_FRAGMENT_BODY \
+  GML_GPU_OPENGL_SCENE_FRAGMENT_PREFIX \
+  GML_GPU_OPENGL_SCENE_POINT_MAPPING \
+  GML_GPU_OPENGL_SCENE_FRAGMENT_SUFFIX
+
+#define GML_GPU_OPENGL_SCENE_SURFACE_FRAGMENT_BODY \
+  GML_GPU_OPENGL_SCENE_FRAGMENT_PREFIX \
+  GML_GPU_OPENGL_SCENE_IDENTITY_POINT_MAPPING \
+  GML_GPU_OPENGL_SCENE_FRAGMENT_SUFFIX
 
 /* The bounded filtered-font rule preserves the CPU's ordered binary64 expression.
  * Embedded programs specialise the generation and write one RGB channel per pass:

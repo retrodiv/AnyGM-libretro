@@ -109,7 +109,7 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
                      sizeof(GML_GPU_OPENGL_PREFIX_DESKTOP)+
                      sizeof(GML_GPU_OPENGL_SCENE_INSTANCED_VERTEX_BODY)];
   char fragment_source[sizeof(GML_GPU_OPENGL_PREFIX_ES)+
-                       sizeof(GML_GPU_OPENGL_PREFIX_DESKTOP)+sizeof(GML_GPU_OPENGL_SCENE_FRAGMENT_BODY)+128u];
+                       sizeof(GML_GPU_OPENGL_PREFIX_DESKTOP)+sizeof(GML_GPU_OPENGL_SCENE_SURFACE_FRAGMENT_BODY)+128u];
   GLuint vertex,fragment;
   GLint status=GL_FALSE;
   if(scene->program) return 1;
@@ -162,7 +162,8 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
                                mode==44?"#define GML_SCENE_CONSTANT_FILTER 38\n#define GML_SCENE_PLAIN_NATIVE 1\n#define GML_SCENE_WHITE_TINT 1\n":
                                mode==45?"#define GML_SCENE_CONSTANT_FILTER 37\n":
                                mode==46?"#define GML_SCENE_CONSTANT_FILTER 42\n":"",
-                               GML_GPU_OPENGL_SCENE_FRAGMENT_BODY);
+                               mode==29 || mode==30?GML_GPU_OPENGL_SCENE_SURFACE_FRAGMENT_BODY:
+                                                    GML_GPU_OPENGL_SCENE_FRAGMENT_BODY);
   if(vertex_length<0 || (size_t)vertex_length>=sizeof vertex_source ||
      fragment_length<0 || (size_t)fragment_length>=sizeof fragment_source){
     gml_gpu_opengl_record_error(error,error_capacity,"scene shader source exceeds buffer capacity");

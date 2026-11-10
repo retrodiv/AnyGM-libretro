@@ -1951,6 +1951,9 @@ static int scene_hot_constant_programs_case(void){
       const char *fragment=anygm_test_graphics_shader_source(1);
       REQUIRE(program && fragment && strstr(fragment,prefix),
         "hot native and filtered samplers compile their existing constant branch");
+      REQUIRE((strstr(fragment,"// Equal extents make every in-bounds point-phase rule the identity.")!=NULL)==
+        (filters[selected]==53u || filters[selected]==55u),
+        "only qualified surface programs receive the identity mapper source");
       if(filters[selected]==55u)
         REQUIRE(!gml_gpu_opengl_scene_draw_program(gpu->backend,53u,0,error,sizeof error),
           "RGB surface programs still require their colour attributes");
