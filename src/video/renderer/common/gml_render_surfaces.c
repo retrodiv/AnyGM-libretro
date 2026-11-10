@@ -4369,6 +4369,35 @@ const uint32_t *gml_surface_pixels_read(GmlRender *r, int id, int *w, int *h){
   return surface_pixels_observe(r,id,w,h);
 }
 
+int gml_surface_pixels_replace(GmlRender *r,int id,const uint32_t *pixels,int width,int height){
+  if(!r || !pixels || id<0 || width<=0 || height<=0 ||
+     width!=gml_surface_width(r,id) || height!=gml_surface_height(r,id) ||
+     (size_t)width>SIZE_MAX/sizeof *pixels/(size_t)height) return 0;
+  int destination_width=0,destination_height=0;
+  uint32_t *destination=surface_pixels(r,id,&destination_width,&destination_height);
+  if(!destination) return 0;
+  if(destination==r->fb || id==r->target_id){
+    gml_render_maybe_prepare_draw(r);
+    destination=surface_pixels(r,id,&destination_width,&destination_height);
+  }
+  if(!destination || destination_width!=width || destination_height!=height) return 0;
+  memmove(destination,pixels,(size_t)width*(size_t)height*sizeof *pixels);
+  int slot=surface_slot(id);
+  if(slot>=0){
+    r->surface[slot].dirty=1;
+    r->surface[slot].opaque_known=0;
+    r->surface[slot].all_opaque=0;
+    r->surface[slot].all_transparent=0;
+  }
+  if(id==0) r->app_surface_opaque=0;
+  if(destination==r->fb){
+    r->fb_opaque_known=0;
+    r->fb_all_opaque=0;
+    r->fb_all_transparent=0;
+  }
+  return 1;
+}
+
 const uint32_t *gml_render_screen_pixels_read(GmlRender *r,int *w,int *h){
   return screen_pixels_observe(r,w,h);
 }

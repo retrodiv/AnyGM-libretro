@@ -1289,11 +1289,14 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     if(!strcmp(nm,"surface_get_width")) return vreal(R?gml_surface_width(R,(int)N(a,n,0)):0);
     if(!strcmp(nm,"surface_get_height")) return vreal(R?gml_surface_height(R,(int)N(a,n,0)):0);
-    if(!strcmp(nm,"surface_getpixel")){ int sid=(int)N(a,n,0), x=(int)N(a,n,1), y=(int)N(a,n,2);
+    if(!strcmp(nm,"surface_getpixel") || !strcmp(nm,"surface_getpixel_ext")){
+      int sid=(int)N(a,n,0), x=(int)N(a,n,1), y=(int)N(a,n,2);
       uint32_t p=0; int w=0,h=0,ok=0;
       const uint32_t *pixels=gml_surface_pixels_read(R,sid,&w,&h);
       if(pixels && x>=0 && y>=0 && x<w && y<h){ p=pixels[(size_t)y*w+x]; ok=1; }
-      return vreal(ok?(((p>>16)&0xff)|(p&0xff00)|((p&0xff)<<16)):0); }
+      uint32_t colour=((p>>16)&0xff)|(p&0xff00)|((p&0xff)<<16);
+      if(!strcmp(nm,"surface_getpixel_ext")) colour|=p&0xFF000000u;
+      return vreal(ok?colour:0); }
     if(!strcmp(nm,"sprite_get_width")){ GmlRenderSpriteMetrics sprite; return vreal(gml_render_sprite_metrics(R,(int)N(a,n,0),&sprite)?sprite.width:0); }
     if(!strcmp(nm,"sprite_get_height")){ GmlRenderSpriteMetrics sprite; return vreal(gml_render_sprite_metrics(R,(int)N(a,n,0),&sprite)?sprite.height:0); }
     if(!strcmp(nm,"sprite_get_number")){ GmlRenderSpriteMetrics sprite; return vreal(gml_render_sprite_metrics(R,(int)N(a,n,0),&sprite)?sprite.frame_count:0); }

@@ -27,6 +27,74 @@ static int struct_number_is(GmlInstance *value,const char *name,double number){
   GmlVal *field=value?gml_varmap_get(&value->vars,name):NULL;
   return field && real_is(*field,number);
 }
+static int surface_pixel_alpha_case(void){
+  int ok=1;
+  const uint32_t pixels[]={0x00123456u,0x7FABCDEFu,0xFF102030u,0x800100FEu};
+  const uint32_t packed[]={0x00563412u,0x7FEFCDABu,0xFF302010u,0x80FE0001u};
+  for(int cached=0;cached<2;cached++){
+    GmlRender *render=calloc(1,sizeof *render);
+    if(!render || gml_render_init(render,NULL)){ free(render); return 0; }
+    GmlVM vm={.render=render};
+    int id=gml_surface_create(render,2,2);
+    uint32_t *destination=surface_pixels(render,id,NULL,NULL);
+    if(!destination){ gml_render_free(render); free(render); return 0; }
+    memcpy(destination,pixels,sizeof pixels);
+    for(int index=0;index<4;index++){
+      GmlVal args[]={vreal(id),vreal(index%2),vreal(index/2)};
+      ok &= real_is(query(&vm,"surface_getpixel_ext",args,3,cached,&ok),packed[index]);
+      ok &= real_is(query(&vm,"surface_getpixel",args,3,cached,&ok),packed[index]&0xFFFFFFu);
+    }
+    GmlVal outside[]={vreal(id),vreal(2),vreal(0)};
+    ok &= real_is(query(&vm,"surface_getpixel_ext",outside,3,cached,&ok),0);
+    outside[0]=vreal(-1); outside[1]=vreal(0);
+    ok &= real_is(query(&vm,"surface_getpixel_ext",outside,3,cached,&ok),0);
+    vm.render=NULL; gml_vm_free(&vm); gml_render_free(render); free(render);
+  }
+  return ok;
+}
+static int buffer_surface_transfer_case(void){
+  int ok=1;
+  const unsigned char bytes[]={0x12,0x34,0x56,0x00,0xAB,0xCD,0xEF,0x7F,
+                                0x10,0x20,0x30,0xFF,0x01,0x00,0xFE,0x80};
+  const uint32_t expected[]={0x00123456u,0x7FABCDEFu,0xFF102030u,0x800100FEu};
+  for(int cached=0;cached<2;cached++){
+    GmlRender *render=calloc(1,sizeof *render);
+    if(!render || gml_render_init(render,NULL)){ free(render); return 0; }
+    GmlVM vm={.render=render};
+    int id=gml_surface_create(render,2,2);
+    GmlVal create[]={vreal(32),vreal(0),vreal(1)};
+    GmlVal buffer=gml_builtin_call(&vm,"buffer_create",create,3);
+    for(unsigned index=0;index<sizeof bytes;index++){
+      GmlVal poke[]={buffer,vreal(8+index),vreal(1),vreal(bytes[index])};
+      gml_builtin_call(&vm,"buffer_poke",poke,4);
+    }
+    GmlVal seek[]={buffer,vreal(0),vreal(19)};
+    gml_builtin_call(&vm,"buffer_seek",seek,3);
+    render->blendmode=1; render->alpha=0; render->color_write_mask=0;
+    GmlVal upload[]={buffer,vreal(id),vreal(8)};
+    query(&vm,"buffer_set_surface",upload,3,cached,&ok);
+    int width=0,height=0;
+    const uint32_t *observed=gml_surface_pixels_read(render,id,&width,&height);
+    ok &= observed && width==2 && height==2 && !memcmp(observed,expected,sizeof expected);
+    ok &= real_is(gml_builtin_call(&vm,"buffer_tell",&buffer,1),19);
+    ok &= render->blendmode==1 && render->alpha==0 && render->color_write_mask==0;
+    /* Every refusal must precede the first destination write. */
+    const double offsets[]={17,-1,2147483648.0,NAN,INFINITY};
+    for(unsigned index=0;index<sizeof offsets/sizeof offsets[0];index++){
+      upload[2]=vreal(offsets[index]);
+      query(&vm,"buffer_set_surface",upload,3,cached,&ok);
+      observed=gml_surface_pixels_read(render,id,NULL,NULL);
+      ok &= observed && !memcmp(observed,expected,sizeof expected);
+    }
+    upload[0]=vreal(-1); upload[2]=vreal(8);
+    query(&vm,"buffer_set_surface",upload,3,cached,&ok);
+    observed=gml_surface_pixels_read(render,id,NULL,NULL);
+    ok &= observed && !memcmp(observed,expected,sizeof expected);
+    ok &= real_is(gml_builtin_call(&vm,"buffer_tell",&buffer,1),19);
+    vm.render=NULL; gml_vm_free(&vm); gml_render_free(render); free(render);
+  }
+  return ok;
+}
 static int vertex_format_information_case(void){
   int ok=1;
   for(int cached=0;cached<2;cached++){
@@ -708,7 +776,9 @@ int main(int argc,char **argv){
   const char *filter=NULL;
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2];
   else if(argc!=1) return EXIT_FAILURE;
-  const AnygmTestCase cases[]={{"vertex_format_information",vertex_format_information_case},
+  const AnygmTestCase cases[]={{"surface_pixel_alpha",surface_pixel_alpha_case},
+    {"buffer_surface_transfer",buffer_surface_transfer_case},
+    {"vertex_format_information",vertex_format_information_case},
     {"vertex_resource_existence",vertex_resource_existence_case},
     {"display_frequency",display_frequency_case},
     {"explicit_default_speed",explicit_default_speed_case},{"circle_precision",circle_case},

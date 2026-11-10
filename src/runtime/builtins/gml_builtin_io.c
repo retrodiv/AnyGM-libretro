@@ -1889,6 +1889,33 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return md5_hex_val(buffer_at(vm,i)->data+off,(size_t)sz); }
   if(!strcmp(nm,"buffer_get_address")){ int id=(int)N(a,n,0), i=vm_buffer_slot(vm,id);
     return vreal(i>=0 ? (double)(UINT64_C(0xB000000000)+(uint32_t)id) : 0); }
+  if(!strcmp(nm,"buffer_set_surface")){
+    double handle=N(a,n,0),surface=N(a,n,1),offset=N(a,n,2);
+    if(n<3 || !isfinite(handle) || handle<1 || handle>INT_MAX ||
+       !isfinite(surface) || surface<0 || surface>INT_MAX ||
+       !isfinite(offset) || offset<0 || offset>INT_MAX) return vreal(0);
+    int source=vm_buffer_slot(vm,(int)handle),sid=(int)surface,off=(int)offset;
+    GmlRender *render=(GmlRender*)vm->render;
+    int width=render?gml_surface_width(render,sid):0;
+    int height=render?gml_surface_height(render,sid):0;
+    if(source<0 || width<=0 || height<=0 ||
+       (size_t)width>(size_t)INT_MAX/4u/(size_t)height) return vreal(0);
+    size_t count=(size_t)width*(size_t)height;
+    if(count>(size_t)INT_MAX/4u || off>buffer_at(vm,source)->size ||
+       count*4u>(size_t)(buffer_at(vm,source)->size-off) ||
+       !buffer_at(vm,source)->data) return vreal(0);
+    uint32_t *pixels=malloc(count*sizeof *pixels);
+    if(!pixels) return vreal(0);
+    const unsigned char *bytes=buffer_at(vm,source)->data+off;
+    for(size_t index=0;index<count;index++){
+      const unsigned char *p=bytes+index*4u;
+      pixels[index]=((uint32_t)p[3]<<24)|((uint32_t)p[0]<<16)|
+                    ((uint32_t)p[1]<<8)|p[2];
+    }
+    (void)gml_surface_pixels_replace(render,sid,pixels,width,height);
+    free(pixels);
+    return vreal(0);
+  }
   if(!strcmp(nm,"buffer_get_surface")){  /* Copy surface pixels as R,G,B,A bytes. */
     int di=vm_buffer_slot(vm,(int)N(a,n,0)); int sid=(int)N(a,n,1); int off=(int)N(a,n,2);
     GmlRender *R=(GmlRender*)vm->render;

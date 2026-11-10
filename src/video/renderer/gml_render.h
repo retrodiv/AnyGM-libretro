@@ -888,6 +888,8 @@ void gml_surface_resize(GmlRender *r, int id, int w, int h);
 int  gml_surface_width(GmlRender *r, int id);
 int  gml_surface_height(GmlRender *r, int id);
 const uint32_t *gml_surface_pixels_read(GmlRender *r, int id, int *w, int *h);
+/* Replace a complete existing surface with native ARGB bytes, independent of draw state. */
+int gml_surface_pixels_replace(GmlRender *r,int id,const uint32_t *pixels,int width,int height);
 /* Borrow the base screen after pending draws and device reads are resolved, independently of
  * any custom surface target. The borrow ends at the next renderer mutation. */
 const uint32_t *gml_render_screen_pixels_read(GmlRender *r,int *w,int *h);
