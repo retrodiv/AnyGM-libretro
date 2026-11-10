@@ -654,6 +654,48 @@ static int dispatch_deferred_fill_case(void){
   return 1;
 }
 
+static int pre_draw_clear_handoff_case(void){
+  enum { W=8,H=6 };
+  const uint32_t zero[W*H]={0};
+  uint32_t source[4]={0},screen[W*H],world[W*H],previous[W*H];
+  GmlWin content={0};
+  GmlRender render;
+  content.bytecode=17;
+  fill_asymmetric(previous,W,H);
+  memcpy(screen,previous,sizeof screen);
+  memcpy(world,previous,sizeof world);
+  render_reset(&render,&content,source,2,2,screen,W,H,1);
+  gml_render_set_pending_fill(&render,0);
+  REQUIRE(gml_render_hold_pre_draw_clear(&render,screen),"separate screen clear can be held");
+  gml_render_begin(&render,world,W,H,0,0);
+  REQUIRE(!render.pending_fill && !render.pre_draw_clear_target &&
+          !memcmp(screen,previous,sizeof screen) && !memcmp(world,previous,sizeof world),
+          "world handoff retires the unread clear without a pixel write");
+
+  gml_render_begin(&render,screen,W,H,0,0);
+  gml_render_set_pending_fill(&render,0);
+  REQUIRE(gml_render_hold_pre_draw_clear(&render,screen),"screen clear waits for a reader");
+  int width=0,height=0;
+  REQUIRE(gml_render_screen_pixels_read(&render,&width,&height)==screen &&
+          width==W && height==H && !memcmp(screen,zero,sizeof screen),
+          "screen reader materializes the entire held zero plane");
+
+  gml_render_begin(&render,screen,W,H,0,0);
+  memcpy(screen,previous,sizeof screen);
+  gml_render_set_pending_fill(&render,0);
+  REQUIRE(gml_render_hold_pre_draw_clear(&render,screen),"same-target fallback is armed");
+  gml_render_begin(&render,screen,W,H,0,0);
+  REQUIRE(!render.pending_fill && !render.pre_draw_clear_target &&
+          !memcmp(screen,zero,sizeof screen),"same-target handoff realizes the held clear");
+
+  gml_render_application_surface_bind(&render,screen,W,H,0);
+  gml_render_set_pending_fill(&render,0);
+  REQUIRE(!gml_render_hold_pre_draw_clear(&render,screen),
+          "the screen cannot be retired while an application surface aliases it");
+  gml_render_free(&render);
+  return 1;
+}
+
 static int dispatch_deferred_presentation_case(void){
   enum { W=24,H=20 };
   uint32_t source[4*3],off[W*H],on[W*H];
@@ -1754,6 +1796,7 @@ int main(int argc,char **argv){
     {"shaded_primitive_and_device",shaded_primitive_and_device_case},
     {"deferred_underlay",deferred_underlay_case},
     {"dispatch_deferred_fill",dispatch_deferred_fill_case},
+    {"pre_draw_clear_handoff",pre_draw_clear_handoff_case},
     {"dispatch_deferred_presentation",dispatch_deferred_presentation_case},
   };
   static const AnygmTestCase plan_cases[]={

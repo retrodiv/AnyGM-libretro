@@ -754,6 +754,8 @@ void gml_render_flush_pending_underlay(GmlRender *r);
 int gml_render_defer_resident_underlay(GmlRender *r);
 void gml_render_set_pending_fill(GmlRender *r, uint32_t color);
 void gml_render_flush_pending_fill(GmlRender *r);
+/* Keep an unread software Pre-Draw clear pending until the world replaces its target. */
+int gml_render_hold_pre_draw_clear(GmlRender *r,const uint32_t *screen);
 /* Finish queued resident draws before an observer leaves the world pass. */
 int gml_render_scene_flush(GmlRender *r);
 /* Submit queued draws while retaining unobserved device pixels. CPU readers and explicit

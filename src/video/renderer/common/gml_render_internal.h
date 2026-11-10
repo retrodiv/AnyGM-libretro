@@ -420,6 +420,7 @@ typedef struct GmlRender {
   int app_presentation_coverage_active;
   int pending_underlay, underlay_x, underlay_y, underlay_w, underlay_h;  /* deferred default app-surface blit */
   int pending_fill; uint32_t pending_fill_color; /* deferred full-target overwrite */
+  const uint32_t *pre_draw_clear_target; /* transient software screen handoff */
   /* Deferred terminal application-surface presentation. Recorded only when it covers the whole
    * target, so whatever it would have overwritten cannot matter, and flushed by the same hooks
    * that flush the two records above. */

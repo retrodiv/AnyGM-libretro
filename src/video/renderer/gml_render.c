@@ -1024,6 +1024,14 @@ void gml_render_free(GmlRender *r){
 void gml_render_begin(GmlRender *r, uint32_t *fb, int w, int h, double cx, double cy){
   if(!gml_render_application_scene_flush(r)) return;
   gml_render_flush_rotated_batch(r);
+  if(r->pre_draw_clear_target){
+    const uint32_t *previous=r->pre_draw_clear_target;
+    r->pre_draw_clear_target=NULL;
+    /* A reader can already have realized the clear. Keep an outstanding write
+     * when the next pass still uses those pixels or the current clear changed. */
+    if(r->pending_fill && (fb==previous || r->fb!=previous || r->pending_fill_color))
+      gml_render_flush_pending_fill(r);
+  }
   if(r->resident_application_pass && r->dispatch_frame_accounting &&
      r->dispatch_frame_accounting->pending_cause==GML_RENDER_RESIDENT_UNKNOWN)
     gml_render_dispatch_resident_lost(r,GML_RENDER_RESIDENT_PASS_RESTART);
@@ -1094,6 +1102,18 @@ void gml_render_cancel_pending_fill(GmlRender *r){
   if(!r) return;
   r->pending_fill=0;
   r->pending_fill_color=0;
+}
+int gml_render_hold_pre_draw_clear(GmlRender *r,const uint32_t *screen){
+  if(!r || !screen || r->fb!=screen || r->base_fb!=screen ||
+     r->fbw!=r->base_fbw || r->fbh!=r->base_fbh ||
+     r->app_surface==screen || r->app_surface_owned==screen ||
+     r->target_id!=-1 || r->target_sp || r->scene_device_enabled ||
+     r->resident_application_pass || r->resident_scene_pass ||
+     !r->pending_fill || r->pending_fill_color || r->pending_underlay ||
+     r->pending_presentation || r->rotated_batch_count ||
+     r->rotated_batch_building || r->rotated_scene_batch) return 0;
+  r->pre_draw_clear_target=screen;
+  return 1;
 }
 void gml_render_set_pending_fill(GmlRender *r, uint32_t color){
   if(!r || !r->fb || r->fbw<=0 || r->fbh<=0) return;

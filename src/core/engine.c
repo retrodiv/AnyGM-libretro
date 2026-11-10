@@ -1582,7 +1582,18 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
                        (int)engine->output_width,(int)engine->output_height,0.0,0.0);
     gml_render_set_pending_fill(&engine->render,0);
     gml_vm_draw_pass(&engine->vm,"Draw_76");
-    gml_render_flush_pending_fill(&engine->render);
+    /* The modern software world takes a separate base. Keep the screen clear
+     * visible to any reader until that handoff. The later screen stage sets
+     * its own clear before drawing. */
+    int held_pre_draw_clear=!resident_pre_draw &&
+      engine->scene_renderer_session==ANYGM_SCENE_RENDERER_CPU &&
+      anygm_policy_has_modern_screen_stage(&engine->win) &&
+      !engine->composed_frame && !engine->content_presented &&
+      !engine->aspect_force_active && !engine->canvas_mode &&
+      engine->fb && engine->fb!=engine->screen &&
+      !anygm_host_development_setting(&engine->host,"GML_LOG_PRESENT_PASSES") &&
+      gml_render_hold_pre_draw_clear(&engine->render,engine->screen);
+    if(!held_pre_draw_clear) gml_render_flush_pending_fill(&engine->render);
     if(resident_pre_draw && !gml_render_scene_submit_pending(&engine->render))
       return ANYGM_ERROR_INTERNAL;
     sync_room_fps(engine,1);
