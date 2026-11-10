@@ -8,6 +8,7 @@
 
 #include <math.h>
 #include <limits.h>
+#include <stdlib.h>
 #include <string.h>
 static uint32_t phys_next_id(GmlVM *vm){
   if(!vm->builtins->phys_next_id) vm->builtins->phys_next_id=4000001u;
@@ -85,6 +86,108 @@ static int physics_target(GmlVM *vm,GmlInstance *in,int target){
   if(target==-3) return 1;
   if(target>=100000) return in->id==(uint32_t)target;
   return target>=0 && gml_object_is(vm,in->obj,target);
+}
+
+static GmlInstance *query_fixture_owner(GmlVM *vm,const GmlPhysicsFixture *fixture){
+  if(!fixture->live || fixture->bound_inst<0) return NULL;
+  GmlInstance *in=gml_vm_instance_by_id(vm,fixture->bound_inst);
+  if(!in || !in->active || in->marked) return NULL;
+  return in;
+}
+
+static int query_target(GmlVM *vm,GmlInstance *in,GmlVal selector){
+  return gml_val_is_number_or_object(selector) &&
+         selector.d>=INT_MIN && selector.d<=INT_MAX &&
+         physics_target(vm,in,(int)selector.d);
+}
+
+static int ray_target(GmlVM *vm,GmlInstance *in,GmlVal selector){
+  if(selector.t!=V_ARR) return query_target(vm,in,selector);
+  int length=gml_val_array_length(selector);
+  for(int i=0;i<length;i++)
+    if(query_target(vm,in,gml_arr_get(selector,i))) return 1;
+  return 0;
+}
+
+static int physics_overlap(GmlVM *vm,GmlVal *arguments,int count){
+  GmlInstance *self=vm->cur_self;
+  double scale=gml_physics_world_scale(vm);
+  if(count<4 || !self || scale<=0 || self->marked) return 0;
+  GmlPhysicsBody pose=gml_physics_placement_pose(self,N(arguments,count,0),
+                                                N(arguments,count,1),N(arguments,count,2));
+  GmlVal selector=arguments[3];
+  const GmlPhysicsFixture *fixtures=vm->builtins->phys_fixture;
+  int sources[GML_PHYS_FIXTURE_MAX],source_count=0;
+  for(int i=0;i<GML_PHYS_FIXTURE_MAX;i++)
+    if(fixtures[i].live && fixtures[i].bound_inst==(int)self->id) sources[source_count++]=i;
+  if(!source_count) return 0;
+  for(int i=0;i<GML_PHYS_FIXTURE_MAX;i++){
+    const GmlPhysicsFixture *target=&fixtures[i];
+    GmlInstance *in=query_fixture_owner(vm,target);
+    if(!in || !query_target(vm,in,selector)) continue;
+    if(in==self && selector.d!=-1 && selector.d!=self->id) continue;
+    GmlPhysicsBody other=gml_physics_body_pose(in);
+    for(int j=0;j<source_count;j++)
+      if(gml_physics_fixture_overlap(&fixtures[sources[j]],&pose,target,&other,scale)) return 1;
+  }
+  return 0;
+}
+
+static int ray_hit_compare(const void *left,const void *right){
+  const GmlPhysicsRayHit *a=left,*b=right;
+  if(a->fraction!=b->fraction) return a->fraction<b->fraction?-1:1;
+  return a->fixture<b->fixture?-1:a->fixture>b->fixture;
+}
+
+static GmlVal physics_raycast(GmlVM *vm,GmlVal *arguments,int count){
+  double scale=gml_physics_world_scale(vm);
+  if(count<5 || scale<=0) return vundef();
+  GmlPhysicsRay ray={N(arguments,count,0),N(arguments,count,1),
+                     N(arguments,count,2),N(arguments,count,3),count>=7?N(arguments,count,6):1};
+  if(!isfinite(ray.max_fraction) || ray.max_fraction<0) return vundef();
+  ray.max_fraction=fmin(ray.max_fraction,1);
+  int all_hits=count>=6 && N(arguments,count,5)!=0;
+  GmlPhysicsRayHit closest,*hits=&closest;
+  if(all_hits){
+    hits=malloc(GML_PHYS_FIXTURE_MAX*sizeof(*hits));
+    if(!hits) return vundef();
+  }
+  int found=0;
+  for(int i=0;i<GML_PHYS_FIXTURE_MAX;i++){
+    const GmlPhysicsFixture *fixture=&vm->builtins->phys_fixture[i];
+    GmlInstance *in=query_fixture_owner(vm,fixture);
+    if(!in || !ray_target(vm,in,arguments[4])) continue;
+    GmlPhysicsBody pose=gml_physics_body_pose(in);
+    if(!pose.active) continue;
+    GmlPhysicsRayHit hit;
+    if(!gml_physics_fixture_raycast(fixture,&pose,&ray,scale,&hit)) continue;
+    if(all_hits) hits[found++]=hit;
+    else if(!found || ray_hit_compare(&hit,&closest)<0){
+      closest=hit;
+      ray.max_fraction=hit.fraction;
+      found=1;
+    }
+  }
+  if(!found){ if(all_hits) free(hits); return vundef(); }
+  if(found>1) qsort(hits,(size_t)found,sizeof(*hits),ray_hit_compare);
+  GmlVal array=gml_arr_new(found,vundef());
+  int complete=gml_val_array_length(array)==found;
+  const char *const names[]={"instance","hitpointX","hitpointY","normalX","normalY","fraction"};
+  for(int i=0;i<found && complete;i++){
+    GmlInstance *record=gml_struct_new(vm);
+    if(!record){ complete=0; break; }
+    const GmlPhysicsRayHit *hit=&hits[i];
+    const double values[]={hit->instance,hit->x,hit->y,hit->nx,hit->ny,hit->fraction};
+    for(unsigned j=0;j<sizeof names/sizeof names[0];j++){
+      GmlVal *field=gml_varmap_put(&record->vars,names[j]);
+      if(!field){ complete=0; break; }
+      *field=vreal(values[j]);
+    }
+    if(complete) gml_arr_set(array,i,vreal(record->id));
+  }
+  if(all_hits) free(hits);
+  if(!complete){ gml_values_release_owned(&array,1); return vundef(); }
+  return array;
 }
 
 /* Writable fields use the same canonical slot for get and set. */
@@ -189,6 +292,8 @@ static void joint_set_value(GmlVM *vm,GmlPhysicsJoint *joint,int field,double nu
 GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
   GmlRender *R=(GmlRender*)vm->render;
   (void)R;
+  if(!strcmp(nm,"physics_test_overlap")) return vreal(physics_overlap(vm,a,n));
+  if(!strcmp(nm,"physics_raycast")) return physics_raycast(vm,a,n);
   if(!strcmp(nm,"physics_fixture_create")){
     GmlPhysicsFixture *f=gml_physics_fixture_new(vm);
     return vreal(f?(double)f->id:0);

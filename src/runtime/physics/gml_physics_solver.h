@@ -109,11 +109,24 @@ typedef struct {
   double x, y, nx, ny;
 } GmlPhysicsContact;
 
+typedef struct {
+  double x1,y1,x2,y2,max_fraction;
+} GmlPhysicsRay;
+
+typedef struct {
+  uint32_t instance,fixture;
+  double x,y,nx,ny,fraction;
+} GmlPhysicsRayHit;
+
 typedef int (*GmlPhysicsFilter)(void *context,int object_a,int object_b);
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+int gml_physics_fixture_overlap(const GmlPhysicsFixture *a,const GmlPhysicsBody *pose_a,
+                                const GmlPhysicsFixture *b,const GmlPhysicsBody *pose_b,double scale);
+int gml_physics_fixture_raycast(const GmlPhysicsFixture *fixture,const GmlPhysicsBody *pose,
+                                const GmlPhysicsRay *ray,double scale,GmlPhysicsRayHit *hit);
 void gml_physics_solver_mass(GmlPhysicsBody *body,const GmlPhysicsFixture *fixtures,
                              int fixture_count,double scale);
 int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,

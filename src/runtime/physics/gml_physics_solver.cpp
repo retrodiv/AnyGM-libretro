@@ -75,6 +75,12 @@ struct Shape {
   }
 };
 
+bool query_transform(const GmlPhysicsBody &pose,double scale,b2Transform &transform) {
+  if (!spatial(pose.x,scale) || !spatial(pose.y,scale) || !bounded(pose.angle)) return false;
+  transform.Set(b2Vec2(float(pose.x*scale),float(pose.y*scale)),float(pose.angle*radians));
+  return true;
+}
+
 struct Filter : b2ContactFilter {
   GmlPhysicsFilter callback;
   void *context;
@@ -117,6 +123,57 @@ b2Body *find_body(const std::vector<b2Body *> &bodies,uint32_t id) {
       return body;
   return nullptr;
 }
+}
+
+extern "C" int gml_physics_fixture_overlap(const GmlPhysicsFixture *a,const GmlPhysicsBody *pose_a,
+                                           const GmlPhysicsFixture *b,const GmlPhysicsBody *pose_b,
+                                           double scale) {
+  b2Transform transform_a,transform_b;
+  if (!query_transform(*pose_a,scale,transform_a) ||
+      !query_transform(*pose_b,scale,transform_b)) return 0;
+  Shape storage_a,storage_b;
+  const b2Shape *shape_a=storage_a.make(*a,scale),*shape_b=storage_b.make(*b,scale);
+  if (!shape_a || !shape_b) return 0;
+  for (int i=0;i<shape_a->GetChildCount();i++)
+    for (int j=0;j<shape_b->GetChildCount();j++)
+      if (b2TestOverlap(shape_a,i,shape_b,j,transform_a,transform_b)) return 1;
+  return 0;
+}
+
+extern "C" int gml_physics_fixture_raycast(const GmlPhysicsFixture *fixture,
+                                           const GmlPhysicsBody *pose,const GmlPhysicsRay *ray,
+                                           double scale,GmlPhysicsRayHit *hit) {
+  b2Transform transform;
+  if (!query_transform(*pose,scale,transform) ||
+      !spatial(ray->x1,scale) || !spatial(ray->y1,scale) ||
+      !spatial(ray->x2,scale) || !spatial(ray->y2,scale)) return 0;
+  b2RayCastInput input;
+  input.p1.Set(float(ray->x1*scale),float(ray->y1*scale));
+  input.p2.Set(float(ray->x2*scale),float(ray->y2*scale));
+  if (input.p1==input.p2) return 0;
+  input.maxFraction=float(ray->max_fraction);
+  Shape storage;
+  const b2Shape *shape=storage.make(*fixture,scale);
+  if (!shape) return 0;
+  b2RayCastOutput closest{b2Vec2(0,0),0};
+  bool found=false;
+  for (int child=0;child<shape->GetChildCount();child++) {
+    b2RayCastOutput output;
+    if (shape->RayCast(&output,input,transform,child) &&
+        (!found || output.fraction<closest.fraction)) {
+      closest=output;
+      found=true;
+    }
+  }
+  if (!found) return 0;
+  hit->instance=uint32_t(fixture->bound_inst);
+  hit->fixture=fixture->id;
+  hit->fraction=closest.fraction;
+  hit->x=ray->x1+(ray->x2-ray->x1)*hit->fraction;
+  hit->y=ray->y1+(ray->y2-ray->y1)*hit->fraction;
+  hit->nx=closest.normal.x;
+  hit->ny=closest.normal.y;
+  return 1;
 }
 
 extern "C" void gml_physics_solver_mass(GmlPhysicsBody *body,

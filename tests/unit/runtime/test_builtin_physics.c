@@ -623,6 +623,109 @@ static void joint_fields(void){
   puts("joint properties: constants, live geometry, solver forces, typed writes and restore passed");
 }
 
+static GmlVal physics_query(GmlVM *vm,int cached,const char *name,GmlVal *args,int count){
+  int id=gml_builtin_fast_id(vm,name);
+  assert(id>=0);
+  return cached?gml_builtin_call_fast_id(vm,id,name,args,count):gml_builtin_call(vm,name,args,count);
+}
+
+static double hit_field(GmlVM *vm,GmlVal hits,int index,const char *field){
+  GmlVal record=gml_arr_get(hits,index);
+  assert(record.t==V_REAL);
+  GmlInstance *instance=gml_struct_find(vm,(uint32_t)record.d);
+  assert(instance);
+  GmlVal *value=gml_varmap_get(&instance->vars,field);
+  assert(value && value->t==V_REAL);
+  return value->d;
+}
+
+static void overlap_queries(void){
+  const char *name="physics_test_overlap";
+  for(int cached=0;cached<2;cached++){
+    GmlVM vm;GmlWin win;setup(&vm,&win);
+    vm.cur_self=&vm.inst[0]; vm.cur_other=&vm.inst[1];
+    double fixture=call(&vm,"physics_fixture_create",NULL,0).d;
+    CALL(&vm,"physics_fixture_set_box_shape",fixture,6,1);
+    assert(CALL(&vm,"physics_fixture_bind_ext",fixture,vm.inst[0].id,3,0).d>0);
+    CALL(&vm,"physics_fixture_delete",fixture);
+    bind_box(&vm,1,20,11,1,1,0);
+    bind_box(&vm,2,50,11,1,1,0);
+    GmlVal args[]={vreal(20),vreal(20),vreal(90),vreal(-2)};
+    assert(physics_query(&vm,cached,name,args,4).d==1);
+    args[2]=vreal(-90);
+    assert(physics_query(&vm,cached,name,args,4).d==0);
+    args[2]=vreal(90);
+    args[3]=vreal(vm.inst[2].id);
+    assert(physics_query(&vm,cached,name,args,4).d==0);
+    args[3]=vobject(0);
+    assert(physics_query(&vm,cached,name,args,4).d==1);
+    args[0]=vreal(0); args[1]=vreal(0); args[2]=vreal(0); args[3]=vreal(-3);
+    assert(physics_query(&vm,cached,name,args,4).d==0);
+    args[0]=vreal(NAN);
+    assert(physics_query(&vm,cached,name,args,4).d==0);
+    assert(get(&vm,0,"phy_position_x")==-3 && get(&vm,0,"phy_rotation")==0);
+    assert(vm.inst[0].x==0 && vm.inst[0].y==0);
+    gml_vm_free(&vm);
+  }
+}
+
+static void raycast_queries(void){
+  const char *name="physics_raycast";
+  for(int cached=0;cached<2;cached++){
+    GmlVM vm;GmlWin win;setup(&vm,&win);
+    GmlObject *objects=realloc(vm.objects,2*sizeof(*objects));
+    assert(objects);
+    vm.objects=objects; vm.n_objects=2;
+    memset(&vm.objects[1],0,sizeof(vm.objects[1]));
+    vm.objects[1].parent=0;
+    vm.inst[1].obj=1;
+    bind_box(&vm,2,70,0,2,2,0);
+    bind_box(&vm,1,20,0,2,2,0);
+    double edge=call(&vm,"physics_fixture_create",NULL,0).d;
+    CALL(&vm,"physics_fixture_set_edge_shape",edge,4,-2,4,2);
+    assert(CALL(&vm,"physics_fixture_bind",edge,vm.inst[1].id).d>0);
+    CALL(&vm,"physics_fixture_delete",edge);
+
+    GmlVal args[]={vreal(0),vreal(0),vreal(100),vreal(0),vobject(0),vreal(1),vreal(1)};
+    GmlVal hits=physics_query(&vm,cached,name,args,5);
+    assert(gml_val_array_length(hits)==1);
+    assert(hit_field(&vm,hits,0,"instance")==vm.inst[1].id);
+    assert(fabs(hit_field(&vm,hits,0,"hitpointX")-18)<.0001);
+    assert(hit_field(&vm,hits,0,"hitpointY")==0 && hit_field(&vm,hits,0,"normalX")==-1);
+    assert(hit_field(&vm,hits,0,"normalY")==0 && fabs(hit_field(&vm,hits,0,"fraction")-.18)<1e-6);
+    gml_values_release_owned(&hits,1);
+
+    GmlVal selectors=gml_arr_new(2,vobject(0));
+    gml_arr_set(selectors,1,vreal(vm.inst[1].id));
+    args[4]=selectors;
+    hits=physics_query(&vm,cached,name,args,7);
+    assert(gml_val_array_length(hits)==3);
+    assert(hit_field(&vm,hits,1,"instance")==vm.inst[1].id);
+    assert(fabs(hit_field(&vm,hits,1,"hitpointX")-24)<.0001);
+    assert(hit_field(&vm,hits,2,"instance")==vm.inst[2].id);
+    assert(fabs(hit_field(&vm,hits,2,"hitpointX")-68)<.0001);
+    gml_values_release_owned(&hits,1);
+    gml_values_release_owned(&selectors,1);
+
+    args[4]=vreal(vm.inst[2].id);
+    args[6]=vreal(.5);
+    assert(physics_query(&vm,cached,name,args,7).t==V_UNDEF);
+    args[4]=vreal(vm.inst[1].id);
+    hits=physics_query(&vm,cached,name,args,7);
+    assert(gml_val_array_length(hits)==2);
+    gml_values_release_owned(&hits,1);
+    assert(gml_physics_variable_set(&vm,&vm.inst[1],"phy_active",vreal(0)));
+    assert(physics_query(&vm,cached,name,args,7).t==V_UNDEF);
+    args[4]=vobject(0); args[6]=vreal(1);
+    args[2]=vreal(0);
+    assert(physics_query(&vm,cached,name,args,7).t==V_UNDEF);
+    args[2]=vreal(INFINITY);
+    assert(physics_query(&vm,cached,name,args,7).t==V_UNDEF);
+    gml_vm_free(&vm);
+  }
+  puts("physics queries: rotated offset overlap, compound ray hits, selectors and fractions passed");
+}
+
 static int allow_contact(void *context,int a,int b){
   assert(a==0 && b==0); return *(int *)context;
 }
@@ -681,6 +784,8 @@ int main(void){
   motor_joint_constructors();
   gear_joint_constructor();
   joint_fields();
+  overlap_queries();
+  raycast_queries();
   puts("physics: units, fixture lifetime, offsets, rotation, contacts, joints and restore passed");
   return 0;
 }

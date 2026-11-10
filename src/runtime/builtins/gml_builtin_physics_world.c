@@ -173,11 +173,22 @@ int gml_physics_capture_gear_pose(GmlVM *vm,const GmlPhysicsJoint *source,int sh
   return 1;
 }
 
-static GmlPhysicsBody joint_body_pose(const GmlInstance *in){
+GmlPhysicsBody gml_physics_body_pose(const GmlInstance *in){
   GmlPhysicsBody pose={0};
   pose.x=value(in,"phy_position_x",in->x);
   pose.y=value(in,"phy_position_y",in->y);
   pose.angle=value(in,"phy_rotation",-in->image_angle);
+  pose.active=value(in,"phy_active",1)!=0;
+  return pose;
+}
+
+GmlPhysicsBody gml_physics_placement_pose(const GmlInstance *in,double x,double y,double angle){
+  GmlPhysicsBody pose={0};
+  pose.angle=angle;
+  double offset_x,offset_y;
+  local_to_world(&pose,value(in,"__phy_offset_x",0),value(in,"__phy_offset_y",0),
+                 &offset_x,&offset_y);
+  pose.x=x-offset_x; pose.y=y-offset_y;
   return pose;
 }
 
@@ -194,7 +205,7 @@ double gml_physics_joint_geometry(GmlVM *vm,const GmlPhysicsJoint *joint,int fie
 
   GmlInstance *a=gml_vm_instance_by_id(vm,joint->a),*b=gml_vm_instance_by_id(vm,joint->b);
   if(!a || !b) return 0;
-  GmlPhysicsBody pose_a=joint_body_pose(a),pose_b=joint_body_pose(b);
+  GmlPhysicsBody pose_a=gml_physics_body_pose(a),pose_b=gml_physics_body_pose(b);
   if(revolute_angle) return (pose_b.angle-pose_a.angle-joint->reference_angle)*M_PI/180.0;
   if(field==GML_JOINT_SPEED && joint->type==GML_PHYS_JOINT_WHEEL)
     return (value(b,"phy_angular_velocity",0)-value(a,"phy_angular_velocity",0))*M_PI/180.0;
