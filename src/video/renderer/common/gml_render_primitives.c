@@ -19,7 +19,7 @@
  * rectangles. Typed entries already receive raster coordinates, so the current world
  * scale must not reject or remap them. Keep unqualified shapes in their CPU raster body. */
 static int resident_flat_eligible_rule(GmlRender *render,int filled_rectangle,int partial_alpha,
-                                        int blendmode){
+                                        int blendmode,int opaque_cutout){
   return render && render->resident_application_pass && gml_render_device(render) &&
     gml_render_scene_target_matches(render) &&
     /* Filled Studio rectangles already carry the builtin's resolved GUI raster bounds. */
@@ -37,13 +37,14 @@ static int resident_flat_eligible_rule(GmlRender *render,int filled_rectangle,in
     (partial_alpha ? isfinite(render->alpha) && render->alpha>0.0 && render->alpha<1.0
                    : render->alpha==1.0) && render->blendmode==blendmode &&
     render->blend_equation==1 && render->blend_equation_alpha==1 &&
-    render->color_write_mask==15u && !render->alpha_test_enable &&
+    render->color_write_mask==15u &&
+    (!render->alpha_test_enable || (opaque_cutout && render->alpha_test_ref<255u)) &&
     !render->pending_presentation && !render->rotated_batch_count &&
     !render->rotated_batch_building;
 }
 
 static int resident_flat_eligible(GmlRender *render){
-  return resident_flat_eligible_rule(render,0,0,0);
+  return resident_flat_eligible_rule(render,0,0,0,0);
 }
 
 /* The particle square writer ignores content colour,program,preset,cutoff and
@@ -322,7 +323,7 @@ static int resident_opaque_rect(GmlRender *render,int x1,int y1,int x2,int y2,
   GmlRenderResourceExecution result;
   /* This entry receives the existing CPU rectangle's inclusive raster bounds. Early
    * classic filled rectangles share that exact coverage; other shapes keep their gate. */
-  if(!resident_flat_eligible_rule(render,classic_rectangle,0,0)) return 0;
+  if(!resident_flat_eligible_rule(render,classic_rectangle,0,0,0)) return 0;
   if(x1>x2){int swap=x1;x1=x2;x2=swap;}
   if(y1>y2){int swap=y1;y1=y2;y2=swap;}
   if(x2<0 || y2<0 || x1>=render->fbw || y1>=render->fbh) return 0;
@@ -372,7 +373,7 @@ static int resident_classic_alpha_rect(GmlRender *render,int x1,int y1,int x2,in
    * The CPU receives these same inclusive, already transformed integer bounds. */
   if(!render || !render->classic || !render->alphablend ||
      render->target_id>=0 || render->target_sp ||
-     !resident_flat_eligible_rule(render,1,!inverse,inverse?2:0) ||
+     !resident_flat_eligible_rule(render,1,!inverse,inverse?2:0,0) ||
      !render->fb_opaque_known || !render->fb_all_opaque ||
      !device || !device->observe_on_demand ||
      !device->observe_on_demand(device->context)) return 0;
@@ -431,7 +432,7 @@ static int resident_studio_alpha_rect(GmlRender *render,int x1,int y1,int x2,int
      render->target_id>=0 || render->target_sp ||
      render->pending_underlay || !render->alphablend ||
      render->alpha<1.0/256.0 ||
-     !resident_flat_eligible_rule(render,1,1,0) ||
+     !resident_flat_eligible_rule(render,1,1,0,0) ||
      !device || !device->observe_on_demand ||
      !device->observe_on_demand(device->context)) return 0;
   if(x1>x2){int swap=x1;x1=x2;x2=swap;}
@@ -943,7 +944,7 @@ static int resident_flat_spans(GmlRender *render,GmlFlatSpans *spans){
 
 static int resident_opaque_surface_circle(GmlRender *r,double cx,double cy,
                                           double rx,double ry,uint32_t color){
-  if(!resident_flat_eligible(r) || r->classic ||
+  if(!resident_flat_eligible_rule(r,0,0,0,1) || r->classic ||
      !anygm_policy_has_modern_layer_semantics(r->win) || r->target_sp<=0 || r->target_id<=0 ||
      gml_d3_is_active(r) || r->fog_flat || r->classic_phase_scene_target ||
      r->app_interp_phase[0] || r->app_interp_phase[1] || r->app_interp_phase[2] ||
@@ -1108,7 +1109,7 @@ static int resident_outline_rectangle(GmlRender *render,int x1,int y1,int x2,int
   int covered,result;
   /* The shared CPU collector preserves the geometric edges after clipping.
    * Only this rectangle outline may reuse the early-Classic raster gate. */
-  if(!resident_flat_eligible_rule(render,render && render->classic,0,0)) return 0;
+  if(!resident_flat_eligible_rule(render,render && render->classic,0,0,0)) return 0;
   outline.spans.render=render;
   outline.spans.capacity=4u;
   outline.spans.regions=regions;

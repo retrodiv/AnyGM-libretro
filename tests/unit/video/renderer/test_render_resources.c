@@ -5736,7 +5736,8 @@ static int resident_rectangle_function_matrix(void){
 
 static int resident_surface_circle_geometry(void){
   enum {W=48,H=40};
-  for(unsigned precision=4u;precision<=64u;precision+=4u){
+  for(unsigned precision=4u;precision<=64u;precision+=4u)
+  for(unsigned cutout=0;cutout<3u;cutout++){
     GmlRender *r=calloc(1,sizeof *r);GmlWin content={.bytecode=17,.has_room_layers=1};
     FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
     uint32_t base[W*H]={0},shadow[W*H];CHECK(r && !gml_render_init(r,NULL));
@@ -5748,6 +5749,7 @@ static int resident_surface_circle_geometry(void){
     CHECK(gml_render_scene_submit_pending(r));memcpy(shadow,r->fb,sizeof shadow);
     r->circle_precision=(int)precision;r->alpha=1.0;r->alphablend=1;
     r->color_write_mask=15u;r->blendmode=0;r->active_shader=-1;
+    r->alpha_test_enable=cutout!=0u;r->alpha_test_ref=cutout==2u?254:0;
     int before=fake.submits;
     gml_render_primitive_circle_subpixel(r,24.25,20.5,12.5,9.25,0xB94D27u,0);
     CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r));
@@ -5763,6 +5765,10 @@ static int resident_surface_circle_geometry(void){
       p->triangle[0][2]==39.0/255.0 && p->triangle[0][3]==77.0/255.0 &&
       p->triangle[0][4]==185.0/255.0 && p->triangle[0][5]==1.0);
     CHECK(!gml_render_cpu_replay_one(base,W,H,&fake.last_primitive,NULL,NULL));
+    r->alpha_test_enable=1;r->alpha_test_ref=255u;
+    gml_render_primitive_circle_subpixel(r,24.25,20.5,12.5,9.25,0xB94D27u,0);
+    CHECK(gml_render_scene_submit_pending(r) &&
+      !gml_render_native_triangle_valid(&fake.last_primitive) && !fake.readbacks && !fake.rgb_queries);
     /* A native packet cannot reconstruct its device image through CPU replay. */
     const uint32_t *observed=NULL;
     GmlRenderResource *resource=gml_render_surface_resource_ensure(r,id);CHECK(resource);
