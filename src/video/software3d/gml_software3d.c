@@ -302,6 +302,29 @@ int gml_software3d_vertex_buffer_exists(const GmlSoftware3D *graphics,int id){
          graphics->vertex_buffer[id].used;
 }
 
+int gml_software3d_vertex_format_info(const GmlSoftware3D *graphics,int id,
+                                       int *stride,int *count){
+  if(!gml_software3d_vertex_format_exists(graphics,id)) return 0;
+  const GmlVertexFormat *format=&graphics->vertex_format[id];
+  if(stride) *stride=format->stride;
+  if(count) *count=format->n_attr;
+  return 1;
+}
+
+int gml_software3d_vertex_format_element_info(const GmlSoftware3D *graphics,
+                                               int id,int index,
+                                               GmlSoftware3DVertexElementInfo *out){
+  if(!out || !gml_software3d_vertex_format_exists(graphics,id)) return 0;
+  const GmlVertexFormat *format=&graphics->vertex_format[id];
+  if(index<0 || index>=format->n_attr) return 0;
+  int offset=0;
+  for(int i=0;i<index;i++) offset+=format->attr[i].bytes;
+  const GmlVertexAttr *attribute=&format->attr[index];
+  *out=(GmlSoftware3DVertexElementInfo){attribute->type,attribute->usage,
+                                      attribute->bytes,offset};
+  return 1;
+}
+
 void gml_software3d_vertex_buffer_delete(GmlSoftware3D *graphics,int id){
   if(!graphics || id<0 || id>=GML_VERTEX_BUFFER_MAX ||
      !graphics->vertex_buffer[id].used) return;

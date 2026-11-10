@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "gml_builtin.h"
+#include "gml_particle.h"
 #include "gml_render_internal.h"
 #include "anygm_test_runner.h"
 #include "memory_vfs.h"
@@ -18,6 +19,88 @@ static GmlVal query(GmlVM *vm,const char *name,GmlVal *args,int count,int cached
   return gml_builtin_call_fast_id(vm,id,name,args,count);
 }
 static int real_is(GmlVal v,double number){ return v.t==V_REAL && v.d==number; }
+static GmlInstance *query_struct(GmlVM *vm,GmlVal value){
+  if(!gml_val_is_number_or_object(value) || !GML_IS_STRUCT_ID(value.d)) return NULL;
+  return gml_struct_find(vm,(unsigned)value.d);
+}
+static int struct_number_is(GmlInstance *value,const char *name,double number){
+  GmlVal *field=value?gml_varmap_get(&value->vars,name):NULL;
+  return field && real_is(*field,number);
+}
+static int vertex_format_information_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlVM vm={.room_index=-1,.pending_room=-1,.next_creation_seq=1};
+    vm.particles=gml_particle_state_create(&vm);
+    if(!vm.particles) return 0;
+    gml_vm_software3d_reset(&vm);
+    gml_builtin_call(&vm,"vertex_format_begin",NULL,0);
+    gml_builtin_call(&vm,"vertex_format_add_colour",NULL,0);
+    gml_builtin_call(&vm,"vertex_format_add_position_3d",NULL,0);
+    GmlVal custom[]={vreal(1),vreal(5)};
+    gml_builtin_call(&vm,"vertex_format_add_custom",custom,2);
+    gml_builtin_call(&vm,"vertex_format_add_texcoord",NULL,0);
+    custom[0]=vreal(6); custom[1]=vreal(7);
+    gml_builtin_call(&vm,"vertex_format_add_custom",custom,2);
+    gml_builtin_call(&vm,"vertex_format_add_normal",NULL,0);
+    GmlVal format=gml_builtin_call(&vm,"vertex_format_end",NULL,0);
+    GmlVal result=query(&vm,"vertex_format_get_info",&format,1,cached,&ok);
+    GmlInstance *info=query_struct(&vm,result);
+    ok &= struct_number_is(info,"stride",44) && struct_number_is(info,"num_elements",6);
+    GmlVal *elements=info?gml_varmap_get(&info->vars,"elements"):NULL;
+    const int expected[][4]={{5,2,4,0},{3,1,12,4},{1,5,4,16},
+                            {2,4,8,20},{6,7,4,28},{3,3,12,32}};
+    ok &= elements && gml_val_array_length(*elements)==6;
+    for(int i=0;elements && i<6;i++){
+      GmlInstance *entry=query_struct(&vm,gml_arr_get(*elements,i));
+      ok &= struct_number_is(entry,"type",expected[i][0]);
+      ok &= struct_number_is(entry,"usage",expected[i][1]);
+      ok &= struct_number_is(entry,"size",expected[i][2]);
+      ok &= struct_number_is(entry,"offset",expected[i][3]);
+    }
+    GmlVal second=query(&vm,"vertex_format_get_info",&format,1,cached,&ok);
+    GmlInstance *other=query_struct(&vm,second);
+    GmlVal *other_elements=other?gml_varmap_get(&other->vars,"elements"):NULL;
+    if(elements && other_elements){
+      GmlInstance *entry=query_struct(&vm,gml_arr_get(*elements,0));
+      if(entry) *gml_varmap_put(&entry->vars,"size")=vreal(99);
+      ok &= struct_number_is(query_struct(&vm,gml_arr_get(*other_elements,0)),"size",4);
+    }else ok=0;
+    *gml_varmap_put(&vm.globals,"retained_info")=second;
+    gml_builtin_call(&vm,"vertex_format_delete",&format,1);
+    ok &= query(&vm,"vertex_format_get_info",&format,1,cached,&ok).t==V_UNDEF;
+    gml_struct_gc(&vm);
+    other=query_struct(&vm,second);
+    ok &= struct_number_is(other,"stride",44);
+    other_elements=other?gml_varmap_get(&other->vars,"elements"):NULL;
+    ok &= other_elements && struct_number_is(query_struct(&vm,gml_arr_get(*other_elements,5)),"offset",32);
+    size_t size=gml_vm_state_size(&vm),written=0,used=0;
+    void *before=malloc(size?size:1),*after=malloc(size?size:1);
+    int saved=before && after && gml_vm_state_save(&vm,before,size,&written) && written==size;
+    ok &= saved;
+    if(saved && other){
+      *gml_varmap_put(&other->vars,"stride")=vreal(-99);
+      int loaded=gml_vm_state_load(&vm,before,size,&used) && used==size;
+      ok &= loaded;
+      if(loaded){
+        other=query_struct(&vm,second);
+        other_elements=other?gml_varmap_get(&other->vars,"elements"):NULL;
+        ok &= struct_number_is(other,"stride",44) && other_elements &&
+              struct_number_is(query_struct(&vm,gml_arr_get(*other_elements,5)),"offset",32);
+        ok &= gml_vm_state_save(&vm,after,size,&written) && written==size &&
+              !memcmp(before,after,size);
+      }
+    }
+    free(before); free(after);
+    const double invalid[]={-1,128,2147483648.0,NAN,INFINITY,1e100};
+    for(size_t i=0;i<sizeof invalid/sizeof invalid[0];i++){
+      GmlVal id=vreal(invalid[i]);
+      ok &= query(&vm,"vertex_format_get_info",&id,1,cached,&ok).t==V_UNDEF;
+    }
+    gml_vm_free(&vm);
+  }
+  return ok;
+}
 static int vertex_resource_existence_case(void){
   int ok=1;
   for(int bound=0;bound<2;bound++) for(int cached=0;cached<2;cached++){
@@ -625,7 +708,8 @@ int main(int argc,char **argv){
   const char *filter=NULL;
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2];
   else if(argc!=1) return EXIT_FAILURE;
-  const AnygmTestCase cases[]={{"vertex_resource_existence",vertex_resource_existence_case},
+  const AnygmTestCase cases[]={{"vertex_format_information",vertex_format_information_case},
+    {"vertex_resource_existence",vertex_resource_existence_case},
     {"display_frequency",display_frequency_case},
     {"explicit_default_speed",explicit_default_speed_case},{"circle_precision",circle_case},
     {"application_surface_lifetime",application_surface_lifetime_case},{"shader_asset_names",shader_case},

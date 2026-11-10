@@ -1911,7 +1911,8 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1813, SPRITE_ADD_FROM_SURFACE, "sprite_add_from_surface", DRAW, DRAW, ALWAYS) \
   ENTRY(1814, POINT_DISTANCE_3D, "point_distance_3d", VALUES, VALUES_MATH, ALWAYS) \
   ENTRY(1815, VERTEX_BUFFER_EXISTS, "vertex_buffer_exists", DRAW, DRAW, ALWAYS) \
-  ENTRY(1816, VERTEX_FORMAT_EXISTS, "vertex_format_exists", DRAW, DRAW, ALWAYS)
+  ENTRY(1816, VERTEX_FORMAT_EXISTS, "vertex_format_exists", DRAW, DRAW, ALWAYS) \
+  ENTRY(1817, VERTEX_FORMAT_GET_INFO, "vertex_format_get_info", DRAW, DRAW, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -1926,7 +1927,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1817
+  GML_BUILTIN_ID_LIMIT = 1818
 } GmlBuiltinId;
 
 #endif

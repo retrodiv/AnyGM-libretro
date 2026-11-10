@@ -101,6 +101,18 @@ int software3d_operation_boundary_fixture(void){
     goto done;
   }
   const double position[4]={1,2,3,0};
+  int stride=-1,attributes=-1;
+  GmlSoftware3DVertexElementInfo element={-7,-7,-7,-7};
+  GmlSoftware3DVertexElementInfo saved=element;
+  if(!gml_software3d_vertex_format_info(graphics,format,&stride,&attributes) ||
+     stride!=12 || attributes!=1 ||
+     gml_software3d_vertex_format_element_info(graphics,format,1,&element) ||
+     memcmp(&element,&saved,sizeof element) ||
+     !gml_software3d_vertex_format_element_info(graphics,format,0,&element) ||
+     element.type!=0 || element.usage!=0 || element.size!=12 || element.offset!=0){
+    fprintf(stderr,"software-3D vertex format value-copy mismatch\n");
+    goto done;
+  }
   if(!gml_software3d_vertex_buffer_attribute(
        graphics,buffer,GML_SOFTWARE3D_VERTEX_POSITION3,position,3) ||
      !gml_software3d_vertex_buffer_exists(graphics,buffer) ||

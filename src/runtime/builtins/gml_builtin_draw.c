@@ -20,6 +20,43 @@ static double builtin_game_speed(GmlVM *vm){
   double v=p?N(p,1,0):60.0;
   return v>0 ? v : 60.0;
 }
+static int vertex_info_number(GmlInstance *record,const char *name,int value){
+  GmlVal *field=gml_varmap_put(&record->vars,name);
+  if(!field) return 0;
+  *field=vreal(value);
+  return 1;
+}
+static GmlVal vertex_format_information(GmlVM *vm,GmlVal *arguments,int count){
+  double raw=N(arguments,count,0);
+  int stride,elements;
+  if(count<1 || !isfinite(raw) || raw<0 || raw>INT_MAX ||
+     !gml_software3d_vertex_format_info(vm->software3d,(int)raw,&stride,&elements))
+    return vundef();
+  GmlInstance *info=gml_struct_new(vm);
+  if(!info) return vundef();
+  GmlVal array=gml_arr_new(elements,vundef());
+  GmlVal *slot=gml_varmap_put(&info->vars,"elements");
+  if(gml_val_array_length(array)!=elements || !slot){
+    gml_values_release_owned(&array,1);
+    return vundef();
+  }
+  *slot=array;
+  if(!vertex_info_number(info,"stride",stride) ||
+     !vertex_info_number(info,"num_elements",elements)) return vundef();
+  for(int i=0;i<elements;i++){
+    GmlSoftware3DVertexElementInfo element;
+    if(!gml_software3d_vertex_format_element_info(vm->software3d,(int)raw,i,&element))
+      return vundef();
+    GmlInstance *record=gml_struct_new(vm);
+    if(!record) return vundef();
+    gml_arr_set(array,i,vreal(record->id));
+    if(!vertex_info_number(record,"type",element.type) ||
+       !vertex_info_number(record,"usage",element.usage) ||
+       !vertex_info_number(record,"size",element.size) ||
+       !vertex_info_number(record,"offset",element.offset)) return vundef();
+  }
+  return vreal(info->id);
+}
 static int primitive_raster_coordinate(const GmlVM *vm,double coordinate){
   if(vm && vm->win && anygm_policy_uses_first_generation_studio(vm->win))
     return (int)ceil(coordinate)+1;
@@ -571,6 +608,8 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
   { GmlRender *R=(GmlRender*)vm->render;
     /* Resource storage is available during startup, before a renderer is bound. */
     GmlSoftware3D *vertex_graphics=vm->software3d;
+    if(!strcmp(nm,"vertex_format_get_info"))
+      return vertex_format_information(vm,a,n);
     /* Vertex format/buffer API. All paths feed the same bounded software
      * vertex store and renderer; aliases cover API generations that exposed
      * colour/color and the early textcoord spelling. */
