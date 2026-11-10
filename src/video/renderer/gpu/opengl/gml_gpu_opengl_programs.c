@@ -163,7 +163,13 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
                                mode==45?"#define GML_SCENE_CONSTANT_FILTER 37\n":
                                mode==46?"#define GML_SCENE_CONSTANT_FILTER 42\n":
                                mode==47?"#define GML_SCENE_CONSTANT_FILTER 84\n":
-                               mode==48?"#define GML_SCENE_CONSTANT_FILTER 79\n#define GML_SCENE_PLAIN_NATIVE 1\n#define GML_SCENE_ZERO_ALPHA_BLEND 1\n":"",
+                               mode==48?"#define GML_SCENE_CONSTANT_FILTER 79\n#define GML_SCENE_PLAIN_NATIVE 1\n#define GML_SCENE_ZERO_ALPHA_BLEND 1\n":
+                               mode==49?"#define GML_SCENE_CONSTANT_FILTER 180\n":
+                               mode==50?"#define GML_SCENE_CONSTANT_FILTER 181\n":
+                               mode==51?"#define GML_SCENE_CONSTANT_FILTER 182\n":
+                               mode==52?"#define GML_SCENE_CONSTANT_FILTER 183\n":
+                               mode==53?"#define GML_SCENE_CONSTANT_FILTER 184\n":
+                               mode==54?"#define GML_SCENE_CONSTANT_FILTER 185\n":"",
                                mode==29 || mode==30?GML_GPU_OPENGL_SCENE_SURFACE_FRAGMENT_BODY:
                                                     GML_GPU_OPENGL_SCENE_FRAGMENT_BODY);
   if(vertex_length<0 || (size_t)vertex_length>=sizeof vertex_source ||
@@ -280,7 +286,11 @@ GlSceneProgram *gml_gpu_opengl_scene_draw_program(GmlGpuBackend *backend,uint32_
   if(filter==GL_SCENE_NATIVE_POINT_STAMP_FILTER) filter=82u;
   int mode=0;
   int plain_native=native_flags&GL_SCENE_NATIVE_PLAIN;
-  if(plain_native && (filter==38u || filter==149u) && (native_flags&GL_SCENE_NATIVE_WHITE_TINT)){
+  if(filter>=GL_SCENE_NATIVE_TEXTURE_NEAREST_FILTER &&
+     filter<=GL_SCENE_NATIVE_TEXTURE_SURFACE_LINEAR_FILTER){
+    unsigned index=47u+filter-GL_SCENE_NATIVE_TEXTURE_NEAREST_FILTER;
+    program=&scene->compact_programs[index];mode=(int)index+2;
+  }else if(plain_native && (filter==38u || filter==149u) && (native_flags&GL_SCENE_NATIVE_WHITE_TINT)){
     unsigned index=filter==149u?41u:42u;
     program=&scene->compact_programs[index];mode=(int)index+2;
   }else if(filter==84u){

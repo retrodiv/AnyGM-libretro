@@ -755,7 +755,14 @@ conversion, stride removal and rendered-origin inversion retain the established
 packing path. No caller pointer survives the upload call. When the selected
 client path creates or resizes a complete image, its initial image submission
 also supplies the pixels, avoiding a separate undefined allocation and fill.
-Partial updates and bounded staged submissions retain their existing ordering.
+The first partial transfer into new or resized atlas storage uses client bytes,
+including after a region union renews its native texture. Staging that first
+partial definition can lose sampled pixels on tiled GLES devices. Subsequent
+complete updates retain the selected policy and transfer budgets. The neutral
+`scene_initial_partial_transfer` control checks initialized union bytes, distinct
+storage, retained complete staging and context replacement on both APIs. This
+changes GPU resource transfer only; CPU drawing and shader calculations are
+unchanged. Device image comparisons remain separate from original-runner evidence.
 
 Immutable RGBA atlas preparation may upload only a demanded source rectangle
 while keeping the original full storage extent and UV coordinates. Axis-aligned
@@ -2805,6 +2812,15 @@ uses the separately selected alpha program for its second pass. Compilation
 failure, context ownership, reuse and destruction remain covered by the hot
 constant-program controls. No original-runner or throughput claim follows from
 program selection alone.
+
+Native textured triangles also retain their existing six sampling/alpha branches
+180 through 185 in separate constant-filter program slots. The nearest, linear,
+covered-alpha and surface variants reuse the same shader body, authored UVs,
+device filtering, blend state and placed vertices. This avoids compiling every
+general-scene branch when a native texture variant is first drawn. CPU execution
+is unchanged. The hot-program controls cover both APIs, compiler refusal,
+distinct mixed owners, context loss and reuse; device first-use timing and
+picture qualification remain separate evidence.
 
 
 Modern packaged nearest sprites on the base SCREEN may use one affine device

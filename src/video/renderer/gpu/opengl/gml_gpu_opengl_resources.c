@@ -729,7 +729,7 @@ static int scene_upload_image(GmlGpuBackend *backend,const GmlRenderImageUpload 
   GlSceneImage *slot;
   size_t row_bytes,bytes;
   const uint8_t *source,*upload_bytes;
-  int first,resize,rendered_origin,staged,initial_client;
+  int first,resize,rendered_origin,staged=0,initial_client,initial_partial;
   if(did_upload) *did_upload=0;
   if(!backend || !transfer || !transfer->bytes || !backend->loaded) return 0;
   scene=&backend->scene;
@@ -832,8 +832,13 @@ static int scene_upload_image(GmlGpuBackend *backend,const GmlRenderImageUpload 
   backend->gl.PixelStorei(GL_UNPACK_ALIGNMENT,1);
   backend->gl.PixelStorei(GL_UNPACK_ROW_LENGTH,0);
   backend->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
-  /* New or resized images are full transfers by the validation above. The selected client path
-   * can initialize storage directly instead of first allocating undefined pixels. */
+  /* Complete client transfers can initialize storage directly. Partial source preparation
+   * first defines its region with client bytes: staging into new partial storage can lose
+   * that region on tiled devices. Later complete updates retain the selected upload policy. */
+  initial_partial=(first || resize) &&
+    (transfer->region.x || transfer->region.y ||
+     transfer->region.width!=transfer->storage_width ||
+     transfer->region.height!=transfer->storage_height);
   initial_client=(first || resize) && scene->upload_policy<0 &&
     !transfer->region.x && !transfer->region.y &&
     transfer->region.width==transfer->storage_width &&
@@ -848,7 +853,8 @@ static int scene_upload_image(GmlGpuBackend *backend,const GmlRenderImageUpload 
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
   }
-  if(!initial_client && !scene_stage_upload(backend,bytes,upload_bytes,&staged)){
+  if(!initial_client && !initial_partial &&
+     !scene_stage_upload(backend,bytes,upload_bytes,&staged)){
     backend->gl.PixelStorei(GL_UNPACK_ALIGNMENT,4);
     backend->gl.BindTexture(GL_TEXTURE_2D,0);
     slot->valid=0;

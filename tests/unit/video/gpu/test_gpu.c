@@ -891,6 +891,61 @@ static int scene_source_region_case(void){
   return 1;
 }
 
+static int scene_initial_partial_transfer_case(void){
+  enum { SIDE=256, BYTES=SIDE*SIDE*4 };
+  uint8_t *pixels=malloc(BYTES);
+  REQUIRE(pixels,"partial transfer source allocated");
+  for(size_t index=0;index<BYTES;index++) pixels[index]=(uint8_t)(index*31u+index/13u);
+  GmlRenderImageRef ref={GML_RENDER_RESOURCE_ATLAS,92u,1u,1u};
+  GmlRenderImageUpload full={.image=ref,.storage_width=SIDE,.storage_height=SIDE,
+    .region={0,0,SIDE,SIDE},.pixel_format=GML_RENDER_PIXEL_RGBA8888,
+    .stride_bytes=SIDE*4u,.byte_capacity=BYTES,.bytes=pixels};
+  for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++){
+    GmlGpu *gpu=gml_gpu_create();GmlGpuContext context=fake_context(api);
+    REQUIRE(gpu,"partial transfer device allocated");
+    for(unsigned epoch=0;epoch<2u;epoch++){
+      anygm_test_graphics_reset();
+      REQUIRE(gml_gpu_context_reset(gpu,&context) && gml_gpu_prepare_scene(gpu,32u,32u),
+              "partial transfer context prepared");
+      GmlRenderDeviceServices service;gml_gpu_device_services(gpu,&service);
+      GLuint previous=0;
+      for(unsigned growth=0;growth<2u;growth++){
+        AnygmTestGraphicsUnpack before=anygm_test_graphics_unpack();
+        GmlRenderRect demand=growth?(GmlRenderRect){131,5,1u,128u}:
+                                      (GmlRenderRect){3,5,128u,128u};
+        REQUIRE(service.upload_source_region(service.context,&full,demand),
+                "staging-sized partial source is accepted");
+        GlSceneImage *image=gml_gpu_opengl_scene_image(gpu->backend,ref);
+        AnygmTestGraphicsUnpack after=anygm_test_graphics_unpack();
+        REQUIRE(image && image->source_partial && image->texture!=previous,
+                "initial and growing source demands own distinct storage");
+        REQUIRE(after.maps==before.maps && after.uploads==before.uploads &&
+                !after.bound && !after.errors,
+                "new partial storage receives client bytes before any staged update");
+        size_t count=0;const uint8_t *actual=anygm_test_graphics_texture_bytes(image->texture,&count);
+        REQUIRE(actual && count==BYTES,"partial upload retains the full storage extent");
+        for(unsigned row=5;row<133u;row++)
+          REQUIRE(!memcmp(actual+(row*SIDE+3u)*4u,pixels+(row*SIDE+3u)*4u,
+                          (128u+growth)*4u),"every initialized union byte survives growth");
+        previous=image->texture;
+      }
+      AnygmTestGraphicsUnpack before=anygm_test_graphics_unpack();
+      REQUIRE(service.upload(service.context,&full),"complete upgrade remains accepted");
+      AnygmTestGraphicsUnpack after=anygm_test_graphics_unpack();
+      REQUIRE(after.maps==before.maps+1u && after.uploads==before.uploads+1u &&
+              !after.bound && !after.errors,"complete upgrade retains ordinary staged transfer");
+      GlSceneImage *image=gml_gpu_opengl_scene_image(gpu->backend,ref);
+      size_t count=0;const uint8_t *actual=anygm_test_graphics_texture_bytes(image->texture,&count);
+      REQUIRE(actual && count==BYTES && !memcmp(actual,pixels,BYTES),
+              "complete upgrade preserves every source byte");
+      gml_gpu_context_lost(gpu);
+    }
+    gml_gpu_destroy(gpu,0);
+  }
+  free(pixels);
+  return 1;
+}
+
 static int scene_upload_policy_case(void){
   uint8_t pixels[129u*128u*4u];
   for(size_t index=0;index<sizeof pixels;index++) pixels[index]=(uint8_t)(index*17u+53u);
@@ -2213,7 +2268,10 @@ static int scene_general_program_demand_case(void){
 }
 
 static int scene_hot_constant_programs_case(void){
-  const unsigned filters[]={32u,33u,153u,21u,22u,25u,26u,53u,55u,147u,149u,30u,23u,24u,34u,35u,36u,39u,41u,40u,37u,42u,84u,31u};
+  const unsigned filters[]={32u,33u,153u,21u,22u,25u,26u,53u,55u,147u,149u,30u,23u,24u,34u,35u,36u,39u,41u,40u,37u,42u,84u,31u,
+    GL_SCENE_NATIVE_TEXTURE_NEAREST_FILTER,GL_SCENE_NATIVE_TEXTURE_LINEAR_FILTER,
+    GL_SCENE_NATIVE_TEXTURE_STAMP_NEAREST_FILTER,GL_SCENE_NATIVE_TEXTURE_STAMP_LINEAR_FILTER,
+    GL_SCENE_NATIVE_TEXTURE_SURFACE_NEAREST_FILTER,GL_SCENE_NATIVE_TEXTURE_SURFACE_LINEAR_FILTER};
   for(unsigned api=0;api<2u;api++)for(unsigned selected=0;selected<sizeof filters/sizeof filters[0];selected++)
   for(unsigned failure=0;failure<2u;failure++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
@@ -8076,6 +8134,7 @@ int main(int argc,char **argv){
     {"scene_staged_upload_bound",scene_staged_upload_bound_case},
     {"scene_upload_policy",scene_upload_policy_case},
     {"scene_source_region",scene_source_region_case},
+    {"scene_initial_partial_transfer",scene_initial_partial_transfer_case},
     {"scene_optional_entry_refusal",scene_optional_entry_refusal_case},
     {"scene_content_source_orientation",scene_content_source_orientation_case},
     {"scene_resident_batch",scene_resident_batch_case},
