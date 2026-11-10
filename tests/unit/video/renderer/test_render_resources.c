@@ -20522,11 +20522,67 @@ static int skip_cpu_draw_policy_preserves_observers(void){
   return 1;
 }
 
+/* Opaque preparation need not clear pixels that the following writer replaces. */
+static int opaque_rectangle_clear_complement(void){
+  static const int rectangles[][4]={{2,1,7,5},{-2,1,6,5},{2,-2,7,4},
+    {2,1,12,5},{2,1,7,10},{0,0,8,6},{-2,-2,10,8},{2,2,2,5},{10,1,12,5}};
+  for(unsigned variant=0;variant<3u;variant++)
+  for(unsigned rect=0;rect<sizeof rectangles/sizeof rectangles[0];rect++){
+    GmlRender *r=calloc(1,sizeof *r);uint32_t pixels[8*6];
+    CHECK(r && !gml_render_init(r,NULL));
+    gml_render_begin(r,pixels,8,6,0,0);
+    for(unsigned pixel=0;pixel<48u;pixel++) pixels[pixel]=0xA1527394u;
+    gml_render_set_pending_fill(r,0x40273859u);
+    if(variant==1u) r->color_write_mask=7u;
+    if(variant==2u) r->scene_device_enabled=1;
+    const int *v=rectangles[rect];
+    gml_render_prepare_opaque_rect(r,v[0],v[1],v[2],v[3]);
+    int left=v[0]<0?0:v[0],top=v[1]<0?0:v[1];
+    int right=v[2]>8?8:v[2],bottom=v[3]>6?6:v[3];
+    int nonempty=left<right && top<bottom;
+    int full=v[0]<=0 && v[1]<=0 && v[2]>=8 && v[3]>=6;
+    CHECK(!r->pending_fill);
+    for(int y=0;y<6;y++)for(int x=0;x<8;x++){
+      int covered=x>=left && x<right && y>=top && y<bottom;
+      int omitted=full || (variant==0u && nonempty && covered);
+      CHECK(pixels[y*8+x]==(omitted?0xA1527394u:0x40273859u));
+      /* Complete the promised full-channel opaque overwrite, then check all ARGB. */
+      if(covered && nonempty) pixels[y*8+x]=0xFF193B5Du;
+      CHECK(pixels[y*8+x]==(covered && nonempty?0xFF193B5Du:0x40273859u));
+    }
+    gml_render_free(r);free(r);
+  }
+  for(unsigned variant=0;variant<9u;variant++){
+    uint32_t reference[48]={0};int reference_flags[3]={0};
+    for(unsigned deferred=0;deferred<2u;deferred++){
+      GmlRender *r=calloc(1,sizeof *r);GmlWin content={.bytecode=17};
+      uint32_t screen[48]={0};CHECK(r && !gml_render_init(r,NULL));r->win=&content;
+      gml_render_begin(r,screen,8,6,0,0);
+      int source=gml_surface_create(r,8,6);CHECK(source>0 && gml_surface_set_target(r,source));
+      gml_render_set_pending_fill(r,variant==4u?0x80417395u:0xFF417395u);
+      gml_render_flush_pending_fill(r);gml_surface_reset_target(r);
+      gml_render_set_pending_fill(r,0x40273859u);
+      if(!deferred) gml_render_flush_pending_fill(r);
+      r->color_write_mask=variant==1u?7u:15u;r->interp=variant==2u;
+      if(variant==6u){r->alpha_test_enable=1;r->alpha_test_ref=255u;}
+      gml_draw_surface_stretched(r,source,variant==7u?-2:0,variant==8u?-1:0,
+        7,5,variant==3u?0x80A0C0u:0xFFFFFFu,variant==5u?.5:1.0);
+      gml_render_maybe_prepare_draw(r);
+      int flags[3]={r->fb_opaque_known,r->fb_all_opaque,r->fb_all_transparent};
+      if(!deferred){memcpy(reference,screen,sizeof screen);memcpy(reference_flags,flags,sizeof flags);}
+      else CHECK(!memcmp(reference,screen,sizeof screen) && !memcmp(reference_flags,flags,sizeof flags));
+      gml_render_free(r);free(r);
+    }
+  }
+  return 1;
+}
+
 int main(void){
   const char *selected=getenv("GML_RENDER_RESOURCE_CASE");
   if(selected){
     int passed;
-    if(!strcmp(selected,"large-rotated-multiply")) passed=resident_large_rotated_multiply();
+    if(!strcmp(selected,"opaque-clear-complement")) passed=opaque_rectangle_clear_complement();
+    else if(!strcmp(selected,"large-rotated-multiply")) passed=resident_large_rotated_multiply();
     else if(!strcmp(selected,"borrowed-screen-handoff")) passed=resident_borrowed_application_screen_handoff();
     else if(!strcmp(selected,"deferred-borrowed-screen")) passed=resident_deferred_borrowed_screen_materialization();
     else if(!strcmp(selected,"manual-point-surface")) passed=resident_manual_point_surface();
@@ -20910,6 +20966,7 @@ int main(void){
   passed+=resident_numbered_rotated_native_quad();
   passed+=resident_lazy_native_atlas();
   passed+=resident_unit_texel_magnification();
-  printf("render resource cases: passed=%d failed=%d\n",passed,328-passed);
-  return passed==328?EXIT_SUCCESS:EXIT_FAILURE;
+  passed+=opaque_rectangle_clear_complement();
+  printf("render resource cases: passed=%d failed=%d\n",passed,329-passed);
+  return passed==329?EXIT_SUCCESS:EXIT_FAILURE;
 }

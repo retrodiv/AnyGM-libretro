@@ -1647,6 +1647,39 @@ void gml_render_discard_deferred_presentation(GmlRender *r){
   if(!r) return;
   r->pending_presentation=0;
 }
+/* A synchronous opaque CPU writer replaces the interior immediately after preparation.
+ * Keep the existing fill writer for the complement; device and deferred owners keep their
+ * ordinary realization path so this cannot discard queued resource or presentation work. */
+static int render_fill_opaque_complement(GmlRender *r,int x0,int y0,int x1,int y1){
+  if(!r || !r->pending_fill || !r->fb || r->fbw<=0 || r->fbh<=0 ||
+     r->target_id!=-1 || r->target_sp || r->scene_device_enabled ||
+     r->resident_application_pass || r->pending_underlay || r->pending_presentation ||
+     r->rotated_batch_count || r->rotated_scene_batch || r->color_write_mask!=15u ||
+     gml_render_cpu_draws_disabled(r)) return 0;
+  if(x0<0) x0=0;
+  if(y0<0) y0=0;
+  if(x1>r->fbw) x1=r->fbw;
+  if(y1>r->fbh) y1=r->fbh;
+  if(x0>=x1 || y0>=y1) return 0;
+  uint32_t colour=r->pending_fill_color;
+  for(int y=0;y<r->fbh;y++){
+    uint32_t *row=r->fb+(size_t)y*r->fbw;
+    if(y<y0 || y>=y1) gml_render_cpu_backend_fill_xrgb(row,r->fbw,colour);
+    else {
+      if(x0) gml_render_cpu_backend_fill_xrgb(row,x0,colour);
+      if(x1<r->fbw) gml_render_cpu_backend_fill_xrgb(row+x1,r->fbw-x1,colour);
+    }
+  }
+  r->pending_fill=0;
+  r->fb_opaque_known=1;
+  r->fb_all_opaque=(colour>>24)==255u;
+  r->fb_all_transparent=(colour>>24)==0u;
+  if(r->dispatch_metrics.enabled)
+    gml_render_dispatch_cpu_record(r,GML_RENDER_SCENE_PRIMITIVE,
+                                    gml_render_dispatch_cpu_reason(r),1u);
+  return 1;
+}
+
 void gml_render_prepare_opaque_rect(GmlRender *r, int x0, int y0, int x1, int y1){
   if(!r) return;
   if(r->pending_underlay){
@@ -1655,6 +1688,7 @@ void gml_render_prepare_opaque_rect(GmlRender *r, int x0, int y0, int x1, int y1
   }
   if(r->pending_fill){
     if(rect_covers_target(r,x0,y0,x1,y1)) gml_render_cancel_pending_fill(r);
+    else if(render_fill_opaque_complement(r,x0,y0,x1,y1)) return;
     else if(!r->resident_application_pass && r->scene_device_enabled && r->target_id==-1)
       render_cpu_flush_pending_fill(r);
     else gml_render_flush_pending_fill(r);

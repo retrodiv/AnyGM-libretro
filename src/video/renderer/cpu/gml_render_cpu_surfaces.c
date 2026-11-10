@@ -1159,7 +1159,7 @@ static void draw_surface_region_impl(GmlRender *r, int surf, double sx0d, double
      * as an opaque rectangle does, and gml_render_prepare_opaque_rect already cancels a pending
      * fill for the rectangle case. Taking the same route here stops the renderer flushing a
      * monitor-sized write nothing will ever be seen through. */
-    if(src_all_opaque && !r->interp && rect_covers_target(r,x0,y0,x0+W,y0+H))
+    if(src_all_opaque && !r->interp && !squant && r->color_write_mask==15u && src!=r->fb)
       gml_render_maybe_prepare_opaque_rect(r,x0,y0,x0+W,y0+H);
     else
       gml_render_maybe_prepare_draw(r);

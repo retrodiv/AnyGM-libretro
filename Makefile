@@ -971,12 +971,12 @@ $(TEST_DIR)/test_libretro_state_transport: tests/contract/libretro_state_transpo
 $(TEST_DIR)/test_libretro_tilemap_state: tests/contract/libretro_tilemap_state.c \
 	tests/support/synthetic_content.c $(CORE_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS)
+	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS)
 
 $(TEST_DIR)/test_libretro_display_cadence: tests/contract/libretro_display_cadence.c \
 	tests/support/synthetic_content.c $(CORE_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS)
+	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS)
 
 # Explicit MinGW-only contract; every mode starts without content or a frontend.
 .PHONY: windows-dll-lifetime-probe windows-dll-lifetime-check
@@ -1010,7 +1010,7 @@ $(TEST_DIR)/test_libretro_dynamic_rewind: tests/contract/libretro_dynamic_rewind
 	tests/support/synthetic_content.c tests/support/graphics_driver_fixture.c \
 	$(CORE_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS)
+	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS)
 
 $(TEST_DIR)/test_libretro_option_defaults: tests/contract/libretro_option_defaults.c \
 	src/adapters/libretro/libretro_options.c
@@ -1020,7 +1020,7 @@ $(TEST_DIR)/test_libretro_option_defaults: tests/contract/libretro_option_defaul
 $(TEST_DIR)/test_libretro_crt_output: tests/contract/libretro_crt_output.c \
 	tests/support/synthetic_content.c $(CORE_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS)
+	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS)
 
 $(TEST_DIR)/test_libretro_keyboard_source: tests/contract/libretro_keyboard_source.c \
 	src/adapters/libretro/libretro_input.c
