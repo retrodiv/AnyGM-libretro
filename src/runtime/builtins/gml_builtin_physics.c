@@ -7,6 +7,7 @@
 #include "anygm_host.h"
 
 #include <math.h>
+#include <limits.h>
 #include <string.h>
 static uint32_t phys_next_id(GmlVM *vm){
   if(!vm->builtins->phys_next_id) vm->builtins->phys_next_id=4000001u;
@@ -109,6 +110,21 @@ GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
         if(vm->inst[i].id==(uint32_t)f->bound_inst && physics_target(vm,&vm->inst[i],(int)N(a,n,0)))
           f->live=0;
     }
+    return vreal(0);
+  }
+  if(!strcmp(nm,"physics_get_density") || !strcmp(nm,"physics_set_density") ||
+     !strcmp(nm,"physics_get_friction") || !strcmp(nm,"physics_set_friction") ||
+     !strcmp(nm,"physics_get_restitution") || !strcmp(nm,"physics_set_restitution")){
+    double id=N(a,n,0);
+    if(n<1 || !isfinite(id) || id<1 || id>INT_MAX || floor(id)!=id) return vreal(0);
+    GmlPhysicsFixture *fixture=phys_fixture_find(vm,(int)id);
+    if(!fixture || fixture->bound_inst<0 || !vm->cur_self ||
+       (uint32_t)fixture->bound_inst!=vm->cur_self->id) return vreal(0);
+    double *value=strstr(nm,"density")?&fixture->density:
+                  strstr(nm,"friction")?&fixture->friction:&fixture->restitution;
+    if(nm[8]=='g') return vreal(*value);
+    double next=N(a,n,1);
+    if(n>=2 && isfinite(next) && next>=0) *value=next;
     return vreal(0);
   }
   if(!strcmp(nm,"physics_fixture_add_point")){

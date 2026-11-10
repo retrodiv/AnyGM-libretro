@@ -180,6 +180,64 @@ static void floor_joints_and_restore(void){
   free(snapshot); gml_vm_free(&vm);
 }
 
+static int bound_fixture_properties(void){
+  static const char *const getters[]={"physics_get_density","physics_get_friction","physics_get_restitution"};
+  static const char *const setters[]={"physics_set_density","physics_set_friction","physics_set_restitution"};
+  const double initial[]={2,.25,.5},changed[]={4,1.5,1.25};
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlVM vm;GmlWin win;setup(&vm,&win);
+    double source=call(&vm,"physics_fixture_create",NULL,0).d;
+    CALL(&vm,"physics_fixture_set_box_shape",source,5,5);
+    CALL(&vm,"physics_fixture_set_density",source,initial[0]);
+    CALL(&vm,"physics_fixture_set_friction",source,initial[1]);
+    CALL(&vm,"physics_fixture_set_restitution",source,initial[2]);
+    double bound=CALL(&vm,"physics_fixture_bind",source,vm.inst[0].id).d;
+    double sibling=CALL(&vm,"physics_fixture_bind",source,vm.inst[1].id).d;
+    assert(bound>0 && sibling>0 && bound!=sibling && bound!=source);
+    CALL(&vm,"physics_fixture_delete",source);
+    vm.cur_self=&vm.inst[0];
+    for(unsigned property=0;property<3u;property++){
+      GmlVal args[]={vreal(bound),vreal(changed[property])};
+      int get_id=gml_builtin_fast_id(&vm,getters[property]);
+      int set_id=gml_builtin_fast_id(&vm,setters[property]);
+      ok &= get_id>=0 && set_id>=0;
+      GmlVal before=cached?gml_builtin_call_fast_id(&vm,get_id,getters[property],args,1):
+                           gml_builtin_call(&vm,getters[property],args,1);
+      ok &= before.t==V_REAL && before.d==initial[property];
+      if(cached) gml_builtin_call_fast_id(&vm,set_id,setters[property],args,2);
+      else gml_builtin_call(&vm,setters[property],args,2);
+      GmlVal after=cached?gml_builtin_call_fast_id(&vm,get_id,getters[property],args,1):
+                          gml_builtin_call(&vm,getters[property],args,1);
+      ok &= after.t==V_REAL && after.d==changed[property];
+      args[0]=vreal(sibling);
+      vm.cur_self=&vm.inst[1];
+      GmlVal other=gml_builtin_call(&vm,getters[property],args,1);
+      ok &= other.t==V_REAL && other.d==initial[property];
+      vm.cur_self=&vm.inst[0];
+    }
+    ok &= fabs(get(&vm,0,"phy_mass")-4)<1e-6 && fabs(get(&vm,1,"phy_mass")-2)<1e-6;
+    size_t capacity=gml_vm_state_size(&vm),written=0,used=0;
+    void *snapshot=malloc(capacity);assert(snapshot);
+    assert(gml_vm_state_save(&vm,snapshot,capacity,&written));
+    CALL(&vm,"physics_set_density",bound,9);
+    CALL(&vm,"physics_set_friction",bound,9);
+    CALL(&vm,"physics_set_restitution",bound,9);
+    assert(gml_vm_state_load(&vm,snapshot,written,&used) && used==written);
+    vm.cur_self=&vm.inst[0];
+    for(unsigned property=0;property<3u;property++){
+      GmlVal value=call(&vm,getters[property],&bound,1);
+      ok &= value.t==V_REAL && value.d==changed[property];
+    }
+    vm.cur_self=&vm.inst[0];CALL(&vm,"physics_apply_impulse",0,0,2,0);
+    ok &= fabs(get(&vm,0,"phy_linear_velocity_x")-5)<1e-5;
+    free(snapshot);gml_vm_free(&vm);
+  }
+  puts(ok?"bound fixture properties: all six named/cached, independent copies, mass and restore passed":
+          "bound fixture properties: failed");
+  return ok;
+}
+
 static int allow_contact(void *context,int a,int b){
   assert(a==0 && b==0); return *(int *)context;
 }
@@ -233,6 +291,7 @@ static void malformed_geometry_and_mass(void){
 
 int main(void){
   units_and_ownership(); offset_and_rotation(); binding_origin_and_phase(); floor_joints_and_restore(); filtering_and_sensors(); malformed_geometry_and_mass();
+  if(!bound_fixture_properties()) return EXIT_FAILURE;
   puts("physics: units, fixture lifetime, offsets, rotation, contacts, joints and restore passed");
   return 0;
 }
