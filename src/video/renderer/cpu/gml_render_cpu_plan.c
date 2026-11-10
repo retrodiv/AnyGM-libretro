@@ -313,9 +313,7 @@ static uint32_t sharp_lerp(uint32_t a,uint32_t b,uint32_t weight){
 static void execute_sharp_bilinear(const GmlPlanOp *op,const GmlPlanImage *image,
                                    uint32_t *target,uint32_t pitch){
   uint32_t width=op->destination.width,height=op->destination.height;
-  uint32_t scale_x=(width+image->width-1u)/image->width;
-  uint32_t scale_y=(height+image->height-1u)/image->height;
-  uint32_t scale=scale_x<scale_y?scale_x:scale_y;
+  uint32_t scale=gml_plan_sharp_scale(&op->destination,image);
   PlanSharpTap stack[PLAN_COLUMN_STACK];
   PlanSharpTap *columns=width<=PLAN_COLUMN_STACK?stack:malloc((size_t)width*sizeof(*columns));
   if(columns)

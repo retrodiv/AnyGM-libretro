@@ -649,6 +649,9 @@ static int engine_present_indirect_gui_host(AnygmEngine *engine,
   return 1;
 }
 
+static int engine_present_hardware_canvas_plan(AnygmEngine *engine,
+                                                unsigned *width,unsigned *height,int resident_crt);
+
 int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned *height){
   GmlRenderDeferredPresentation record;
   GmlRenderPlan *plan;
@@ -668,6 +671,8 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
   if(engine->host_canvas_active && !crt_readback)
     return scene && engine_present_indirect_gui_host(engine,width,height);
   if(!gml_render_deferred_presentation(&engine->render,&record)){
+    if(scene && crt_readback)
+      return engine_present_hardware_canvas_plan(engine,width,height,1);
     GmlRenderImageRef completed={0};
     /* R03_COMPLETED_SCREEN_PRESENT: the scene already owns the final raster. The
      * application surface is not its substitute, and CPU pixels are not an upload source. */
@@ -836,7 +841,8 @@ presented:
   return 1;
 }
 
-int engine_present_hardware_canvas(AnygmEngine *engine,unsigned *width,unsigned *height){
+static int engine_present_hardware_canvas_plan(AnygmEngine *engine,
+                                                unsigned *width,unsigned *height,int resident_crt){
   unsigned host_width=0,host_height=0;
   GmlRenderImageRef completed={0};
   int resident=0;
@@ -853,16 +859,18 @@ int engine_present_hardware_canvas(AnygmEngine *engine,unsigned *width,unsigned 
                      engine->present_crop_right || engine->present_crop_bottom;
   /* A contained 1:1 crop changes only the source indices, not sampling or
    * logical frame ownership. Deferred pictures and scaled crops retain their owner. */
-  int identity_crop=scene && engine->host_canvas_active &&
+  int identity_crop=scene && engine->host_canvas_active && !resident_crt &&
     !gml_render_deferred_presentation(&engine->render,NULL) &&
     engine_present_crop_rect(engine,engine->output_width,engine->output_height,
                               &crop_x,&crop_y,&crop_width,&crop_height) &&
     engine->host_canvas_width==(int)crop_width &&
     engine->host_canvas_height==(int)crop_height;
   /* A current logical SCREEN is already complete. Host fitting must not observe its CPU shadow
-   * or replace the saved logical raster with the host-sized filtered picture. CRT and
-   * nonidentity crops retain their separate, established presentation boundaries. */
-  if(scene && !engine->host_crt_active &&
+   * or replace the saved logical raster with the host-sized filtered picture. The CRT caller
+   * has already ruled out a deferred terminal program. It may only borrow the complete raster. */
+  if(resident_crt && (crop_requested || engine->present_shift_x || engine->present_shift_y))
+    return 0;
+  if(scene && (resident_crt || !engine->host_crt_active) &&
      (!crop_requested || identity_crop))
     resident=gml_render_completed_screen_image(&engine->render,engine->screen,
                 (int)engine->output_width,(int)engine->output_height,&completed);
@@ -876,7 +884,7 @@ int engine_present_hardware_canvas(AnygmEngine *engine,unsigned *width,unsigned 
     (identity_crop || (!crop_requested &&
       engine->host_canvas_width>=(int)engine->output_width &&
       engine->host_canvas_height>=(int)engine->output_height));
-  if(!resident && !hybrid && !cpu_nearest) return 0;
+  if(!resident && (resident_crt || (!hybrid && !cpu_nearest))) return 0;
   if(!resident && !engine_materialize_completed_frame(engine)) return 0;
   engine_host_extent(engine,&host_width,&host_height);
   if(!host_width || !host_height) return 0;
@@ -894,6 +902,7 @@ int engine_present_hardware_canvas(AnygmEngine *engine,unsigned *width,unsigned 
     GmlPlanImage *source=&engine->host_plan.images[0];
     source->cpu_pixels=NULL;
     source->resident_image=completed;
+    if(resident_crt) engine->host_plan.operations[1].alpha_write=0xFFu;
     if(identity_crop){
       /* Keep the actual texture extent. Identity pixel-centre axes select
        * crop_offset + local_index exactly; no subimage upload or copy is needed. */
@@ -919,6 +928,10 @@ int engine_present_hardware_canvas(AnygmEngine *engine,unsigned *width,unsigned 
   if(width) *width=host_width;
   if(height) *height=host_height;
   return 1;
+}
+
+int engine_present_hardware_canvas(AnygmEngine *engine,unsigned *width,unsigned *height){
+  return engine_present_hardware_canvas_plan(engine,width,height,0);
 }
 
 int engine_present_hardware_frame(AnygmEngine *engine,const uint32_t *pixels,

@@ -244,7 +244,8 @@ struct GmlGpuBackend {
   GLint u_dest_y;
   GLint u_target_height;
   GLint u_source_height,u_resident_source,u_rgb_query;
-  GLint u_box_destination;
+  GLint u_filter_destination;
+  GLint u_sharp_scale;
   GlSourceTexture sources[GML_PLAN_MAX_IMAGES];
   GlAxisMap maps[GL_MAP_SLOTS];
   uint16_t *map_scratch;

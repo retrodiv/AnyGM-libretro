@@ -98,7 +98,7 @@
   "}\n"
 
 /* u_map_x and u_map_y hold the exact source index for every destination index, built on the CPU
- * from the same expression the software executor walks. A negative box tag uses proven identity
+ * from the same expression the software executor walks. A negative filter extent selects proven identity
  * indices directly. u_target_height converts the framebuffer's
  * bottom-left row to the top-left row AnyGM addresses. */
 #define GML_GPU_OPENGL_FRAGMENT_BODY_HEAD \
@@ -111,7 +111,8 @@
   "uniform int u_source_height;\n" \
   "uniform int u_resident_source;\n" \
   "uniform int u_rgb_query;\n" \
-  "uniform ivec2 u_box_destination;\n" \
+  "uniform ivec2 u_filter_destination;\n" \
+  "uniform int u_sharp_scale;\n" \
   "out vec4 o_color;\n" \
   "void main(){\n" \
   "  // R03_SHADER_SCREEN_RGB_QUERY: discard only exact RGB zero; coverage is irrelevant.\n" \
@@ -122,11 +123,23 @@
   "  }\n" \
   "  int dx=int(gl_FragCoord.x)-u_dest_x;\n" \
   "  int dy=(u_target_height-1-int(gl_FragCoord.y))-u_dest_y;\n" \
+  "  if(u_sharp_scale>0){\n" \
+  "    // Adjacent virtual texels map to equal or adjacent source texels.\n" \
+  "    vec2 size=vec2(textureSize(u_source,0)),scale=vec2(float(u_sharp_scale));\n" \
+  "    vec2 virtual_size=size*scale;\n" \
+  "    vec2 pos=clamp((vec2(dx,dy)+0.5)*virtual_size/vec2(u_filter_destination)-0.5,\n" \
+  "                   vec2(0.0),virtual_size-1.0);\n" \
+  "    vec2 lo=floor(pos);\n" \
+  "    vec2 first=floor(lo/scale),last=min(size-1.0,floor((lo+1.0)/scale));\n" \
+  "    vec2 centre=mix(first,last,fract(pos))+0.5;\n" \
+  "    vec2 uv=vec2(centre.x,size.y-centre.y)/size;\n" \
+  "    o_color=vec4(textureLod(u_source,uv,0.0).rgb,1.0); return;\n" \
+  "  }\n" \
   "  // R03_SHADER_HOST_BOX: the same integer footprint, hardware-averaged in 2x2 cells.\n" \
-  "  if(u_box_destination.x>0){\n" \
+  "  if(u_filter_destination.x>0){\n" \
   "    ivec2 size=textureSize(u_source,0),p=ivec2(dx,dy);\n" \
-  "    ivec2 first=p*size/u_box_destination;\n" \
-  "    ivec2 last=min(size,max((p+ivec2(1))*size/u_box_destination,first+ivec2(1)));\n" \
+  "    ivec2 first=p*size/u_filter_destination;\n" \
+  "    ivec2 last=min(size,max((p+ivec2(1))*size/u_filter_destination,first+ivec2(1)));\n" \
   "    vec3 total=vec3(0.0);\n" \
   "    for(int y=first.y;y<last.y;y+=2){\n" \
   "      int rows=min(2,last.y-y); vec3 row=vec3(0.0);\n" \
@@ -141,7 +154,7 @@
   "    o_color=vec4(total/float(last.y-first.y),1.0); return;\n" \
   "  }\n" \
   "  int sx=dx,sy=dy;\n" \
-  "  if(u_box_destination.x>=0){\n" \
+  "  if(u_filter_destination.x>=0){\n" \
   "    sx=int(texelFetch(u_map_x,ivec2(dx,0),0).r);\n" \
   "    sy=int(texelFetch(u_map_y,ivec2(dy,0),0).r);\n" \
   "  }\n" \

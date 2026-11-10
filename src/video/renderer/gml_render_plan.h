@@ -263,6 +263,14 @@ int gml_render_plan_add_blit_nearest(GmlRenderPlan *plan,uint32_t source,
                                      uint32_t alpha_write);
 int gml_render_plan_add_blit_box(GmlRenderPlan *plan,uint32_t source,
                                  GmlPlanRect destination,uint32_t alpha_write);
+/* Integer nearest enlargement in the virtual plane sampled by sharp bilinear. */
+static inline uint32_t gml_plan_sharp_scale(const GmlPlanRect *destination,
+                                            const GmlPlanImage *image){
+  uint32_t x=(destination->width+image->width-1u)/image->width;
+  uint32_t y=(destination->height+image->height-1u)/image->height;
+  return x<y?x:y;
+}
+
 int gml_render_plan_add_blit_sharp_bilinear(GmlRenderPlan *plan,uint32_t source,
                                             GmlPlanRect destination,uint32_t alpha_write);
 /* The terminal presentation drawn through the content's own program. The shader record is copied

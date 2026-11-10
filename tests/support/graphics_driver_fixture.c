@@ -691,7 +691,7 @@ static void fake_UseProgram(GLuint p){ note_call(); g_fake.bound_program=p; }
 static void fake_DeleteProgram(GLuint p){ (void)p; note_call(); g_fake.deletes_issued++; }
 static GLint fake_GetUniformLocation(GLuint p,const GLchar *name){
   note_call();
-  if(!strcmp(name,"u_box_destination")){
+  if(!strcmp(name,"u_filter_destination")){
     g_fake.box_program=p;g_fake.box_location=g_fake.uniform_count;
   }
   if((!strcmp(name,"u_filter") || !strcmp(name,"u_selected_filter")) &&

@@ -17,7 +17,8 @@ static int begin_host_extent(GmlGpuBackend *backend,uintptr_t framebuffer,
   uint64_t width=(uint64_t)plan->target_width+1u,height=(uint64_t)plan->target_height+1u;
   if(!framebuffer || plan->target!=GML_PLAN_TARGET_HOST_FRAMEBUFFER ||
      plan->operation_count!=2u || plan->operations[0].opcode!=GML_PLAN_OP_CLEAR_XRGB ||
-     plan->operations[1].opcode!=GML_PLAN_OP_BLIT_OPAQUE_NEAREST ||
+     (plan->operations[1].opcode!=GML_PLAN_OP_BLIT_OPAQUE_NEAREST &&
+      plan->operations[1].opcode!=GML_PLAN_OP_BLIT_OPAQUE_SHARP_BILINEAR) ||
      !gl->InvalidateFramebuffer || !gl->ClearBufferfv || !gl->GetIntegerv ||
      !gl->GetFramebufferAttachmentParameteriv || !gl->GetTexLevelParameteriv ||
      !gl->GenRenderbuffers || !gl->BindRenderbuffer || !gl->RenderbufferStorage ||
@@ -201,9 +202,10 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
       GmlPlanAxis axis_y=op->axis_y;
       GLuint source_name=0,map_x=0,map_y=0;
       int resident_source=0;
-      int box=op->opcode==GML_PLAN_OP_BLIT_OPAQUE_BOX;
-      GLint box_destination[2]={box?(GLint)op->destination.width:0,
-                                box?(GLint)op->destination.height:0};
+      int sharp=op->opcode==GML_PLAN_OP_BLIT_OPAQUE_SHARP_BILINEAR;
+      int filtered=sharp || op->opcode==GML_PLAN_OP_BLIT_OPAQUE_BOX;
+      GLint filter_destination[2]={filtered?(GLint)op->destination.width:0,
+                                   filtered?(GLint)op->destination.height:0};
       if(op->opcode==GML_PLAN_OP_PRESENT_CPU_FRAME){
         axis_x=identity_axis(image->width);
         axis_y=identity_axis(image->height);
@@ -213,7 +215,7 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
         axis_is_identity(&axis_x,image->width) && axis_is_identity(&axis_y,image->height);
       /* Keep the existing map cache and bindings; only the shader lookup is redundant.
        * Zero selects maps, positive values are box extents, and this tag selects identity. */
-      if(identity)box_destination[0]=box_destination[1]=GL_PLAN_IDENTITY_AXES;
+      if(identity)filter_destination[0]=filter_destination[1]=GL_PLAN_IDENTITY_AXES;
       if(image->resident_image.resource_class){
         GlSceneImage *scene=gml_gpu_opengl_scene_image(backend,image->resident_image);
         if(!scene || scene->width!=image->width || scene->height!=image->height ||
@@ -229,7 +231,7 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
         failed=1;
         break;
       }
-      if(!box &&
+      if(!filtered &&
          (!gml_gpu_opengl_upload_axis(backend,index*2u,&axis_x,op->destination.width,counters,&map_x) ||
           !gml_gpu_opengl_upload_axis(backend,index*2u+1u,&axis_y,op->destination.height,counters,&map_y))){
         gml_gpu_opengl_record_error(error,error_capacity,"graphics axis map upload failed");
@@ -241,10 +243,12 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
       backend->gl.Uniform1i(backend->u_dest_y,op->destination.y);
       backend->gl.Uniform1i(backend->u_source_height,(GLint)image->height);
       backend->gl.Uniform1i(backend->u_resident_source,resident_source);
-      backend->gl.Uniform2iv(backend->u_box_destination,1,box_destination);
+      backend->gl.Uniform1i(backend->u_sharp_scale,
+                            sharp?(GLint)gml_plan_sharp_scale(&op->destination,image):0);
+      backend->gl.Uniform2iv(backend->u_filter_destination,1,filter_destination);
       backend->gl.ActiveTexture(GL_TEXTURE0);
       backend->gl.BindTexture(GL_TEXTURE_2D,source_name);
-      if(box){
+      if(filtered){
         backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
         backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
       }
@@ -255,7 +259,7 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
       backend->gl.DrawArrays(GL_TRIANGLES,0,3);
       if(identity)identity_draws++;
       if(counters) counters->draw_calls++;
-      if(box){
+      if(filtered){
         backend->gl.ActiveTexture(GL_TEXTURE0);
         backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
         backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
@@ -341,8 +345,9 @@ int gml_render_gpu_opengl_present_shift(GmlGpuBackend *backend,uintptr_t framebu
   backend->gl.Uniform1i(backend->u_dest_y,written.y);
   backend->gl.Uniform1i(backend->u_source_height,(GLint)height);
   backend->gl.Uniform1i(backend->u_resident_source,1);
+  backend->gl.Uniform1i(backend->u_sharp_scale,0);
   const GLint no_box[2]={0,0};
-  backend->gl.Uniform2iv(backend->u_box_destination,1,no_box);
+  backend->gl.Uniform2iv(backend->u_filter_destination,1,no_box);
   backend->gl.ActiveTexture(GL_TEXTURE0);backend->gl.BindTexture(GL_TEXTURE_2D,source);
   backend->gl.ActiveTexture(GL_TEXTURE1);backend->gl.BindTexture(GL_TEXTURE_2D,map_x);
   backend->gl.ActiveTexture(GL_TEXTURE2);backend->gl.BindTexture(GL_TEXTURE_2D,map_y);

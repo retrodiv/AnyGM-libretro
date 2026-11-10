@@ -466,6 +466,57 @@ static int identity_axis_maps_case(void){
   return 1;
 }
 
+static int resident_sharp_bilinear_case(void){
+  for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++){
+    GmlGpuContext context=fake_context(api);
+    GmlRenderImageRef source={GML_RENDER_RESOURCE_SCREEN,1u,1u,1u};
+    GmlRenderDrawOp clear={0};
+    GmlRenderDrawBatch batch={0};
+    GmlRenderDeviceServices services={0};
+    GmlRenderPlan plan;
+    uint32_t pixels[6]={0};
+    anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"sharp host context adopted");
+    gml_gpu_device_services(gpu,&services);
+    clear.opcode=GML_RENDER_OP_CLEAR;
+    clear.target.image=source;
+    clear.target.storage_version=1u;
+    clear.target.width=3u;
+    clear.target.height=2u;
+    clear.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    clear.target.region=(GmlRenderRect){0,0,3u,2u};
+    batch.operations=&clear;
+    batch.operation_count=1u;
+    REQUIRE(services.submit(services.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,
+            "sharp host source rendered on the device");
+    REQUIRE(build_canvas_plan(&plan,pixels,3u,2u,9u,8u,2,1,5u,4u),
+            "sharp host margins recorded");
+    plan.operation_count=1u;
+    REQUIRE(gml_render_plan_add_blit_sharp_bilinear(&plan,0u,(GmlPlanRect){2,1,5u,4u},0xFFu),
+            "sharp host fit recorded");
+    REQUIRE(!gml_render_plan_gpu_eligible(&plan),"borrowed CPU sharp plan retains software");
+    plan.images[0].cpu_pixels=NULL;
+    plan.images[0].resident_image=source;
+    plan.operations[1].alpha_write=0xA5u;
+    REQUIRE(!gml_render_plan_gpu_eligible(&plan),"nonopaque write retains software");
+    plan.operations[1].alpha_write=0xFFu;
+    GmlGpuCounters before={0},after={0};
+    gml_gpu_counters(gpu,&before);
+    REQUIRE(gml_gpu_execute_plan(gpu,&plan),"resident sharp plan executes");
+    gml_gpu_counters(gpu,&after);
+    int x=0,y=0,w=0,h=0;
+    anygm_test_graphics_scissor(&x,&y,&w,&h);
+    REQUIRE(x==2 && y==3 && w==5 && h==4,"sharp fit preserves placement and row origin");
+    REQUIRE(after.draw_calls==before.draw_calls+1u &&
+            after.uploaded_bytes==before.uploaded_bytes &&
+            after.scene_uploaded_bytes==before.scene_uploaded_bytes &&
+            !anygm_test_graphics_read_pixels(),"sharp fit draws once without source transport");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int completed_frame_snapshot_case(void){
   GmlGpu *gpu;
   GmlGpuContext context=fake_context(GML_GPU_API_OPENGLES3);
@@ -8173,6 +8224,7 @@ int main(int argc,char **argv){
     {"scene_raw_copy",scene_raw_copy_case},
     {"scene_identity_underlay",scene_identity_underlay_case},
     {"identity_axis_maps",identity_axis_maps_case},
+    {"resident_sharp_bilinear",resident_sharp_bilinear_case},
     {"scene_native_stretched_cell",scene_native_stretched_cell_case},
     {"scene_white_unit_clear",scene_white_unit_clear_case},
     {"scene_transparent_surface_regions",scene_transparent_surface_regions_case},
