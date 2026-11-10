@@ -569,6 +569,8 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
   (void)R;
   /* ---- drawing ---- */
   { GmlRender *R=(GmlRender*)vm->render;
+    /* Resource storage is available during startup, before a renderer is bound. */
+    GmlSoftware3D *vertex_graphics=vm->software3d;
     /* Vertex format/buffer API. All paths feed the same bounded software
      * vertex store and renderer; aliases cover API generations that exposed
      * colour/color and the early textcoord spelling. */
@@ -576,52 +578,52 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       double id=N(a,n,0);
       if(n<1 || !isfinite(id) || id<0 || id>INT_MAX) return vreal(0);
       return vreal(!strcmp(nm,"vertex_buffer_exists")?
-        gml_software3d_vertex_buffer_exists(GML_GRAPHICS,(int)id):
-        gml_software3d_vertex_format_exists(GML_GRAPHICS,(int)id));
+        gml_software3d_vertex_buffer_exists(vertex_graphics,(int)id):
+        gml_software3d_vertex_format_exists(vertex_graphics,(int)id));
     }
     if(!strcmp(nm,"vertex_format_begin")){
-      gml_software3d_vertex_format_begin(GML_GRAPHICS); return vreal(0); }
+      gml_software3d_vertex_format_begin(vertex_graphics); return vreal(0); }
     if(!strcmp(nm,"vertex_format_add_position")){
       gml_software3d_vertex_format_add(
-        GML_GRAPHICS,GML_SOFTWARE3D_VERTEX_POSITION2,2,1,2,8);
+        vertex_graphics,GML_SOFTWARE3D_VERTEX_POSITION2,2,1,2,8);
       return vreal(0); }
     if(!strcmp(nm,"vertex_format_add_position_3d")){
       gml_software3d_vertex_format_add(
-        GML_GRAPHICS,GML_SOFTWARE3D_VERTEX_POSITION3,3,1,3,12);
+        vertex_graphics,GML_SOFTWARE3D_VERTEX_POSITION3,3,1,3,12);
       return vreal(0); }
     if(!strcmp(nm,"vertex_format_add_colour")||!strcmp(nm,"vertex_format_add_color")){
       gml_software3d_vertex_format_add(
-        GML_GRAPHICS,GML_SOFTWARE3D_VERTEX_COLOR,5,2,4,4);
+        vertex_graphics,GML_SOFTWARE3D_VERTEX_COLOR,5,2,4,4);
       return vreal(0); }
     if(!strcmp(nm,"vertex_format_add_normal")){
       gml_software3d_vertex_format_add(
-        GML_GRAPHICS,GML_SOFTWARE3D_VERTEX_NORMAL,3,3,3,12);
+        vertex_graphics,GML_SOFTWARE3D_VERTEX_NORMAL,3,3,3,12);
       return vreal(0); }
     if(!strcmp(nm,"vertex_format_add_texcoord")||!strcmp(nm,"vertex_format_add_textcoord")){
       gml_software3d_vertex_format_add(
-        GML_GRAPHICS,GML_SOFTWARE3D_VERTEX_TEXCOORD,2,4,2,8);
+        vertex_graphics,GML_SOFTWARE3D_VERTEX_TEXCOORD,2,4,2,8);
       return vreal(0); }
     if(!strcmp(nm,"vertex_format_add_custom")){
       int type=(int)N(a,n,0),usage=(int)N(a,n,1),components=type>=1&&type<=4?type:4;
       int bytes=(type>=1&&type<=4)?type*4:4;
       /* A custom attribute does not become a fixed-function vertex field. */
       gml_software3d_vertex_format_add(
-        GML_GRAPHICS,GML_SOFTWARE3D_VERTEX_CUSTOM,type,usage,components,bytes);
+        vertex_graphics,GML_SOFTWARE3D_VERTEX_CUSTOM,type,usage,components,bytes);
       return vreal(0); }
-    if(!strcmp(nm,"vertex_format_end")) return vreal(gml_software3d_vertex_format_finish(GML_GRAPHICS));
+    if(!strcmp(nm,"vertex_format_end")) return vreal(gml_software3d_vertex_format_finish(vertex_graphics));
     if(!strcmp(nm,"vertex_format_delete")){
-      gml_software3d_vertex_format_delete(GML_GRAPHICS,(int)N(a,n,0));
+      gml_software3d_vertex_format_delete(vertex_graphics,(int)N(a,n,0));
       return vreal(0); }
-    if(!strcmp(nm,"vertex_create_buffer")) return vreal(gml_software3d_vertex_buffer_create(GML_GRAPHICS,0));
+    if(!strcmp(nm,"vertex_create_buffer")) return vreal(gml_software3d_vertex_buffer_create(vertex_graphics,0));
     if(!strcmp(nm,"vertex_create_buffer_ext")){
       double requested=N(a,n,0); int bytes=requested>INT_MAX?INT_MAX:(requested>0?(int)requested:0);
-      return vreal(gml_software3d_vertex_buffer_create(GML_GRAPHICS,bytes)); }
+      return vreal(gml_software3d_vertex_buffer_create(vertex_graphics,bytes)); }
     if(!strcmp(nm,"vertex_delete_buffer")){
-      gml_software3d_vertex_buffer_delete(GML_GRAPHICS,(int)N(a,n,0));
+      gml_software3d_vertex_buffer_delete(vertex_graphics,(int)N(a,n,0));
       return vreal(0); }
-    if(!strcmp(nm,"vertex_begin")) return vreal(gml_software3d_vertex_buffer_begin(GML_GRAPHICS,(int)N(a,n,0),(int)N(a,n,1))?0:-1);
+    if(!strcmp(nm,"vertex_begin")) return vreal(gml_software3d_vertex_buffer_begin(vertex_graphics,(int)N(a,n,0),(int)N(a,n,1))?0:-1);
     if(!strcmp(nm,"vertex_end")){
-      gml_software3d_vertex_buffer_end(GML_GRAPHICS,(int)N(a,n,0));
+      gml_software3d_vertex_buffer_end(vertex_graphics,(int)N(a,n,0));
       return vreal(0); }
     if(!strcmp(nm,"vertex_position")||!strcmp(nm,"vertex_position_3d")||
        !strcmp(nm,"vertex_normal")||!strcmp(nm,"vertex_texcoord")||!strcmp(nm,"vertex_textcoord")){
@@ -633,11 +635,11 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
         kind=GML_SOFTWARE3D_VERTEX_NORMAL;
       else if(strstr(nm,"texcoord")||strstr(nm,"textcoord"))
         kind=GML_SOFTWARE3D_VERTEX_TEXCOORD;
-      gml_software3d_vertex_buffer_attribute(GML_GRAPHICS,(int)N(a,n,0),kind,value,n-1); return vreal(0); }
+      gml_software3d_vertex_buffer_attribute(vertex_graphics,(int)N(a,n,0),kind,value,n-1); return vreal(0); }
     if(!strcmp(nm,"vertex_colour")||!strcmp(nm,"vertex_color")){
       double value[4]={N(a,n,1),N(a,n,2),0,0};
       gml_software3d_vertex_buffer_attribute(
-        GML_GRAPHICS,(int)N(a,n,0),GML_SOFTWARE3D_VERTEX_COLOR,value,2);
+        vertex_graphics,(int)N(a,n,0),GML_SOFTWARE3D_VERTEX_COLOR,value,2);
       return vreal(0); }
     if(!strcmp(nm,"vertex_argb")){
       /* The low 24 bits use the ordinary colour layout with red in the low byte and blue
@@ -646,29 +648,29 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       double value[4]={(double)(argb&0xFFFFFFu),
                        ((argb>>24)&255)/255.0,0,0};
       gml_software3d_vertex_buffer_attribute(
-        GML_GRAPHICS,(int)N(a,n,0),GML_SOFTWARE3D_VERTEX_COLOR,value,2);
+        vertex_graphics,(int)N(a,n,0),GML_SOFTWARE3D_VERTEX_COLOR,value,2);
       return vreal(0); }
     if(!strcmp(nm,"vertex_float1")||!strcmp(nm,"vertex_float2")||
        !strcmp(nm,"vertex_float3")||!strcmp(nm,"vertex_float4")){
       int count=nm[strlen(nm)-1]-'0'; double value[4]={0,0,0,0};
       for(int i=0;i<count;i++) value[i]=N(a,n,i+1);
       gml_software3d_vertex_buffer_attribute(
-        GML_GRAPHICS,(int)N(a,n,0),GML_SOFTWARE3D_VERTEX_CUSTOM,value,count);
+        vertex_graphics,(int)N(a,n,0),GML_SOFTWARE3D_VERTEX_CUSTOM,value,count);
       return vreal(0); }
     if(!strcmp(nm,"vertex_ubyte4")){
       double value[4]={N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4)};
       (void)gml_software3d_vertex_buffer_attribute_ubyte4(
-        GML_GRAPHICS,(int)N(a,n,0),value);
+        vertex_graphics,(int)N(a,n,0),value);
       return vreal(0); }
     if(!strcmp(nm,"vertex_freeze")){
       return vreal(gml_software3d_vertex_buffer_freeze(
-        GML_GRAPHICS,(int)N(a,n,0))?0:-1); }
+        vertex_graphics,(int)N(a,n,0))?0:-1); }
     if(!strcmp(nm,"vertex_get_number")){
       return vreal(gml_software3d_vertex_buffer_number(
-        GML_GRAPHICS,(int)N(a,n,0))); }
+        vertex_graphics,(int)N(a,n,0))); }
     if(!strcmp(nm,"vertex_get_buffer_size")){
       return vreal((double)gml_software3d_vertex_buffer_size(
-        GML_GRAPHICS,(int)N(a,n,0))); }
+        vertex_graphics,(int)N(a,n,0))); }
     if(!strcmp(nm,"vertex_submit")||!strcmp(nm,"vertex_submit_ext")){
       int first=0,number=-1;
       if(!strcmp(nm,"vertex_submit_ext")){ first=(int)N(a,n,3); number=(int)N(a,n,4); }

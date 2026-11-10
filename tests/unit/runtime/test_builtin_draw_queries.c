@@ -20,9 +20,9 @@ static GmlVal query(GmlVM *vm,const char *name,GmlVal *args,int count,int cached
 static int real_is(GmlVal v,double number){ return v.t==V_REAL && v.d==number; }
 static int vertex_resource_existence_case(void){
   int ok=1;
-  for(int cached=0;cached<2;cached++){
+  for(int bound=0;bound<2;bound++) for(int cached=0;cached<2;cached++){
     GmlRender render={0};
-    GmlVM vm={.render=&render};
+    GmlVM vm={.render=bound?&render:NULL};
     const char *queries[]={"vertex_buffer_exists","vertex_format_exists"};
     GmlVal zero=vreal(0),negative=vreal(-1);
     for(int i=0;i<2;i++){
@@ -44,6 +44,14 @@ static int vertex_resource_existence_case(void){
     gml_builtin_call(&vm,"vertex_end",&buffer,1);
     gml_builtin_call(&vm,"vertex_freeze",&buffer,1);
     ok &= real_is(query(&vm,queries[0],&buffer,1,cached,&ok),1);
+    ok &= real_is(query(&vm,"vertex_get_number",&buffer,1,cached,&ok),1);
+    ok &= real_is(query(&vm,"vertex_get_buffer_size",&buffer,1,cached,&ok),12);
+    if(!bound){
+      vm.render=&render;
+      ok &= real_is(query(&vm,queries[0],&buffer,1,cached,&ok),1);
+      ok &= real_is(query(&vm,queries[1],&format,1,cached,&ok),1);
+      vm.render=NULL;
+    }
     gml_builtin_call(&vm,"vertex_format_delete",&format,1);
     ok &= real_is(query(&vm,queries[1],&format,1,cached,&ok),0);
     ok &= real_is(query(&vm,queries[0],&buffer,1,cached,&ok),1);
