@@ -1279,7 +1279,8 @@ GmlVal gml_builtin_try_collision(GmlVM *vm, const char *nm, GmlVal *a, int n){
     GmlDSList *list=ds_list_slot_repair(vm,(int)N(a,n,6));
     return vreal(collision_shape_list_query(vm,2,p,n>3?a[3]:vreal(IT_NOONE),
       N(a,n,4)>=0.5,(int)N(a,n,5),list,N(a,n,7)>=0.5)); }
-  if(!strcmp(nm,"move_contact_solid")||!strcmp(nm,"move_contact")){ GmlInstance *s=vm->cur_self; if(!s) return vreal(0);
+  if(!strcmp(nm,"move_contact_solid")||!strcmp(nm,"move_contact")||!strcmp(nm,"move_contact_all")){ GmlInstance *s=vm->cur_self; if(!s) return vreal(0);
+    if(!strcmp(nm,"move_contact_all") && n<2) return vreal(0);
     int solid_only=!strcmp(nm,"move_contact_solid");
     int target=solid_only?0:IT_ALL;
     int classic=vm->win && anygm_policy_uses_classic_runtime(vm->win);

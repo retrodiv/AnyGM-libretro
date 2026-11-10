@@ -137,9 +137,56 @@ static int bounds_case(void){
   }
   return ok;
 }
+static int all_contact_case(void){
+  int ok=1;
+  for(int classic=0;classic<2;classic++) for(int cached=0;cached<2;cached++){
+    Fixture *f=fixture(classic),*control=fixture(classic);
+    if(!f || !control){if(f) release(f);if(control) release(control);return 0;}
+    const char *name="move_contact_all";
+    int id=gml_builtin_fast_id(&f->vm,name);
+    ok &= expect(id>=0,"all-instance contact has an exact cached identity");
+    GmlVal missing[]={vreal(0)};
+    for(int count=0;count<2;count++){
+      if(cached && id>=0) gml_builtin_call_fast_id(&f->vm,id,name,missing,count);
+      else gml_builtin_call(&f->vm,name,missing,count);
+      ok &= expect(f->instances[0].x==0,"all-instance contact requires direction and distance");
+    }
+    const double distances[]={20,2,0,-1};
+    for(unsigned i=0;i<sizeof distances/sizeof distances[0];i++){
+      f->instances[0].x=0;gml_colgrid_invalidate(&f->vm);
+      GmlVal args[]={vreal(0),vreal(distances[i])};
+      if(cached && id>=0) gml_builtin_call_fast_id(&f->vm,id,name,args,2);
+      else gml_builtin_call(&f->vm,name,args,2);
+      ok &= expect(f->instances[0].x==(i==1?2:3),
+                   "all-instance contact stops before the nearer non-solid mask");
+      ok &= expect(f->instances[0].y==0 && f->instances[0].speed==7 &&
+                   f->instances[0].direction==23 && f->instances[0].hspeed==3 &&
+                   f->instances[0].vspeed==4,"all-instance contact preserves motion");
+    }
+    f->instances[0].x=control->instances[0].x=4;
+    gml_colgrid_invalidate(&f->vm);gml_colgrid_invalidate(&control->vm);
+    GmlVal args[]={vreal(0),vreal(20)};
+    if(cached && id>=0) gml_builtin_call_fast_id(&f->vm,id,name,args,2);
+    else gml_builtin_call(&f->vm,name,args,2);
+    gml_builtin_call(&control->vm,"move_contact",args,2);
+    ok &= expect(f->instances[0].x==control->instances[0].x &&
+                 f->instances[0].y==control->instances[0].y,
+                 "all-instance contact retains the existing overlap policy");
+    double x=f->instances[0].x,y=f->instances[0].y;
+    double other_x=control->instances[0].x,other_y=control->instances[0].y;
+    f->vm.cur_self=NULL;
+    gml_builtin_call(&f->vm,name,args,2);
+    ok &= expect(f->instances[0].x==x && f->instances[0].y==y &&
+                 control->instances[0].x==other_x && control->instances[0].y==other_y,
+                 "all-instance contact without a current instance is a no-op");
+    release(f);release(control);
+  }
+  return ok;
+}
 int main(int argc,char **argv){
   const AnygmTestCase cases[]={{"selection",selection_case},{"distance",distance_case},
-    {"overlap_parity",parity_case},{"relative",relative_case},{"bounds_isolation",bounds_case}};
+    {"overlap_parity",parity_case},{"relative",relative_case},{"bounds_isolation",bounds_case},
+    {"all_contact",all_contact_case}};
   const AnygmTestGroup group={"contact_action",cases,sizeof cases/sizeof cases[0]};
   AnygmTestResult result={0};
   const char *filter=argc==3&&!strcmp(argv[1],"--case")?argv[2]:NULL;
