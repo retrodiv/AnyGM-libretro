@@ -321,6 +321,62 @@ static int authored_case(void){
   gml_vm_free(&vm); free(win.str_hix);
   return ok;
 }
+static int sparse_authored_case(void){
+  int ok=1;
+  for(unsigned absent=1;absent<8;absent++){
+    unsigned char bytes[160]={0};
+    char *strings[]={"authored_slot"};uint32_t offsets[]={128};
+    put32(bytes,3);
+    for(unsigned i=0;i<3;i++){
+      unsigned ep=16+32*i;put32(bytes+4+4*i,(absent&(1u<<i))?0:ep);
+      put32(bytes+ep,128);put32(bytes+ep+12,2);put32(bytes+ep+16,1);
+      put_float(bytes+ep+20,(float)(10+i));put_float(bytes+ep+24,20);
+      put_float(bytes+ep+28,100);
+    }
+    GmlWin win={0};win.data=bytes;win.size=sizeof bytes;win.bytecode=17;
+    win.strs=strings;win.str_charoff=offsets;win.n_strs=1;win.n_chunks=1;
+    memcpy(win.chunks[0].name,"PATH",5);win.chunks[0].size=112;
+    GmlVM vm={0};int initialized=!gml_vm_init(&vm,&win,NULL);
+    ok &= expect(initialized,"null authored pointers are absent resources, not malformed records");
+    if(initialized){
+      ok &= expect(vm.n_paths==3 && vm.n_authored_paths==3,
+                   "absent authored paths retain their resource indices");
+      for(int pass=0;pass<2;pass++){
+        for(unsigned i=0;i<3;i++){
+          GmlVal id=vreal(i);int present=!(absent&(1u<<i));
+          ok &= expect(query(&vm,"path_exists",id,0)==present &&
+                       vm.paths[i].deleted==!present,
+                       "path existence distinguishes live records from null slots");
+          if(present) ok &= expect(query(&vm,"path_get_point_x",id,0)==10+i,
+                                   "a record after a hole retains its own geometry");
+        }
+        if(pass==0){
+          size_t size=gml_vm_state_size(&vm),written=0,used=0;
+          unsigned char *state=malloc(size?size:1);
+          int restored=state && size && gml_vm_state_save(&vm,state,size,&written) &&
+            written==size && gml_vm_state_load(&vm,state,written,&used) && used==written;
+          ok &= expect(restored,"sparse authored path identities survive current state restoration");
+          free(state);if(!restored)break;
+        }
+      }
+      GmlVal added=gml_builtin_call(&vm,"path_add",NULL,0);
+      ok &= expect(added.t==V_REAL && added.d==3,
+                   "runtime paths follow the complete authored index range");
+    }
+    gml_vm_free(&vm);free(win.str_hix);
+  }
+  /* A nonzero pointer into the table, a short record and an out-of-file pointer remain invalid. */
+  const unsigned invalid[]={4,112,UINT32_MAX};
+  for(unsigned i=0;i<sizeof invalid/sizeof invalid[0];i++){
+    unsigned char bytes[128]={0};put32(bytes,1);put32(bytes+4,invalid[i]);
+    GmlWin win={0};win.data=bytes;win.size=sizeof bytes;win.bytecode=17;win.n_chunks=1;
+    memcpy(win.chunks[0].name,"PATH",5);win.chunks[0].size=120;
+    GmlVM vm={0};int status=gml_vm_init(&vm,&win,NULL);
+    ok &= expect(status!=0,"nonzero malformed path pointers retain strict bounds rejection");
+    gml_vm_free(&vm);free(win.str_hix);
+  }
+  return ok;
+}
 static int edited_restore_case(void){
   GmlVM vm={0}; vm.room_index=vm.pending_room=-1; vm.next_creation_seq=1;
   vm.particles=gml_particle_state_create(&vm);
@@ -389,7 +445,7 @@ int main(void){
                                {"smooth_control_center",smooth_center_case},
                                {"paused_relative_followers",paused_followers_case},
                                {"append_preserves_source",append_case},{"resource_names",names_case},
-                               {"authored_controls",authored_case},
+                               {"authored_controls",authored_case},{"sparse_authored_slots",sparse_authored_case},
                                {"edited_state_restore",edited_restore_case}};
   const AnygmTestGroup group={"paths",cases,sizeof cases/sizeof cases[0]};
   AnygmTestResult result; anygm_test_run_groups(&group,1,NULL,&result);

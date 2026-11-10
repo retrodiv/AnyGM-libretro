@@ -609,8 +609,11 @@ static int parse_paths(GmlVM *vm){
   vm->n_authored_paths=(int)n;
   for(uint32_t i=0;i<n;i++){
     uint32_t ep=gml_vm_read_u32_le(d,base+4+i*4);
-    if(ep<base+4+n*4 || ep>end || end-ep<20) goto fail;
     GmlPath *p=&vm->paths[i];
+    /* A null directory pointer is an absent resource. Keep its ID reserved so later authored
+     * paths and runtime-created paths retain their original indices. */
+    if(!ep){p->deleted=1;continue;}
+    if(ep<base+4+n*4 || ep>end || end-ep<20) goto fail;
     /* GMS1.4 PATH entry: [name_ptr:u32][kind:u32(0=straight,1=smooth)][closed:u32][precision:u32]
      * [n_points:u32][points: each x(f32),y(f32),speed_factor(f32)=12B]. */
     p->kind=(int)gml_vm_read_u32_le(d,ep+4);
