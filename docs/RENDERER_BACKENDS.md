@@ -110,8 +110,9 @@ they never enter the separate exact-copy leaf.
 Point-sampled surface RGB and opaque-covered alpha reuse the existing shader
 body with separately cached constant selectors. Constant compilation removes
 unrelated sampler branches without changing sampling or channel formulas.
-Truncated integer tint also retains its own constant selector 37, so its first
-device draw does not compile the unrelated dynamic sampler paths. Its source
+Truncated integer tint and its covered-alpha destination-factor variant also
+retain their own constant selectors 37 and 42, so their first
+device draws do not compile the unrelated dynamic sampler paths. Their source
 effects, alpha, cutout and blending remain in the original branch.
 An unknown destination alpha still requires its existing alpha-only pass;
 a certified opaque destination omits that pass. Context loss forgets both

@@ -160,7 +160,8 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
                                mode==42?"#define GML_SCENE_CONSTANT_FILTER 40\n":
                                mode==43?"#define GML_SCENE_CONSTANT_FILTER 149\n#define GML_SCENE_PLAIN_NATIVE 1\n#define GML_SCENE_WHITE_TINT 1\n":
                                mode==44?"#define GML_SCENE_CONSTANT_FILTER 38\n#define GML_SCENE_PLAIN_NATIVE 1\n#define GML_SCENE_WHITE_TINT 1\n":
-                               mode==45?"#define GML_SCENE_CONSTANT_FILTER 37\n":"",
+                               mode==45?"#define GML_SCENE_CONSTANT_FILTER 37\n":
+                               mode==46?"#define GML_SCENE_CONSTANT_FILTER 42\n":"",
                                GML_GPU_OPENGL_SCENE_FRAGMENT_BODY);
   if(vertex_length<0 || (size_t)vertex_length>=sizeof vertex_source ||
      fragment_length<0 || (size_t)fragment_length>=sizeof fragment_source){
@@ -279,6 +280,8 @@ GlSceneProgram *gml_gpu_opengl_scene_draw_program(GmlGpuBackend *backend,uint32_
   if(plain_native && (filter==38u || filter==149u) && (native_flags&GL_SCENE_NATIVE_WHITE_TINT)){
     unsigned index=filter==149u?41u:42u;
     program=&scene->compact_programs[index];mode=(int)index+2;
+  }else if(filter==42u){
+    program=&scene->compact_programs[44];mode=46;
   }else if(filter==37u){
     program=&scene->compact_programs[43];mode=45;
   }else if(filter==40u){
