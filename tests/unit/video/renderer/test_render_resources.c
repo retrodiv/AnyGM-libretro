@@ -20910,6 +20910,6 @@ int main(void){
   passed+=resident_numbered_rotated_native_quad();
   passed+=resident_lazy_native_atlas();
   passed+=resident_unit_texel_magnification();
-  printf("render resource cases: passed=%d failed=%d\n",passed,327-passed);
-  return passed==327?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,328-passed);
+  return passed==328?EXIT_SUCCESS:EXIT_FAILURE;
 }
