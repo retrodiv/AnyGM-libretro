@@ -24,7 +24,6 @@ int builtin_save_image(GmlVM *vm,const char *path,const uint32_t *pixels,
 #define GML_TIME_SOURCE_ID_BASE UINT32_C(0x48000000)
 #define GML_TIME_SOURCE_HIDDEN_PARENT 2
 #define GML_MAX_EMITTERS 32
-#define GML_PHYS_FIXTURE_MAX 2048
 #define GML_PHYS_JOINT_MAX 1024
 
 typedef struct {
@@ -219,7 +218,8 @@ GmlDSMap *builtin_state_ds_map_allocate(GmlBuiltinState *state,uint32_t id);
 GmlDSList *builtin_state_ds_list_allocate(GmlBuiltinState *state,uint32_t id);
 GmlDSGrid *builtin_state_ds_grid_allocate(GmlBuiltinState *state,uint32_t id);
 
-GmlPhysicsFixture *gml_physics_fixture_new(GmlVM *vm);
+GmlPhysicsFixture *gml_physics_fixture_new(GmlVM *vm,int units);
+void gml_physics_fixture_drop(GmlPhysicsFixture *fixture);
 double gml_physics_world_scale(GmlVM *vm);
 void gml_physics_initialize_body(GmlVM *vm,GmlInstance *instance);
 uint32_t gml_physics_bind_fixture(GmlVM *vm,const GmlPhysicsFixture *fixture,

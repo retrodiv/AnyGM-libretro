@@ -791,6 +791,116 @@ static void kinematic_fixture_templates(void){
   puts("kinematic fixtures: template isolation, density precedence, motion and restore passed");
 }
 
+static void select_chain_shape(GmlVM *vm,int cached,double fixture,int loop){
+  GmlVal args[]={vreal(fixture),vreal(loop)};
+  physics_query(vm,cached,"physics_fixture_set_chain_shape",args,2);
+}
+
+static void chain_fixtures(void){
+  for(int cached=0;cached<2;cached++){
+    GmlVM vm;GmlWin win;setup(&vm,&win);
+    vm.inst[0].x=10;vm.inst[0].y=20;
+    vm.inst[1].x=100;vm.inst[1].y=30;
+    double open=call(&vm,"physics_fixture_create",NULL,0).d;
+    select_chain_shape(&vm,cached,open,0);
+    for(int i=0;i<=20;i++) CALL(&vm,"physics_fixture_add_point",open,i*4,0);
+    double open_bound=CALL(&vm,"physics_fixture_bind",open,vm.inst[0].id).d;
+    assert(open_bound>0 && get(&vm,0,"phy_mass")==0);
+    CALL(&vm,"physics_fixture_set_circle_shape",open,1);
+    CALL(&vm,"physics_fixture_delete",open);
+
+    double loop=call(&vm,"physics_fixture_create",NULL,0).d;
+    select_chain_shape(&vm,cached,loop,1);
+    CALL(&vm,"physics_fixture_add_point",loop,0,0);
+    CALL(&vm,"physics_fixture_add_point",loop,16,0);
+    assert(CALL(&vm,"physics_fixture_bind",loop,vm.inst[1].id).d==0);
+    CALL(&vm,"physics_fixture_add_point",loop,16,16);
+    CALL(&vm,"physics_fixture_add_point",loop,0,0);
+    assert(CALL(&vm,"physics_fixture_bind",loop,vm.inst[1].id).d==0);
+    select_chain_shape(&vm,cached,loop,1);
+    CALL(&vm,"physics_fixture_add_point",loop,0,0);
+    CALL(&vm,"physics_fixture_add_point",loop,16,0);
+    CALL(&vm,"physics_fixture_add_point",loop,16,16);
+    CALL(&vm,"physics_fixture_set_sensor",loop,1);
+    double loop_bound=CALL(&vm,"physics_fixture_bind",loop,vm.inst[1].id).d;
+    assert(loop_bound>0);
+    CALL(&vm,"physics_fixture_delete",loop);
+
+    GmlVal args[]={vreal(95),vreal(38),vreal(120),vreal(38),vreal(vm.inst[1].id),vreal(1)};
+    GmlVal hits=physics_query(&vm,cached,"physics_raycast",args,6);
+    assert(gml_val_array_length(hits)==2);
+    assert(fabs(hit_field(&vm,hits,0,"hitpointX")-108)<.001);
+    assert(fabs(hit_field(&vm,hits,1,"hitpointX")-116)<.001);
+    gml_values_release_owned(&hits,1);
+    args[0]=vreal(87);args[1]=vreal(27);args[2]=vreal(87);args[3]=vreal(13);
+    args[4]=vreal(vm.inst[0].id);
+    hits=physics_query(&vm,cached,"physics_raycast",args,6);
+    assert(gml_val_array_length(hits)==1);
+    assert(fabs(hit_field(&vm,hits,0,"hitpointY")-20)<.001);
+    assert(hit_field(&vm,hits,0,"normalY")==1);
+    gml_values_release_owned(&hits,1);
+
+    bind_box(&vm,2,87,10,1,1,1);
+    vm.cur_self=&vm.inst[2];
+    GmlVal overlap[]={vreal(87),vreal(20),vreal(0),vreal(vm.inst[0].id)};
+    assert(physics_query(&vm,cached,"physics_test_overlap",overlap,4).d==1);
+    overlap[1]=vreal(17);
+    assert(physics_query(&vm,cached,"physics_test_overlap",overlap,4).d==0);
+    CALL(&vm,"physics_world_gravity",0,9.8);
+    CALL(&vm,"physics_fixture_set_collision_group",open_bound,1);
+
+    size_t size=gml_vm_state_size(&vm),written=0,used=0;
+    void *snapshot=malloc(size);
+    assert(snapshot && gml_vm_state_save(&vm,snapshot,size,&written));
+    step(&vm,60);
+    double y=get(&vm,2,"phy_position_y");
+    assert(y>17 && y<20 && fabs(get(&vm,2,"phy_linear_velocity_y"))<.001);
+    CALL(&vm,"physics_remove_fixture",vm.inst[0].id,open_bound);
+    assert(physics_query(&vm,cached,"physics_raycast",args,6).t==V_UNDEF);
+    assert(gml_vm_state_load(&vm,snapshot,written,&used) && used==written);
+    step(&vm,60);
+    assert(get(&vm,2,"phy_position_y")==y);
+    hits=physics_query(&vm,cached,"physics_raycast",args,6);
+    assert(gml_val_array_length(hits)==1);
+    gml_values_release_owned(&hits,1);
+    free(snapshot);
+    CALL(&vm,"physics_remove_fixture",vm.inst[1].id,loop_bound);
+    double dense=call(&vm,"physics_fixture_create",NULL,0).d;
+    select_chain_shape(&vm,cached,dense,0);
+    CALL(&vm,"physics_fixture_add_point",dense,0,0);
+    CALL(&vm,"physics_fixture_add_point",dense,16,0);
+    CALL(&vm,"physics_fixture_set_density",dense,1);
+    assert(CALL(&vm,"physics_fixture_bind",dense,vm.inst[1].id).d>0);
+    assert(get(&vm,1,"phy_mass")==1 && get(&vm,1,"phy_dynamic")==1);
+    step(&vm,3);
+    assert(get(&vm,1,"phy_position_y")>30);
+    gml_vm_free(&vm);
+  }
+  puts("chain fixtures: open and closed geometry, long chains, contacts, ray hits and restore passed");
+}
+
+static void chain_state_budget(void){
+  GmlVM vm;GmlWin win;setup(&vm,&win);
+  double chain=call(&vm,"physics_fixture_create",NULL,0).d;
+  select_chain_shape(&vm,0,chain,0);
+  for(int i=0;i<=GML_PHYS_CHAIN_POINT_LIMIT;i++)
+    CALL(&vm,"physics_fixture_add_point",chain,i,0);
+  assert(vm.builtins->phys_fixture[0].points==GML_PHYS_CHAIN_POINT_LIMIT);
+  assert(call(&vm,"physics_fixture_create",NULL,0).d==0);
+  size_t chain_size=gml_vm_state_size(&vm),written=0,used=0;
+  void *snapshot=malloc(chain_size);
+  assert(snapshot && gml_vm_state_save(&vm,snapshot,chain_size,&written));
+  gml_builtin_physics_room_reset(&vm);
+  for(int i=0;i<GML_PHYS_FIXTURE_MAX;i++)
+    assert(call(&vm,"physics_fixture_create",NULL,0).d>0);
+  assert(chain_size<gml_vm_state_size(&vm));
+  assert(gml_vm_state_load(&vm,snapshot,written,&used) && used==written);
+  assert(vm.builtins->phys_fixture[0].points==GML_PHYS_CHAIN_POINT_LIMIT);
+  assert(vm.builtins->phys_fixture[0].chain[GML_PHYS_CHAIN_POINT_LIMIT-1].x==GML_PHYS_CHAIN_POINT_LIMIT-1);
+  free(snapshot);
+  gml_vm_free(&vm);
+}
+
 static int allow_contact(void *context,int a,int b){
   assert(a==0 && b==0); return *(int *)context;
 }
@@ -852,6 +962,8 @@ int main(void){
   overlap_queries();
   raycast_queries();
   kinematic_fixture_templates();
+  chain_fixtures();
+  chain_state_budget();
   puts("physics: units, fixture lifetime, offsets, rotation, contacts, joints and restore passed");
   return 0;
 }

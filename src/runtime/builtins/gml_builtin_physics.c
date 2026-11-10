@@ -20,8 +20,17 @@ static GmlPhysicsFixture *phys_fixture_find(GmlVM *vm, int id){
     if(vm->builtins->phys_fixture[i].live && vm->builtins->phys_fixture[i].id==(uint32_t)id) return &vm->builtins->phys_fixture[i];
   return NULL;
 }
-GmlPhysicsFixture *gml_physics_fixture_new(GmlVM *vm){
-  if(!vm) return NULL;
+static int fixture_units_used(const GmlVM *vm){
+  int used=0;
+  for(int i=0;i<GML_PHYS_FIXTURE_MAX;i++){
+    const GmlPhysicsFixture *fixture=&vm->builtins->phys_fixture[i];
+    if(fixture->live) used+=gml_physics_fixture_units(fixture->points);
+  }
+  return used;
+}
+
+GmlPhysicsFixture *gml_physics_fixture_new(GmlVM *vm,int units){
+  if(!vm || fixture_units_used(vm)>GML_PHYS_FIXTURE_MAX-units) return NULL;
   for(int i=0;i<GML_PHYS_FIXTURE_MAX;i++) if(!vm->builtins->phys_fixture[i].live){
     GmlPhysicsFixture *f=&vm->builtins->phys_fixture[i];
     memset(f,0,sizeof(*f));
@@ -31,6 +40,38 @@ GmlPhysicsFixture *gml_physics_fixture_new(GmlVM *vm){
   }
   return NULL;
 }
+
+static void fixture_clear_chain(GmlPhysicsFixture *fixture){
+  if(!gml_physics_is_chain(fixture->shape)) return;
+  free(fixture->chain);
+  fixture->chain=NULL;
+  fixture->chain_capacity=0;
+  fixture->points=0;
+}
+
+void gml_physics_fixture_drop(GmlPhysicsFixture *fixture){
+  fixture_clear_chain(fixture);
+  fixture->live=0;
+}
+
+static void fixture_append_chain(GmlVM *vm,GmlPhysicsFixture *fixture,double x,double y){
+  if(fixture->bound_inst>=0 || !isfinite(x) || !isfinite(y) ||
+     fabs(x)>1e12 || fabs(y)>1e12 || fixture->points>=GML_PHYS_CHAIN_POINT_LIMIT) return;
+  int count=fixture->points;
+  if(gml_physics_fixture_units(count+1)>gml_physics_fixture_units(count) &&
+     fixture_units_used(vm)>=GML_PHYS_FIXTURE_MAX) return;
+  if(count>=fixture->chain_capacity){
+    int capacity=fixture->chain_capacity?fixture->chain_capacity*2:GML_PHYS_FIXTURE_POINTS;
+    if(capacity>GML_PHYS_CHAIN_POINT_LIMIT) capacity=GML_PHYS_CHAIN_POINT_LIMIT;
+    GmlPhysicsPoint *points=realloc(fixture->chain,(size_t)capacity*sizeof(*points));
+    if(!points) return;
+    fixture->chain=points;
+    fixture->chain_capacity=capacity;
+  }
+  fixture->chain[count]=(GmlPhysicsPoint){x,y};
+  fixture->points++;
+}
+
 GmlPhysicsJoint *gml_physics_find_joint(GmlVM *vm,double id){
   if(!vm || !vm->builtins || !(id>=1 && id<=UINT32_MAX)) return NULL;
   for(int i=0;i<GML_PHYS_JOINT_MAX;i++)
@@ -136,7 +177,34 @@ static int physics_overlap(GmlVM *vm,GmlVal *arguments,int count){
 static int ray_hit_compare(const void *left,const void *right){
   const GmlPhysicsRayHit *a=left,*b=right;
   if(a->fraction!=b->fraction) return a->fraction<b->fraction?-1:1;
-  return a->fixture<b->fixture?-1:a->fixture>b->fixture;
+  if(a->fixture!=b->fixture) return a->fixture<b->fixture?-1:1;
+  return a->child<b->child?-1:a->child>b->child;
+}
+
+typedef struct {
+  GmlPhysicsRayHit *hits;
+  int count,capacity,all,failed;
+} PhysicsRayHits;
+
+static int collect_ray_hit(void *context,const GmlPhysicsRayHit *hit){
+  PhysicsRayHits *result=context;
+  if(!result->all){
+    if(!result->count || ray_hit_compare(hit,result->hits)<0){
+      *result->hits=*hit;
+      result->count=1;
+    }
+    return 1;
+  }
+  if(result->count==result->capacity){
+    int capacity=result->capacity?result->capacity*2:16;
+    if(capacity>GML_PHYS_CHAIN_POINT_LIMIT) capacity=GML_PHYS_CHAIN_POINT_LIMIT;
+    if(capacity<=result->capacity){ result->failed=1; return 0; }
+    GmlPhysicsRayHit *hits=realloc(result->hits,(size_t)capacity*sizeof(*hits));
+    if(!hits){ result->failed=1; return 0; }
+    result->hits=hits; result->capacity=capacity;
+  }
+  result->hits[result->count++]=*hit;
+  return 1;
 }
 
 static GmlVal physics_raycast(GmlVM *vm,GmlVal *arguments,int count){
@@ -146,29 +214,22 @@ static GmlVal physics_raycast(GmlVM *vm,GmlVal *arguments,int count){
                      N(arguments,count,2),N(arguments,count,3),count>=7?N(arguments,count,6):1};
   if(!isfinite(ray.max_fraction) || ray.max_fraction<0) return vundef();
   ray.max_fraction=fmin(ray.max_fraction,1);
-  int all_hits=count>=6 && N(arguments,count,5)!=0;
-  GmlPhysicsRayHit closest,*hits=&closest;
-  if(all_hits){
-    hits=malloc(GML_PHYS_FIXTURE_MAX*sizeof(*hits));
-    if(!hits) return vundef();
-  }
-  int found=0;
-  for(int i=0;i<GML_PHYS_FIXTURE_MAX;i++){
+  GmlPhysicsRayHit closest;
+  PhysicsRayHits result={0};
+  result.all=count>=6 && N(arguments,count,5)!=0;
+  if(!result.all) result.hits=&closest;
+  for(int i=0;i<GML_PHYS_FIXTURE_MAX && !result.failed;i++){
     const GmlPhysicsFixture *fixture=&vm->builtins->phys_fixture[i];
     GmlInstance *in=query_fixture_owner(vm,fixture);
     if(!in || !ray_target(vm,in,arguments[4])) continue;
     GmlPhysicsBody pose=gml_physics_body_pose(in);
     if(!pose.active) continue;
-    GmlPhysicsRayHit hit;
-    if(!gml_physics_fixture_raycast(fixture,&pose,&ray,scale,&hit)) continue;
-    if(all_hits) hits[found++]=hit;
-    else if(!found || ray_hit_compare(&hit,&closest)<0){
-      closest=hit;
-      ray.max_fraction=hit.fraction;
-      found=1;
-    }
+    gml_physics_fixture_raycast(fixture,&pose,&ray,scale,collect_ray_hit,&result);
+    if(!result.all && result.count) ray.max_fraction=closest.fraction;
   }
-  if(!found){ if(all_hits) free(hits); return vundef(); }
+  int found=result.count;
+  GmlPhysicsRayHit *hits=result.hits;
+  if(!found || result.failed){ if(result.all) free(hits); return vundef(); }
   if(found>1) qsort(hits,(size_t)found,sizeof(*hits),ray_hit_compare);
   GmlVal array=gml_arr_new(found,vundef());
   int complete=gml_val_array_length(array)==found;
@@ -185,7 +246,7 @@ static GmlVal physics_raycast(GmlVM *vm,GmlVal *arguments,int count){
     }
     if(complete) gml_arr_set(array,i,vreal(record->id));
   }
-  if(all_hits) free(hits);
+  if(result.all) free(hits);
   if(!complete){ gml_values_release_owned(&array,1); return vundef(); }
   return array;
 }
@@ -295,12 +356,12 @@ GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"physics_test_overlap")) return vreal(physics_overlap(vm,a,n));
   if(!strcmp(nm,"physics_raycast")) return physics_raycast(vm,a,n);
   if(!strcmp(nm,"physics_fixture_create")){
-    GmlPhysicsFixture *f=gml_physics_fixture_new(vm);
+    GmlPhysicsFixture *f=gml_physics_fixture_new(vm,1);
     return vreal(f?(double)f->id:0);
   }
   if(!strcmp(nm,"physics_fixture_delete")){
     GmlPhysicsFixture *f=phys_fixture_find(vm,(int)N(a,n,0));
-    if(f && f->bound_inst<0) f->live=0;
+    if(f && f->bound_inst<0) gml_physics_fixture_drop(f);
     return vreal(0);
   }
   if(!strcmp(nm,"physics_fixture_bind") || !strcmp(nm,"physics_fixture_bind_ext")){
@@ -321,8 +382,10 @@ GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
     GmlPhysicsFixture *f=phys_fixture_find(vm,(int)N(a,n,1));
     if(f && f->bound_inst>=0){
       for(int i=0;i<vm->inst_count;i++)
-        if(vm->inst[i].id==(uint32_t)f->bound_inst && physics_target(vm,&vm->inst[i],(int)N(a,n,0)))
-          f->live=0;
+        if(vm->inst[i].id==(uint32_t)f->bound_inst && physics_target(vm,&vm->inst[i],(int)N(a,n,0))){
+          gml_physics_fixture_drop(f);
+          break;
+        }
     }
     return vreal(0);
   }
@@ -343,30 +406,43 @@ GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   if(!strcmp(nm,"physics_fixture_add_point")){
     GmlPhysicsFixture *f=phys_fixture_find(vm,(int)N(a,n,0));
-    if(f && f->points<GML_PHYS_FIXTURE_POINTS){
+    if(f && gml_physics_is_chain(f->shape)){
+      if(n>=3) fixture_append_chain(vm,f,N(a,n,1),N(a,n,2));
+    } else if(f && f->points<GML_PHYS_FIXTURE_POINTS){
       int p=f->points++;
       f->px[p]=N(a,n,1); f->py[p]=N(a,n,2);
     }
     return vreal(0);
   }
+  if(!strcmp(nm,"physics_fixture_set_chain_shape")){
+    double id=N(a,n,0);
+    if(n<2 || !(id>0 && id<=INT_MAX)) return vreal(0);
+    GmlPhysicsFixture *f=phys_fixture_find(vm,(int)id);
+    if(f && f->bound_inst<0){
+      fixture_clear_chain(f);
+      f->points=0;
+      f->shape=N(a,n,1)!=0?GML_PHYS_FIXTURE_LOOP:GML_PHYS_FIXTURE_CHAIN;
+    }
+    return vreal(0);
+  }
   if(!strcmp(nm,"physics_fixture_set_polygon_shape")){
     GmlPhysicsFixture *f=phys_fixture_find(vm,(int)N(a,n,0));
-    if(f){ f->shape=3; f->points=0; }
+    if(f){ fixture_clear_chain(f); f->shape=3; f->points=0; }
     return vreal(0);
   }
   if(!strcmp(nm,"physics_fixture_set_edge_shape")){
     GmlPhysicsFixture *f=phys_fixture_find(vm,(int)N(a,n,0));
-    if(f){ f->shape=4; f->x1=N(a,n,1); f->y1=N(a,n,2); f->x2=N(a,n,3); f->y2=N(a,n,4); }
+    if(f){ fixture_clear_chain(f); f->shape=4; f->x1=N(a,n,1); f->y1=N(a,n,2); f->x2=N(a,n,3); f->y2=N(a,n,4); }
     return vreal(0);
   }
   if(!strcmp(nm,"physics_fixture_set_circle_shape")){
     GmlPhysicsFixture *f=phys_fixture_find(vm,(int)N(a,n,0));
-    if(f){ f->shape=1; f->radius=N(a,n,1); }
+    if(f){ fixture_clear_chain(f); f->shape=1; f->radius=N(a,n,1); }
     return vreal(0);
   }
   if(!strcmp(nm,"physics_fixture_set_box_shape")){
     GmlPhysicsFixture *f=phys_fixture_find(vm,(int)N(a,n,0));
-    if(f){ f->shape=2; f->w=N(a,n,1); f->h=N(a,n,2); }
+    if(f){ fixture_clear_chain(f); f->shape=2; f->w=N(a,n,1); f->h=N(a,n,2); }
     return vreal(0);
   }
   if(!strcmp(nm,"physics_fixture_set_density")){

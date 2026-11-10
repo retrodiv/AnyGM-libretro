@@ -48,10 +48,10 @@ uint32_t gml_physics_bind_fixture(GmlVM *vm,const GmlPhysicsFixture *source,
                                  GmlInstance *in,double xoffset,double yoffset){
   if(!vm || !source || !in || !isfinite(xoffset) || !isfinite(yoffset)) return 0;
   GmlPhysicsFixture copy=*source;
-  /* An unmodified fixture template is static in the kinematic API. Keep
-   * the established dynamic default for templates without that flag. */
-  if(copy.kinematic && !copy.density_set && copy.density==GML_PHYS_FIXTURE_DEFAULT_DENSITY)
-    copy.density=0;
+  /* Kinematic templates and chains use zero implicit density. Keep the
+   * established dynamic default for other shapes. */
+  if((copy.kinematic || gml_physics_is_chain(copy.shape)) && !copy.density_set &&
+     copy.density==GML_PHYS_FIXTURE_DEFAULT_DENSITY) copy.density=0;
   int select_type=copy.kinematic || value(in,"__phy_kinematic",0)==PHYS_KINEMATIC_FROM_FIXTURE;
   if(select_type){
     for(int i=0;i<GML_PHYS_FIXTURE_MAX;i++){
@@ -62,8 +62,16 @@ uint32_t gml_physics_bind_fixture(GmlVM *vm,const GmlPhysicsFixture *source,
       }
     }
   }
-  GmlPhysicsFixture *bound=gml_physics_fixture_new(vm);
-  if(!bound) return 0;
+  if(gml_physics_is_chain(copy.shape)){
+    if(!gml_physics_chain_valid(source,gml_physics_world_scale(vm))) return 0;
+    size_t bytes=(size_t)copy.points*sizeof(*copy.chain);
+    copy.chain=malloc(bytes);
+    if(!copy.chain) return 0;
+    memcpy(copy.chain,source->chain,bytes);
+    copy.chain_capacity=copy.points;
+  }
+  GmlPhysicsFixture *bound=gml_physics_fixture_new(vm,gml_physics_fixture_units(copy.points));
+  if(!bound){ free(copy.chain); return 0; }
   uint32_t id=bound->id;
   *bound=copy; bound->id=id; bound->live=1; bound->bound_inst=(int)in->id;
   bound->kinematic=0; bound->density_set=0;
@@ -373,7 +381,8 @@ void gml_physics_step(GmlVM *vm){
    * Explicit-id lookup keeps deactivated instances and their attachments alive. */
   for(int i=0;i<GML_PHYS_FIXTURE_MAX;i++){
     GmlPhysicsFixture *f=&vm->builtins->phys_fixture[i];
-    if(f->live && f->bound_inst>=0 && !gml_vm_instance_by_id(vm,f->bound_inst)) f->live=0;
+    if(f->live && f->bound_inst>=0 && !gml_vm_instance_by_id(vm,f->bound_inst))
+      gml_physics_fixture_drop(f);
   }
   for(int i=0;i<GML_PHYS_JOINT_MAX;i++){
     GmlPhysicsJoint *j=&vm->builtins->phys_joint[i];

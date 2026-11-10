@@ -7,7 +7,13 @@
 #include <stdint.h>
 
 #define GML_PHYS_FIXTURE_POINTS 16
+#define GML_PHYS_FIXTURE_MAX 2048
+#define GML_PHYS_CHAIN_POINT_LIMIT (GML_PHYS_FIXTURE_MAX*GML_PHYS_FIXTURE_POINTS)
 #define GML_PHYS_FIXTURE_DEFAULT_DENSITY 0.5
+
+enum { GML_PHYS_FIXTURE_CHAIN=5, GML_PHYS_FIXTURE_LOOP };
+
+typedef struct { double x,y; } GmlPhysicsPoint;
 
 /* Canonical resource descriptions. Native solver objects never enter state bytes. */
 typedef struct {
@@ -17,7 +23,19 @@ typedef struct {
   double radius, w, h, x1, y1, x2, y2;
   double px[GML_PHYS_FIXTURE_POINTS], py[GML_PHYS_FIXTURE_POINTS];
   int sensor, group, kinematic, density_set;
+  GmlPhysicsPoint *chain;
+  int chain_capacity;
 } GmlPhysicsFixture;
+
+static inline int gml_physics_is_chain(int shape){
+  return shape==GML_PHYS_FIXTURE_CHAIN || shape==GML_PHYS_FIXTURE_LOOP;
+}
+
+/* Longer chains draw from the existing room fixture budget, one unit per
+ * block of points. Their serialized data fits inside the old fixture ceiling. */
+static inline int gml_physics_fixture_units(int points){
+  return points>0 ? 1+(points-1)/GML_PHYS_FIXTURE_POINTS : 1;
+}
 
 enum {
   GML_PHYS_JOINT_REVOLUTE=1,
@@ -102,7 +120,7 @@ typedef struct {
   double x, y, angle, vx, vy, omega, linear_damping, angular_damping;
   double force_x, force_y, torque;
   double mass, inertia, center_x, center_y;
-  int explicit_mass;
+  int explicit_mass,chain_mass;
 } GmlPhysicsBody;
 
 typedef struct {
@@ -115,19 +133,22 @@ typedef struct {
 } GmlPhysicsRay;
 
 typedef struct {
-  uint32_t instance,fixture;
+  uint32_t instance,fixture,child;
   double x,y,nx,ny,fraction;
 } GmlPhysicsRayHit;
+typedef int (*GmlPhysicsRayVisitor)(void *context,const GmlPhysicsRayHit *hit);
 
 typedef int (*GmlPhysicsFilter)(void *context,int object_a,int object_b);
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+int gml_physics_chain_valid(const GmlPhysicsFixture *fixture,double scale);
 int gml_physics_fixture_overlap(const GmlPhysicsFixture *a,const GmlPhysicsBody *pose_a,
                                 const GmlPhysicsFixture *b,const GmlPhysicsBody *pose_b,double scale);
-int gml_physics_fixture_raycast(const GmlPhysicsFixture *fixture,const GmlPhysicsBody *pose,
-                                const GmlPhysicsRay *ray,double scale,GmlPhysicsRayHit *hit);
+void gml_physics_fixture_raycast(const GmlPhysicsFixture *fixture,const GmlPhysicsBody *pose,
+                                 const GmlPhysicsRay *ray,double scale,
+                                 GmlPhysicsRayVisitor visit,void *context);
 void gml_physics_solver_mass(GmlPhysicsBody *body,const GmlPhysicsFixture *fixtures,
                              int fixture_count,double scale);
 int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,

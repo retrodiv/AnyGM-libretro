@@ -17,18 +17,37 @@ bool bounded(double x) { return std::isfinite(x) && std::fabs(x) <= 1e12; }
 bool spatial(double x,double scale) { return bounded(x) && std::fabs(x*scale)<=1e6; }
 float nonnegative(double x) { return bounded(x) && x > 0 ? float(x) : 0.0f; }
 
+int fixture_children(const GmlPhysicsFixture &fixture) {
+  if (!gml_physics_is_chain(fixture.shape)) return 1;
+  if (!fixture.chain || fixture.points<2) return 0;
+  return fixture.shape==GML_PHYS_FIXTURE_LOOP?fixture.points:fixture.points-1;
+}
+
 struct Shape {
   b2CircleShape circle;
   b2PolygonShape polygon;
   b2EdgeShape edge;
 
-  const b2Shape *make(const GmlPhysicsFixture &f, double scale) {
+  const b2Shape *segment(double x1,double y1,double x2,double y2,double scale) {
+    if (!spatial(x1,scale) || !spatial(y1,scale) || !spatial(x2,scale) || !spatial(y2,scale))
+      return nullptr;
+    b2Vec2 a(float(x1*scale),float(y1*scale)),b(float(x2*scale),float(y2*scale));
+    if ((a-b).LengthSquared()<=b2_epsilon*b2_epsilon) return nullptr;
+    edge.SetTwoSided(a,b);
+    return &edge;
+  }
+
+  const b2Shape *make(const GmlPhysicsFixture &f,double scale,int child=0) {
+    if (!bounded(f.density) || f.density>1e6) return nullptr;
+    if (gml_physics_is_chain(f.shape)) {
+      const GmlPhysicsPoint &a=f.chain[child],&b=f.chain[(child+1)%f.points];
+      return segment(a.x,a.y,b.x,b.y,scale);
+    }
     /* Bound converted geometry and density before the single-precision mass integrals.
      * Finite doubles alone can still overflow those integrals into invalid native bodies. */
     const double dimensions[]={f.radius,f.w,f.h,f.x1,f.y1,f.x2,f.y2};
     for (double coordinate:dimensions)
       if (!bounded(coordinate) || std::fabs(coordinate*scale)>1e6) return nullptr;
-    if (!bounded(f.density) || f.density>1e6) return nullptr;
     if (f.shape == 1 && f.radius*scale > b2_epsilon) {
       circle.m_radius = float(f.radius * scale);
       circle.m_p.SetZero();
@@ -38,13 +57,7 @@ struct Shape {
       polygon.SetAsBox(float(f.w * scale), float(f.h * scale));
       return &polygon;
     }
-    if (f.shape == 4 && bounded(f.x1) && bounded(f.x2) && bounded(f.y1) && bounded(f.y2)) {
-      b2Vec2 a(float(f.x1 * scale), float(f.y1 * scale));
-      b2Vec2 b(float(f.x2 * scale), float(f.y2 * scale));
-      if ((a-b).LengthSquared() <= b2_epsilon*b2_epsilon) return nullptr;
-      edge.SetTwoSided(a,b);
-      return &edge;
-    }
+    if (f.shape == 4) return segment(f.x1,f.y1,f.x2,f.y2,scale);
     if (f.shape == 3 && f.points >= 3 && f.points <= GML_PHYS_FIXTURE_POINTS) {
       /* Set computes a convex hull, but requires at least three distinct, non-collinear
        * points. Validate those preconditions before entering the vendor assertion boundary. */
@@ -125,6 +138,23 @@ b2Body *find_body(const std::vector<b2Body *> &bodies,uint32_t id) {
 }
 }
 
+extern "C" int gml_physics_chain_valid(const GmlPhysicsFixture *fixture,double scale) {
+  const int count=fixture_children(*fixture);
+  if (scale<=0 || !count ||
+      fixture->points<(fixture->shape==GML_PHYS_FIXTURE_LOOP?3:2)) return 0;
+  for (int i=0;i<fixture->points;i++) {
+    const GmlPhysicsPoint &p=fixture->chain[i];
+    if (!spatial(p.x,scale) || !spatial(p.y,scale)) return 0;
+  }
+  for (int child=0;child<count;child++) {
+    const GmlPhysicsPoint &a=fixture->chain[child],&b=fixture->chain[(child+1)%fixture->points];
+    b2Vec2 first(float(a.x*scale),float(a.y*scale));
+    b2Vec2 second(float(b.x*scale),float(b.y*scale));
+    if (b2DistanceSquared(first,second)<b2_linearSlop*b2_linearSlop) return 0;
+  }
+  return 1;
+}
+
 extern "C" int gml_physics_fixture_overlap(const GmlPhysicsFixture *a,const GmlPhysicsBody *pose_a,
                                            const GmlPhysicsFixture *b,const GmlPhysicsBody *pose_b,
                                            double scale) {
@@ -132,48 +162,47 @@ extern "C" int gml_physics_fixture_overlap(const GmlPhysicsFixture *a,const GmlP
   if (!query_transform(*pose_a,scale,transform_a) ||
       !query_transform(*pose_b,scale,transform_b)) return 0;
   Shape storage_a,storage_b;
-  const b2Shape *shape_a=storage_a.make(*a,scale),*shape_b=storage_b.make(*b,scale);
-  if (!shape_a || !shape_b) return 0;
-  for (int i=0;i<shape_a->GetChildCount();i++)
-    for (int j=0;j<shape_b->GetChildCount();j++)
-      if (b2TestOverlap(shape_a,i,shape_b,j,transform_a,transform_b)) return 1;
+  const int count_a=fixture_children(*a),count_b=fixture_children(*b);
+  for (int i=0;i<count_a;i++) {
+    const b2Shape *shape_a=storage_a.make(*a,scale,i);
+    if (!shape_a) continue;
+    for (int j=0;j<count_b;j++) {
+      const b2Shape *shape_b=storage_b.make(*b,scale,j);
+      if (shape_b && b2TestOverlap(shape_a,0,shape_b,0,transform_a,transform_b)) return 1;
+    }
+  }
   return 0;
 }
 
-extern "C" int gml_physics_fixture_raycast(const GmlPhysicsFixture *fixture,
-                                           const GmlPhysicsBody *pose,const GmlPhysicsRay *ray,
-                                           double scale,GmlPhysicsRayHit *hit) {
+extern "C" void gml_physics_fixture_raycast(const GmlPhysicsFixture *fixture,
+                                            const GmlPhysicsBody *pose,const GmlPhysicsRay *ray,
+                                            double scale,GmlPhysicsRayVisitor visit,void *context) {
   b2Transform transform;
   if (!query_transform(*pose,scale,transform) ||
       !spatial(ray->x1,scale) || !spatial(ray->y1,scale) ||
-      !spatial(ray->x2,scale) || !spatial(ray->y2,scale)) return 0;
+      !spatial(ray->x2,scale) || !spatial(ray->y2,scale)) return;
   b2RayCastInput input;
   input.p1.Set(float(ray->x1*scale),float(ray->y1*scale));
   input.p2.Set(float(ray->x2*scale),float(ray->y2*scale));
-  if (input.p1==input.p2) return 0;
+  if (input.p1==input.p2) return;
   input.maxFraction=float(ray->max_fraction);
   Shape storage;
-  const b2Shape *shape=storage.make(*fixture,scale);
-  if (!shape) return 0;
-  b2RayCastOutput closest{b2Vec2(0,0),0};
-  bool found=false;
-  for (int child=0;child<shape->GetChildCount();child++) {
+  const int count=fixture_children(*fixture);
+  for (int child=0;child<count;child++) {
+    const b2Shape *shape=storage.make(*fixture,scale,child);
     b2RayCastOutput output;
-    if (shape->RayCast(&output,input,transform,child) &&
-        (!found || output.fraction<closest.fraction)) {
-      closest=output;
-      found=true;
-    }
+    if (!shape || !shape->RayCast(&output,input,transform,0)) continue;
+    GmlPhysicsRayHit hit;
+    hit.instance=uint32_t(fixture->bound_inst);
+    hit.fixture=fixture->id;
+    hit.child=uint32_t(child);
+    hit.fraction=output.fraction;
+    hit.x=ray->x1+(ray->x2-ray->x1)*hit.fraction;
+    hit.y=ray->y1+(ray->y2-ray->y1)*hit.fraction;
+    hit.nx=output.normal.x;
+    hit.ny=output.normal.y;
+    if (!visit(context,&hit)) break;
   }
-  if (!found) return 0;
-  hit->instance=uint32_t(fixture->bound_inst);
-  hit->fixture=fixture->id;
-  hit->fraction=closest.fraction;
-  hit->x=ray->x1+(ray->x2-ray->x1)*hit->fraction;
-  hit->y=ray->y1+(ray->y2-ray->y1)*hit->fraction;
-  hit->nx=closest.normal.x;
-  hit->ny=closest.normal.y;
-  return 1;
 }
 
 extern "C" void gml_physics_solver_mass(GmlPhysicsBody *body,
@@ -181,9 +210,12 @@ extern "C" void gml_physics_solver_mass(GmlPhysicsBody *body,
                                           int count,double scale) {
   if (!body || !fixtures || !bounded(scale) || scale<=0) return;
   double mass=0,inertia=0,cx=0,cy=0;
+  const GmlPhysicsFixture *first=nullptr;
   for (int i=0;i<count;i++) {
     const auto &f=fixtures[i];
     if (!f.live || f.bound_inst!=int(body->id)) continue;
+    if (!first || f.id<first->id) first=&f;
+    if (gml_physics_is_chain(f.shape)) continue;
     Shape storage;
     const b2Shape *shape=storage.make(f,scale);
     if (!shape) continue;
@@ -192,8 +224,10 @@ extern "C" void gml_physics_solver_mass(GmlPhysicsBody *body,
     mass+=data.mass; inertia+=data.I;
     cx+=data.mass*data.center.x; cy+=data.mass*data.center.y;
   }
+  body->chain_mass=mass<=0 && first && gml_physics_is_chain(first->shape) &&
+                   nonnegative(first->density)>0;
   if (mass>0) { cx/=mass; cy/=mass; }
-  body->mass=mass;
+  body->mass=body->chain_mass?1:mass; /* Dynamic segments have zero area. */
   body->inertia=std::max(0.0,inertia-mass*(cx*cx+cy*cy));
   body->center_x=cx/scale; body->center_y=cy/scale;
 }
@@ -313,20 +347,22 @@ extern "C" int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,
     b2Body *body=find_body(native,uint32_t(f->bound_inst));
     if (!body) continue;
     Shape storage;
-    const b2Shape *shape=storage.make(*f,scale);
-    if (!shape) continue;
     b2FixtureDef def;
-    def.shape=shape; def.density=nonnegative(f->density);
+    def.density=nonnegative(f->density);
     def.friction=nonnegative(f->friction); def.restitution=nonnegative(f->restitution);
     def.isSensor=f->sensor!=0;
     def.filter.groupIndex=int16(std::max(-32768,std::min(32767,f->group)));
-    body->CreateFixture(&def);
+    const int count=fixture_children(*f);
+    for (int child=0;child<count;child++) {
+      def.shape=storage.make(*f,scale,child);
+      if (def.shape) body->CreateFixture(&def);
+    }
   }
   for (int i=0;i<body_count;i++) {
     b2Body *body=native[size_t(i)];
     const auto &b=bodies[i];
     if (!body) continue;
-    if (b.explicit_mass && b.mass>0 && bounded(b.mass) && bounded(b.inertia) &&
+    if ((b.explicit_mass || b.chain_mass) && b.mass>0 && bounded(b.mass) && bounded(b.inertia) &&
         spatial(b.center_x,scale) && spatial(b.center_y,scale)) {
       b2MassData data;
       data.mass=float(b.mass);

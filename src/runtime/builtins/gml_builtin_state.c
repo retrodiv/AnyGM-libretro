@@ -437,6 +437,7 @@ static void builtin_state_release_owned_values(GmlBuiltinState *state){
 
 static void builtin_state_physics_reset(GmlBuiltinState *state){
   if(!state) return;
+  for(int i=0;i<GML_PHYS_FIXTURE_MAX;i++) free(state->phys_fixture[i].chain);
   memset(state->phys_fixture,0,sizeof(state->phys_fixture));
   memset(state->phys_joint,0,sizeof(state->phys_joint));
   state->phys_next_id=0;
@@ -915,7 +916,12 @@ void gml_builtin_state_write_physics(const GmlBuiltinState *state,
     gml_vm_state_write_real(writer,fixture->y2);
     gml_vm_state_write_i32(writer,fixture->sensor);
     gml_vm_state_write_i32(writer,fixture->group);
-    for(int p=0;p<GML_PHYS_FIXTURE_POINTS;p++){
+    if(gml_physics_is_chain(fixture->shape)){
+      for(int p=0;p<fixture->points;p++){
+        gml_vm_state_write_real(writer,fixture->chain[p].x);
+        gml_vm_state_write_real(writer,fixture->chain[p].y);
+      }
+    } else for(int p=0;p<GML_PHYS_FIXTURE_POINTS;p++){
       gml_vm_state_write_real(writer,fixture->px[p]);
       gml_vm_state_write_real(writer,fixture->py[p]);
     }
@@ -962,6 +968,7 @@ int gml_builtin_state_read_physics(GmlBuiltinState *state,
                              (uint32_t)fixture_live);
     fixture_live=0;
   }
+  int fixture_units=0;
   for(int i=0;i<fixture_live && gml_vm_state_reader_ok(reader);i++){
     GmlPhysicsFixture *fixture=&state->phys_fixture[i];
     memset(fixture,0,sizeof(*fixture));
@@ -980,9 +987,19 @@ int gml_builtin_state_read_physics(GmlBuiltinState *state,
       fixture->density_set=(flags & PHYS_TEMPLATE_DENSITY_SET)!=0;
     }
     fixture->points=gml_vm_state_read_i32(reader);
-    if(fixture->points<0 || fixture->points>GML_PHYS_FIXTURE_POINTS ||
-       fixture->shape<0 || fixture->shape>4 || !fixture->id || fixture->id>=state->phys_next_id){
+    int chain=gml_physics_is_chain(fixture->shape);
+    int limit=chain?GML_PHYS_CHAIN_POINT_LIMIT:GML_PHYS_FIXTURE_POINTS;
+    if(fixture->points<0 || fixture->points>limit ||
+       (chain && fixture->bound_inst>=0 &&
+        fixture->points<(fixture->shape==GML_PHYS_FIXTURE_LOOP?3:2)) ||
+       fixture->shape<0 || fixture->shape>GML_PHYS_FIXTURE_LOOP ||
+       !fixture->id || fixture->id>=state->phys_next_id){
       gml_vm_state_reader_fail(reader,"bad physics fixture description",fixture->id);
+      return 0;
+    }
+    fixture_units+=gml_physics_fixture_units(fixture->points);
+    if(fixture_units>GML_PHYS_FIXTURE_MAX){
+      gml_vm_state_reader_fail(reader,"physics fixture budget exceeded",fixture->id);
       return 0;
     }
     for(int previous=0;previous<i;previous++) if(state->phys_fixture[previous].id==fixture->id){
@@ -1004,7 +1021,22 @@ int gml_builtin_state_read_physics(GmlBuiltinState *state,
     fixture->y2=gml_vm_state_read_real(reader);
     fixture->sensor=gml_vm_state_read_i32(reader);
     fixture->group=gml_vm_state_read_i32(reader);
-    for(int p=0;p<GML_PHYS_FIXTURE_POINTS;p++){
+    if(chain && fixture->points){
+      fixture->chain=malloc((size_t)fixture->points*sizeof(*fixture->chain));
+      if(!fixture->chain){
+        gml_vm_state_reader_fail(reader,"cannot allocate physics chain points",fixture->id);
+        return 0;
+      }
+      fixture->chain_capacity=fixture->points;
+      for(int p=0;p<fixture->points && gml_vm_state_reader_ok(reader);p++){
+        double x=gml_vm_state_read_real(reader),y=gml_vm_state_read_real(reader);
+        if(!isfinite(x) || !isfinite(y) || fabs(x)>1e12 || fabs(y)>1e12){
+          gml_vm_state_reader_fail(reader,"bad physics chain point",fixture->id);
+          return 0;
+        }
+        fixture->chain[p]=(GmlPhysicsPoint){x,y};
+      }
+    } else if(!chain) for(int p=0;p<GML_PHYS_FIXTURE_POINTS;p++){
       fixture->px[p]=gml_vm_state_read_real(reader);
       fixture->py[p]=gml_vm_state_read_real(reader);
     }

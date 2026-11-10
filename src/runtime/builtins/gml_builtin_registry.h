@@ -1946,7 +1946,8 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1848, PHYSICS_JOINT_GET_VALUE, "physics_joint_get_value", PHYSICS, PHYSICS, ALWAYS) \
   ENTRY(1849, PHYSICS_TEST_OVERLAP, "physics_test_overlap", PHYSICS, PHYSICS, ALWAYS) \
   ENTRY(1850, PHYSICS_RAYCAST, "physics_raycast", PHYSICS, PHYSICS, ALWAYS) \
-  ENTRY(1851, PHYSICS_FIXTURE_SET_KINEMATIC, "physics_fixture_set_kinematic", PHYSICS, PHYSICS, ALWAYS)
+  ENTRY(1851, PHYSICS_FIXTURE_SET_KINEMATIC, "physics_fixture_set_kinematic", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1852, PHYSICS_FIXTURE_SET_CHAIN_SHAPE, "physics_fixture_set_chain_shape", PHYSICS, PHYSICS, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -1961,7 +1962,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1852
+  GML_BUILTIN_ID_LIMIT = 1853
 } GmlBuiltinId;
 
 #endif
