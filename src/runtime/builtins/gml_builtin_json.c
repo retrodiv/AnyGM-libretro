@@ -248,7 +248,13 @@ static GmlVal json_parse_object(JsonIn *j, int depth){
       if(!js_consume(j,':')){ free(key); j->ok=0; return vreal(0); }
       GmlVal val=json_parse_value(j,depth+1);
       if(!j->ok){ free(key); return vreal(0); }
-      *gml_varmap_put(&st->vars,key)=var_store_clone(val);
+      const char *interned=gml_win_intern_lookup(j->vm->win,key);
+      GmlVal *slot;
+      if(interned){
+        free(key);
+        slot=gml_varmap_put(&st->vars,interned);
+      }else slot=gml_varmap_put_owned(&st->vars,key);
+      *slot=var_store_clone(val);
       if(js_consume(j,'}')) break;
       if(!js_consume(j,',')){ j->ok=0; return vreal(0); }
       /* Studio JSON compatibility accepts a final comma in objects emitted by Studio tooling. */

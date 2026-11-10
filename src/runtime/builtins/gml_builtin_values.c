@@ -801,9 +801,14 @@ static int varmap_delete_key(GmlVarMap *m, const char *key){
   if(found<0) return 0;
   GmlVarMap nm={0};
   for(int i=0;i<m->cap;i++){
-    if(i==found || !m->slots[i].key) continue;
-    *gml_varmap_put(&nm,m->slots[i].key)=m->slots[i].val;
+    GmlVarSlot *slot=&m->slots[i];
+    if(i==found || !slot->key) continue;
+    GmlVal *value=slot->key_owned
+      ?gml_varmap_put_owned(&nm,(char*)slot->key)
+      :gml_varmap_put(&nm,slot->key);
+    *value=slot->val;
   }
+  if(m->slots[found].key_owned) free((char*)m->slots[found].key);
   free(m->slots);
   *m=nm;
   return 1;
@@ -865,6 +870,7 @@ typedef struct {
   GmlVM *vm;
   VariableCloneArray *array; int array_count, array_cap;
   VariableCloneStruct *structure; int structure_count, structure_cap;
+  int key_copy_failed;
 } VariableCloneContext;
 
 static GmlVal variable_clone_value(VariableCloneContext *context, GmlVal value, int depth);
@@ -937,10 +943,17 @@ static GmlVal variable_clone_struct(VariableCloneContext *context, GmlInstance *
   for(int i=0;i<source->vars.cap;i++){
     GmlVarSlot *slot=&source->vars.slots[i];
     if(!slot->key) continue;
+    char *key=slot->key_owned?strdup(slot->key):NULL;
+    if(slot->key_owned && !key){
+      context->key_copy_failed=1;
+      return vreal((double)source->id);
+    }
     GmlVal copy=depth>0
       ?variable_clone_value(context,slot->val,depth-1)
       :gml_arr_store_clone(slot->val);
-    *gml_varmap_put(&clone->vars,slot->key)=copy;
+    GmlVal *value=key?gml_varmap_put_owned(&clone->vars,key)
+                     :gml_varmap_put(&clone->vars,slot->key);
+    *value=copy;
   }
   /* A cloned bound method whose receiver is part of this clone graph follows the receiver clone.
    * External receivers remain bound to their original instance, matching variable_clone. */
@@ -980,7 +993,7 @@ static GmlVal gml_variable_clone(GmlVM *vm, GmlVal *args, int count){
   VariableCloneContext context={.vm=vm};
   GmlVal result=variable_clone_value(&context,args[0],depth);
   free(context.array); free(context.structure);
-  return result;
+  return context.key_copy_failed?args[0]:result;
 }
 
 GmlVal gml_builtin_try_values_variables(GmlVM *vm, const char *nm, GmlVal *a, int n){
