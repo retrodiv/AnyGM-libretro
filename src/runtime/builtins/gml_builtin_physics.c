@@ -171,6 +171,66 @@ GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
     GmlPhysicsFixture *f=phys_fixture_find(vm,(int)N(a,n,0)); if(f) f->sensor=N(a,n,1)!=0; return vreal(0); }
   if(!strcmp(nm,"physics_fixture_set_collision_group")){
     GmlPhysicsFixture *f=phys_fixture_find(vm,(int)N(a,n,0)); if(f) f->group=(int)N(a,n,1); return vreal(0); }
+  if(!strcmp(nm,"physics_joint_distance_create") || !strcmp(nm,"physics_joint_friction_create") ||
+     !strcmp(nm,"physics_joint_weld_create") || !strcmp(nm,"physics_joint_pulley_create")){
+    GmlPhysicsJoint joint={0};
+    if(!strcmp(nm,"physics_joint_distance_create")) joint.type=GML_PHYS_JOINT_DISTANCE;
+    else if(!strcmp(nm,"physics_joint_friction_create")) joint.type=GML_PHYS_JOINT_FRICTION;
+    else if(!strcmp(nm,"physics_joint_weld_create")) joint.type=GML_PHYS_JOINT_WELD;
+    else joint.type=GML_PHYS_JOINT_PULLEY;
+    int required=joint.type==GML_PHYS_JOINT_PULLEY?12:joint.type==GML_PHYS_JOINT_WELD?8:7;
+    double scale=gml_physics_world_scale(vm);
+    if(n<required || scale<=0) return vreal(-1);
+    for(int i=0;i<required;i++){
+      double arg=N(a,n,i);
+      if(!isfinite(arg) || fabs(arg)>1e12) return vreal(-1);
+    }
+    joint.a=N(a,n,0); joint.b=N(a,n,1);
+    if(joint.a==-1 && vm->cur_self) joint.a=vm->cur_self->id;
+    if(joint.a==-2 && vm->cur_other) joint.a=vm->cur_other->id;
+    if(joint.b==-1 && vm->cur_self) joint.b=vm->cur_self->id;
+    if(joint.b==-2 && vm->cur_other) joint.b=vm->cur_other->id;
+    if(joint.a<0 || joint.b<0 || joint.a>UINT32_MAX || joint.b>UINT32_MAX) return vreal(-1);
+    joint.x1=N(a,n,2); joint.y1=N(a,n,3);
+    if(joint.type==GML_PHYS_JOINT_DISTANCE){
+      joint.x2=N(a,n,4); joint.y2=N(a,n,5);
+      joint.params[1]=N(a,n,6)!=0;
+      joint.value_count=2;
+    } else if(joint.type==GML_PHYS_JOINT_PULLEY){
+      joint.x2=N(a,n,4); joint.y2=N(a,n,5);
+      joint.anchor_ax=N(a,n,6); joint.anchor_ay=N(a,n,7);
+      joint.anchor_bx=N(a,n,8); joint.anchor_by=N(a,n,9);
+      joint.params[0]=N(a,n,10); joint.params[1]=N(a,n,11)!=0;
+      if(joint.params[0]<1e-12) return vreal(-1);
+      joint.value_count=4;
+    } else {
+      int first=joint.type==GML_PHYS_JOINT_WELD?5:4;
+      /* Weld input gives A relative to B, while the solver stores B relative to A. */
+      if(joint.type==GML_PHYS_JOINT_WELD) joint.reference_angle=-N(a,n,4);
+      joint.params[0]=fmax(0,N(a,n,first));
+      joint.params[1]=fmax(0,N(a,n,first+1));
+      joint.params[2]=N(a,n,first+2)!=0;
+      joint.value_count=3;
+    }
+    gml_physics_initialize_joint(vm,&joint);
+    if(!joint.initialized) return vreal(-1);
+    double limit=fmin(1e12,1e6/scale);
+    const double anchors[]={joint.anchor_ax,joint.anchor_ay,joint.anchor_bx,joint.anchor_by};
+    for(unsigned i=0;i<sizeof anchors/sizeof anchors[0];i++)
+      if(!isfinite(anchors[i]) || fabs(anchors[i])>limit) return vreal(-1);
+    if(joint.type==GML_PHYS_JOINT_DISTANCE && joint.params[0]>limit) return vreal(-1);
+    if(joint.type==GML_PHYS_JOINT_PULLEY &&
+       (fabs(joint.x1)>limit || fabs(joint.y1)>limit ||
+        fabs(joint.x2)>limit || fabs(joint.y2)>limit ||
+        !isfinite(joint.params[2]) || !isfinite(joint.params[3]) ||
+        joint.params[2]>limit || joint.params[3]>limit)) return vreal(-1);
+    GmlPhysicsJoint *owned=phys_joint_new(vm,joint.type);
+    if(!owned) return vreal(-1);
+    joint.id=owned->id;
+    joint.live=1;
+    *owned=joint;
+    return vreal(joint.id);
+  }
   if(!strcmp(nm,"physics_joint_revolute_create")||!strcmp(nm,"physics_joint_prismatic_create")||
      !strcmp(nm,"physics_joint_wheel_create")||!strcmp(nm,"physics_joint_rope_create")){
     int type=!strcmp(nm,"physics_joint_revolute_create")?1:

@@ -18,6 +18,17 @@ typedef struct {
   int sensor, group;
 } GmlPhysicsFixture;
 
+enum {
+  GML_PHYS_JOINT_DISTANCE=5,
+  GML_PHYS_JOINT_FRICTION,
+  GML_PHYS_JOINT_WELD,
+  GML_PHYS_JOINT_PULLEY
+};
+
+/* Additional parameter layouts: distance (length, collide), friction (force,
+ * torque, collide), weld (frequency, damping ratio, collide), and pulley
+ * (ratio, collide, initial length A, initial length B). Lengths are in pixels.
+ * Pulley x1/y1 and x2/y2 are the two fixed world anchors. */
 typedef struct {
   int live, type, value_count;
   uint32_t id;

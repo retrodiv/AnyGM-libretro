@@ -238,6 +238,83 @@ static int bound_fixture_properties(void){
   return ok;
 }
 
+static void read_joint_motion(GmlVM *vm,double result[12]){
+  const char *const fields[]={"phy_position_x","phy_position_y","phy_rotation",
+                              "phy_linear_velocity_x","phy_linear_velocity_y","phy_angular_velocity"};
+  for(int body=0;body<2;body++)
+    for(int field=0;field<6;field++) result[body*6+field]=get(vm,body,fields[field]);
+}
+
+static void direct_joint_constructors(void){
+  static const struct {const char *name; int count,steps; double args[10];} cases[]={
+    {"physics_joint_distance_create",7,8,{4,0,36,0,0}},
+    {"physics_joint_friction_create",7,3,{40,0,1,.03,0}},
+    {"physics_joint_weld_create",8,1192,{20,0,30,4,.8,0}},
+    {"physics_joint_pulley_create",12,8,{3,0,77,0,3,0,-3,0,2,0}}
+  };
+  for(int cached=0;cached<2;cached++) for(unsigned index=0;index<4;index++){
+    int pulley=index==3;
+    GmlVM vm;GmlWin win;setup(&vm,&win);
+    CALL(&vm,"physics_world_gravity",0,0);
+    bind_box(&vm,0,0,pulley?40:0,2,2,pulley?1:0);
+    bind_box(&vm,1,pulley?80:40,pulley?40:0,2,2,1);
+    vm.cur_self=&vm.inst[0];vm.cur_other=&vm.inst[1];
+    GmlVal args[12]={vreal(-1),vreal(-2)};
+    const char *name=cases[index].name;
+    int count=cases[index].count,id=gml_builtin_fast_id(&vm,name);
+    assert(id>=0);
+    for(int arg=2;arg<count;arg++) args[arg]=vreal(cases[index].args[arg-2]);
+    assert(gml_builtin_call(&vm,name,args,count-1).d==-1);
+    GmlVal joint=cached?gml_builtin_call_fast_id(&vm,id,name,args,count):
+                         gml_builtin_call(&vm,name,args,count);
+    assert(joint.t==V_REAL && joint.d>0);
+    if(index==0){
+      vm.cur_self=&vm.inst[1];CALL(&vm,"physics_apply_impulse",40,0,-.5,0);
+    } else if(index==1){
+      assert(gml_physics_variable_set(&vm,&vm.inst[1],"phy_linear_velocity_x",vreal(30)));
+      assert(gml_physics_variable_set(&vm,&vm.inst[1],"phy_angular_velocity",vreal(120)));
+    } else if(index==2){
+      /* The off-centre body increases angular inertia. Verify the spring
+       * begins moving before checking its settled angle and anchor. */
+      step(&vm,8);
+      double angle=get(&vm,1,"phy_rotation");
+      assert(angle<0 && angle>-20);
+    } else if(pulley){
+      for(int body=0;body<2;body++)
+        assert(gml_physics_variable_set(&vm,&vm.inst[body],"phy_fixed_rotation",vreal(1)));
+      assert(gml_physics_variable_set(&vm,&vm.inst[0],"phy_position_y",vreal(45)));
+      CALL(&vm,"physics_apply_impulse",0,45,0,.2);
+    }
+    size_t size=gml_vm_state_size(&vm),written=0,used=0;
+    void *snapshot=malloc(size);
+    assert(snapshot && gml_vm_state_save(&vm,snapshot,size,&written));
+    double expected[12],actual[12];
+    step(&vm,cases[index].steps);
+    read_joint_motion(&vm,expected);
+    assert(gml_vm_state_load(&vm,snapshot,written,&used) && used==written);
+    step(&vm,cases[index].steps);
+    read_joint_motion(&vm,actual);
+    assert(!memcmp(expected,actual,sizeof actual));
+    if(index==0){
+      assert(fabs(actual[6]-40)<.001 && fabs(actual[9])<.001);
+      CALL(&vm,"physics_joint_delete",joint.d);
+      vm.cur_self=&vm.inst[1];CALL(&vm,"physics_apply_impulse",40,0,-.5,0);
+      step(&vm,1);assert(get(&vm,1,"phy_position_x")<39.5);
+    } else if(index==1){
+      assert(actual[6]>40.1 && actual[9]>0 && actual[9]<29);
+      assert(actual[11]>0 && actual[11]<119);
+    } else if(index==2){
+      assert(fabs(actual[8]+30)<.05);
+      assert(fabs(actual[6]-(20+10*sqrt(3)))<.02 && fabs(actual[7]+10)<.02);
+    } else {
+      assert(actual[1]>40.5 && actual[7]<39.75);
+      assert(fabs(actual[1]+2*actual[7]-120)<.002);
+    }
+    free(snapshot);gml_vm_free(&vm);
+  }
+  puts("physics joint constructors: distance, friction, weld and pulley motion and restore passed");
+}
+
 static int allow_contact(void *context,int a,int b){
   assert(a==0 && b==0); return *(int *)context;
 }
@@ -292,6 +369,7 @@ static void malformed_geometry_and_mass(void){
 int main(void){
   units_and_ownership(); offset_and_rotation(); binding_origin_and_phase(); floor_joints_and_restore(); filtering_and_sensors(); malformed_geometry_and_mass();
   if(!bound_fixture_properties()) return EXIT_FAILURE;
+  direct_joint_constructors();
   puts("physics: units, fixture lifetime, offsets, rotation, contacts, joints and restore passed");
   return 0;
 }

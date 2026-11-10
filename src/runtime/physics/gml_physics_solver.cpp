@@ -255,6 +255,61 @@ extern "C" int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,
       def.maxLength=std::max(b2_linearSlop,float(j->params[0]*scale));
       def.length=def.maxLength; def.collideConnected=j->params[1]!=0;
       world.CreateJoint(&def);
+    } else if (j->type>=GML_PHYS_JOINT_DISTANCE && j->type<=GML_PHYS_JOINT_PULLEY) {
+      const b2Vec2 local_a(float(j->anchor_ax*scale),float(j->anchor_ay*scale));
+      const b2Vec2 local_b(float(j->anchor_bx*scale),float(j->anchor_by*scale));
+      switch (j->type) {
+        case GML_PHYS_JOINT_DISTANCE: {
+          if (!spatial(j->params[0],scale)) break;
+          b2DistanceJointDef def;
+          def.bodyA=a; def.bodyB=b;
+          def.localAnchorA=local_a; def.localAnchorB=local_b;
+          def.length=std::max(b2_linearSlop,float(j->params[0]*scale));
+          def.minLength=def.maxLength=def.length;
+          def.collideConnected=j->params[1]!=0;
+          world.CreateJoint(&def);
+          break;
+        }
+        case GML_PHYS_JOINT_FRICTION: {
+          b2FrictionJointDef def;
+          def.bodyA=a; def.bodyB=b;
+          def.localAnchorA=local_a; def.localAnchorB=local_b;
+          def.maxForce=nonnegative(j->params[0]);
+          def.maxTorque=nonnegative(j->params[1]);
+          def.collideConnected=j->params[2]!=0;
+          world.CreateJoint(&def);
+          break;
+        }
+        case GML_PHYS_JOINT_WELD: {
+          b2WeldJointDef def;
+          def.bodyA=a; def.bodyB=b;
+          def.localAnchorA=local_a; def.localAnchorB=local_b;
+          def.referenceAngle=float(j->reference_angle*radians);
+          b2AngularStiffness(def.stiffness,def.damping,nonnegative(j->params[0]),
+                            nonnegative(j->params[1]),a,b);
+          if (!std::isfinite(def.stiffness) || !std::isfinite(def.damping)) break;
+          def.collideConnected=j->params[2]!=0;
+          world.CreateJoint(&def);
+          break;
+        }
+        case GML_PHYS_JOINT_PULLEY: {
+          if (j->params[0]<1e-12 ||
+              !spatial(j->x1,scale) || !spatial(j->y1,scale) ||
+              !spatial(j->x2,scale) || !spatial(j->y2,scale) ||
+              !spatial(j->params[2],scale) || !spatial(j->params[3],scale)) break;
+          b2PulleyJointDef def;
+          def.bodyA=a; def.bodyB=b;
+          def.localAnchorA=local_a; def.localAnchorB=local_b;
+          def.groundAnchorA.Set(float(j->x1*scale),float(j->y1*scale));
+          def.groundAnchorB.Set(float(j->x2*scale),float(j->y2*scale));
+          def.lengthA=float(j->params[2]*scale);
+          def.lengthB=float(j->params[3]*scale);
+          def.ratio=float(j->params[0]);
+          def.collideConnected=j->params[1]!=0;
+          world.CreateJoint(&def);
+          break;
+        }
+      }
     }
   }
   substeps=std::max(1,std::min(16,substeps));
