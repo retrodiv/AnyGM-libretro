@@ -27,7 +27,7 @@ static void fail(const char *label){
  * not content, and the sample deliberately spans the whole table so a broken probe sequence cannot
  * pass by covering only its first entries. */
 static const char *const recognized_names[]={
-  "undefined","room","room_speed","fps","delta_time","view_current","view_enabled",
+  "undefined","game_id","room","room_speed","fps","delta_time","view_current","view_enabled",
   "background_color","event_type","mouse_x","current_time","os_type","os_windows",
   "room_width","room_height","instance_count","health","lives","score","id","object_index",
   "sprite_width","image_number","x","y","xprevious","sprite_index","image_index","image_alpha",
@@ -351,8 +351,35 @@ static void argument_and_receiver_resolution(void){
   free(vm.structs);free(vm.struct_gen);free(vm.struct_free);free(vm.special_var_hash);
 }
 
+static void game_identity_semantics(void){
+  GmlWin win={0};
+  GmlVM vm={.win=&win};
+  vm.inst=calloc(1,sizeof *vm.inst);
+  if(!vm.inst){ fail("identity receiver allocation"); return; }
+  vm.inst_count=vm.inst_cap=1;
+  vm.inst[0].id=100001; vm.inst[0].active=1;
+  vm.cur_self=vm.inst;
+  const uint32_t identities[]={0,9,42,UINT32_MAX};
+  for(size_t i=0;i<sizeof identities/sizeof identities[0];i++){
+    win.gameid=identities[i];
+    unsigned long unset=gml_vm_unset_reads(&vm);
+    GmlVal value=gml_vm_identifier_get(&vm,"game_id");
+    GmlVal global=gml_vm_variable_get_h(&vm,IT_GLOBAL,"game_id",gml_value_name_hash("game_id"));
+    if(value.t!=V_REAL || value.d!=(double)identities[i] ||
+       global.t!=V_REAL || global.d!=(double)identities[i] ||
+       gml_vm_unset_reads(&vm)!=unset) fail("game_id must read loaded metadata without an unset fallback");
+    gml_vm_assign_current_scope(&vm,"game_id",vreal(7));
+    value=gml_vm_identifier_get(&vm,"game_id");
+    if(value.t!=V_REAL || value.d!=(double)identities[i] ||
+       gml_varmap_get(&vm.inst[0].vars,"game_id")) fail("game_id is read-only");
+  }
+  vm.win=NULL;
+  gml_vm_free(&vm);
+}
+
 int main(void){
   special_name_gate();
+  game_identity_semantics();
   global_lookup_semantics();
   argument_and_receiver_resolution();
   draw_item_sort_order();

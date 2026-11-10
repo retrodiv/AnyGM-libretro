@@ -293,6 +293,7 @@ int gmlc_classic_project_load_image(const AnygmContentTransforms *transforms,Gml
   }
   free(project_data);
   project->classic_version=(int)manifest.inventory.header.version;
+  project->game_id=manifest.inventory.header.game_id;
   project->classic_scaling=manifest.inventory.settings.scaling;
   project->classic_interpolate=manifest.inventory.settings.interpolate;
   project->classic_swap_creation_events=manifest.inventory.settings.swap_creation_events;

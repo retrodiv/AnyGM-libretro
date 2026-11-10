@@ -269,6 +269,7 @@ typedef struct {
   char *yyp_path;
   char *name;
   char *startup_code_path;
+  uint32_t game_id;
   int classic_version;
   int classic_scaling;
   int classic_interpolate;

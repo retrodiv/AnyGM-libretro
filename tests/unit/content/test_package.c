@@ -441,6 +441,27 @@ static int expect_font_style_normalization(const char *directory){
   return ok;
 }
 
+static int expect_authored_game_identity(const char *directory){
+  char path[256],error[256]={0};
+  snprintf(path,sizeof path,"%s/identity.win",directory);
+  AnygmHostServices host={.struct_size=sizeof host,.abi_version=ANYGM_HOST_SERVICES_VERSION};
+  anygm_stdio_vfs_services_init(&host);
+  GmlcProject project={.host=&host,.name=(char *)"neutral_identity"};
+  const uint32_t ids[]={0,9,42,UINT32_MAX};
+  int ok=1;
+  for(size_t i=0;ok && i<sizeof ids/sizeof ids[0];i++){
+    project.game_id=ids[i];
+    uint8_t *bytes=NULL; size_t size=0; GmlWin win={0};
+    ok=gmlc_package_write_structural(&project,path,error,sizeof error) &&
+       read_bytes(path,&bytes,&size) && gml_win_from_mem(&win,bytes,size,0)==0 &&
+       win.gameid==ids[i];
+    if(!ok) fprintf(stderr,"packaged game identity %" PRIu32 " was not preserved: %s\n",ids[i],error);
+    gml_win_free(&win); free(bytes);
+  }
+  remove(path);
+  return ok;
+}
+
 int main(int argc,char **argv){
   AnygmSyntheticContent first={0}, second={0};
   uint8_t *first_bytes=NULL, *second_bytes=NULL;
@@ -479,6 +500,7 @@ int main(int argc,char **argv){
   if(ok && !expect_classic_room_order_display_extent(first.directory)) ok=0;
   if(ok && !expect_optn_scale_is_read(first.directory)) ok=0;
   if(ok && !expect_font_style_normalization(first.directory)) ok=0;
+  if(ok && !expect_authored_game_identity(first.directory)) ok=0;
 
   free(first_bytes);
   free(second_bytes);

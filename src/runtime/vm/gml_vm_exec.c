@@ -477,7 +477,7 @@ static int inst_sprite_metric_get(GmlVM *vm, GmlInstance *in, const char *name, 
  * read and write. Hash-hit => run the original chain (its strcmps confirm; collisions are
  * safe); miss => the name is provably not special, go straight to the varmap. */
 static const char *const g_special_var_names[]={
-  "undefined","infinity","room","room_first","room_last","keyboard_lastkey","keyboard_key","keyboard_string","keyboard_lastchar","room_speed","working_directory","program_directory",
+  "undefined","game_id","infinity","room","room_first","room_last","keyboard_lastkey","keyboard_key","keyboard_string","keyboard_lastchar","room_speed","working_directory","program_directory",
   "fps","delta_time","view_current","view_enabled","room_persistent","background_color","background_colour",
   "view_left","view_top","view_width","view_height","view_x","view_y",
   "brush_color","brush_style","pen_color","pen_size",
@@ -635,6 +635,7 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
    * global and Classic policies above, then use the established argument reader. */
   if(argument_get(vm,name,&out)) return out;
   if(!strcmp(name,"undefined")) return vundef();   /* GMS2.3 builtin literal used by optional-arg prologues */
+  if(!strcmp(name,"game_id")) return vreal(vm->win?vm->win->gameid:0);
   if(!strcmp(name,"infinity")) return vreal(INFINITY); /* unbounded numeric literal */
   if(!strcmp(name,"room")) return vreal(vm->room_index);   /* GM built-in: current room index */
   if(!strcmp(name,"room_first") || !strcmp(name,"room_last")){
@@ -849,6 +850,7 @@ static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal
       return;
     }
   }
+  if(!strcmp(name,"game_id")) return;
   if(!strcmp(name,"room")){
     int target=(int)asnum(v);
     gml_vm_warm_audio_for_room(vm,target);

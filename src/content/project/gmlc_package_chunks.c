@@ -811,7 +811,6 @@ int write_gen8(Pkg *pkg, const GmlcProject *p){
     if(scaled_h>0 && scaled_h<=UINT32_MAX) dh=(uint32_t)scaled_h;
   }
   const uint8_t bytecode_version=15;
-  const uint32_t game_id=0;
   const uint32_t info_flags=0x000000B2u;
   const uint64_t timestamp=0;
   size_t s=chunk_begin(pkg,"GEN8");
@@ -823,7 +822,7 @@ int write_gen8(Pkg *pkg, const GmlcProject *p){
   add_str_patch(pkg,(uint32_t)(base+8),sid_cfg);
   patch32(&pkg->b,base+12,(uint32_t)(p->next_instance_id>100000?p->next_instance_id:100000));
   patch32(&pkg->b,base+16,10000000);
-  patch32(&pkg->b,base+20,game_id);
+  patch32(&pkg->b,base+20,p->game_id);
   add_str_patch(pkg,(uint32_t)(base+40),sid_id);
   patch32(&pkg->b,base+44,2);
   patch32(&pkg->b,base+48,0);
