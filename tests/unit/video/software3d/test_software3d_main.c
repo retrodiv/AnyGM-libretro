@@ -74,6 +74,7 @@ int main(int argc,char **argv){
   };
   static const AnygmTestCase state_cases[]={
     {"canonical_roundtrip",software3d_state_roundtrip_case},
+    {"matrix_stack",matrix_stack_fixture},
   };
   const AnygmTestGroup groups[]={
     {"boundary",boundary_cases,sizeof boundary_cases/sizeof boundary_cases[0]},

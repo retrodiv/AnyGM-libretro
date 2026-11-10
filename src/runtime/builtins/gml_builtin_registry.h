@@ -1947,7 +1947,13 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1849, PHYSICS_TEST_OVERLAP, "physics_test_overlap", PHYSICS, PHYSICS, ALWAYS) \
   ENTRY(1850, PHYSICS_RAYCAST, "physics_raycast", PHYSICS, PHYSICS, ALWAYS) \
   ENTRY(1851, PHYSICS_FIXTURE_SET_KINEMATIC, "physics_fixture_set_kinematic", PHYSICS, PHYSICS, ALWAYS) \
-  ENTRY(1852, PHYSICS_FIXTURE_SET_CHAIN_SHAPE, "physics_fixture_set_chain_shape", PHYSICS, PHYSICS, ALWAYS)
+  ENTRY(1852, PHYSICS_FIXTURE_SET_CHAIN_SHAPE, "physics_fixture_set_chain_shape", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1853, MATRIX_STACK_CLEAR, "matrix_stack_clear", DRAW, DRAW_3D, ALWAYS) \
+  ENTRY(1854, MATRIX_STACK_IS_EMPTY, "matrix_stack_is_empty", DRAW, DRAW_3D, ALWAYS) \
+  ENTRY(1855, MATRIX_STACK_POP, "matrix_stack_pop", DRAW, DRAW_3D, ALWAYS) \
+  ENTRY(1856, MATRIX_STACK_PUSH, "matrix_stack_push", DRAW, DRAW_3D, ALWAYS) \
+  ENTRY(1857, MATRIX_STACK_SET, "matrix_stack_set", DRAW, DRAW_3D, ALWAYS) \
+  ENTRY(1858, MATRIX_STACK_TOP, "matrix_stack_top", DRAW, DRAW_3D, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -1962,7 +1968,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1853
+  GML_BUILTIN_ID_LIMIT = 1859
 } GmlBuiltinId;
 
 #endif

@@ -175,6 +175,61 @@ static GmlVal gm_matrix_write(const double matrix[16],GmlVal reuse){
   return result;
 }
 
+static GmlVal gm_matrix_stack_builtin(GmlVM *vm,const char *name,GmlVal *args,int count){
+  /* The implicit identity base is at depth zero. The VM owns numeric
+   * snapshots of the live matrices, so neither arguments nor returned
+   * arrays alias the stack, and its contents restore with VM state. */
+  enum { MATRIX_SIZE=16, MATRIX_STACK_LIMIT=50 };
+  const char *const key="__gml_matrix_stack";
+  GmlVal *slot=gml_varmap_get(&vm->globals,key);
+  GmlVal stack=slot?*slot:vundef();
+  int length=gml_val_array_length(stack);
+  if(length%MATRIX_SIZE || length>(MATRIX_STACK_LIMIT+1)*MATRIX_SIZE) return vundef();
+  int depth=length?length/MATRIX_SIZE-1:0;
+  if(!strcmp(name,"matrix_stack_is_empty")) return vreal(depth==0);
+  if(!strcmp(name,"matrix_stack_clear")){
+    if(length) gml_arr_resize(stack,0);
+    return vundef();
+  }
+  if(!strcmp(name,"matrix_stack_pop")){
+    if(length) gml_arr_resize(stack,length-MATRIX_SIZE);
+    return vundef();
+  }
+
+  double top[MATRIX_SIZE],next[MATRIX_SIZE];
+  if(length){
+    for(int i=0;i<MATRIX_SIZE;i++) top[i]=gml_arr_get(stack,length-MATRIX_SIZE+i).d;
+  } else gml_software3d_matrix_identity(top);
+  if(!strcmp(name,"matrix_stack_top")) return gm_matrix_write(top,vundef());
+
+  int push=!strcmp(name,"matrix_stack_push");
+  if(push && depth>=MATRIX_STACK_LIMIT) return vundef();
+  if(push && !count) memcpy(next,top,sizeof next);
+  else {
+    if(!count || gml_val_array_length(args[0])!=MATRIX_SIZE || !gm_matrix_read(args[0],next))
+      return vundef();
+    if(push) gml_software3d_matrix_multiply(top,next,next);
+  }
+
+  int offset=(depth+push)*MATRIX_SIZE;
+  int new_length=offset+MATRIX_SIZE;
+  if(stack.t!=V_ARR || !stack.arr){
+    stack=gml_arr_new(new_length,vreal(0));
+    if(gml_val_array_length(stack)!=new_length){ gml_values_release_owned(&stack,1); return vundef(); }
+    slot=gml_varmap_put(&vm->globals,key);
+    if(!slot){ gml_values_release_owned(&stack,1); return vundef(); }
+    gml_arr_mark_escaped(stack);
+    *slot=stack;
+  } else if(new_length>length){
+    gml_arr_set(stack,new_length-1,vreal(0));
+    if(gml_val_array_length(stack)!=new_length) return vundef();
+  }
+  if(push && !length)
+    for(int i=0;i<MATRIX_SIZE;i++) gml_arr_set(stack,i,vreal(top[i]));
+  for(int i=0;i<MATRIX_SIZE;i++) gml_arr_set(stack,offset+i,vreal(next[i]));
+  return vundef();
+}
+
 static GmlVal gm_matrix_builtin(GmlRender *R,const char *name,GmlVal *args,int count){
   double result[16];
   if(!strcmp(name,"matrix_inverse")){
@@ -2113,6 +2168,10 @@ GmlVal gml_builtin_try_draw_3d(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"sprite_get_texture")){ int spr=(int)N(a,n,0), img=(int)N(a,n,1);
     return vreal(gml_render_sprite_texture_handle(spr,img)); }
   if(!strcmp(nm,"texture_debug_messages")) return vreal(0);
+  if(!strcmp(nm,"matrix_stack_clear") || !strcmp(nm,"matrix_stack_is_empty") ||
+     !strcmp(nm,"matrix_stack_pop") || !strcmp(nm,"matrix_stack_push") ||
+     !strcmp(nm,"matrix_stack_set") || !strcmp(nm,"matrix_stack_top"))
+    return gm_matrix_stack_builtin(vm,nm,a,n);
   if(!strcmp(nm,"matrix_build_identity")||!strcmp(nm,"matrix_get")||!strcmp(nm,"matrix_set")||
      !strcmp(nm,"matrix_multiply")||!strcmp(nm,"matrix_build")||!strcmp(nm,"matrix_inverse")||
      !strcmp(nm,"matrix_transform_vertex")||!strcmp(nm,"matrix_build_lookat")||

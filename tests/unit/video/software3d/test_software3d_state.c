@@ -3,6 +3,8 @@
  */
 #include "software3d_test_fixture.h"
 
+#include <assert.h>
+
 
 int software3d_operation_boundary_fixture(void){
   GmlWin win={0};
@@ -414,3 +416,90 @@ int software3d_state_roundtrip_case(void){
   return software3d_state_roundtrip_exit_code()==0;
 }
 
+
+
+static GmlVal stack_call(GmlVM *vm,int cached,const char *name,GmlVal *args,int count){
+  int id=gml_builtin_fast_id(vm,name);
+  assert(id>=0);
+  return cached?gml_builtin_call_fast_id(vm,id,name,args,count):
+                gml_builtin_call(vm,name,args,count);
+}
+
+static void stack_check_top(GmlVM *vm,int cached,double sx,double sy,double x,double y){
+  GmlVal matrix=stack_call(vm,cached,"matrix_stack_top",NULL,0);
+  assert(gml_val_array_length(matrix)==16);
+  assert(gml_arr_get(matrix,0).d==sx && gml_arr_get(matrix,5).d==sy);
+  assert(gml_arr_get(matrix,12).d==x && gml_arr_get(matrix,13).d==y);
+  assert(gml_arr_get(matrix,10).d==1 && gml_arr_get(matrix,15).d==1);
+  gml_values_release_owned(&matrix,1);
+}
+
+int matrix_stack_fixture(void){
+  for(int cached=0;cached<2;cached++){
+    GmlWin win={0};
+    GmlVM vm={0};
+    vm.win=&win;
+    vm.particles=gml_particle_state_create(&vm);
+    assert(vm.particles);
+    gml_vm_software3d_reset(&vm);
+#define STACK(name,args,count) stack_call(&vm,cached,"matrix_stack_" name,args,count)
+    assert(STACK("is_empty",NULL,0).d==1);
+    stack_check_top(&vm,cached,1,1,0,0);
+    GmlVal translation=call_values(&vm,"matrix_build_identity",NULL,0);
+    GmlVal scaling=call_values(&vm,"matrix_build_identity",NULL,0);
+    GmlVal identity=call_values(&vm,"matrix_build_identity",NULL,0);
+    gml_arr_set(translation,12,vreal(3)); gml_arr_set(translation,13,vreal(4));
+    gml_arr_set(scaling,0,vreal(2)); gml_arr_set(scaling,5,vreal(3));
+
+    assert(STACK("set",&translation,1).t==V_UNDEF);
+    assert(STACK("is_empty",NULL,0).d==1);
+    stack_check_top(&vm,cached,1,1,3,4);
+    assert(STACK("push",&scaling,1).t==V_UNDEF);
+    assert(STACK("is_empty",NULL,0).d==0);
+    stack_check_top(&vm,cached,2,3,3,4);
+    gml_arr_set(scaling,0,vreal(17));
+    GmlVal exposed=STACK("top",NULL,0);
+    gml_arr_set(exposed,12,vreal(999));
+    gml_values_release_owned(&exposed,1);
+    stack_check_top(&vm,cached,2,3,3,4);
+
+    STACK("push",NULL,0);
+    stack_check_top(&vm,cached,2,3,3,4);
+    gml_arr_set(translation,12,vreal(11));
+    STACK("set",&translation,1);
+    stack_check_top(&vm,cached,1,1,11,4);
+    double world[16];
+    assert(gml_software3d_matrix_get(vm.software3d,2,world));
+    assert(world[0]==1 && world[5]==1 && world[12]==0 && world[13]==0);
+
+    size_t size=gml_vm_state_size(&vm),written=0,used=0;
+    void *snapshot=malloc(size);
+    assert(snapshot && gml_vm_state_save(&vm,snapshot,size,&written));
+    assert(STACK("clear",NULL,0).t==V_UNDEF);
+    stack_check_top(&vm,cached,1,1,0,0);
+    assert(gml_vm_state_load(&vm,snapshot,written,&used) && used==written);
+    free(snapshot);
+    stack_check_top(&vm,cached,1,1,11,4);
+    assert(STACK("pop",NULL,0).t==V_UNDEF);
+    stack_check_top(&vm,cached,2,3,3,4);
+    STACK("pop",NULL,0);
+    assert(STACK("is_empty",NULL,0).d==1);
+    stack_check_top(&vm,cached,1,1,3,4);
+    STACK("pop",NULL,0);
+    stack_check_top(&vm,cached,1,1,0,0);
+
+    for(int i=0;i<50;i++) STACK("push",&identity,1);
+    STACK("push",&translation,1);
+    stack_check_top(&vm,cached,1,1,0,0);
+    for(int i=0;i<49;i++) STACK("pop",NULL,0);
+    assert(STACK("is_empty",NULL,0).d==0);
+    STACK("pop",NULL,0);
+    assert(STACK("is_empty",NULL,0).d==1);
+#undef STACK
+    GmlVal matrices[]={translation,scaling,identity};
+    gml_values_release_owned(matrices,sizeof matrices/sizeof matrices[0]);
+    gml_vm_free(&vm);
+  }
+  puts("matrix stack: composition, identity base, capacity, isolation and restore passed");
+  return 1;
+}
