@@ -844,8 +844,8 @@ static char *glsl_relocate_global_initializers(char *source){
 /* Rewrite one source. `desktop` selects the 330 core dialect; otherwise 300 es. `vertex` selects
  * the storage qualifier spellings. Returns a malloc'd string, or NULL on allocation failure. */
 static char *glsl_rewrite(const char *source,int vertex,int desktop,int little_endian,
-                          int scene_rgba){
-  static const struct { const char *from; const char *to_vertex; const char *to_fragment; } words[]={
+                          int scene_rgba,const char *sample_name){
+  const struct { const char *from; const char *to_vertex; const char *to_fragment; } words[]={
     {"attribute","in","in"},
     {"varying","out","in"},
     {"texture2DLod","textureLod","textureLod"},
@@ -853,6 +853,7 @@ static char *glsl_rewrite(const char *source,int vertex,int desktop,int little_e
     {"texture2D","anygm_sample","anygm_sample"},
     {"textureCube","texture","texture"},
     {"gl_FragColor","gl_FragColor","anygm_fragment"},
+    {"sample",sample_name,sample_name},
   };
   char *out=NULL;
   size_t length=0,capacity=0,i=0,n=strlen(source);
@@ -1019,6 +1020,26 @@ static GLuint link_content(GmlGpuBackend *backend,const char *vertex,const char 
 
 /* Compile the content's program for this context, or return the cached one. Returns NULL with the
  * slot marked failed when the context refuses it. */
+/* Legacy sources can use sample as an identifier. The target dialect reserves it,
+ * so both stages use an alias absent from either authored source. */
+static void glsl_legacy_sample_name(const char *vertex,const char *fragment,char name[32]){
+  unsigned suffix=0;
+  do {
+    snprintf(name,32,"anygm_legacy_sample_%u",suffix++);
+  } while(strstr(vertex,name) || strstr(fragment,name));
+}
+
+static void glsl_restore_sample_name(char *name,const char *alias){
+  static const char original[]="sample";
+  size_t alias_length=strlen(alias);
+  char *part=name;
+  while((part=strstr(part,alias))){
+    memmove(part+sizeof original-1,part+alias_length,strlen(part+alias_length)+1);
+    memcpy(part,original,sizeof original-1);
+    part+=sizeof original-1;
+  }
+}
+
 static GlContentProgram *content_program(GmlGpuBackend *backend,const GmlPlanShader *shader,
                                          int scene_rgba,
                                          char *error,size_t error_capacity){
@@ -1030,8 +1051,10 @@ static GlContentProgram *content_program(GmlGpuBackend *backend,const GmlPlanSha
   slot->last_used=++backend->use_clock;
   if(slot->program) return slot;
   if(slot->failed) return NULL;
-  vertex=glsl_rewrite(vertex_text,1,desktop,backend->little_endian,scene_rgba);
-  fragment=glsl_rewrite(fragment_text,0,desktop,backend->little_endian,scene_rgba);
+  char sample_name[32];
+  glsl_legacy_sample_name(vertex_text,fragment_text,sample_name);
+  vertex=glsl_rewrite(vertex_text,1,desktop,backend->little_endian,scene_rgba,sample_name);
+  fragment=glsl_rewrite(fragment_text,0,desktop,backend->little_endian,scene_rgba,sample_name);
   if(vertex && fragment) slot->program=link_content(backend,vertex,fragment,error,error_capacity);
   free(vertex);
   free(fragment);
@@ -1085,6 +1108,7 @@ static GlContentProgram *content_program(GmlGpuBackend *backend,const GmlPlanSha
       if(!entry->name[0]) continue;
       entry->location=backend->gl.GetUniformLocation(slot->program,entry->name);
       if(entry->location<0) continue;
+      glsl_restore_sample_name(entry->name,sample_name);
       slot->uniform_count++;
     }
   }

@@ -7711,6 +7711,37 @@ static int content_program_global_initializers_case(void){
   return 1;
 }
 
+static int content_program_legacy_identifier_case(void){
+  static const char fragment[]=
+    "varying vec2 v_vTexcoord;\n"
+    "uniform vec2 sample;\n"
+    "void main(){\n"
+    "  float anygm_legacy_sample_0 = v_vTexcoord.x;\n"
+    "  gl_FragColor = vec4(sample, anygm_legacy_sample_0, 1.0);\n"
+    "}\n";
+  uint32_t frame[8*6]={0},mask[4*4]={0};
+  for(int api=0;api<2;api++){
+    GmlRenderPlan plan;
+    anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"legacy identifier context adopted");
+    REQUIRE(build_content_plan(&plan,frame,mask),"legacy identifier plan built");
+    plan.shader.fragment_es=fragment;
+    snprintf(plan.shader.uniforms[0].name,sizeof plan.shader.uniforms[0].name,"sample");
+    plan.shader.uniform_count=1u;
+    REQUIRE(gml_gpu_execute_plan(gpu,&plan),"legacy identifier program submitted");
+    const char *text=anygm_test_graphics_shader_source(1);
+    REQUIRE(strstr(text,"uniform vec2 anygm_legacy_sample_1;")!=NULL &&
+            strstr(text,"vec4(anygm_legacy_sample_1, anygm_legacy_sample_0, 1.0)")!=NULL,
+            "legacy identifier is translated without a collision");
+    REQUIRE(anygm_test_graphics_float_uniforms()==1,
+            "the authored uniform name still supplies the translated program");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 /* A program the context refuses is a shader failure, named as such, so the runtime can retire the
  * shader rather than pay the refusal every frame; and the refusal is not repeated for the same
  * text. */
@@ -8123,6 +8154,7 @@ int main(int argc,char **argv){
     {"content_sampler_filters",content_sampler_filter_case},
     {"content_program_embedded_dialect",content_program_embedded_dialect_case},
     {"content_program_global_initializers",content_program_global_initializers_case},
+    {"content_program_legacy_identifier",content_program_legacy_identifier_case},
     {"content_program_refused",content_program_refused_case},
     {"content_program_readback",content_program_readback_case},
     {"content_program_source_region",content_program_source_region_case},
