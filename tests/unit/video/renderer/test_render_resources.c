@@ -16577,6 +16577,39 @@ static int resident_opaque_sprite_complete_application(void){
 }
 
 /* Admission/authority only. The owning real-context control supplies D2 pixels. */
+static int resident_lazy_native_atlas(void){
+  enum { W=24,H=20 };
+  const uint8_t encoded[]={0,'f','i','o','q',4,0,4,0,0,0,0,0,
+    0xFF,0xC0,0x30,0x60,0xFF,0x4E};
+  GmlWin content={.bytecode=17,.has_room_layers=1,.data=encoded,.size=sizeof encoded};
+  GmlRender *r=calloc(1,sizeof *r);FakeDevice fake={.on_demand=1};
+  GmlRenderDeviceServices device=service(&fake);uint32_t screen[W*H]={0},shadow[W*H];
+  CHECK(r && !gml_render_init(r,NULL));r->win=&content;
+  free(r->atlas[0].px);r->atlas[0].px=NULL;
+  r->atlas[0].w=r->atlas[0].h=0;r->atlas[0].blob=1;
+  r->atlas[0].decode_attempted=0;
+  r->atlas[0].avail=sizeof encoded-1u;r->atlas[0].chunk_end=sizeof encoded;
+  r->tpag=calloc(1,sizeof *r->tpag);r->spr=calloc(1,sizeof *r->spr);CHECK(r->tpag && r->spr);
+  r->n_tpag=r->n_spr=1;r->tpag[0]=(GmlTpag){.sw=4,.sh=4,.tw=4,.th=4,.bw=4,.bh=4};
+  r->spr[0]=(GmlSprite){.w=4,.h=4,.originx=2,.originy=2,.n_frames=1};
+  r->spr[0].frame=calloc(1,sizeof(int));CHECK(r->spr[0].frame);
+  device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
+  CHECK(gml_render_begin_resident_base(r,screen,W,H,0,0));
+  gml_render_set_pending_fill(r,0xFF273859u);gml_render_flush_pending_fill(r);
+  CHECK(gml_render_scene_submit_pending(r));memcpy(shadow,screen,sizeof shadow);
+  r->interp=0;r->fog_flat=1;r->fog_flat_rgb=0x315A9Cu;r->blendmode=3;
+  size_t decoded=r->atlas_decoded_bytes;
+  gml_draw_sprite_ext(r,0,0,12,10,1,1,31,0xD0A070u,.55);
+  CHECK(r->resident_application_pass && !fake.readbacks && !fake.rgb_queries &&
+    gml_render_scene_submit_pending(r));
+  CHECK(r->atlas[0].px && r->atlas_decoded_bytes==decoded+64u &&
+    r->atlas[0].px[0]==0xC0u && r->atlas[0].px[3]==0xFFu);
+  CHECK(fake.last_quad.shape==GML_RENDER_QUAD_GENERAL && fake.last_filter==GML_RENDER_FILTER_NEAREST &&
+    fake.last_quad.sampling.source_region.width==4u && fake.last_quad.sampling.source_region.height==4u &&
+    !fake.last_quad.span_active && !memcmp(shadow,screen,sizeof shadow));
+  gml_render_abandon_device(r);gml_render_free(r);free(r);return 1;
+}
+
 static int resident_numbered_rotated_native_quad(void){
   enum { W=256,H=192,SW=128,SH=96 };
   for(unsigned owner=0;owner<2u;owner++) for(unsigned angle=0;angle<1u+owner;angle++)
@@ -20474,6 +20507,7 @@ int main(void){
     else if(!strcmp(selected,"wide-nearest-rows")) passed=resident_large_screen_axis_row_metadata();
     else if(!strcmp(selected,"large-rotated-rows")) passed=resident_large_rotated_sample_row_metadata();
     else if(!strcmp(selected,"numbered-rotated-native-quad")) passed=resident_numbered_rotated_native_quad();
+    else if(!strcmp(selected,"lazy-native-atlas")) passed=resident_lazy_native_atlas();
     else if(!strcmp(selected,"flat-fog-sprite")) passed=resident_flat_fog_sprite_function();
     else if(!strcmp(selected,"nearest-text-sampler-edges")) passed=resident_nearest_text_sampler_edges();
     else if(!strcmp(selected,"bounded-axis-screen")) passed=resident_bounded_axis_screen_sprite();
@@ -20821,7 +20855,8 @@ int main(void){
   passed+=resident_rectangle_cpu_passthrough_programs();
   passed+=skip_cpu_draw_policy_preserves_observers();
   passed+=resident_numbered_rotated_native_quad();
+  passed+=resident_lazy_native_atlas();
   passed+=resident_unit_texel_magnification();
-  printf("render resource cases: passed=%d failed=%d\n",passed,326-passed);
-  return passed==326?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,327-passed);
+  return passed==327?EXIT_SUCCESS:EXIT_FAILURE;
 }

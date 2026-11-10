@@ -5311,12 +5311,15 @@ static int rotated_geometry_prepare(GmlRender *r,GmlSprite *spr,GmlTpag *t,
 int gml_render_rotated_sprite_placement(GmlRender *r,GmlSprite *sprite,GmlTpag *page,
   double x,double y,double xs,double ys,double rotation,GmlRenderRotatedPlacement *placement){
   if(!r || !sprite || !page || !placement || !r->atlas ||
-     page->atlas<0 || page->atlas>=r->n_atlas || !r->atlas[page->atlas].px ||
+     page->atlas<0 || page->atlas>=r->n_atlas ||
      page->sx<0 || page->sy<0 || page->sw<=0 || page->sh<=0 ||
-     (int64_t)page->sx+page->sw>r->atlas[page->atlas].w ||
-     (int64_t)page->sy+page->sh>r->atlas[page->atlas].h ||
      !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
      xs==0.0 || ys==0.0 || !isfinite(rotation)) return -1;
+  /* Placement reads the same immutable crop bounds as the scalar writer.
+   * Decode a lazy source before requiring its pixels or decoded dimensions. */
+  if(!atlas_pixels(r,page->atlas) ||
+     (int64_t)page->sx+page->sw>r->atlas[page->atlas].w ||
+     (int64_t)page->sy+page->sh>r->atlas[page->atlas].h) return -1;
   GmlRotatedGeometry geometry;
   int result=rotated_geometry_prepare(r,sprite,page,&r->atlas[page->atlas],
     x,y,xs,ys,rotation,0,1,&geometry);
