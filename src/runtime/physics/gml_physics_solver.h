@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #define GML_PHYS_FIXTURE_POINTS 16
+#define GML_PHYS_FIXTURE_DEFAULT_DENSITY 0.5
 
 /* Canonical resource descriptions. Native solver objects never enter state bytes. */
 typedef struct {
@@ -15,7 +16,7 @@ typedef struct {
   double density, friction, restitution, lin_damp, ang_damp, awake;
   double radius, w, h, x1, y1, x2, y2;
   double px[GML_PHYS_FIXTURE_POINTS], py[GML_PHYS_FIXTURE_POINTS];
-  int sensor, group;
+  int sensor, group, kinematic, density_set;
 } GmlPhysicsFixture;
 
 enum {

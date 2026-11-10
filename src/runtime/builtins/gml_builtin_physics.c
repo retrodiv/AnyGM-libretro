@@ -26,7 +26,7 @@ GmlPhysicsFixture *gml_physics_fixture_new(GmlVM *vm){
     GmlPhysicsFixture *f=&vm->builtins->phys_fixture[i];
     memset(f,0,sizeof(*f));
     f->live=1; f->id=phys_next_id(vm); f->bound_inst=-1; f->awake=1;
-    f->density=0.5; f->friction=0.2; f->lin_damp=0.1; f->ang_damp=0.1;
+    f->density=GML_PHYS_FIXTURE_DEFAULT_DENSITY; f->friction=0.2; f->lin_damp=0.1; f->ang_damp=0.1;
     return f;
   }
   return NULL;
@@ -370,7 +370,13 @@ GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(0);
   }
   if(!strcmp(nm,"physics_fixture_set_density")){
-    GmlPhysicsFixture *f=phys_fixture_find(vm,(int)N(a,n,0)); if(f) f->density=N(a,n,1); return vreal(0); }
+    GmlPhysicsFixture *f=phys_fixture_find(vm,(int)N(a,n,0));
+    if(f){
+      f->density=N(a,n,1);
+      if(f->bound_inst<0) f->density_set=1;
+    }
+    return vreal(0);
+  }
   if(!strcmp(nm,"physics_fixture_set_friction")){
     GmlPhysicsFixture *f=phys_fixture_find(vm,(int)N(a,n,0)); if(f) f->friction=N(a,n,1); return vreal(0); }
   if(!strcmp(nm,"physics_fixture_set_restitution")){
@@ -379,6 +385,13 @@ GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
     GmlPhysicsFixture *f=phys_fixture_find(vm,(int)N(a,n,0)); if(f) f->lin_damp=N(a,n,1); return vreal(0); }
   if(!strcmp(nm,"physics_fixture_set_angular_damping")){
     GmlPhysicsFixture *f=phys_fixture_find(vm,(int)N(a,n,0)); if(f) f->ang_damp=N(a,n,1); return vreal(0); }
+  if(!strcmp(nm,"physics_fixture_set_kinematic")){
+    double id=N(a,n,0);
+    if(n<1 || !(id>0 && id<=INT_MAX)) return vreal(0);
+    GmlPhysicsFixture *fixture=phys_fixture_find(vm,(int)id);
+    if(fixture && fixture->bound_inst<0) fixture->kinematic=1;
+    return vreal(0);
+  }
   if(!strcmp(nm,"physics_fixture_set_awake")){
     GmlPhysicsFixture *f=phys_fixture_find(vm,(int)N(a,n,0)); if(f) f->awake=N(a,n,1); return vreal(0); }
   if(!strcmp(nm,"physics_fixture_set_sensor")){

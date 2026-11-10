@@ -726,6 +726,71 @@ static void raycast_queries(void){
   puts("physics queries: rotated offset overlap, compound ray hits, selectors and fractions passed");
 }
 
+static void kinematic_fixture_templates(void){
+  const char *name="physics_fixture_set_kinematic";
+  for(int cached=0;cached<2;cached++){
+    GmlVM vm;GmlWin win;setup(&vm,&win);
+    vm.inst[1].x=50; vm.inst[2].x=100;
+    double implicit=call(&vm,"physics_fixture_create",NULL,0).d;
+    double explicit=call(&vm,"physics_fixture_create",NULL,0).d;
+    assert(implicit>0 && explicit>0);
+    CALL(&vm,"physics_fixture_set_box_shape",implicit,2,2);
+    CALL(&vm,"physics_fixture_set_box_shape",explicit,2,2);
+    CALL(&vm,"physics_fixture_set_linear_damping",implicit,0);
+    CALL(&vm,"physics_fixture_set_density",explicit,.5);
+    double ordinary=CALL(&vm,"physics_fixture_bind",implicit,vm.inst[0].id).d;
+    assert(ordinary>0 && get(&vm,0,"phy_dynamic")==1);
+    GmlVal first=vreal(implicit),second=vreal(explicit);
+    physics_query(&vm,cached,name,&first,1);
+    physics_query(&vm,cached,name,&second,1);
+    double additional=CALL(&vm,"physics_fixture_bind",implicit,vm.inst[0].id).d;
+    assert(additional>0 && get(&vm,0,"phy_dynamic")==1 && get(&vm,0,"phy_kinematic")==0);
+    vm.cur_self=&vm.inst[0];
+    assert(CALL(&vm,"physics_get_density",ordinary).d==.5);
+
+    size_t size=gml_vm_state_size(&vm),written=0,used=0;
+    void *snapshot=malloc(size);
+    assert(snapshot && gml_vm_state_save(&vm,snapshot,size,&written));
+    CALL(&vm,"physics_fixture_delete",implicit);
+    CALL(&vm,"physics_fixture_delete",explicit);
+    assert(gml_vm_state_load(&vm,snapshot,written,&used) && used==written);
+    free(snapshot);
+    double kinematic=CALL(&vm,"physics_fixture_bind",implicit,vm.inst[1].id).d;
+    double dynamic=CALL(&vm,"physics_fixture_bind",explicit,vm.inst[2].id).d;
+    assert(kinematic>0 && dynamic>0);
+    assert(get(&vm,1,"phy_kinematic")==1 && get(&vm,1,"phy_dynamic")==0);
+    assert(get(&vm,2,"phy_kinematic")==0 && get(&vm,2,"phy_dynamic")==1);
+    vm.cur_self=&vm.inst[1];
+    assert(CALL(&vm,"physics_get_density",kinematic).d==0);
+    vm.cur_self=&vm.inst[2];
+    assert(CALL(&vm,"physics_get_density",dynamic).d==.5);
+
+    CALL(&vm,"physics_world_gravity",0,9.8);
+    vm.cur_self=&vm.inst[1];
+    assert(gml_physics_variable_set(&vm,&vm.inst[1],"phy_linear_velocity_x",vreal(30)));
+    CALL(&vm,"physics_apply_impulse",50,0,5,5);
+    assert(get(&vm,1,"phy_linear_velocity_x")==30 && get(&vm,1,"phy_linear_velocity_y")==0);
+    size=gml_vm_state_size(&vm);
+    snapshot=malloc(size);
+    assert(snapshot && gml_vm_state_save(&vm,snapshot,size,&written));
+    step(&vm,8);
+    double final_x=get(&vm,1,"phy_position_x");
+    assert(final_x>50 && get(&vm,1,"phy_position_y")==0);
+    assert(fabs(get(&vm,1,"phy_linear_velocity_x")-30)<1e-6);
+    assert(get(&vm,2,"phy_position_y")>0);
+    assert(gml_vm_state_load(&vm,snapshot,written,&used) && used==written);
+    step(&vm,8);
+    assert(get(&vm,1,"phy_position_x")==final_x && get(&vm,1,"phy_kinematic")==1);
+    free(snapshot);
+
+    CALL(&vm,"physics_remove_fixture",vm.inst[1].id,kinematic);
+    assert(CALL(&vm,"physics_fixture_bind",explicit,vm.inst[1].id).d>0);
+    assert(get(&vm,1,"phy_kinematic")==0 && get(&vm,1,"phy_dynamic")==1);
+    gml_vm_free(&vm);
+  }
+  puts("kinematic fixtures: template isolation, density precedence, motion and restore passed");
+}
+
 static int allow_contact(void *context,int a,int b){
   assert(a==0 && b==0); return *(int *)context;
 }
@@ -786,6 +851,7 @@ int main(void){
   joint_fields();
   overlap_queries();
   raycast_queries();
+  kinematic_fixture_templates();
   puts("physics: units, fixture lifetime, offsets, rotation, contacts, joints and restore passed");
   return 0;
 }

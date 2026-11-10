@@ -19,6 +19,9 @@ static void store(GmlInstance *in,const char *name,double number){
 }
 static int initialized(const GmlInstance *in){ return value(in,"__phy_body",0)!=0; }
 
+/* A new first fixture may replace the body type established by a template. */
+enum { PHYS_KINEMATIC_FROM_FIXTURE=2 };
+
 int gml_physics_body_enabled(GmlVM *vm,const GmlInstance *in){
   if(!vm || !in || gml_physics_world_scale(vm)<=0) return 0;
   return initialized(in) || (in->obj>=0 && in->obj<vm->n_objects &&
@@ -45,11 +48,28 @@ uint32_t gml_physics_bind_fixture(GmlVM *vm,const GmlPhysicsFixture *source,
                                  GmlInstance *in,double xoffset,double yoffset){
   if(!vm || !source || !in || !isfinite(xoffset) || !isfinite(yoffset)) return 0;
   GmlPhysicsFixture copy=*source;
+  /* An unmodified fixture template is static in the kinematic API. Keep
+   * the established dynamic default for templates without that flag. */
+  if(copy.kinematic && !copy.density_set && copy.density==GML_PHYS_FIXTURE_DEFAULT_DENSITY)
+    copy.density=0;
+  int select_type=copy.kinematic || value(in,"__phy_kinematic",0)==PHYS_KINEMATIC_FROM_FIXTURE;
+  if(select_type){
+    for(int i=0;i<GML_PHYS_FIXTURE_MAX;i++){
+      const GmlPhysicsFixture *existing=&vm->builtins->phys_fixture[i];
+      if(existing->live && existing->bound_inst==(int)in->id){
+        select_type=0;
+        break;
+      }
+    }
+  }
   GmlPhysicsFixture *bound=gml_physics_fixture_new(vm);
   if(!bound) return 0;
   uint32_t id=bound->id;
   *bound=copy; bound->id=id; bound->live=1; bound->bound_inst=(int)in->id;
+  bound->kinematic=0; bound->density_set=0;
   if(!initialized(in)) initialize_values(in,xoffset,yoffset);
+  if(select_type)
+    store(in,"__phy_kinematic",copy.kinematic && copy.density<=0?PHYS_KINEMATIC_FROM_FIXTURE:0);
   store(in,"phy_linear_damping",copy.lin_damp);
   store(in,"phy_angular_damping",copy.ang_damp);
   return id;
@@ -326,7 +346,7 @@ int gml_physics_variable_set(GmlVM *vm,GmlInstance *in,const char *name,GmlVal v
   if(!strcmp(name,"phy_linear_velocity_x") || !strcmp(name,"phy_linear_velocity_y") ||
           !strcmp(name,"phy_angular_velocity")){
     GmlPhysicsBody b; read_body(vm,in,&b);
-    if(b.mass<=0 && d!=0) store(in,"__phy_kinematic",1);
+    if(b.mass<=0 && d!=0 && !b.kinematic) store(in,"__phy_kinematic",1);
   } else if(strcmp(name,"phy_active") && strcmp(name,"phy_bullet") &&
             strcmp(name,"phy_fixed_rotation") && strcmp(name,"phy_linear_damping") &&
             strcmp(name,"phy_angular_damping")) return 0;

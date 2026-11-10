@@ -871,6 +871,10 @@ int gml_builtin_state_read_mp_grids(GmlBuiltinState *state,
   return gml_vm_state_reader_ok(reader);
 }
 
+/* Nonnegative fixture association words are body IDs. Negative words
+ * describe templates. The original -1 value has no template flags. */
+enum { PHYS_TEMPLATE_KINEMATIC=1, PHYS_TEMPLATE_DENSITY_SET=2 };
+
 void gml_builtin_state_write_physics(const GmlBuiltinState *state,
                                      GmlVmStateWriter *writer){
   gml_vm_state_write_u32(writer,state->phys_next_id);
@@ -888,7 +892,13 @@ void gml_builtin_state_write_physics(const GmlBuiltinState *state,
     const GmlPhysicsFixture *fixture=&state->phys_fixture[i];
     gml_vm_state_write_u32(writer,fixture->id);
     gml_vm_state_write_i32(writer,fixture->shape);
-    gml_vm_state_write_i32(writer,fixture->bound_inst);
+    int association=fixture->bound_inst;
+    if(association<0){
+      int flags=(fixture->kinematic?PHYS_TEMPLATE_KINEMATIC:0) |
+                (fixture->density_set?PHYS_TEMPLATE_DENSITY_SET:0);
+      association=-1-flags;
+    }
+    gml_vm_state_write_i32(writer,association);
     gml_vm_state_write_i32(writer,fixture->points);
     gml_vm_state_write_real(writer,fixture->density);
     gml_vm_state_write_real(writer,fixture->friction);
@@ -959,6 +969,16 @@ int gml_builtin_state_read_physics(GmlBuiltinState *state,
     fixture->id=gml_vm_state_read_u32(reader);
     fixture->shape=gml_vm_state_read_i32(reader);
     fixture->bound_inst=gml_vm_state_read_i32(reader);
+    if(fixture->bound_inst<0){
+      if(fixture->bound_inst < -1-(PHYS_TEMPLATE_KINEMATIC | PHYS_TEMPLATE_DENSITY_SET)){
+        gml_vm_state_reader_fail(reader,"bad physics fixture template flags",fixture->id);
+        return 0;
+      }
+      int flags=-1-fixture->bound_inst;
+      fixture->bound_inst=-1;
+      fixture->kinematic=(flags & PHYS_TEMPLATE_KINEMATIC)!=0;
+      fixture->density_set=(flags & PHYS_TEMPLATE_DENSITY_SET)!=0;
+    }
     fixture->points=gml_vm_state_read_i32(reader);
     if(fixture->points<0 || fixture->points>GML_PHYS_FIXTURE_POINTS ||
        fixture->shape<0 || fixture->shape>4 || !fixture->id || fixture->id>=state->phys_next_id){
