@@ -2357,6 +2357,7 @@ int gml_render_gpu_opengl_copy_image(GmlGpuBackend *backend,const GmlRenderDrawO
      (dp==target->width && !copy->destination.x && !copy->destination.y &&
       copy->destination.width==target->width && copy->destination.height==target->height));
   target->alpha_opaque=0;
+  target->alpha_bounds_known=0;
   GmlRenderTargetRef source_target={source->ref,1u,source->width,source->height,
     source->pixel_format,{0,0,source->width,source->height}};
   if(!gml_gpu_opengl_scene_target(backend,&source_target)) return 0;
@@ -2626,6 +2627,41 @@ static int recovery_indirect_prepare(GmlGpuBackend *backend){
   return 1;
 }
 
+/* The identity surface sampler discards zero-alpha source texels. A certificate
+ * from transparent clears and placed draws can therefore bound its fragment work
+ * without changing the quad, sample coordinates, blending or alpha stamp. */
+void gml_gpu_opengl_surface_alpha_scissor(GmlGpuBackend *backend,GlSceneImage *target,
+                                  const GlSceneImage *source,uint32_t filter,
+                                  uint32_t count,uint32_t source_alpha_key,
+                                  const GmlRenderSourcePalette *palette){
+  const float *v=backend->scene.vertices;
+  if((filter!=53u && filter!=55u) || count!=1u || !source || source==target ||
+     !source->valid || !source->rendered_origin || !source->alpha_bounds_known ||
+     source_alpha_key || (palette && palette->enabled) ||
+     v[14]!=(float)source->width || v[15]!=(float)source->height ||
+     v[16]!=1.0f || v[17]!=(float)target->height || v[18]!=0.0f ||
+     !isfinite(v[12]) || !isfinite(v[13]) ||
+     fabsf(v[12])>65536.0f || fabsf(v[13])>65536.0f ||
+     v[12]!=floorf(v[12]) || v[13]!=floorf(v[13])) return;
+  for(unsigned corner=0;corner<6u;corner++){
+    const float *at=v+(size_t)corner*GL_SCENE_VERTEX_FLOATS;
+    if(!isfinite(at[0]) || !isfinite(at[1]) ||
+       at[0]<v[12] || at[0]>v[12]+v[14] ||
+       at[1]<v[13] || at[1]>v[13]+v[15] ||
+       at[23]!=0.0f || at[26]!=0.0f) return;
+  }
+  int left=(int)v[12]+source->alpha_bounds[0];
+  int top=(int)v[13]+source->alpha_bounds[1];
+  int right=(int)v[12]+source->alpha_bounds[2];
+  int bottom=(int)v[13]+source->alpha_bounds[3];
+  if(left<0) left=0;
+  if(top<0) top=0;
+  if(right>(int)target->width) right=(int)target->width;
+  if(bottom>(int)target->height) bottom=(int)target->height;
+  if(left>=right || top>=bottom) backend->gl.Scissor(0,0,0,0);
+  else backend->gl.Scissor(left,(int)target->height-bottom,right-left,bottom-top);
+}
+
 static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage *source,
                        uint32_t filter,int blend,uint32_t count,uint32_t write_mask,int alpha_test,
                        uint32_t source_alpha_key,const GmlRenderSourcePalette *palette){
@@ -2694,6 +2730,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
   backend->gl.Viewport(0,0,(GLsizei)target->width,(GLsizei)target->height);
   backend->gl.Scissor(0,0,(GLsizei)target->width,(GLsizei)target->height);
+  gml_gpu_opengl_surface_alpha_scissor(backend,target,source,filter,count,source_alpha_key,palette);
   backend->gl.ActiveTexture(GL_TEXTURE0);
   backend->gl.BindTexture(GL_TEXTURE_2D,source?source->texture:0u);
   if(source){
@@ -2854,7 +2891,23 @@ restore_stream_state:
   if(backend->gl.GetError()!=GL_NO_ERROR || !upload_ok){
     scene->instance_span_count=scene->instance_span_next=0;
     target->valid=0;
+    target->alpha_bounds_known=0;
     return 0;
+  }
+  if((write_mask&8u) && target->alpha_bounds_known) for(uint32_t quad=0;quad<count;quad++){
+    if(!target->alpha_bounds[0] && !target->alpha_bounds[1] &&
+       target->alpha_bounds[2]==(int32_t)target->width &&
+       target->alpha_bounds[3]==(int32_t)target->height) break;
+    const float *v=scene->vertices+(size_t)quad*6u*GL_SCENE_VERTEX_FLOATS;
+    if(!isfinite(v[0]) || !isfinite(v[1])) target->alpha_bounds_known=0;
+    double left=v[0],right=v[0],top=v[1],bottom=v[1];
+    for(unsigned corner=1;corner<6u;corner++){
+      const float *at=v+(size_t)corner*GL_SCENE_VERTEX_FLOATS;
+      if(!isfinite(at[0]) || !isfinite(at[1])){target->alpha_bounds_known=0;break;}
+      left=fmin(left,at[0]);right=fmax(right,at[0]);
+      top=fmin(top,at[1]);bottom=fmax(bottom,at[1]);
+    }
+    gml_gpu_opengl_alpha_cover(target,left-1.0,top-1.0,right+1.0,bottom+1.0);
   }
   target->valid=1;
   target->rendered_origin=1;
@@ -3083,6 +3136,7 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
   if(qualified_blend(state)==6)
     font_mode=op->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_FONT_MODERN?3:2;
   target->alpha_opaque=0;
+  target->alpha_bounds_known=0;
   if(!exact_rect(op,&left,&bottom,&width,&height,
                  qualified_blend(state)==4 || qualified_blend(state)==6 ||
                  qualified_blend(state)==7 || qualified_blend(state)==11) ||
@@ -3312,6 +3366,7 @@ static void mark_uncertain(GmlRenderExecutionResult *result,GlSceneImage *target
   if(target){
     target->valid=0;
     target->alpha_opaque=0;
+    target->alpha_bounds_known=0;
     result->uncertain_targets[0]=target->ref;
     result->uncertain_target_count=1;
   } else result->all_destinations_uncertain=1;
@@ -3469,6 +3524,9 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       break;
     }
     active_target=target;
+    if(op->opcode!=GML_RENDER_OP_TEXTURED_QUAD &&
+       op->opcode!=GML_RENDER_OP_COLOURED_PRIMITIVE && op->opcode!=GML_RENDER_OP_CLEAR)
+      target->alpha_bounds_known=0;
     if(op->opcode==GML_RENDER_OP_COPY_IMAGE){
       if(!copy_source || !gml_render_gpu_opengl_copy_image(backend,op,target,copy_source)){
         mark_uncertain(&result,target);break;
@@ -3627,6 +3685,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     }
     if(op->opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW){
       target->alpha_opaque=0;
+      target->alpha_bounds_known=0;
       GlSceneImage *source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
       GlSceneImage *samplers[GML_PLAN_MAX_SAMPLERS]={0};
       for(uint32_t bound=0;bound<op->payload.shader->sampler_count;bound++)

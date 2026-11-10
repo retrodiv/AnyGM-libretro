@@ -1337,6 +1337,7 @@ int gml_gpu_opengl_scene_shader_draw(GmlGpuBackend *backend,const GmlPlanShader 
                                       GlSceneImage *const *samplers,uint32_t sampler_count,
                                       int source_over,
                                       char *error,size_t error_capacity){
+  if(target) target->alpha_bounds_known=0;
   GmlRenderPlan plan={0};
   GmlPlanOp operation={0};
   GLuint sampler_names[GML_PLAN_MAX_SAMPLERS]={0};

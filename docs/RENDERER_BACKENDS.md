@@ -3333,3 +3333,16 @@ Completed-frame copying, CPU algorithms and serialized state stay unchanged.
 `identity_axis_maps` checks both APIs and five identity forms with cropped/noncanonical
 negative controls and a single shader draw. Acceptance still requires original-runner
 picture evidence; these neutral controls alone establish no fidelity or speed claim.
+
+
+Conservative alpha bounds are context-local image metadata. Complete resolved
+clears establish them, and ordinary placed geometry expands them outwards.
+Uploads, copies, custom programs, exact writers, replacement storage and uncertain
+writes invalidate the certificate. Positive unit-scale integer surface samplers
+53/55 may intersect their scissor with these bounds only when transparent source
+samples already discard. The placed quad, sampler, blending and separate alpha
+stamp remain unchanged; other maps retain the complete scissor.
+`scene_transparent_surface_bounds` covers both APIs, clear/coverage rules, CPU
+ownership invalidation and unproved sampler refusals. There is no original-runner
+picture evidence for this optimization; actual-device image and performance
+qualification is separate from this call contract. CPU execution is unchanged.

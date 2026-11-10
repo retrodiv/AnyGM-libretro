@@ -5429,6 +5429,89 @@ static int scene_opaque_native_alpha_case(void){
   return 1;
 }
 
+static int scene_transparent_surface_bounds_case(void){
+  for(unsigned api=0;api<2u;api++){
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"alpha bounds context created");
+    GmlRenderDeviceServices device={0};gml_gpu_device_services(gpu,&device);
+    uint32_t pixels[64]={0};
+    GmlRenderImageUpload upload={.image={GML_RENDER_RESOURCE_ATLAS,93u,1u,1u},
+      .storage_width=1u,.storage_height=1u,.region={0,0,1u,1u},
+      .pixel_format=GML_RENDER_PIXEL_RGBA8888,.stride_bytes=4u,.byte_capacity=4u,.bytes=pixels};
+    REQUIRE(device.upload(device.context,&upload),"alpha bounds scene services primed");
+    GmlRenderTargetRef ref={{GML_RENDER_RESOURCE_SURFACE,94u,1u,1u},
+      1u,8u,6u,GML_RENDER_PIXEL_ARGB8888,{0,0,8u,6u}};
+    GlSceneImage *source=gml_gpu_opengl_scene_target(gpu->backend,&ref);
+    REQUIRE(source && !source->alpha_bounds_known,"new storage has no alpha proof");
+    GmlRenderDrawOp clear={.opcode=GML_RENDER_OP_CLEAR,.target=ref};
+    REQUIRE(gml_render_gpu_opengl_clear(gpu->backend,&clear,source) &&
+      source->alpha_bounds_known && source->alpha_bounds[0]==8 &&
+      source->alpha_bounds[1]==6 && !source->alpha_bounds[2] && !source->alpha_bounds[3],
+      "complete transparent clear certifies empty alpha");
+    source->valid=source->rendered_origin=1;
+    gml_gpu_opengl_alpha_cover(source,2.25,1.25,4.25,3.25);
+    REQUIRE(source->alpha_bounds[0]==2 && source->alpha_bounds[1]==1 &&
+      source->alpha_bounds[2]==5 && source->alpha_bounds[3]==4,
+      "placed fractional bounds expand outward");
+    clear.target.region=(GmlRenderRect){0,0,1u,1u};
+    REQUIRE(gml_render_gpu_opengl_clear(gpu->backend,&clear,source) &&
+      source->alpha_bounds[0]==2 && source->alpha_bounds[2]==5,
+      "partial transparent clear never narrows an existing proof");
+    clear.payload.clear_colour=0x40000000u;
+    REQUIRE(gml_render_gpu_opengl_clear(gpu->backend,&clear,source) &&
+      source->alpha_bounds[0]==0 && source->alpha_bounds[1]==0,
+      "partial nonzero clear expands alpha bounds");
+    clear.payload.clear_colour=0;clear.target=ref;
+    REQUIRE(gml_render_gpu_opengl_clear(gpu->backend,&clear,source),"alpha fixture cleared");
+    gml_gpu_opengl_alpha_cover(source,2,1,5,4);
+    GlSceneImage target={.width=12u,.height=10u};
+    float *vertices=calloc(6u*GL_SCENE_VERTEX_FLOATS,sizeof(float));
+    REQUIRE(vertices,"alpha bounds stream allocated");
+    float *prior=gpu->backend->scene.vertices;gpu->backend->scene.vertices=vertices;
+    static const unsigned corners[6]={0,1,2,0,2,3};
+    for(unsigned c=0;c<6u;c++){
+      float *v=vertices+c*GL_SCENE_VERTEX_FLOATS;unsigned corner=corners[c];
+      v[0]=1.0f+((corner==1u || corner==2u)?8.0f:0.0f);
+      v[1]=2.0f+(corner>=2u?6.0f:0.0f);
+      v[12]=1;v[13]=2;v[14]=8;v[15]=6;v[16]=1;v[17]=10;
+    }
+    for(unsigned pass=0;pass<2u;pass++){
+      gpu->backend->gl.Scissor(0,0,12,10);
+      gml_gpu_opengl_surface_alpha_scissor(gpu->backend,&target,source,pass?55u:53u,1u,0u,NULL);
+      int x,y,w,h;anygm_test_graphics_scissor(&x,&y,&w,&h);
+      REQUIRE(x==3 && y==4 && w==3 && h==3,"RGB and alpha stamp share the placed source bounds");
+    }
+    for(unsigned bad=0;bad<10u;bad++){
+      float saved[6u*GL_SCENE_VERTEX_FLOATS];memcpy(saved,vertices,sizeof saved);
+      GlSceneImage changed=*source;GmlRenderSourcePalette palette={0};
+      uint32_t filter=53u,count=1u,key=0u;
+      if(bad==0u) changed.alpha_bounds_known=0;
+      if(bad==1u) changed.valid=0;
+      if(bad==2u) changed.rendered_origin=0;
+      if(bad==3u) filter=54u;
+      if(bad==4u) count=2u;
+      if(bad==5u) key=1u;
+      if(bad==6u) palette.enabled=1u;
+      if(bad==7u) vertices[14]=7;
+      if(bad==8u) vertices[23]=1;
+      if(bad==9u) vertices[26]=1;
+      gpu->backend->gl.Scissor(0,0,12,10);
+      gml_gpu_opengl_surface_alpha_scissor(gpu->backend,&target,&changed,filter,count,key,&palette);
+      int x,y,w,h;anygm_test_graphics_scissor(&x,&y,&w,&h);
+      REQUIRE(!x && !y && w==12 && h==10,"unproved samplers retain their complete scissor");
+      memcpy(vertices,saved,sizeof saved);
+    }
+    gpu->backend->scene.vertices=prior;free(vertices);
+    upload.image=ref.image;upload.storage_width=8u;upload.storage_height=6u;
+    upload.region=ref.region;upload.stride_bytes=32u;upload.byte_capacity=192u;
+    REQUIRE(device.upload(device.context,&upload) && !source->alpha_bounds_known,
+      "CPU ownership invalidates the derived alpha proof");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_target_attachment_reuse_case(void){
   for(unsigned api=0;api<2u;api++){
     anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
@@ -7826,6 +7909,7 @@ int main(int argc,char **argv){
     {"identity_axis_maps",identity_axis_maps_case},
     {"scene_native_stretched_cell",scene_native_stretched_cell_case},
     {"scene_white_unit_clear",scene_white_unit_clear_case},
+    {"scene_transparent_surface_bounds",scene_transparent_surface_bounds_case},
     {"scene_target_attachment_reuse",scene_target_attachment_reuse_case},
     {"scene_opaque_native_alpha",scene_opaque_native_alpha_case},
     {"scene_nearest_rows",scene_nearest_rows_case},

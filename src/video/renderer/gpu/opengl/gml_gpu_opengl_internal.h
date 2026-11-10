@@ -121,12 +121,22 @@ typedef struct GlSceneImage {
   int valid,target,rendered_origin,retired;
   int framebuffer_complete;
   int alpha_opaque; /* derived proof that every stored alpha byte is 255 */
+  /* Conservative top-origin bounds of every possibly nonzero alpha byte.
+   * This context-local certificate is discarded by untracked image writers. */
+  int alpha_bounds_known;
+  int32_t alpha_bounds[4];
   int opaque_white_known;
   uint8_t opaque_white[GL_SCENE_WHITE_TEXELS/8];
   int source_partial;
   GmlRenderRect source_region;
   uint64_t source_upload_bytes;
 } GlSceneImage;
+
+void gml_gpu_opengl_alpha_cover(GlSceneImage *image,double left,double top,
+                               double right,double bottom);
+void gml_gpu_opengl_surface_alpha_scissor(GmlGpuBackend *backend,GlSceneImage *target,
+  const GlSceneImage *source,uint32_t filter,uint32_t count,uint32_t source_alpha_key,
+  const GmlRenderSourcePalette *palette);
 
 typedef struct GlSceneCheckpoint {
   GmlRenderImageRef image;

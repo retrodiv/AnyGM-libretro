@@ -763,6 +763,7 @@ static int scene_upload_image(GmlGpuBackend *backend,const GmlRenderImageUpload 
       transfer->region.height!=transfer->storage_height)) return 0;
   slot->content_source_version=0;
   slot->alpha_opaque=0;
+  slot->alpha_bounds_known=0;
   slot->opaque_white_known=0;
   first=!slot->texture;
   resize=slot->width!=transfer->storage_width || slot->height!=transfer->storage_height;
@@ -827,6 +828,7 @@ static int scene_upload_image(GmlGpuBackend *backend,const GmlRenderImageUpload 
     backend->gl.BindTexture(GL_TEXTURE_2D,0);
     slot->valid=0;
     slot->alpha_opaque=0;
+    slot->alpha_bounds_known=0;
     return 0;
   }
   if(!initial_client) backend->gl.TexSubImage2D(GL_TEXTURE_2D,0,transfer->region.x,
@@ -971,6 +973,7 @@ GlSceneImage *gml_gpu_opengl_scene_target(GmlGpuBackend *backend,const GmlRender
   slot=scene_slot(backend,target->image);
   if(!slot) return NULL;
   if(slot->source_partial) return NULL;
+  if(!slot->valid) slot->alpha_bounds_known=0;
   /* A target may be written without another CPU upload. Never retain a source
    * certificate across that ownership boundary, even before the first write. */
   slot->opaque_white_known=0;
@@ -992,11 +995,14 @@ GlSceneImage *gml_gpu_opengl_scene_target(GmlGpuBackend *backend,const GmlRender
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
     slot->valid=0;
     slot->alpha_opaque=0;
+    slot->alpha_bounds_known=0;
   }
   backend->gl.BindTexture(GL_TEXTURE_2D,0);
   if(!slot->framebuffer){
     backend->gl.GenFramebuffers(1,&slot->framebuffer);
-    if(!slot->framebuffer){ slot->valid=0; slot->alpha_opaque=0; return NULL; }
+    if(!slot->framebuffer){
+      slot->valid=slot->alpha_opaque=slot->alpha_bounds_known=0;return NULL;
+    }
   }
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,slot->framebuffer);
   /* This framebuffer belongs only to this image. Reattaching unchanged storage
@@ -1005,12 +1011,15 @@ GlSceneImage *gml_gpu_opengl_scene_target(GmlGpuBackend *backend,const GmlRender
     backend->gl.FramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,
                                      slot->texture,0);
     if(backend->gl.CheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE ||
-       backend->gl.GetError()!=GL_NO_ERROR){ slot->valid=0; slot->alpha_opaque=0; return NULL; }
+       backend->gl.GetError()!=GL_NO_ERROR){
+      slot->valid=slot->alpha_opaque=slot->alpha_bounds_known=0;return NULL;
+    }
     slot->framebuffer_complete=1;
     backend->target_attachments++;
   }else{
     if(backend->gl.GetError()!=GL_NO_ERROR){
-      slot->framebuffer_complete=slot->valid=slot->alpha_opaque=0;return NULL;
+      slot->framebuffer_complete=slot->valid=slot->alpha_opaque=slot->alpha_bounds_known=0;
+      return NULL;
     }
     backend->target_reuses++;
   }
@@ -1305,6 +1314,7 @@ void gml_gpu_opengl_scene_retire(GmlGpuBackend *backend,GmlRenderImageRef image)
       candidate->retired=1;
       candidate->valid=0;
       candidate->alpha_opaque=0;
+      candidate->alpha_bounds_known=0;
       return;
     }
   }
