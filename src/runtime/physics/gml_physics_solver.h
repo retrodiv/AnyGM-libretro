@@ -19,13 +19,22 @@ typedef struct {
 } GmlPhysicsFixture;
 
 enum {
-  GML_PHYS_JOINT_DISTANCE=5,
+  GML_PHYS_JOINT_REVOLUTE=1,
+  GML_PHYS_JOINT_PRISMATIC,
+  GML_PHYS_JOINT_WHEEL,
+  GML_PHYS_JOINT_ROPE,
+  GML_PHYS_JOINT_DISTANCE,
   GML_PHYS_JOINT_FRICTION,
   GML_PHYS_JOINT_WELD,
   GML_PHYS_JOINT_PULLEY
 };
 
-/* Additional parameter layouts: distance (length, collide), friction (force,
+/* Prismatic and wheel x2/y2 hold the unit axis in body A's local frame.
+ * Prismatic parameters: lower and upper translation (pixels), enable limit,
+ * motor force, motor speed (m/s), enable motor, collide.
+ * Wheel parameters: enable motor, motor torque, motor speed (rad/s),
+ * frequency, damping ratio, collide.
+ * Other parameter layouts: distance (length, collide), friction (force,
  * torque, collide), weld (frequency, damping ratio, collide), and pulley
  * (ratio, collide, initial length A, initial length B). Lengths are in pixels.
  * Pulley x1/y1 and x2/y2 are the two fixed world anchors. */

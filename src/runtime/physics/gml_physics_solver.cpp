@@ -230,10 +230,10 @@ extern "C" int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,
     if (!valid || j->a<0 || j->b<0 || j->a>UINT32_MAX || j->b>UINT32_MAX ||
         !spatial(j->anchor_ax,scale) || !spatial(j->anchor_ay,scale) ||
         !spatial(j->anchor_bx,scale) || !spatial(j->anchor_by,scale) ||
-        (j->type==4 && !spatial(j->params[0],scale))) continue;
+        (j->type==GML_PHYS_JOINT_ROPE && !spatial(j->params[0],scale))) continue;
     b2Body *a=find_body(native,uint32_t(j->a)), *b=find_body(native,uint32_t(j->b));
     if (!a || !b || a==b) continue;
-    if (j->type==1) {
+    if (j->type==GML_PHYS_JOINT_REVOLUTE) {
       b2RevoluteJointDef def;
       def.bodyA=a; def.bodyB=b;
       def.localAnchorA.Set(float(j->anchor_ax*scale),float(j->anchor_ay*scale));
@@ -246,7 +246,39 @@ extern "C" int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,
       def.motorSpeed=float(j->params[2]*radians); def.enableMotor=j->params[3]!=0;
       def.collideConnected=j->params[4]!=0;
       world.CreateJoint(&def);
-    } else if (j->type==4) {
+    } else if (j->type==GML_PHYS_JOINT_PRISMATIC || j->type==GML_PHYS_JOINT_WHEEL) {
+      const b2Vec2 local_a(float(j->anchor_ax*scale),float(j->anchor_ay*scale));
+      const b2Vec2 local_b(float(j->anchor_bx*scale),float(j->anchor_by*scale));
+      if (std::fabs(j->x2*j->x2+j->y2*j->y2-1.0)>1e-6) continue;
+      const b2Vec2 axis(float(j->x2),float(j->y2));
+      if (j->type==GML_PHYS_JOINT_PRISMATIC) {
+        if (!spatial(j->params[0],scale) || !spatial(j->params[1],scale) ||
+            j->params[0]>j->params[1]) continue;
+        b2PrismaticJointDef def;
+        def.bodyA=a; def.bodyB=b;
+        def.localAnchorA=local_a; def.localAnchorB=local_b; def.localAxisA=axis;
+        def.referenceAngle=float(j->reference_angle*radians);
+        def.lowerTranslation=float(j->params[0]*scale);
+        def.upperTranslation=float(j->params[1]*scale);
+        def.enableLimit=j->params[2]!=0;
+        def.maxMotorForce=nonnegative(j->params[3]);
+        def.motorSpeed=float(j->params[4]); def.enableMotor=j->params[5]!=0;
+        def.collideConnected=j->params[6]!=0;
+        world.CreateJoint(&def);
+      } else {
+        b2WheelJointDef def;
+        def.bodyA=a; def.bodyB=b;
+        def.localAnchorA=local_a; def.localAnchorB=local_b; def.localAxisA=axis;
+        def.enableMotor=j->params[0]!=0;
+        def.maxMotorTorque=nonnegative(j->params[1]);
+        def.motorSpeed=float(j->params[2]);
+        b2LinearStiffness(def.stiffness,def.damping,nonnegative(j->params[3]),
+                          nonnegative(j->params[4]),a,b);
+        if (!std::isfinite(def.stiffness) || !std::isfinite(def.damping)) continue;
+        def.collideConnected=j->params[5]!=0;
+        world.CreateJoint(&def);
+      }
+    } else if (j->type==GML_PHYS_JOINT_ROPE) {
       b2DistanceJointDef def;
       def.bodyA=a; def.bodyB=b;
       def.localAnchorA.Set(float(j->anchor_ax*scale),float(j->anchor_ay*scale));

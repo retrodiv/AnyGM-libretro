@@ -121,7 +121,9 @@ void gml_physics_initialize_joint(GmlVM *vm,GmlPhysicsJoint *j){
   if(!a || !b || a==b) return;
   gml_physics_initialize_body(vm,a); gml_physics_initialize_body(vm,b);
   if(!initialized(a) || !initialized(b)) return;
-  if(j->type==1 || j->type==GML_PHYS_JOINT_FRICTION || j->type==GML_PHYS_JOINT_WELD){
+  int has_axis=j->type==GML_PHYS_JOINT_PRISMATIC || j->type==GML_PHYS_JOINT_WHEEL;
+  if(has_axis || j->type==GML_PHYS_JOINT_REVOLUTE ||
+     j->type==GML_PHYS_JOINT_FRICTION || j->type==GML_PHYS_JOINT_WELD){
     world_to_local(a,j->x1,j->y1,&j->anchor_ax,&j->anchor_ay);
     world_to_local(b,j->x1,j->y1,&j->anchor_bx,&j->anchor_by);
   } else if(j->type==GML_PHYS_JOINT_DISTANCE){
@@ -137,11 +139,19 @@ void gml_physics_initialize_joint(GmlVM *vm,GmlPhysicsJoint *j){
     read_body(vm,b,&body);
     local_to_world(&body,j->anchor_bx,j->anchor_by,&x,&y);
     j->params[3]=hypot(x-j->x2,y-j->y2);
-  } else if(j->type==4){
+  } else if(j->type==GML_PHYS_JOINT_ROPE){
     /* Rope endpoints are local offsets in the language API. */
     j->anchor_ax=j->x1; j->anchor_ay=j->y1;
     j->anchor_bx=j->x2; j->anchor_by=j->y2;
   } else return;
+  if(has_axis){
+    double length=hypot(j->x2,j->y2);
+    if(!isfinite(length) || length==0) return;
+    double angle=value(a,"phy_rotation",0)*M_PI/180.0;
+    double x=j->x2/length,y=j->y2/length,c=cos(angle),s=sin(angle);
+    j->x2=c*x+s*y; j->y2=-s*x+c*y;
+    if(!isfinite(j->x2) || !isfinite(j->y2)) return;
+  }
   if(j->type!=GML_PHYS_JOINT_WELD)
     j->reference_angle=value(b,"phy_rotation",0)-value(a,"phy_rotation",0);
   j->initialized=1;
