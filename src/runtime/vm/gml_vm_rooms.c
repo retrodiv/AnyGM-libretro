@@ -1273,6 +1273,7 @@ static void room_camera_resources_init(GmlVM *vm,int reset_bindings){
         value=gml_vm_global_array_number(vm,view_fields[field],camera);
       gml_vm_global_array_set(vm,camera_fields[field],camera,value);
     }
+    gml_camera_matrices_clear(vm,camera);
     gml_vm_global_array_set(vm,"__gml_camera_matrix_eye_x",camera,0);
     gml_vm_global_array_set(vm,"__gml_camera_matrix_eye_y",camera,0);
     gml_vm_global_array_set(vm,"__gml_camera_matrix_eye_valid",camera,0);

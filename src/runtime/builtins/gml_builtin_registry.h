@@ -1953,7 +1953,9 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1855, MATRIX_STACK_POP, "matrix_stack_pop", DRAW, DRAW_3D, ALWAYS) \
   ENTRY(1856, MATRIX_STACK_PUSH, "matrix_stack_push", DRAW, DRAW_3D, ALWAYS) \
   ENTRY(1857, MATRIX_STACK_SET, "matrix_stack_set", DRAW, DRAW_3D, ALWAYS) \
-  ENTRY(1858, MATRIX_STACK_TOP, "matrix_stack_top", DRAW, DRAW_3D, ALWAYS)
+  ENTRY(1858, MATRIX_STACK_TOP, "matrix_stack_top", DRAW, DRAW_3D, ALWAYS) \
+  ENTRY(1859, CAMERA_GET_VIEW_MAT, "camera_get_view_mat", DRAW, DRAW, ALWAYS) \
+  ENTRY(1860, CAMERA_GET_PROJ_MAT, "camera_get_proj_mat", DRAW, DRAW, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -1968,7 +1970,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1859
+  GML_BUILTIN_ID_LIMIT = 1861
 } GmlBuiltinId;
 
 #endif

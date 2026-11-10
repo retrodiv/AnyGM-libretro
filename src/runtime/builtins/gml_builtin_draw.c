@@ -230,6 +230,18 @@ static GmlVal gm_matrix_stack_builtin(GmlVM *vm,const char *name,GmlVal *args,in
   return vundef();
 }
 
+static void gm_matrix_ortho(double result[16],double width,double height,double near_clip,double far_clip){
+  width=fabs(width); height=fabs(height);
+  if(width<1e-12) width=1;
+  if(height<1e-12) height=1;
+  if(fabs(far_clip-near_clip)<1e-12) far_clip=near_clip+1;
+  gml_software3d_matrix_identity(result);
+  result[0]=2.0/width;
+  result[5]=2.0/height;
+  result[10]=1.0/(far_clip-near_clip);
+  result[14]=-near_clip/(far_clip-near_clip);
+}
+
 static GmlVal gm_matrix_builtin(GmlRender *R,const char *name,GmlVal *args,int count){
   double result[16];
   if(!strcmp(name,"matrix_inverse")){
@@ -322,16 +334,7 @@ static GmlVal gm_matrix_builtin(GmlRender *R,const char *name,GmlVal *args,int c
     return gm_matrix_write(result,count>9?args[9]:vundef());
   }
   if(!strcmp(name,"matrix_build_projection_ortho")){
-    double width=fabs(N(args,count,0)),height=fabs(N(args,count,1));
-    double near_clip=N(args,count,2),far_clip=N(args,count,3);
-    if(width<1e-12) width=1;
-    if(height<1e-12) height=1;
-    if(fabs(far_clip-near_clip)<1e-12) far_clip=near_clip+1;
-    gml_software3d_matrix_identity(result);
-    result[0]=2.0/width;
-    result[5]=2.0/height;
-    result[10]=1.0/(far_clip-near_clip);
-    result[14]=-near_clip/(far_clip-near_clip);
+    gm_matrix_ortho(result,N(args,count,0),N(args,count,1),N(args,count,2),N(args,count,3));
     return gm_matrix_write(result,count>4?args[4]:vundef());
   }
   if(!strcmp(name,"matrix_build_projection_perspective_fov")){
@@ -578,12 +581,84 @@ int gml_camera_override_mask(GmlVM *vm,uint64_t camera_mask,int field,double val
   for(int camera=0;camera<GML_CAMERA_OVERRIDE_COUNT;camera++){
     if(!(camera_mask&(UINT64_C(1)<<camera)) || !gml_camera_live(vm,camera)) continue;
     gml_camera_field_set(vm,camera,field,value);
+    gml_camera_matrices_clear(vm,camera);
     if(field==GML_CAM_X || field==GML_CAM_Y)
       gml_set_global_arr(vm,"__gml_camera_matrix_eye_valid",camera,0);
     changed++;
   }
   return changed;
 }
+static const char *const camera_matrix_keys[]={"__gml_camera_view_matrix","__gml_camera_proj_matrix"};
+
+static GmlVal camera_matrix_snapshot(GmlVM *vm,int camera,int projection){
+  GmlVal *root=gml_varmap_get(&vm->globals,camera_matrix_keys[projection]);
+  return root?gml_arr_get(*root,camera):vundef();
+}
+
+void gml_camera_matrices_clear(GmlVM *vm,int camera){
+  for(int projection=0;projection<2;projection++)
+    gml_arr_resize(camera_matrix_snapshot(vm,camera,projection),0);
+}
+
+static void camera_matrix_store(GmlVM *vm,int camera,int projection,const double matrix[16]){
+  GmlVal snapshot=camera_matrix_snapshot(vm,camera,projection);
+  if(snapshot.t==V_ARR && snapshot.arr){
+    gm_matrix_write(matrix,snapshot);
+    return;
+  }
+  GmlVal *root=gml_varmap_put(&vm->globals,camera_matrix_keys[projection]);
+  if(!root) return;
+  if(root->t!=V_ARR || !root->arr) *root=gml_arr_new(0,vreal(0));
+  if(!root->arr) return;
+  snapshot=gm_matrix_write(matrix,vundef());
+  if(gml_val_array_length(snapshot)==16) gml_arr_set(*root,camera,snapshot);
+  if(gml_arr_get(*root,camera).arr!=snapshot.arr) gml_values_release_owned(&snapshot,1);
+}
+
+static int camera_build_matrix(GmlVM *vm,int camera,int live,int projection,double matrix[16]){
+  double width=live?gml_camera_field(vm,camera,GML_CAM_W,0):gml_global_arr(vm,"view_wview",camera);
+  double height=live?gml_camera_field(vm,camera,GML_CAM_H,0):gml_global_arr(vm,"view_hview",camera);
+  if(width<=0 || height<=0){
+    if(!live) return 0;
+    gml_software3d_matrix_identity(matrix);
+  } else if(projection){
+    gm_matrix_ortho(matrix,width,height,1,32000);
+  } else {
+    double x=live?gml_camera_field(vm,camera,GML_CAM_X,0):gml_global_arr(vm,"view_xview",camera);
+    double y=live?gml_camera_field(vm,camera,GML_CAM_Y,0):gml_global_arr(vm,"view_yview",camera);
+    double angle=live?gml_camera_field(vm,camera,GML_CAM_ANGLE,0):0;
+    x+=width*.5; y+=height*.5;
+    gml_software3d_matrix_rotation_axis(matrix,0,0,1,-angle);
+    matrix[12]=-(matrix[0]*x+matrix[4]*y);
+    matrix[13]=-(matrix[1]*x+matrix[5]*y);
+    matrix[14]=16000;
+  }
+  return 1;
+}
+
+static GmlVal camera_get_matrix(GmlVM *vm,int camera,int projection){
+  int live=gml_camera_live(vm,camera);
+  if(!live && camera>=GML_ROOM_CAMERA_COUNT) return vreal(-1);
+  if(!live && vm->win && anygm_policy_has_modern_layer_semantics(vm->win) &&
+     !anygm_policy_uses_legacy_room_cameras(vm->win)) return vreal(-1);
+  double matrix[16];
+  if((live && gm_matrix_read(camera_matrix_snapshot(vm,camera,projection),matrix)) ||
+     camera_build_matrix(vm,camera,live,projection,matrix))
+    return gm_matrix_write(matrix,vundef());
+  return vreal(-1);
+}
+
+static void camera_set_matrix_snapshot(GmlVM *vm,int camera,int projection,const double matrix[16]){
+  /* The rectangle mapping can move or resize the rendered view. Keep the other
+   * matrix's previous value until a camera operation rebuilds both matrices. */
+  double other[16];
+  if(!gm_matrix_read(camera_matrix_snapshot(vm,camera,!projection),other)){
+    camera_build_matrix(vm,camera,1,!projection,other);
+    camera_matrix_store(vm,camera,!projection,other);
+  }
+  camera_matrix_store(vm,camera,projection,matrix);
+}
+
 static int gml_camera_alloc(GmlVM *vm){
   static const double defaults[10]={0,0,0,0,0,-1,-1,-1,0,0};
   int first=vm && vm->win && anygm_policy_has_modern_layer_semantics(vm->win)
@@ -595,6 +670,7 @@ static int gml_camera_alloc(GmlVM *vm){
     int id=first+(hint-first+pass)%available;
     if(!gml_camera_live(vm,id)){
       gml_set_global_arr(vm,"__gml_camera_live",id,1);
+      gml_camera_matrices_clear(vm,id);
       for(int field=GML_CAM_X;field<=GML_CAM_YBORDER;field++)
         gml_camera_field_set(vm,id,field,defaults[field]);
       gml_set_global_arr(vm,"__gml_camera_matrix_eye_x",id,0);
@@ -631,6 +707,7 @@ static void gml_camera_apply_matrix_rect(GmlVM *vm,int camera){
 static int gml_camera_set_view_matrix(GmlVM *vm,int camera,GmlVal matrix_value){
   double matrix[16];
   if(!gml_camera_live(vm,camera) || !gm_matrix_read(matrix_value,matrix)) return 0;
+  camera_set_matrix_snapshot(vm,camera,0,matrix);
   /* matrix_build_lookat puts the camera axes in the first three rows.  For an orthonormal view,
    * inverse(rotation) * -translation recovers the world-space eye. */
   double eye_x=-(matrix[0]*matrix[12]+matrix[1]*matrix[13]+matrix[2]*matrix[14]);
@@ -646,6 +723,7 @@ static int gml_camera_set_view_matrix(GmlVM *vm,int camera,GmlVal matrix_value){
 static int gml_camera_set_projection_matrix(GmlVM *vm,int camera,GmlVal matrix_value){
   double matrix[16];
   if(!gml_camera_live(vm,camera) || !gm_matrix_read(matrix_value,matrix)) return 0;
+  camera_set_matrix_snapshot(vm,camera,1,matrix);
   /* Orthographic matrices retain W in 2/m00 and H in 2/m11.  Perspective matrices have m15=0
    * and do not describe a finite 2-D view rectangle, so they leave the existing dimensions. */
   if(fabs(matrix[15]-1.0)<1e-8 && fabs(matrix[0])>1e-12 && fabs(matrix[5])>1e-12){
@@ -1191,6 +1269,7 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"camera_destroy")){ int c=(int)N(a,n,0);
       if(c>=0 && c<GML_CAMERA_LIMIT){
         gml_set_global_arr(vm,"__gml_camera_live",c,0);
+        gml_camera_matrices_clear(vm,c);
         gml_set_global_arr(vm,"__gml_camera_matrix_eye_valid",c,0);
       }
       return vreal(0); }
@@ -1198,8 +1277,16 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       return vreal(gml_vm_room_camera_set(
         vm,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2))?0:-1);
     if(!strcmp(nm,"camera_set_view_angle")){ int c=(int)N(a,n,0);
-      if(gml_camera_live(vm,c)) gml_camera_field_set(vm,c,GML_CAM_ANGLE,N(a,n,1));
+      if(gml_camera_live(vm,c)){
+        gml_camera_field_set(vm,c,GML_CAM_ANGLE,N(a,n,1));
+        gml_camera_matrices_clear(vm,c);
+      }
       return vreal(0); }
+    if(!strcmp(nm,"camera_get_view_mat") || !strcmp(nm,"camera_get_proj_mat")){
+      double camera=N(a,n,0);
+      if(n<1 || !(camera>=0 && camera<GML_CAMERA_LIMIT)) return vreal(-1);
+      return camera_get_matrix(vm,(int)camera,!strcmp(nm,"camera_get_proj_mat"));
+    }
     if(!strcmp(nm,"camera_set_view_mat")){
       if(n>1) gml_camera_set_view_matrix(vm,(int)N(a,n,0),a[1]);
       return vreal(0); }
@@ -1210,6 +1297,7 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"camera_set_view_pos")){ int c=(int)N(a,n,0);
       if(gml_camera_live(vm,c)){
         gml_camera_field_set(vm,c,GML_CAM_X,N(a,n,1)); gml_camera_field_set(vm,c,GML_CAM_Y,N(a,n,2));
+        gml_camera_matrices_clear(vm,c);
         gml_set_global_arr(vm,"__gml_camera_matrix_eye_valid",c,0);
       } else if(c>=0 && c<8){
         gml_set_global_arr(vm,"view_xview",c,N(a,n,1)); gml_set_global_arr(vm,"view_yview",c,N(a,n,2));
@@ -1230,6 +1318,7 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       if(gml_camera_live(vm,c)){
         if(cw>0) gml_camera_field_set(vm,c,GML_CAM_W,cw);
         if(chh>0) gml_camera_field_set(vm,c,GML_CAM_H,chh);
+        if(cw>0 || chh>0) gml_camera_matrices_clear(vm,c);
       } else if(c>=0 && c<8){
         if(cw>0) gml_set_global_arr(vm,"view_wview",c,cw);
         if(chh>0) gml_set_global_arr(vm,"view_hview",c,chh);
@@ -1261,6 +1350,15 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
           double fallback=defaults[field];
           if(src>=0 && src<8 && legacy[field]) fallback=gml_global_arr(vm,legacy[field],src);
           gml_camera_field_set(vm,dst,field,gml_camera_field(vm,src,field,fallback));
+        }
+        if(dst!=src){
+          gml_camera_matrices_clear(vm,dst);
+          for(int projection=0;projection<2;projection++){
+            double matrix[16];
+            if(gml_camera_live(vm,src) &&
+               gm_matrix_read(camera_matrix_snapshot(vm,src,projection),matrix))
+              camera_matrix_store(vm,dst,projection,matrix);
+          }
         }
         gml_set_global_arr(vm,"__gml_camera_matrix_eye_valid",dst,0);
       }

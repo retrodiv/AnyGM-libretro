@@ -4835,6 +4835,11 @@ static int expect_persistent_lifecycle_exit_code(void){
       fprintf(stderr,"studio camera follow fixture allocation failed\n"); return 1;
     }
     int camera_id=(int)camera.d;
+    GmlVal projection_args[]={vreal(100),vreal(100),vreal(1),vreal(10000)};
+    GmlVal projection=gml_builtin_call(&vm,"matrix_build_projection_ortho",projection_args,4);
+    GmlVal set_projection_args[]={camera,projection};
+    (void)gml_builtin_call(&vm,"camera_set_proj_mat",set_projection_args,2);
+    gml_values_release_owned(&projection,1);
     gml_vm_step(&vm);
     if(fabs(global_array_value(&vm,"__gml_camera_x",camera_id)-4)>1e-9 ||
        fabs(global_array_value(&vm,"__gml_camera_y",camera_id)-50.4)>1e-9){
@@ -4842,6 +4847,15 @@ static int expect_persistent_lifecycle_exit_code(void){
         global_array_value(&vm,"__gml_camera_x",camera_id),
         global_array_value(&vm,"__gml_camera_y",camera_id)); return 1;
     }
+    GmlVal view=gml_builtin_call(&vm,"camera_get_view_mat",&camera,1);
+    projection=gml_builtin_call(&vm,"camera_get_proj_mat",&camera,1);
+    int follows=gml_val_array_length(view)==16 && gml_val_array_length(projection)==16 &&
+      fabs(gml_arr_get(view,12).d+54)<1e-9 &&
+      fabs(gml_arr_get(view,13).d+100.4)<1e-9 &&
+      fabs(gml_arr_get(projection,10).d-1.0/31999)<1e-12;
+    GmlVal matrices[]={view,projection};
+    gml_values_release_owned(matrices,2);
+    if(!follows){ fprintf(stderr,"studio camera follow matrices mismatch\n"); return 1; }
     GmlVal speed_args[3]={camera,vreal(-1),vreal(-1)};
     (void)gml_builtin_call(&vm,"camera_set_view_speed",speed_args,3);
     gml_vm_step(&vm);

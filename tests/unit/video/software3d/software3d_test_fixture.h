@@ -72,6 +72,7 @@ int classic_sprite_replace_fixture(void);
 int sprite_instance_metric_scale_fixture(void);
 int software3d_state_roundtrip_case(void);
 int matrix_stack_fixture(void);
+int camera_matrices_fixture(void);
 int software3d_case_language(Software3dRasterFixture *fixture);
 int software3d_case_particles(Software3dRasterFixture *fixture);
 int software3d_case_projection(Software3dRasterFixture *fixture);

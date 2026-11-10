@@ -955,6 +955,7 @@ void gml_vm_step(GmlVM *vm){
     }
     gml_vm_global_array_set(vm,"__gml_camera_x",camera,vx);
     gml_vm_global_array_set(vm,"__gml_camera_y",camera,vy);
+    gml_camera_matrices_clear(vm,camera);
     if(camera==0 && anygm_host_development_setting(vm->host,"GML_LOG_FOLLOW")){ if(vm->diagnostics.camera_follow_log_count++%60==0)
       anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[camera-follow] cam=%d target=%d(%s) at=(%.0f,%.0f) view=(%.0f,%.0f %.0fx%.0f) border=(%.0f,%.0f) speed=(%.0f,%.0f)\n",
         camera,target,(fo->obj>=0&&fo->obj<vm->n_objects)?vm->objects[fo->obj].name:"?",

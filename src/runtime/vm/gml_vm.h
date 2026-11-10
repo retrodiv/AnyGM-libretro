@@ -728,6 +728,7 @@ int     gml_alarm_paused(GmlVM *vm, int obj, int alarm_index);
  * 0=x, 1=y, 2=width, 3=height; only live handles in the mask are touched. Surface variables are
  * resolved on every active instance of an object or descendant, then resized by their handles. */
 int     gml_camera_override_mask(GmlVM *vm, uint64_t camera_mask, int field, double value);
+void    gml_camera_matrices_clear(GmlVM *vm,int camera);
 int     gml_resize_inst_surface_all(GmlVM *vm, const char *object, const char *variable,
                                     int width, int height);
 int     gml_room_owned_global(const char *name);

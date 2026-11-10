@@ -418,7 +418,7 @@ int software3d_state_roundtrip_case(void){
 
 
 
-static GmlVal stack_call(GmlVM *vm,int cached,const char *name,GmlVal *args,int count){
+static GmlVal fixture_builtin_call(GmlVM *vm,int cached,const char *name,GmlVal *args,int count){
   int id=gml_builtin_fast_id(vm,name);
   assert(id>=0);
   return cached?gml_builtin_call_fast_id(vm,id,name,args,count):
@@ -426,7 +426,7 @@ static GmlVal stack_call(GmlVM *vm,int cached,const char *name,GmlVal *args,int 
 }
 
 static void stack_check_top(GmlVM *vm,int cached,double sx,double sy,double x,double y){
-  GmlVal matrix=stack_call(vm,cached,"matrix_stack_top",NULL,0);
+  GmlVal matrix=fixture_builtin_call(vm,cached,"matrix_stack_top",NULL,0);
   assert(gml_val_array_length(matrix)==16);
   assert(gml_arr_get(matrix,0).d==sx && gml_arr_get(matrix,5).d==sy);
   assert(gml_arr_get(matrix,12).d==x && gml_arr_get(matrix,13).d==y);
@@ -442,7 +442,7 @@ int matrix_stack_fixture(void){
     vm.particles=gml_particle_state_create(&vm);
     assert(vm.particles);
     gml_vm_software3d_reset(&vm);
-#define STACK(name,args,count) stack_call(&vm,cached,"matrix_stack_" name,args,count)
+#define STACK(name,args,count) fixture_builtin_call(&vm,cached,"matrix_stack_" name,args,count)
     assert(STACK("is_empty",NULL,0).d==1);
     stack_check_top(&vm,cached,1,1,0,0);
     GmlVal translation=call_values(&vm,"matrix_build_identity",NULL,0);
@@ -501,5 +501,86 @@ int matrix_stack_fixture(void){
     gml_vm_free(&vm);
   }
   puts("matrix stack: composition, identity base, capacity, isolation and restore passed");
+  return 1;
+}
+
+static void assert_matrix_values(GmlVal actual,GmlVal expected){
+  assert(gml_val_array_length(actual)==16 && gml_val_array_length(expected)==16);
+  for(int i=0;i<16;i++) assert(gml_arr_get(actual,i).d==gml_arr_get(expected,i).d);
+  gml_values_release_owned(&actual,1);
+}
+
+int camera_matrices_fixture(void){
+  for(int cached=0;cached<2;cached++){
+    GmlWin win={0};
+    GmlVM vm={0};
+    vm.win=&win;
+    vm.particles=gml_particle_state_create(&vm);
+    assert(vm.particles);
+    gml_vm_software3d_reset(&vm);
+#define CAMERA(name,args,count) fixture_builtin_call(&vm,cached,"camera_" name,args,count)
+    GmlVal camera=CAMERA("create",NULL,0);
+    GmlVal identity=call_values(&vm,"matrix_build_identity",NULL,0);
+    assert_matrix_values(CAMERA("get_view_mat",&camera,1),identity);
+    assert_matrix_values(CAMERA("get_proj_mat",&camera,1),identity);
+
+    GmlVal rect[]={vreal(12),vreal(34),vreal(320),vreal(180),vreal(90)};
+    GmlVal angled=CAMERA("create_view",rect,5);
+    GmlVal view=CAMERA("get_view_mat",&angled,1);
+    assert(gml_val_array_length(view)==16);
+    assert(fabs(gml_arr_get(view,0).d)<1e-9 && fabs(gml_arr_get(view,5).d)<1e-9);
+    assert(gml_arr_get(view,1).d==-1 && gml_arr_get(view,4).d==1);
+    assert(fabs(gml_arr_get(view,12).d+124)<1e-9);
+    assert(fabs(gml_arr_get(view,13).d-172)<1e-9);
+    assert(gml_arr_get(view,14).d==16000);
+    GmlVal ortho_args[]={rect[2],rect[3],vreal(1),vreal(32000)};
+    GmlVal ortho=call_values(&vm,"matrix_build_projection_ortho",ortho_args,4);
+    assert_matrix_values(CAMERA("get_proj_mat",&angled,1),ortho);
+    GmlVal initial_projection[]={camera,ortho};
+    CAMERA("set_proj_mat",initial_projection,2);
+    assert_matrix_values(CAMERA("get_view_mat",&camera,1),identity);
+
+    GmlVal perspective_args[]={vreal(60),vreal(1.5),vreal(1),vreal(999)};
+    GmlVal perspective=call_values(&vm,"matrix_build_projection_perspective_fov",perspective_args,4);
+    GmlVal args[]={camera,view};
+    CAMERA("set_view_mat",args,2);
+    args[1]=perspective;
+    CAMERA("set_proj_mat",args,2);
+    assert_matrix_values(CAMERA("get_view_mat",&camera,1),view);
+    assert_matrix_values(CAMERA("get_proj_mat",&camera,1),perspective);
+    gml_arr_set(view,14,vreal(77));
+    GmlVal returned=CAMERA("get_view_mat",&camera,1);
+    assert(gml_arr_get(returned,14).d==16000);
+    gml_arr_set(returned,14,vreal(88));
+    gml_values_release_owned(&returned,1);
+    returned=CAMERA("get_view_mat",&camera,1);
+    assert(gml_arr_get(returned,14).d==16000);
+    gml_arr_set(view,14,vreal(16000));
+    gml_values_release_owned(&returned,1);
+
+    GmlVal copy[]={angled,camera};
+    CAMERA("copy_transforms",copy,2);
+    assert_matrix_values(CAMERA("get_view_mat",&angled,1),view);
+    assert_matrix_values(CAMERA("get_proj_mat",&angled,1),perspective);
+    size_t size=gml_vm_state_size(&vm),written=0,used=0;
+    void *state=malloc(size);
+    assert(state && gml_vm_state_save(&vm,state,size,&written));
+    CAMERA("destroy",&camera,1);
+    assert(CAMERA("get_view_mat",&camera,1).d==-1);
+    assert_matrix_values(CAMERA("get_view_mat",&angled,1),view);
+    assert(gml_vm_state_load(&vm,state,written,&used) && used==written);
+    free(state);
+    assert_matrix_values(CAMERA("get_view_mat",&camera,1),view);
+    assert_matrix_values(CAMERA("get_proj_mat",&camera,1),perspective);
+    GmlVal size_args[]={camera,rect[2],rect[3]};
+    CAMERA("set_view_size",size_args,3);
+    assert_matrix_values(CAMERA("get_proj_mat",&camera,1),ortho);
+    assert_matrix_values(CAMERA("get_proj_mat",&angled,1),perspective);
+#undef CAMERA
+    GmlVal matrices[]={identity,view,ortho,perspective};
+    gml_values_release_owned(matrices,sizeof matrices/sizeof matrices[0]);
+    gml_vm_free(&vm);
+  }
+  puts("camera matrices: automatic transforms, value isolation, copy and restore passed");
   return 1;
 }
