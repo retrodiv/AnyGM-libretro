@@ -2199,6 +2199,79 @@ static uint64_t dispatch_cpu_total(const GmlRenderDispatchMetrics *metrics){
   return total;
 }
 
+/* A partially transparent corner stays well outside every clipped viewport.
+ * That unobserved texel prevents a complete-opacity certificate, retaining the
+ * general packet executor with exactly the same geometry and visible samples. */
+static void check_exact_cardinal_copy_rows(void){
+  enum {SIDE=513,W=512,H=512};
+  uint8_t *pixels=malloc((size_t)SIDE*SIDE*4u);
+  uint32_t *reference=malloc((size_t)W*H*sizeof *reference);
+  uint32_t *actual=malloc((size_t)W*H*sizeof *actual);
+  expect(pixels && reference && actual,"cardinal copy fixture allocation");
+  if(!pixels || !reference || !actual){free(pixels);free(reference);free(actual);return;}
+  const double anchors[4][2]={{-13,-7},{-7,500},{500,500},{500,-7}};
+  unsigned controls=0;
+  for(unsigned generation=0;generation<2u;generation++)
+  for(unsigned direction=0;direction<4u;direction++)
+  for(unsigned phase=0;phase<4u;phase++)
+  for(unsigned policy=0;policy<6u;policy++){
+    double offset=phase==0u?0.0:phase==1u?.5:nextafter(.5,phase==2u?0.0:1.0);
+    for(size_t pixel=0;pixel<(size_t)SIDE*SIDE;pixel++){
+      pixels[pixel*4u]=(uint8_t)(pixel*13u+17u);
+      pixels[pixel*4u+1u]=(uint8_t)(pixel*23u+31u);
+      pixels[pixel*4u+2u]=(uint8_t)(pixel*37u+43u);
+      pixels[pixel*4u+3u]=255u;
+    }
+    if(policy==1u || policy==2u)
+      pixels[((size_t)200*SIDE+250u)*4u+3u]=policy==1u?0u:127u;
+    size_t hidden=(direction==2u?(size_t)SIDE*SIDE-1u:0u)*4u+3u;
+    GmlRenderDispatchMetrics expected_metrics={0};
+    for(unsigned pass=0;pass<3u;pass++){
+      pixels[hidden]=pass?255u:254u;
+      GmlRender *render=calloc(1,sizeof *render);GmlWin content={0};
+      AnygmHostServices host={0};StretchBandSettings settings={pass==2u?"4":"1","0"};
+      GmlSprite sprite={0};GmlTpag page={0};GmlAtlas atlas={0};int frame=0;
+      expect(render && !gml_render_init(render,NULL),"cardinal copy renderer init");
+      if(!render)continue;
+      host.struct_size=sizeof host;host.userdata=&settings;host.development_setting=stretch_band_setting;
+      content.bytecode=generation?17:14;content.host=&host;render->win=&content;
+      render->fb=render->base_fb=actual;
+      render->fbw=render->base_fbw=W;render->fbh=render->base_fbh=H;
+      render->target_id=-1;render->alpha=1;render->alphablend=1;render->color_write_mask=15u;
+      render->active_shader=render->lut_pal_sprite=-1;
+      render->blend_equation=render->blend_equation_alpha=1;
+      sprite.w=sprite.h=SIDE;sprite.n_frames=1;sprite.frame=&frame;
+      page.sw=page.sh=page.bw=page.bh=SIDE;page.atlas=0;
+      atlas.w=atlas.h=SIDE;atlas.px=pixels;atlas.decode_attempted=1;
+      render->spr=&sprite;render->n_spr=1;render->tpag=&page;render->n_tpag=1;
+      render->atlas=&atlas;render->n_atlas=1;
+      if(policy==5u){render->alpha_test_enable=1;render->alpha_test_ref=255u;}
+      for(size_t pixel=0;pixel<(size_t)W*H;pixel++)actual[pixel]=(uint32_t)(pixel*2654435761u);
+      gml_render_dispatch_diagnostics_enable(render,1);
+      GmlRenderCpuBackendDispatchScope scope;
+      gml_render_cpu_backend_dispatch_begin(render,&scope,GML_RENDER_SCENE_SPRITE,0);
+      blit_rotated(render,&sprite,&page,anchors[direction][0]+offset,anchors[direction][1]+offset,
+        1,1,direction*90.0,policy==4u?0x8371B5u:0xFFFFFFu,policy==3u?.61:1.0);
+      gml_render_cpu_backend_dispatch_end(render,&scope);
+      expect(render->rotated_batch_count==1,"cardinal control keeps its queued exact draw");
+      gml_render_flush_rotated_batch(render);
+      expect(page.alpha_runs_built==(policy<=2u),
+             "exact cardinal admission uses the established complete-opacity proof");
+      GmlRenderDispatchMetrics metrics={0};gml_render_dispatch_metrics(render,&metrics);
+      if(!pass){memcpy(reference,actual,(size_t)W*H*sizeof *actual);expected_metrics=metrics;}
+      else expect(!memcmp(reference,actual,(size_t)W*H*sizeof *actual) &&
+                  !memcmp(&expected_metrics,&metrics,sizeof metrics),
+                  "cardinal copies match general fixed20 ARGB and actual-write accounting");
+      gml_render_texture_page_cache_clear(render,&page);
+      render->spr=NULL;render->n_spr=0;render->tpag=NULL;render->n_tpag=0;
+      render->atlas=NULL;render->n_atlas=0;
+      gml_render_free(render);free(render);controls++;
+    }
+  }
+  free(pixels);free(reference);free(actual);
+  fprintf(stderr,"exact cardinal copy reference controls: %u\n",controls);
+}
+
 static void check_dispatch_rotated_queue(void){
   enum {
     ROT_EXACT,ROT_CACHED,ROT_MASK_VECTOR,ROT_MASK_SCALAR,ROT_EMPTY_LUT,
@@ -2628,6 +2701,7 @@ int main(void) {
   check_dispatch_rgba_textures();
   check_dispatch_atlas_textures();
   check_dispatch_rotated_queue();
+  check_exact_cardinal_copy_rows();
   check_named_palette_sampler();
   check_grid_uniform_dependencies();
   check_opaque_stretched_underlay();

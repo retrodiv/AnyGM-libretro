@@ -4958,6 +4958,7 @@ typedef struct {
   double ax, ay, cosine, sine, inv_xscale, inv_yscale;
   double local_x_offset, local_y_offset;
   int x0, x1, y0, y1, use_quad_span, white, vector_pixels, round_blend;
+  int copy_cardinal;
   int blend_r, blend_g, blend_b;
   int64_t delta_x, delta_y;
   uint32_t alpha_lut[256];
@@ -5002,6 +5003,36 @@ static void GML_HOT_RENDER exact_rotated_band_rows(
                    band->local_y_offset;
     int64_t lx_fp=(int64_t)floor(local_x*(double)RFP_ONE);
     int64_t ly_fp=(int64_t)floor(local_y*(double)RFP_ONE);
+    if(band->copy_cardinal){
+      /* Keep this row's existing fixed20 origin and quad span. An exact unit
+       * cardinal step selects a bounded contiguous or strided source interval. */
+      int source_x=floor_fixed20(lx_fp),source_y=floor_fixed20(ly_fp);
+      int horizontal=band->delta_x!=0;
+      int fixed=horizontal?source_y:source_x;
+      int fixed_extent=horizontal?tpag->sh:tpag->sw;
+      if(fixed<0 || fixed>=fixed_extent) continue;
+      int coordinate=horizontal?source_x:source_y;
+      int extent=horizontal?tpag->sw:tpag->sh;
+      int step=(horizontal?band->delta_x:band->delta_y)>0?1:-1;
+      int64_t first=step>0?-(int64_t)coordinate:(int64_t)coordinate-extent+1;
+      int64_t last=step>0?(int64_t)extent-coordinate:(int64_t)coordinate+1;
+      if(first<0) first=0;
+      if(last>rx1-rx0) last=rx1-rx0;
+      if(last>first){
+        int sx=source_x+(horizontal?step*(int)first:0);
+        int sy=source_y+(horizontal?0:step*(int)first);
+        const uint32_t *source=band->argb+(size_t)sy*tpag->sw+sx;
+        uint32_t *destination=row+rx0+(int)first;
+        int run=(int)(last-first);
+        if(horizontal && step>0) memcpy(destination,source,(size_t)run*sizeof *source);
+        else if(horizontal)
+          copy_argb_force_opaque_reverse(destination+run-1,source-(run-1),run);
+        else for(int pixel=0;pixel<run;pixel++)
+          destination[pixel]=source[(ptrdiff_t)pixel*step*tpag->sw];
+        gml_render_dispatch_cpu_coverage_write(band->dispatch_written);
+      }
+      continue;
+    }
     for(int px=rx0;px<rx1;){
       int source_x,source_y,skip,vector;
       int maxrun=rx1-px;
@@ -6023,6 +6054,10 @@ static void GML_HOT_RENDER blit_rotated_impl(GmlRender *r, GmlSprite *spr, GmlTp
       band.delta_x=dlx_fp;
       band.delta_y=dly_fp;
       memcpy(band.alpha_lut,a16_lut,sizeof a16_lut);
+      if(white && a16_lut[255]==65536u &&
+         (((dlx_fp==RFP_ONE || dlx_fp==-RFP_ONE) && !dly_fp) ||
+          ((dly_fp==RFP_ONE || dly_fp==-RFP_ONE) && !dlx_fp)))
+        band.copy_cardinal=tpag_fully_opaque_argb(r,t,a)==immutable_argb;
       GmlRotatedBatchItem *item=rotated_batch_append(r,3);
       if(item){
         item->draw.exact=band;
