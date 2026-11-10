@@ -173,6 +173,71 @@ int gml_physics_capture_gear_pose(GmlVM *vm,const GmlPhysicsJoint *source,int sh
   return 1;
 }
 
+static GmlPhysicsBody joint_body_pose(const GmlInstance *in){
+  GmlPhysicsBody pose={0};
+  pose.x=value(in,"phy_position_x",in->x);
+  pose.y=value(in,"phy_position_y",in->y);
+  pose.angle=value(in,"phy_rotation",-in->image_angle);
+  return pose;
+}
+
+double gml_physics_joint_geometry(GmlVM *vm,const GmlPhysicsJoint *joint,int field){
+  if(field==GML_JOINT_ANGLE && joint->type==GML_PHYS_JOINT_WELD)
+    return joint->reference_angle*M_PI/180.0;
+  int anchors=field>=GML_JOINT_ANCHOR_1_X && field<=GML_JOINT_ANCHOR_2_Y;
+  int axis_joint=joint->type==GML_PHYS_JOINT_PRISMATIC || joint->type==GML_PHYS_JOINT_WHEEL;
+  int along_axis=axis_joint && (field==GML_JOINT_TRANSLATION || field==GML_JOINT_SPEED);
+  int pulley_length=joint->type==GML_PHYS_JOINT_PULLEY &&
+                    (field==GML_JOINT_LENGTH_1 || field==GML_JOINT_LENGTH_2);
+  int revolute_angle=field==GML_JOINT_ANGLE && joint->type==GML_PHYS_JOINT_REVOLUTE;
+  if(!anchors && !along_axis && !pulley_length && !revolute_angle) return 0;
+
+  GmlInstance *a=gml_vm_instance_by_id(vm,joint->a),*b=gml_vm_instance_by_id(vm,joint->b);
+  if(!a || !b) return 0;
+  GmlPhysicsBody pose_a=joint_body_pose(a),pose_b=joint_body_pose(b);
+  if(revolute_angle) return (pose_b.angle-pose_a.angle-joint->reference_angle)*M_PI/180.0;
+  if(field==GML_JOINT_SPEED && joint->type==GML_PHYS_JOINT_WHEEL)
+    return (value(b,"phy_angular_velocity",0)-value(a,"phy_angular_velocity",0))*M_PI/180.0;
+
+  double local_ax=joint->anchor_ax,local_ay=joint->anchor_ay;
+  double local_bx=joint->anchor_bx,local_by=joint->anchor_by;
+  if(joint->type==GML_PHYS_JOINT_GEAR){
+    const GmlPhysicsJoint *source_a=gml_physics_find_joint(vm,joint->x1);
+    const GmlPhysicsJoint *source_b=gml_physics_find_joint(vm,joint->x2);
+    if(!source_a || !source_b) return 0;
+    local_ax=source_a->anchor_bx; local_ay=source_a->anchor_by;
+    local_bx=source_b->anchor_bx; local_by=source_b->anchor_by;
+  }
+  double ax,ay,bx,by;
+  local_to_world(&pose_a,local_ax,local_ay,&ax,&ay);
+  local_to_world(&pose_b,local_bx,local_by,&bx,&by);
+  double scale=gml_physics_world_scale(vm);
+  switch(field){
+    case GML_JOINT_ANCHOR_1_X: return ax*scale;
+    case GML_JOINT_ANCHOR_1_Y: return ay*scale;
+    case GML_JOINT_ANCHOR_2_X: return bx*scale;
+    case GML_JOINT_ANCHOR_2_Y: return by*scale;
+    case GML_JOINT_LENGTH_1: return hypot(ax-joint->x1,ay-joint->y1)*scale;
+    case GML_JOINT_LENGTH_2: return hypot(bx-joint->x2,by-joint->y2)*scale;
+  }
+
+  double angle=pose_a.angle*M_PI/180.0,c=cos(angle),s=sin(angle);
+  double ux=c*joint->x2-s*joint->y2,uy=s*joint->x2+c*joint->y2;
+  double dx=bx-ax,dy=by-ay;
+  if(field==GML_JOINT_TRANSLATION) return (dx*ux+dy*uy)*scale;
+
+  /* The linear velocities belong to the centers of mass. Differentiate
+   * the projected anchor separation, including the rotating axis. */
+  read_body(vm,a,&pose_a); read_body(vm,b,&pose_b);
+  double center_ax,center_ay,center_bx,center_by;
+  local_to_world(&pose_a,pose_a.center_x,pose_a.center_y,&center_ax,&center_ay);
+  local_to_world(&pose_b,pose_b.center_x,pose_b.center_y,&center_bx,&center_by);
+  double wa=pose_a.omega*M_PI/180.0,wb=pose_b.omega*M_PI/180.0;
+  double vx=pose_b.vx-wb*(by-center_by)-pose_a.vx+wa*(ay-center_ay);
+  double vy=pose_b.vy+wb*(bx-center_bx)-pose_a.vy-wa*(ax-center_ax);
+  return (ux*vx+uy*vy+wa*(ux*dy-uy*dx))*scale;
+}
+
 void gml_physics_apply(GmlVM *vm,GmlInstance *in,double x,double y,
                        double fx,double fy,int impulse,int local){
   if(!gml_physics_body_enabled(vm,in) || !isfinite(x) || !isfinite(y) ||

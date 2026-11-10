@@ -10,6 +10,7 @@
 #include "gml_render.h"
 #include "gml_audio.h"
 #include "gml_particle.h"
+#include "gml_physics_solver.h"
 #include "anygm_host.h"
 
 #include <limits.h>
@@ -634,6 +635,11 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   /* Argument names cannot match the global constants below. Keep dynamic
    * global and Classic policies above, then use the established argument reader. */
   if(argument_get(vm,name,&out)) return out;
+  if(!strncmp(name,"phy_joint_",10)){
+#define GML_JOINT_FIELD_READ(symbol, value, label) if(!strcmp(name,label)) return vreal(value);
+    GML_PHYS_JOINT_FIELDS(GML_JOINT_FIELD_READ)
+#undef GML_JOINT_FIELD_READ
+  }
   if(!strcmp(name,"undefined")) return vundef();   /* GMS2.3 builtin literal used by optional-arg prologues */
   if(!strcmp(name,"game_id")) return vreal(vm->win?vm->win->gameid:0);
   if(!strcmp(name,"infinity")) return vreal(INFINITY); /* unbounded numeric literal */

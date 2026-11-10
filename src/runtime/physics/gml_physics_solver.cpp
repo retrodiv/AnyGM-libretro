@@ -144,24 +144,24 @@ extern "C" void gml_physics_solver_mass(GmlPhysicsBody *body,
 /* Box2D derives the coupling constant when it constructs the gear. Give it
  * the authored source poses for that calculation, then restore the current
  * poses before any solve or contact detection. */
-static void create_gear(b2World &world,const GmlPhysicsJoint &gear,double scale,
+static b2Joint *create_gear(b2World &world,const GmlPhysicsJoint &gear,double scale,
                         b2Body *a,b2Body *b,b2Joint *first,b2Joint *second) {
   if (!first || !second || first->GetBodyB()!=a || second->GetBodyB()!=b ||
       a->GetType()!=b2_dynamicBody || b->GetType()!=b2_dynamicBody ||
-      a==second->GetBodyA() || b==first->GetBodyA()) return;
+      a==second->GetBodyA() || b==first->GetBodyA()) return nullptr;
   b2Body *const bodies[]={first->GetBodyA(),a,second->GetBodyA(),b};
   b2Vec2 positions[4];
   float angles[4];
   bool moved[4];
   for (int i=0;i<4;i++) {
     const double *pose=gear.params+1+3*i;
-    if (!bodies[i]->IsEnabled() || !spatial(pose[0],scale) || !spatial(pose[1],scale)) return;
+    if (!bodies[i]->IsEnabled() || !spatial(pose[0],scale) || !spatial(pose[1],scale)) return nullptr;
     positions[i]=bodies[i]->GetPosition();
     angles[i]=bodies[i]->GetAngle();
     moved[i]=false;
   }
   /* The supported shared ground has no independent solver motion. */
-  if (bodies[0]==bodies[2] && bodies[0]->GetType()==b2_dynamicBody) return;
+  if (bodies[0]==bodies[2] && bodies[0]->GetType()==b2_dynamicBody) return nullptr;
   for (int i=0;i<4;i++) {
     if (i==2 && bodies[0]==bodies[2]) continue;
     const double *pose=gear.params+1+3*i;
@@ -174,14 +174,47 @@ static void create_gear(b2World &world,const GmlPhysicsJoint &gear,double scale,
   def.bodyA=a; def.bodyB=b;
   def.joint1=first; def.joint2=second;
   def.ratio=float(gear.params[0]);
-  world.CreateJoint(&def);
+  b2Joint *joint=world.CreateJoint(&def);
   for (int i=0;i<4;i++)
     if (moved[i]) bodies[i]->SetTransform(positions[i],angles[i]);
+  return joint;
+}
+
+struct StepJoint {
+  GmlPhysicsJoint *description;
+  b2Joint *native;
+};
+
+static void sample_joint(StepJoint &entry,float inv_dt) {
+  GmlPhysicsJoint &joint=*entry.description;
+  double *sample=joint.params;
+  for (int i=GML_JOINT_SAMPLE_FORCE_X;i<=GML_JOINT_SAMPLE_MOTOR_FORCE;i++) sample[i]=0;
+  if (joint.value_count>GML_JOINT_SAMPLE_FORCE_X) joint.value_count=GML_JOINT_SAMPLE_FORCE_X;
+  b2Joint *native=entry.native;
+  if (!native || !native->IsEnabled() ||
+      (native->GetBodyA()->GetType()==b2_staticBody && native->GetBodyB()->GetType()==b2_staticBody)) return;
+  b2Vec2 force=native->GetReactionForce(inv_dt);
+  sample[GML_JOINT_SAMPLE_FORCE_X]=force.x;
+  sample[GML_JOINT_SAMPLE_FORCE_Y]=force.y;
+  sample[GML_JOINT_SAMPLE_TORQUE]=native->GetReactionTorque(inv_dt);
+  switch (joint.type) {
+    case GML_PHYS_JOINT_REVOLUTE:
+      sample[GML_JOINT_SAMPLE_MOTOR_TORQUE]=static_cast<b2RevoluteJoint *>(native)->GetMotorTorque(inv_dt);
+      break;
+    case GML_PHYS_JOINT_WHEEL:
+      sample[GML_JOINT_SAMPLE_MOTOR_TORQUE]=static_cast<b2WheelJoint *>(native)->GetMotorTorque(inv_dt);
+      break;
+    case GML_PHYS_JOINT_PRISMATIC:
+      sample[GML_JOINT_SAMPLE_MOTOR_FORCE]=static_cast<b2PrismaticJoint *>(native)->GetMotorForce(inv_dt);
+      break;
+  }
+  for (int i=GML_JOINT_SAMPLE_FORCE_X;i<=GML_JOINT_SAMPLE_MOTOR_FORCE;i++)
+    if (!std::isfinite(sample[i])) sample[i]=0;
 }
 
 extern "C" int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,
                                          const GmlPhysicsFixture *fixtures,int fixture_count,
-                                         const GmlPhysicsJoint *joints,int joint_count,
+                                         GmlPhysicsJoint *joints,int joint_count,
                                          double scale,double gx,double gy,double seconds,
                                          int substeps,int iterations,GmlPhysicsFilter callback,
                                          void *context,GmlPhysicsContact *output,int capacity) {
@@ -256,12 +289,15 @@ extern "C" int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,
       body->ApplyForceToCenter(b2Vec2(float(b.force_x),float(b.force_y)),true);
     if (bounded(b.torque)) body->ApplyTorque(float(b.torque),true);
   }
-  std::vector<const GmlPhysicsJoint *> ordered_joints;
+  std::vector<StepJoint> ordered_joints;
   for (int i=0;i<joint_count;i++)
-    if (joints[i].live && joints[i].initialized) ordered_joints.push_back(&joints[i]);
-  std::sort(ordered_joints.begin(),ordered_joints.end(),[](const GmlPhysicsJoint *a,const GmlPhysicsJoint *b){return a->id<b->id;});
-  const bool has_gear=std::any_of(ordered_joints.begin(),ordered_joints.end(),
-                                [](const GmlPhysicsJoint *joint){return joint->type==GML_PHYS_JOINT_GEAR;});
+    if (joints[i].live && joints[i].initialized) ordered_joints.push_back({&joints[i],nullptr});
+  std::sort(ordered_joints.begin(),ordered_joints.end(),[](const StepJoint &a,const StepJoint &b){
+    return a.description->id<b.description->id;
+  });
+  const bool has_gear=std::any_of(ordered_joints.begin(),ordered_joints.end(),[](const StepJoint &entry){
+    return entry.description->type==GML_PHYS_JOINT_GEAR;
+  });
   using GearSource=std::pair<uint32_t,b2Joint *>;
   std::vector<GearSource> gear_sources;
   auto find_source=[&gear_sources](double id) -> b2Joint * {
@@ -269,12 +305,14 @@ extern "C" int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,
                             [](const GearSource &entry,double key){return entry.first<key;});
     return at!=gear_sources.end() && at->first==id?at->second:nullptr;
   };
-  for (auto *j:ordered_joints) {
+  for (StepJoint &entry:ordered_joints) {
+    const GmlPhysicsJoint *j=entry.description;
     const double values[]={j->a,j->b,j->anchor_ax,j->anchor_ay,j->anchor_bx,
                            j->anchor_by,j->reference_angle,j->x2,j->y2};
     bool valid=true;
     for (double value:values) if (!bounded(value)) valid=false;
-    for (double value:j->params) if (!bounded(value)) valid=false;
+    for (int i=0;i<GML_JOINT_SAMPLE_FORCE_X;i++)
+      if (!bounded(j->params[i])) valid=false;
     if (!valid || j->a<0 || j->b<0 || j->a>UINT32_MAX || j->b>UINT32_MAX ||
         !spatial(j->anchor_ax,scale) || !spatial(j->anchor_ay,scale) ||
         !spatial(j->anchor_bx,scale) || !spatial(j->anchor_by,scale) ||
@@ -293,8 +331,8 @@ extern "C" int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,
       def.maxMotorTorque=nonnegative(j->params[1]);
       def.motorSpeed=float(j->params[2]*radians); def.enableMotor=j->params[3]!=0;
       def.collideConnected=j->params[4]!=0;
-      b2Joint *native_joint=world.CreateJoint(&def);
-      if (has_gear) gear_sources.emplace_back(j->id,native_joint);
+      entry.native=world.CreateJoint(&def);
+      if (has_gear) gear_sources.emplace_back(j->id,entry.native);
     } else if (j->type==GML_PHYS_JOINT_PRISMATIC || j->type==GML_PHYS_JOINT_WHEEL) {
       const b2Vec2 local_a(float(j->anchor_ax*scale),float(j->anchor_ay*scale));
       const b2Vec2 local_b(float(j->anchor_bx*scale),float(j->anchor_by*scale));
@@ -313,8 +351,8 @@ extern "C" int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,
         def.maxMotorForce=nonnegative(j->params[3]);
         def.motorSpeed=float(j->params[4]); def.enableMotor=j->params[5]!=0;
         def.collideConnected=j->params[6]!=0;
-        b2Joint *native_joint=world.CreateJoint(&def);
-        if (has_gear) gear_sources.emplace_back(j->id,native_joint);
+        entry.native=world.CreateJoint(&def);
+        if (has_gear) gear_sources.emplace_back(j->id,entry.native);
       } else {
         b2WheelJointDef def;
         def.bodyA=a; def.bodyB=b;
@@ -326,10 +364,10 @@ extern "C" int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,
                           nonnegative(j->params[4]),a,b);
         if (!std::isfinite(def.stiffness) || !std::isfinite(def.damping)) continue;
         def.collideConnected=j->params[5]!=0;
-        world.CreateJoint(&def);
+        entry.native=world.CreateJoint(&def);
       }
     } else if (j->type==GML_PHYS_JOINT_GEAR) {
-      create_gear(world,*j,scale,a,b,find_source(j->x1),find_source(j->x2));
+      entry.native=create_gear(world,*j,scale,a,b,find_source(j->x1),find_source(j->x2));
     } else if (j->type==GML_PHYS_JOINT_ROPE) {
       b2DistanceJointDef def;
       def.bodyA=a; def.bodyB=b;
@@ -338,7 +376,7 @@ extern "C" int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,
       def.minLength=b2_linearSlop;
       def.maxLength=std::max(b2_linearSlop,float(j->params[0]*scale));
       def.length=def.maxLength; def.collideConnected=j->params[1]!=0;
-      world.CreateJoint(&def);
+      entry.native=world.CreateJoint(&def);
     } else if (j->type>=GML_PHYS_JOINT_DISTANCE && j->type<=GML_PHYS_JOINT_PULLEY) {
       const b2Vec2 local_a(float(j->anchor_ax*scale),float(j->anchor_ay*scale));
       const b2Vec2 local_b(float(j->anchor_bx*scale),float(j->anchor_by*scale));
@@ -349,9 +387,13 @@ extern "C" int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,
           def.bodyA=a; def.bodyB=b;
           def.localAnchorA=local_a; def.localAnchorB=local_b;
           def.length=std::max(b2_linearSlop,float(j->params[0]*scale));
-          def.minLength=def.maxLength=def.length;
+          if (j->params[2]>0) {
+            b2LinearStiffness(def.stiffness,def.damping,nonnegative(j->params[2]),
+                              nonnegative(j->params[3]),a,b);
+            if (!std::isfinite(def.stiffness) || !std::isfinite(def.damping)) break;
+          } else def.minLength=def.maxLength=def.length;
           def.collideConnected=j->params[1]!=0;
-          world.CreateJoint(&def);
+          entry.native=world.CreateJoint(&def);
           break;
         }
         case GML_PHYS_JOINT_FRICTION: {
@@ -361,7 +403,7 @@ extern "C" int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,
           def.maxForce=nonnegative(j->params[0]);
           def.maxTorque=nonnegative(j->params[1]);
           def.collideConnected=j->params[2]!=0;
-          world.CreateJoint(&def);
+          entry.native=world.CreateJoint(&def);
           break;
         }
         case GML_PHYS_JOINT_WELD: {
@@ -373,7 +415,7 @@ extern "C" int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,
                             nonnegative(j->params[1]),a,b);
           if (!std::isfinite(def.stiffness) || !std::isfinite(def.damping)) break;
           def.collideConnected=j->params[2]!=0;
-          world.CreateJoint(&def);
+          entry.native=world.CreateJoint(&def);
           break;
         }
         case GML_PHYS_JOINT_PULLEY: {
@@ -390,7 +432,7 @@ extern "C" int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,
           def.lengthB=float(j->params[3]*scale);
           def.ratio=float(j->params[0]);
           def.collideConnected=j->params[1]!=0;
-          world.CreateJoint(&def);
+          entry.native=world.CreateJoint(&def);
           break;
         }
       }
@@ -398,8 +440,9 @@ extern "C" int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,
   }
   substeps=std::max(1,std::min(16,substeps));
   iterations=std::max(1,std::min(64,iterations));
-  for (int step=0;step<substeps;step++)
-    world.Step(float(seconds/substeps),iterations,iterations);
+  const float time_step=float(seconds/substeps);
+  for (int step=0;step<substeps;step++) world.Step(time_step,iterations,iterations);
+  for (StepJoint &entry:ordered_joints) sample_joint(entry,1.0f/time_step);
   for (int i=0;i<body_count;i++) {
     b2Body *body=native[size_t(i)]; auto &b=bodies[i];
     if (!body) continue;

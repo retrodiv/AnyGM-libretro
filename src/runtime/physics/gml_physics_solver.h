@@ -30,6 +30,50 @@ enum {
   GML_PHYS_JOINT_GEAR
 };
 
+#define GML_PHYS_JOINT_FIELDS(ENTRY) \
+  ENTRY(ANCHOR_1_X, 0, "phy_joint_anchor_1_x") \
+  ENTRY(ANCHOR_1_Y, 1, "phy_joint_anchor_1_y") \
+  ENTRY(ANCHOR_2_X, 2, "phy_joint_anchor_2_x") \
+  ENTRY(ANCHOR_2_Y, 3, "phy_joint_anchor_2_y") \
+  ENTRY(REACTION_FORCE_X, 4, "phy_joint_reaction_force_x") \
+  ENTRY(REACTION_FORCE_Y, 5, "phy_joint_reaction_force_y") \
+  ENTRY(REACTION_TORQUE, 6, "phy_joint_reaction_torque") \
+  ENTRY(MOTOR_SPEED, 7, "phy_joint_motor_speed") \
+  ENTRY(ANGLE, 8, "phy_joint_angle") \
+  ENTRY(MOTOR_TORQUE, 9, "phy_joint_motor_torque") \
+  ENTRY(MAX_MOTOR_TORQUE, 10, "phy_joint_max_motor_torque") \
+  ENTRY(TRANSLATION, 11, "phy_joint_translation") \
+  ENTRY(SPEED, 12, "phy_joint_speed") \
+  ENTRY(MOTOR_FORCE, 13, "phy_joint_motor_force") \
+  ENTRY(MAX_MOTOR_FORCE, 14, "phy_joint_max_motor_force") \
+  ENTRY(LENGTH_1, 15, "phy_joint_length_1") \
+  ENTRY(LENGTH_2, 16, "phy_joint_length_2") \
+  ENTRY(DAMPING_RATIO, 17, "phy_joint_damping_ratio") \
+  ENTRY(FREQUENCY, 18, "phy_joint_frequency") \
+  ENTRY(LOWER_ANGLE_LIMIT, 19, "phy_joint_lower_angle_limit") \
+  ENTRY(UPPER_ANGLE_LIMIT, 20, "phy_joint_upper_angle_limit") \
+  ENTRY(ANGLE_LIMITS, 21, "phy_joint_angle_limits") \
+  ENTRY(MAX_LENGTH, 22, "phy_joint_max_length") \
+  ENTRY(MAX_TORQUE, 23, "phy_joint_max_torque") \
+  ENTRY(MAX_FORCE, 24, "phy_joint_max_force")
+
+enum {
+#define GML_JOINT_FIELD(symbol, value, name) GML_JOINT_##symbol=value,
+  GML_PHYS_JOINT_FIELDS(GML_JOINT_FIELD)
+#undef GML_JOINT_FIELD
+  GML_JOINT_FIELD_COUNT
+};
+
+/* The final five slots hold solver observations. Older records that used
+ * this tail as arbitrary parameters have value_count greater than its start. */
+enum {
+  GML_JOINT_SAMPLE_FORCE_X=19,
+  GML_JOINT_SAMPLE_FORCE_Y,
+  GML_JOINT_SAMPLE_TORQUE,
+  GML_JOINT_SAMPLE_MOTOR_TORQUE,
+  GML_JOINT_SAMPLE_MOTOR_FORCE
+};
+
 /* Prismatic and wheel x2/y2 hold the unit axis in body A's local frame.
  * Prismatic parameters: lower and upper translation (pixels), enable limit,
  * motor force, motor speed (m/s), enable motor, collide.
@@ -74,7 +118,7 @@ void gml_physics_solver_mass(GmlPhysicsBody *body,const GmlPhysicsFixture *fixtu
                              int fixture_count,double scale);
 int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,
                             const GmlPhysicsFixture *fixtures,int fixture_count,
-                            const GmlPhysicsJoint *joints,int joint_count,
+                            GmlPhysicsJoint *joints,int joint_count,
                             double scale,double gravity_x,double gravity_y,
                             double seconds,int substeps,int iterations,
                             GmlPhysicsFilter filter,void *context,

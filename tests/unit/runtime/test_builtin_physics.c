@@ -478,6 +478,151 @@ static void gear_joint_constructor(void){
   puts("gear joint: all source pairs, signed ratios, fixed coupling, deletion and restore passed");
 }
 
+static double joint_field(GmlVM *vm,int cached,double joint,int field){
+  const char *name="physics_joint_get_value";
+  GmlVal args[]={vreal(joint),vreal(field)};
+  GmlVal result=cached?gml_builtin_call_fast_id(vm,gml_builtin_fast_id(vm,name),name,args,2):
+                       gml_builtin_call(vm,name,args,2);
+  assert(result.t==V_REAL);
+  return result.d;
+}
+
+static void write_joint_field(GmlVM *vm,int cached,double joint,int field,double value){
+  const char *name="physics_joint_set_value";
+  GmlVal args[]={vreal(joint),vreal(field),vreal(value)};
+  if(cached) gml_builtin_call_fast_id(vm,gml_builtin_fast_id(vm,name),name,args,3);
+  else gml_builtin_call(vm,name,args,3);
+}
+
+static void joint_fields(void){
+  for(int cached=0;cached<2;cached++){
+    GmlVM vm;GmlWin win;setup(&vm,&win);
+#define GET(j,field) joint_field(&vm,cached,j,GML_JOINT_##field)
+#define SET(j,field,value) write_joint_field(&vm,cached,j,GML_JOINT_##field,value)
+#define EXPECT_CONSTANT(symbol, value, name) do { \
+      GmlVal result=gml_vm_identifier_get(&vm,name); \
+      assert(result.t==V_REAL && result.d==value); \
+    } while(0);
+    GML_PHYS_JOINT_FIELDS(EXPECT_CONSTANT)
+#undef EXPECT_CONSTANT
+    bind_box(&vm,0,0,0,2,2,0);
+    bind_box(&vm,1,40,0,2,2,1);
+    bind_box(&vm,2,0,40,2,2,1);
+    CALL(&vm,"physics_world_gravity",5,0);
+    double distance=CALL(&vm,"physics_joint_distance_create",vm.inst[0].id,
+                         vm.inst[1].id,0,0,40,0,0).d;
+    assert(distance>0);
+    assert(GET(distance,ANCHOR_1_X)==0 && GET(distance,ANCHOR_1_Y)==0);
+    assert(GET(distance,ANCHOR_2_X)==4 && GET(distance,ANCHOR_2_Y)==0);
+    assert(GET(distance,LENGTH_1)==4 && GET(distance,LENGTH_2)==0);
+    assert(GET(distance,TRANSLATION)==0 && GET(distance,REACTION_FORCE_X)==0);
+    SET(distance,ANCHOR_2_X,99);
+    assert(GET(distance,ANCHOR_2_X)==4);
+    GmlPhysicsJoint *old_joint=gml_physics_find_joint(&vm,distance);
+    assert(old_joint);
+    old_joint->value_count=24;
+    old_joint->params[GML_JOINT_SAMPLE_FORCE_X]=123;
+    assert(GET(distance,REACTION_FORCE_X)==0);
+    step(&vm,1);
+    double force=GET(distance,REACTION_FORCE_X);
+    assert(fabs(force+5*get(&vm,1,"phy_mass"))<.0001);
+    assert(GET(distance,REACTION_FORCE_Y)==0 && GET(distance,REACTION_TORQUE)==0);
+    size_t size=gml_vm_state_size(&vm),written=0,used=0;
+    void *snapshot=malloc(size);
+    assert(snapshot && gml_vm_state_save(&vm,snapshot,size,&written));
+    SET(distance,LENGTH_1,3);
+    SET(distance,FREQUENCY,4);
+    SET(distance,DAMPING_RATIO,.8);
+    assert(GET(distance,LENGTH_1)==3 && GET(distance,FREQUENCY)==4 && GET(distance,DAMPING_RATIO)==.8);
+    step(&vm,1);
+    assert(get(&vm,1,"phy_position_x")>30 && get(&vm,1,"phy_position_x")<40);
+    step(&vm,80);
+    assert(fabs(get(&vm,1,"phy_position_x")-30)<.1);
+    assert(gml_vm_state_load(&vm,snapshot,written,&used) && used==written);
+    assert(GET(distance,REACTION_FORCE_X)==force && GET(distance,LENGTH_1)==4);
+    assert(GET(distance,FREQUENCY)==0 && GET(distance,DAMPING_RATIO)==0);
+    free(snapshot);
+    CALL(&vm,"physics_joint_delete",distance);
+    assert(GET(distance,REACTION_FORCE_X)==0);
+
+    CALL(&vm,"physics_world_gravity",0,0);
+    double prismatic=gear_source(&vm,1,1,40);
+    assert(prismatic>0);
+    assert(gml_physics_variable_set(&vm,&vm.inst[1],"phy_position_x",vreal(44)));
+    assert(gml_physics_variable_set(&vm,&vm.inst[1],"phy_linear_velocity_x",vreal(5)));
+    double translation=GET(prismatic,TRANSLATION),speed=GET(prismatic,SPEED);
+    assert(fabs(translation-.4)<1e-12 && fabs(speed-.5)<1e-12);
+    SET(prismatic,MOTOR_SPEED,2);
+    SET(prismatic,MAX_MOTOR_FORCE,.25);
+    assert(GET(prismatic,MOTOR_SPEED)==2 && GET(prismatic,MAX_MOTOR_FORCE)==.25);
+    CALL(&vm,"physics_joint_enable_motor",prismatic,1);
+    step(&vm,1);
+    assert(fabs(GET(prismatic,MOTOR_FORCE)-.25)<1e-6 && GET(prismatic,SPEED)>.5);
+    assert(GET(prismatic,MOTOR_TORQUE)==0);
+    CALL(&vm,"physics_joint_delete",prismatic);
+
+    double revolute=gear_source(&vm,2,0,0);
+    assert(revolute>0);
+    SET(revolute,LOWER_ANGLE_LIMIT,100);
+    assert(GET(revolute,LOWER_ANGLE_LIMIT)==90 && GET(revolute,UPPER_ANGLE_LIMIT)==90);
+    SET(revolute,LOWER_ANGLE_LIMIT,-40);
+    SET(revolute,UPPER_ANGLE_LIMIT,60);
+    SET(revolute,ANGLE_LIMITS,1);
+    SET(revolute,MOTOR_SPEED,2);
+    SET(revolute,MAX_MOTOR_TORQUE,.5);
+    assert(GET(revolute,LOWER_ANGLE_LIMIT)==-40 && GET(revolute,UPPER_ANGLE_LIMIT)==60);
+    assert(GET(revolute,ANGLE_LIMITS)==1 && fabs(GET(revolute,MOTOR_SPEED)-2)<1e-12);
+    assert(GET(revolute,MAX_MOTOR_TORQUE)==.5);
+    assert(gml_physics_variable_set(&vm,&vm.inst[2],"phy_rotation",vreal(30)));
+    assert(fabs(GET(revolute,ANGLE)-acos(-1)/6)<1e-12);
+    CALL(&vm,"physics_joint_enable_motor",revolute,1);
+    step(&vm,1);
+    assert(fabs(GET(revolute,MOTOR_TORQUE))>0 && fabs(GET(revolute,MOTOR_TORQUE))<=.500001);
+    CALL(&vm,"physics_joint_delete",revolute);
+
+    double pulley=CALL(&vm,"physics_joint_pulley_create",vm.inst[0].id,
+                       vm.inst[1].id,0,-10,40,-10,0,0,0,0,1,0).d;
+    assert(pulley>0);
+    assert(fabs(GET(pulley,LENGTH_1)-1)<1e-12 && GET(pulley,LENGTH_2)>1);
+    double friction=CALL(&vm,"physics_joint_friction_create",vm.inst[0].id,
+                         vm.inst[1].id,40,0,1,2,0).d;
+    assert(friction>0);
+    SET(friction,MAX_FORCE,4);
+    SET(friction,MAX_TORQUE,5);
+    assert(GET(friction,MAX_FORCE)==4 && GET(friction,MAX_TORQUE)==5);
+    double rope=CALL(&vm,"physics_joint_rope_create",vm.inst[0].id,vm.inst[1].id,
+                     0,0,0,0,60,0).d;
+    assert(rope>0 && GET(rope,MAX_LENGTH)==6);
+    SET(rope,MAX_LENGTH,3);
+    assert(GET(rope,MAX_LENGTH)==3);
+
+    double wheel=CALL(&vm,"physics_joint_wheel_create",vm.inst[0].id,
+                      vm.inst[2].id,0,40,0,1,0,2,-3,5,.6,0).d;
+    assert(wheel>0);
+    assert(GET(wheel,FREQUENCY)==5 && GET(wheel,DAMPING_RATIO)==.6);
+    SET(wheel,FREQUENCY,7);
+    SET(wheel,DAMPING_RATIO,.7);
+    assert(GET(wheel,FREQUENCY)==7 && GET(wheel,DAMPING_RATIO)==.7);
+    double wheel_y=get(&vm,2,"phy_position_y");
+    assert(gml_physics_variable_set(&vm,&vm.inst[2],"phy_position_y",vreal(wheel_y+5)));
+    assert(gml_physics_variable_set(&vm,&vm.inst[2],"phy_angular_velocity",vreal(-90)));
+    assert(fabs(GET(wheel,TRANSLATION)-.5)<1e-12);
+    assert(fabs(GET(wheel,SPEED)+acos(-1)/2)<1e-12);
+
+    double weld=CALL(&vm,"physics_joint_weld_create",vm.inst[0].id,
+                     vm.inst[2].id,0,40,30,4,.8,0).d;
+    assert(weld>0);
+    assert(fabs(GET(weld,ANGLE)+acos(-1)/6)<1e-12);
+    SET(weld,FREQUENCY,6);
+    SET(weld,DAMPING_RATIO,.9);
+    assert(GET(weld,FREQUENCY)==6 && GET(weld,DAMPING_RATIO)==.9);
+#undef SET
+#undef GET
+    gml_vm_free(&vm);
+  }
+  puts("joint properties: constants, live geometry, solver forces, typed writes and restore passed");
+}
+
 static int allow_contact(void *context,int a,int b){
   assert(a==0 && b==0); return *(int *)context;
 }
@@ -535,6 +680,7 @@ int main(void){
   direct_joint_constructors();
   motor_joint_constructors();
   gear_joint_constructor();
+  joint_fields();
   puts("physics: units, fixture lifetime, offsets, rotation, contacts, joints and restore passed");
   return 0;
 }

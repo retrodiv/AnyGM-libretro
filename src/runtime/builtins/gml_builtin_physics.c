@@ -30,8 +30,8 @@ GmlPhysicsFixture *gml_physics_fixture_new(GmlVM *vm){
   }
   return NULL;
 }
-static GmlPhysicsJoint *phys_joint_find(GmlVM *vm, int id){
-  if(!vm || id<=0) return NULL;
+GmlPhysicsJoint *gml_physics_find_joint(GmlVM *vm,double id){
+  if(!vm || !vm->builtins || !(id>=1 && id<=UINT32_MAX)) return NULL;
   for(int i=0;i<GML_PHYS_JOINT_MAX;i++)
     if(vm->builtins->phys_joint[i].live && vm->builtins->phys_joint[i].id==(uint32_t)id) return &vm->builtins->phys_joint[i];
   return NULL;
@@ -85,6 +85,105 @@ static int physics_target(GmlVM *vm,GmlInstance *in,int target){
   if(target==-3) return 1;
   if(target>=100000) return in->id==(uint32_t)target;
   return target>=0 && gml_object_is(vm,in->obj,target);
+}
+
+/* Writable fields use the same canonical slot for get and set. */
+static double *joint_setting(GmlPhysicsJoint *joint,int field){
+  switch(joint->type){
+    case GML_PHYS_JOINT_REVOLUTE:
+      switch(field){
+        case GML_JOINT_MOTOR_SPEED: return &joint->params[2];
+        case GML_JOINT_MAX_MOTOR_TORQUE: return &joint->params[1];
+        case GML_JOINT_LOWER_ANGLE_LIMIT: return &joint->x2;
+        case GML_JOINT_UPPER_ANGLE_LIMIT: return &joint->y2;
+        case GML_JOINT_ANGLE_LIMITS: return &joint->params[0];
+      }
+      break;
+    case GML_PHYS_JOINT_PRISMATIC:
+      if(field==GML_JOINT_MOTOR_SPEED) return &joint->params[4];
+      if(field==GML_JOINT_MAX_MOTOR_FORCE) return &joint->params[3];
+      break;
+    case GML_PHYS_JOINT_WHEEL:
+      switch(field){
+        case GML_JOINT_MOTOR_SPEED: return &joint->params[2];
+        case GML_JOINT_MAX_MOTOR_TORQUE: return &joint->params[1];
+        case GML_JOINT_FREQUENCY: return &joint->params[3];
+        case GML_JOINT_DAMPING_RATIO: return &joint->params[4];
+      }
+      break;
+    case GML_PHYS_JOINT_DISTANCE:
+      if(field==GML_JOINT_LENGTH_1) return &joint->params[0];
+      if(field==GML_JOINT_FREQUENCY) return &joint->params[2];
+      if(field==GML_JOINT_DAMPING_RATIO) return &joint->params[3];
+      break;
+    case GML_PHYS_JOINT_WELD:
+      if(field==GML_JOINT_FREQUENCY) return &joint->params[0];
+      if(field==GML_JOINT_DAMPING_RATIO) return &joint->params[1];
+      break;
+    case GML_PHYS_JOINT_ROPE:
+      if(field==GML_JOINT_MAX_LENGTH) return &joint->params[0];
+      break;
+    case GML_PHYS_JOINT_FRICTION:
+      if(field==GML_JOINT_MAX_FORCE) return &joint->params[0];
+      if(field==GML_JOINT_MAX_TORQUE) return &joint->params[1];
+      break;
+  }
+  return NULL;
+}
+
+static double joint_setting_scale(GmlVM *vm,const GmlPhysicsJoint *joint,int field){
+  if(field==GML_JOINT_LENGTH_1 || field==GML_JOINT_MAX_LENGTH)
+    return gml_physics_world_scale(vm);
+  if(field==GML_JOINT_MOTOR_SPEED && joint->type==GML_PHYS_JOINT_REVOLUTE)
+    return M_PI/180.0;
+  return 1;
+}
+
+static double joint_get_value(GmlVM *vm,GmlPhysicsJoint *joint,int field){
+  double *setting=joint_setting(joint,field);
+  if(setting){
+    switch(field){
+      case GML_JOINT_ANGLE_LIMITS: return *setting!=0;
+      case GML_JOINT_LOWER_ANGLE_LIMIT: return fmin(joint->x2,joint->y2);
+      case GML_JOINT_UPPER_ANGLE_LIMIT: return fmax(joint->x2,joint->y2);
+      case GML_JOINT_MOTOR_SPEED: return *setting*joint_setting_scale(vm,joint,field);
+      case GML_JOINT_LENGTH_1:
+      case GML_JOINT_MAX_LENGTH: return fmax(.005,*setting*joint_setting_scale(vm,joint,field));
+      default: return fmax(0,*setting*joint_setting_scale(vm,joint,field));
+    }
+  }
+  if(joint->value_count<=GML_JOINT_SAMPLE_FORCE_X){
+    switch(field){
+      case GML_JOINT_REACTION_FORCE_X: return joint->params[GML_JOINT_SAMPLE_FORCE_X];
+      case GML_JOINT_REACTION_FORCE_Y: return joint->params[GML_JOINT_SAMPLE_FORCE_Y];
+      case GML_JOINT_REACTION_TORQUE: return joint->params[GML_JOINT_SAMPLE_TORQUE];
+      case GML_JOINT_MOTOR_TORQUE: return joint->params[GML_JOINT_SAMPLE_MOTOR_TORQUE];
+      case GML_JOINT_MOTOR_FORCE: return joint->params[GML_JOINT_SAMPLE_MOTOR_FORCE];
+    }
+  }
+  return gml_physics_joint_geometry(vm,joint,field);
+}
+
+static void joint_set_value(GmlVM *vm,GmlPhysicsJoint *joint,int field,double number){
+  double *setting=joint_setting(joint,field);
+  if(!setting || !isfinite(number)) return;
+  double scale=joint_setting_scale(vm,joint,field);
+  if(scale<=0) return;
+  double canonical=number/scale;
+  if(fabs(canonical)>1e12) return;
+  switch(field){
+    case GML_JOINT_ANGLE_LIMITS: canonical=number>0.5; break;
+    case GML_JOINT_LOWER_ANGLE_LIMIT: canonical=fmin(canonical,joint->y2); break;
+    case GML_JOINT_UPPER_ANGLE_LIMIT: canonical=fmax(canonical,joint->x2); break;
+    case GML_JOINT_MOTOR_SPEED: break;
+    case GML_JOINT_LENGTH_1:
+    case GML_JOINT_MAX_LENGTH:
+      if(number>1e6) return;
+      canonical=fmax(0,canonical);
+      break;
+    default: canonical=fmax(0,canonical); break;
+  }
+  *setting=canonical;
 }
 
 GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
@@ -273,8 +372,8 @@ GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
     double first=N(a,n,2),second=N(a,n,3),ratio=N(a,n,4);
     if(n<5 || !(first>0 && first<=INT_MAX && second>0 && second<=INT_MAX) ||
        !isfinite(ratio) || fabs(ratio)>1e12 || gml_physics_world_scale(vm)<=0) return vreal(-1);
-    const GmlPhysicsJoint *j1=phys_joint_find(vm,(int)first);
-    const GmlPhysicsJoint *j2=phys_joint_find(vm,(int)second);
+    const GmlPhysicsJoint *j1=gml_physics_find_joint(vm,first);
+    const GmlPhysicsJoint *j2=gml_physics_find_joint(vm,second);
     if(!j1 || !j2 || !j1->initialized || !j2->initialized ||
        (j1->type!=GML_PHYS_JOINT_REVOLUTE && j1->type!=GML_PHYS_JOINT_PRISMATIC) ||
        (j2->type!=GML_PHYS_JOINT_REVOLUTE && j2->type!=GML_PHYS_JOINT_PRISMATIC)) return vreal(-1);
@@ -301,7 +400,7 @@ GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"physics_joint_enable_motor")){
     double id=N(a,n,0);
     if(n<2 || !(id>0 && id<=INT_MAX)) return vreal(0);
-    GmlPhysicsJoint *j=phys_joint_find(vm,(int)id);
+    GmlPhysicsJoint *j=gml_physics_find_joint(vm,id);
     if(!j) return vreal(0);
     int enabled=N(a,n,1)!=0;
     switch(j->type){
@@ -312,14 +411,18 @@ GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(0);
   }
   if(!strcmp(nm,"physics_joint_delete")){
-    GmlPhysicsJoint *j=phys_joint_find(vm,(int)N(a,n,0));
+    GmlPhysicsJoint *j=gml_physics_find_joint(vm,N(a,n,0));
     if(j) gml_physics_drop_joint(vm,j);
     return vreal(0);
   }
-  if(!strcmp(nm,"physics_joint_set_value")){
-    GmlPhysicsJoint *j=phys_joint_find(vm,(int)N(a,n,0));
-    int idx=(int)N(a,n,1);
-    if(j && j->type!=GML_PHYS_JOINT_GEAR && idx>=0 && idx<24){ j->params[idx]=N(a,n,2); if(idx>=j->value_count) j->value_count=idx+1; }
+  if(!strcmp(nm,"physics_joint_get_value") || !strcmp(nm,"physics_joint_set_value")){
+    int write=!strcmp(nm,"physics_joint_set_value");
+    double field=N(a,n,1);
+    if(n<(write?3:2) || !(field>=0 && field<GML_JOINT_FIELD_COUNT)) return vreal(0);
+    GmlPhysicsJoint *j=gml_physics_find_joint(vm,N(a,n,0));
+    if(!j || !j->initialized) return vreal(0);
+    if(!write) return vreal(joint_get_value(vm,j,(int)field));
+    joint_set_value(vm,j,(int)field,N(a,n,2));
     return vreal(0);
   }
   if(!strcmp(nm,"physics_mass_properties")){
