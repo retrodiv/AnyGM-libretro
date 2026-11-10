@@ -1503,7 +1503,10 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
   snprintf(gui,sizeof gui,"%s/window-gui.gml",fixture->directory);
   snprintf(draw,sizeof draw,"%s/window-draw.gml",fixture->directory);
   snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
-  if(!write_text(create,explicit_gui_size==18?
+  if(!write_text(create,explicit_gui_size==21?
+      "window_set_size(320,180);\n"
+      "view_wport[0]=320; view_hport[0]=180;\n"
+      "surface_resize(application_surface,320,180);\n":explicit_gui_size==18?
       "window_set_size(320,180);\n":translated_world?
       "window_set_size(64,48);\n"
       "application_surface_draw_enable(false);\n"
@@ -1534,7 +1537,11 @@ static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,in
       "window_set_size(320,180);\n"
       "surface_resize(application_surface,64,48);\n"
       "application_surface_draw_enable(false);\n") ||
-     !write_text(gui,explicit_gui_size==18?
+     !write_text(gui,explicit_gui_size==21?
+      "var w=window_get_width(); var h=window_get_height();\n"
+      "draw_clear(c_blue); draw_set_color(c_white);\n"
+      "draw_rectangle(w/2-8,h/2-6,w/2+7,h/2+5,false);\n"
+      "draw_set_color(c_red); draw_rectangle(w/2-11,h/2,w/2-11,h/2,false);\n":explicit_gui_size==18?
       "var w=window_get_width(); var h=window_get_height();\n"
       "draw_clear(c_blue); draw_set_color(c_white);\n"
       "draw_rectangle(w/4,h/4,3*w/4-1,3*h/4-1,false);\n":translated_world?
@@ -1719,6 +1726,10 @@ int anygm_synthetic_manual_single_view_content_create(AnygmSyntheticContent *fix
 }
 int anygm_synthetic_manual_inset_view_content_create(AnygmSyntheticContent *fixture){
   return synthetic_manual_single_view_content_create(fixture,1);
+}
+
+int anygm_synthetic_native_owned_gui_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_window_gui_content_create(fixture,21);
 }
 
 int anygm_synthetic_window_query_gui_content_create(AnygmSyntheticContent *fixture){

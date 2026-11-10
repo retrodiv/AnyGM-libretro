@@ -2380,6 +2380,15 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 	    gml_render_gui_begin(&engine->render,gui_target_width,gui_target_height);
 	    gml_render_gui_set_size(&engine->render,gui_logical_width,gui_logical_height);
 	  } else {
+	  int native_owned_gui = !engine->canvas_mode && !engine->aspect_force_active &&
+	    render_presentation.application_owned && render_presentation.application_draw_enabled &&
+	    render_presentation.application_width==gtw &&
+	    render_presentation.application_height==gth &&
+	    render_presentation.effective_width==gtw && render_presentation.effective_height==gth &&
+	    gtw==(int)ow && gth==(int)oh && frame_view_count==1 &&
+	    application_surface_matches_first_generation_view_port(
+	      engine,frame_view_count,frame_views[0].px,frame_views[0].py,
+	      frame_views[0].pw,frame_views[0].ph,gtw,gth);
 	  gml_render_gui_begin(&engine->render,
 	    gui_uses_window_target?gtw:gsw,gui_uses_window_target?gth:gsh);
 	    /* display_set_gui_size() is normally called from Create/room setup, before the GUI pass
@@ -2388,14 +2397,15 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 	    if((anygm_policy_has_modern_layer_semantics(&engine->win) || gui_uses_window_target) &&
 	       engine->vm.gui_w>0 && engine->vm.gui_h>0)
 	      gml_render_gui_set_size(&engine->render,engine->vm.gui_w,engine->vm.gui_h);
-	    /* Without an explicit GUI size, first-generation layer semantics use the first
-	     * room's view port as logical GUI coordinates. The physical target and its
-	     * presentation extents remain unchanged; later layers use the live target. */
+	    /* A complete owned window already agrees with the published window queries.
+	     * Keep that native GUI plane; applying the initial room's projection again
+	     * would scale fixed offsets and displace window-derived coordinates. Other
+	     * implicit first-generation paths retain their established boot projection. */
 	    /* A full-width compositor explicitly addresses the widened window, so its implicit GUI
 	     * coordinates must follow that target too. Keep this projection local to the draw pass:
 	     * persisting it as a content-declared GUI size feeds it back into canvas/aspect selection
 	     * and leaves the previous forced extent behind when the frontend changes modes. */
-	    else if(!(engine->aspect_force_active && compositor_fullwidth) &&
+	    else if(!native_owned_gui && !(engine->aspect_force_active && compositor_fullwidth) &&
 	            !anygm_policy_has_modern_layer_semantics(&engine->win) &&
 	            engine->vm.gui_w<=0 && engine->vm.gui_h<=0 &&
 	            engine->vm.gui_boot_w>=16 && engine->vm.gui_boot_h>=16 &&

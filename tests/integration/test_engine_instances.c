@@ -1158,6 +1158,65 @@ static int shifted_view_port_policy(void){
   return ok;
 }
 
+static int native_owned_implicit_gui_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_native_owned_gui_content_create(&fixture)) return 0;
+  AnygmHostServices services={0}; services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmContentSource source={0}; source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH; source.path=fixture.path;
+  source.cache_directory=source.save_directory=fixture.directory;
+  int ok=1;
+  for(int device=0;device<2;device++){
+    AnygmEngine *engine=NULL;
+    AnygmConfigDelta config={0}; config.struct_size=sizeof config;
+    config.fields=ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_SCENE_RENDERER|
+      ANYGM_CONFIG_MONITOR_WIDTH|ANYGM_CONFIG_MONITOR_HEIGHT;
+    config.values.struct_size=sizeof config.values;
+    config.values.present_logical_raster=0;
+    config.values.scene_renderer=device?ANYGM_SCENE_RENDERER_OPENGL:ANYGM_SCENE_RENDERER_CPU;
+    config.values.monitor_width=320; config.values.monitor_height=180;
+    int phase_ok=anygm_create(&services,&engine)==ANYGM_OK &&
+      anygm_set_config(engine,&config)==ANYGM_OK &&
+      anygm_load(engine,&source,NULL)==ANYGM_OK;
+    if(phase_ok) engine->win.bytecode=15;
+    for(int frame=0;phase_ok && frame<3;frame++){
+      AnygmInputFrame input={0}; input.struct_size=sizeof input;
+      input.pointer_x=input.pointer_y=-1;
+      AnygmFrameOutput output={0}; output.struct_size=sizeof output;
+      phase_ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK && output.pixels &&
+        output.width==320 && output.height==180;
+      GmlRenderPresentationMetrics metrics={0};
+      gml_render_presentation_metrics(&engine->render,&metrics);
+      phase_ok=phase_ok && metrics.application_owned && metrics.application_draw_enabled &&
+        metrics.application_width==320 && metrics.application_height==180 &&
+        metrics.effective_width==320 && metrics.effective_height==180 &&
+        engine->vm.gui_w==0 && engine->vm.gui_h==0 &&
+        engine->vm.gui_boot_w==64 && engine->vm.gui_boot_h==48;
+      for(unsigned y=0;phase_ok && y<output.height;y++)
+        for(unsigned x=0;phase_ok && x<output.width;x++){
+          uint32_t expected=0x0000FF;
+          if(x>=152 && x<=167 && y>=84 && y<=95) expected=0xFFFFFF;
+          if(x==149 && y==90) expected=0xFF0000;
+          uint32_t actual=((const uint32_t *)((const uint8_t *)output.pixels+y*output.pitch))[x]&0xFFFFFF;
+          if(actual!=expected){
+            fprintf(stderr,"native owned GUI device=%d frame=%d pixel=%u,%u actual=%06x expected=%06x\n",
+              device,frame,x,y,actual,expected);
+            phase_ok=0;
+          }
+        }
+      if(!phase_ok) fprintf(stderr,"native owned GUI metadata device=%d frame=%d boot=%dx%d app=%dx%d effective=%dx%d\n",
+        device,frame,engine->vm.gui_boot_w,engine->vm.gui_boot_h,
+        metrics.application_width,metrics.application_height,metrics.effective_width,metrics.effective_height);
+    }
+    ok=ok && phase_ok;
+    anygm_destroy(engine);
+  }
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int implicit_gui_window_query_policy(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_window_query_gui_content_create(&fixture)) return 0;
@@ -4010,6 +4069,8 @@ int main(int argc,char **argv){
       return virtual_monitor_geometry_policy()?0:1;
     if(!strcmp(argv[2],"native_raster_window_query"))
       return native_raster_window_query_policy()?0:1;
+    if(!strcmp(argv[2],"native_owned_implicit_gui"))
+      return native_owned_implicit_gui_policy()?0:1;
     if(!strcmp(argv[2],"implicit_gui_window_query"))
       return implicit_gui_window_query_policy()?0:1;
     if(!strcmp(argv[2],"implicit_window_query"))
@@ -4142,6 +4203,7 @@ int main(int argc,char **argv){
   if(!native_raster_window_query_policy()) return 1;
   if(!implicit_window_query_policy()) return 1;
   if(!implicit_gui_window_query_policy()) return 1;
+  if(!native_owned_implicit_gui_policy()) return 1;
   if(!live_monitor_override_policy()) return 1;
   if(!host_canvas_scale_policy()) return 1;
   if(!room_order_redirect_policy()) return 1;
