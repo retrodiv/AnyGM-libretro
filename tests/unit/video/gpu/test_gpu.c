@@ -5429,6 +5429,38 @@ static int scene_opaque_native_alpha_case(void){
   return 1;
 }
 
+static int scene_transparent_surface_regions_case(void){
+  GlSceneImage image={.width=95u,.height=77u,.alpha_bounds_known=1};
+  image.alpha_bounds[0]=95;image.alpha_bounds[1]=77;
+  gml_gpu_opengl_alpha_cover(&image,3,3,12,12);
+  gml_gpu_opengl_alpha_cover(&image,60,36,87,60);
+  GmlRenderRect regions[32];unsigned count=gml_gpu_opengl_alpha_regions(&image,regions);
+  REQUIRE(count==2u,"separated occupied tile rectangles merge vertically");
+  for(unsigned y=0;y<image.height;y++)for(unsigned x=0;x<image.width;x++){
+    unsigned hits=0;
+    for(unsigned i=0;i<count;i++) if(x>=(unsigned)regions[i].x && y>=(unsigned)regions[i].y &&
+      x<(unsigned)regions[i].x+regions[i].width && y<(unsigned)regions[i].y+regions[i].height) hits++;
+    unsigned occupied=(image.alpha_tiles[y/3u]>>(x/3u))&1u;
+    REQUIRE(hits==occupied,"disjoint regions cover every marked tile exactly once");
+  }
+  image.width=image.height=32u;image.alpha_tiles_full=0;
+  image.alpha_bounds[0]=image.alpha_bounds[1]=0;
+  image.alpha_bounds[2]=image.alpha_bounds[3]=32;
+  for(unsigned row=0;row<32u;row++)image.alpha_tiles[row]=row&1u?0xAAAAAAAAu:0x55555555u;
+  REQUIRE(!gml_gpu_opengl_alpha_regions(&image,regions),
+    "fragmented tile capacity retains the ordinary bounding scissor");
+  memset(image.alpha_tiles,0,sizeof image.alpha_tiles);
+  gml_gpu_opengl_alpha_cover(&image,-10,-10,2,2);
+  REQUIRE(image.alpha_tiles[0]==3u && image.alpha_tiles[1]==3u && !image.alpha_tiles[2],
+    "offscreen bounds clip before tile indexing");
+  gml_gpu_opengl_alpha_cover(&image,0,0,32,32);
+  REQUIRE(image.alpha_tiles_full && !gml_gpu_opengl_alpha_regions(&image,regions),
+    "complete coverage retains one ordinary bounding scissor");
+  image.alpha_bounds_known=0;image.alpha_tiles_full=0;
+  REQUIRE(!gml_gpu_opengl_alpha_regions(&image,regions),"unproved masks never limit fragment work");
+  return 1;
+}
+
 static int scene_transparent_surface_bounds_case(void){
   for(unsigned api=0;api<2u;api++){
     anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
@@ -7909,6 +7941,7 @@ int main(int argc,char **argv){
     {"identity_axis_maps",identity_axis_maps_case},
     {"scene_native_stretched_cell",scene_native_stretched_cell_case},
     {"scene_white_unit_clear",scene_white_unit_clear_case},
+    {"scene_transparent_surface_regions",scene_transparent_surface_regions_case},
     {"scene_transparent_surface_bounds",scene_transparent_surface_bounds_case},
     {"scene_target_attachment_reuse",scene_target_attachment_reuse_case},
     {"scene_opaque_native_alpha",scene_opaque_native_alpha_case},

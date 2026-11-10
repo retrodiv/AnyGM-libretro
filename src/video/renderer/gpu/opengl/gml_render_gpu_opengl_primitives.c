@@ -4,6 +4,7 @@
 /* Qualified scene clear and flat primitive spans use the same resolved GL region fill. */
 #include "gml_gpu_opengl_internal.h"
 #include <math.h>
+#include <string.h>
 
 void gml_gpu_opengl_alpha_cover(GlSceneImage *image,double left,double top,
                                double right,double bottom){
@@ -20,6 +21,15 @@ void gml_gpu_opengl_alpha_cover(GlSceneImage *image,double left,double top,
   if(image->alpha_bounds[1]>top) image->alpha_bounds[1]=(int32_t)top;
   if(image->alpha_bounds[2]<right) image->alpha_bounds[2]=(int32_t)right;
   if(image->alpha_bounds[3]<bottom) image->alpha_bounds[3]=(int32_t)bottom;
+  if(image->alpha_tiles_full) return;
+  uint32_t tile_width=(image->width+31u)/32u,tile_height=(image->height+31u)/32u;
+  uint32_t first=(uint32_t)left/tile_width,last=((uint32_t)right-1u)/tile_width;
+  uint32_t mask=UINT32_MAX<<first;
+  if(last<31u) mask&=(1u<<(last+1u))-1u;
+  for(uint32_t row=(uint32_t)top/tile_height;row<=((uint32_t)bottom-1u)/tile_height;row++)
+    image->alpha_tiles[row]|=mask;
+  if(left==0.0 && top==0.0 && right==image->width && bottom==image->height)
+    image->alpha_tiles_full=1;
 }
 
 static int fill_region(GmlGpuBackend *backend,GlSceneImage *target,
@@ -40,6 +50,8 @@ static int fill_region(GmlGpuBackend *backend,GlSceneImage *target,
   if(!ok) target->alpha_bounds_known=0;
   else if(complete){
     target->alpha_bounds_known=1;
+    target->alpha_tiles_full=alpha!=0.0f;
+    memset(target->alpha_tiles,alpha==0.0f?0:255,sizeof target->alpha_tiles);
     target->alpha_bounds[0]=alpha==0.0f?(int32_t)target->width:0;
     target->alpha_bounds[1]=alpha==0.0f?(int32_t)target->height:0;
     target->alpha_bounds[2]=alpha==0.0f?0:(int32_t)target->width;

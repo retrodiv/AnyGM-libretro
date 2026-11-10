@@ -125,6 +125,8 @@ typedef struct GlSceneImage {
    * This context-local certificate is discarded by untracked image writers. */
   int alpha_bounds_known;
   int32_t alpha_bounds[4];
+  int alpha_tiles_full;
+  uint32_t alpha_tiles[32];
   int opaque_white_known;
   uint8_t opaque_white[GL_SCENE_WHITE_TEXELS/8];
   int source_partial;
@@ -134,9 +136,10 @@ typedef struct GlSceneImage {
 
 void gml_gpu_opengl_alpha_cover(GlSceneImage *image,double left,double top,
                                double right,double bottom);
-void gml_gpu_opengl_surface_alpha_scissor(GmlGpuBackend *backend,GlSceneImage *target,
+int gml_gpu_opengl_surface_alpha_scissor(GmlGpuBackend *backend,GlSceneImage *target,
   const GlSceneImage *source,uint32_t filter,uint32_t count,uint32_t source_alpha_key,
   const GmlRenderSourcePalette *palette);
+unsigned gml_gpu_opengl_alpha_regions(const GlSceneImage *source,GmlRenderRect regions[32]);
 
 typedef struct GlSceneCheckpoint {
   GmlRenderImageRef image;

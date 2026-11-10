@@ -2630,7 +2630,7 @@ static int recovery_indirect_prepare(GmlGpuBackend *backend){
 /* The identity surface sampler discards zero-alpha source texels. A certificate
  * from transparent clears and placed draws can therefore bound its fragment work
  * without changing the quad, sample coordinates, blending or alpha stamp. */
-void gml_gpu_opengl_surface_alpha_scissor(GmlGpuBackend *backend,GlSceneImage *target,
+int gml_gpu_opengl_surface_alpha_scissor(GmlGpuBackend *backend,GlSceneImage *target,
                                   const GlSceneImage *source,uint32_t filter,
                                   uint32_t count,uint32_t source_alpha_key,
                                   const GmlRenderSourcePalette *palette){
@@ -2642,13 +2642,13 @@ void gml_gpu_opengl_surface_alpha_scissor(GmlGpuBackend *backend,GlSceneImage *t
      v[16]!=1.0f || v[17]!=(float)target->height || v[18]!=0.0f ||
      !isfinite(v[12]) || !isfinite(v[13]) ||
      fabsf(v[12])>65536.0f || fabsf(v[13])>65536.0f ||
-     v[12]!=floorf(v[12]) || v[13]!=floorf(v[13])) return;
+     v[12]!=floorf(v[12]) || v[13]!=floorf(v[13])) return 0;
   for(unsigned corner=0;corner<6u;corner++){
     const float *at=v+(size_t)corner*GL_SCENE_VERTEX_FLOATS;
     if(!isfinite(at[0]) || !isfinite(at[1]) ||
        at[0]<v[12] || at[0]>v[12]+v[14] ||
        at[1]<v[13] || at[1]>v[13]+v[15] ||
-       at[23]!=0.0f || at[26]!=0.0f) return;
+       at[23]!=0.0f || at[26]!=0.0f) return 0;
   }
   int left=(int)v[12]+source->alpha_bounds[0];
   int top=(int)v[13]+source->alpha_bounds[1];
@@ -2660,6 +2660,38 @@ void gml_gpu_opengl_surface_alpha_scissor(GmlGpuBackend *backend,GlSceneImage *t
   if(bottom>(int)target->height) bottom=(int)target->height;
   if(left>=right || top>=bottom) backend->gl.Scissor(0,0,0,0);
   else backend->gl.Scissor(left,(int)target->height-bottom,right-left,bottom-top);
+  return 1;
+}
+
+/* Merge occupied coarse tiles into disjoint rectangles. Capacity exhaustion
+ * retains the conservative single bounding scissor, never drops a covered tile. */
+unsigned gml_gpu_opengl_alpha_regions(const GlSceneImage *source,GmlRenderRect regions[32]){
+  if(!source || !source->width || !source->height ||
+     !source->alpha_bounds_known || source->alpha_tiles_full) return 0;
+  uint32_t tw=(source->width+31u)/32u,th=(source->height+31u)/32u;
+  unsigned count=0;
+  for(uint32_t row=0;row<32u && row*th<source->height;row++){
+    uint32_t bits=source->alpha_tiles[row];
+    for(uint32_t x=0;x<32u && x*tw<source->width;){
+      if(!(bits&(1u<<x))){x++;continue;}
+      uint32_t first=x;
+      do{x++;}while(x<32u && (bits&(1u<<x)));
+      uint32_t left=first*tw,right=x*tw,top=row*th,bottom=(row+1u)*th;
+      if(right>source->width) right=source->width;
+      if(bottom>source->height) bottom=source->height;
+      unsigned found=0;
+      for(;found<count;found++){
+        GmlRenderRect *r=&regions[found];
+        if(r->x==(int32_t)left && r->width==right-left &&
+           (uint32_t)r->y+r->height==top){r->height=bottom-(uint32_t)r->y;break;}
+      }
+      if(found==count){
+        if(count==32u) return 0;
+        regions[count++]=(GmlRenderRect){(int32_t)left,(int32_t)top,right-left,bottom-top};
+      }
+    }
+  }
+  return count;
 }
 
 static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage *source,
@@ -2730,7 +2762,10 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
   backend->gl.Viewport(0,0,(GLsizei)target->width,(GLsizei)target->height);
   backend->gl.Scissor(0,0,(GLsizei)target->width,(GLsizei)target->height);
-  gml_gpu_opengl_surface_alpha_scissor(backend,target,source,filter,count,source_alpha_key,palette);
+  GmlRenderRect alpha_regions[32];
+  unsigned alpha_region_count=0;
+  if(gml_gpu_opengl_surface_alpha_scissor(backend,target,source,filter,count,source_alpha_key,palette))
+    alpha_region_count=gml_gpu_opengl_alpha_regions(source,alpha_regions);
   backend->gl.ActiveTexture(GL_TEXTURE0);
   backend->gl.BindTexture(GL_TEXTURE_2D,source?source->texture:0u);
   if(source){
@@ -2860,9 +2895,29 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
                                     (const void*)(offset+(size_t)index*4u*sizeof(float)));
     backend->gl.VertexAttribDivisor((GLuint)attributes[index],1u);
   }
-  if(scene->recovery_indirect_active && (filter==23u || filter==24u))
-    backend->gl.DrawArraysIndirect(GL_TRIANGLES,NULL);
-  else backend->gl.DrawArraysInstanced(GL_TRIANGLES,0,6,(GLsizei)count);
+  for(unsigned region=0;region<(alpha_region_count?alpha_region_count:1u);region++){
+    if(alpha_region_count){
+      const GmlRenderRect *r=&alpha_regions[region];
+      const float *v=scene->vertices;
+      int left=(int)v[12]+r->x,top=(int)v[13]+r->y;
+      int right=left+(int)r->width,bottom=top+(int)r->height;
+      int bx=(int)v[12]+source->alpha_bounds[0],by=(int)v[13]+source->alpha_bounds[1];
+      int br=(int)v[12]+source->alpha_bounds[2],bb=(int)v[13]+source->alpha_bounds[3];
+      if(left<bx) left=bx;
+      if(top<by) top=by;
+      if(right>br) right=br;
+      if(bottom>bb) bottom=bb;
+      if(left<0) left=0;
+      if(top<0) top=0;
+      if(right>(int)target->width) right=(int)target->width;
+      if(bottom>(int)target->height) bottom=(int)target->height;
+      if(left>=right || top>=bottom) continue;
+      backend->gl.Scissor(left,(int)target->height-bottom,right-left,bottom-top);
+    }
+    if(scene->recovery_indirect_active && (filter==23u || filter==24u))
+      backend->gl.DrawArraysIndirect(GL_TRIANGLES,NULL);
+    else backend->gl.DrawArraysInstanced(GL_TRIANGLES,0,6,(GLsizei)count);
+  }
   if(stamp_alpha && !skip_alpha && (write_mask&8u) && filter!=GL_SCENE_NATIVE_POINT_OPAQUE_FILTER && filter!=23u && filter!=35u && filter!=39u && filter!=40u && filter!=53u && filter!=66u && filter!=21u && filter!=25u && filter!=32u && filter!=80u){
     /* The CPU screen writer keeps alpha opaque at every covered texel,
      * even when its prior alpha is unknown. Reuse the sampled vertices and
@@ -2895,9 +2950,7 @@ restore_stream_state:
     return 0;
   }
   if((write_mask&8u) && target->alpha_bounds_known) for(uint32_t quad=0;quad<count;quad++){
-    if(!target->alpha_bounds[0] && !target->alpha_bounds[1] &&
-       target->alpha_bounds[2]==(int32_t)target->width &&
-       target->alpha_bounds[3]==(int32_t)target->height) break;
+    if(target->alpha_tiles_full) break;
     const float *v=scene->vertices+(size_t)quad*6u*GL_SCENE_VERTEX_FLOATS;
     if(!isfinite(v[0]) || !isfinite(v[1])) target->alpha_bounds_known=0;
     double left=v[0],right=v[0],top=v[1],bottom=v[1];
