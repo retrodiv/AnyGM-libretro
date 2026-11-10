@@ -16579,7 +16579,7 @@ static int resident_opaque_sprite_complete_application(void){
 /* Admission/authority only. The owning real-context control supplies D2 pixels. */
 static int resident_lazy_native_atlas(void){
   enum { W=24,H=20 };
-  const uint8_t encoded[]={0,'f','i','o','q',4,0,4,0,0,0,0,0,
+  uint8_t encoded[]={0,'f','i','o','q',4,0,4,0,0,0,0,0,
     0xFF,0xC0,0x30,0x60,0xFF,0x4E};
   GmlWin content={.bytecode=17,.has_room_layers=1,.data=encoded,.size=sizeof encoded};
   GmlRender *r=calloc(1,sizeof *r);FakeDevice fake={.on_demand=1};

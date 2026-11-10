@@ -709,11 +709,15 @@
   "      ivec2 p=ivec2(int(gl_FragCoord.x),int(v_step.y)-1-int(gl_FragCoord.y))-ivec2(v_map.xy);\n" \
   "      if(v_map.z<0.0) p.x=dest.x-1-p.x;\n" \
   "      if(v_map.w<0.0) p.y=dest.y-1-p.y;\n" \
+  "#if defined(GML_SCENE_CONSTANT_FILTER) && (GML_SCENE_CONSTANT_FILTER==53 || GML_SCENE_CONSTANT_FILTER==55)\n" \
   "      // Equal extents make every in-bounds point-phase rule the identity.\n" \
   "      ivec2 at=p;\n" \
   "      if(any(notEqual(size,dest)) || v_span_y.w!=0.0 ||\n" \
   "         any(lessThan(p,ivec2(0))) || any(greaterThanEqual(p,dest))){\n" \
   "        at=p*size/dest;\n" \
+  "#else\n" \
+  "      ivec2 at=p*size/dest;\n" \
+  "#endif\n" \
   "        if(v_span_y.w==2.0) at=ivec2(v_span_x.zw)+p*ivec2(v_span_y.yz)/dest;\n" \
   "        else if(v_span_y.w==1.0) at=ivec2(floor(v_span_x.zw+vec2(p)*v_span_y.yz/vec2(dest)));\n" \
   "        if(v_span_x.x==1.0) at.x=(2*p.x*size.x+dest.x)/(2*dest.x);\n" \
@@ -722,7 +726,9 @@
   "        if(v_span_x.y==2.0) at.y=(2*p.y+1)*size.y/(2*dest.y);\n" \
   "        if(v_span_x.x==3.0) at.x=((2*p.x+1)*size.x-1)/(2*dest.x);\n" \
   "        if(v_span_x.y==3.0) at.y=((2*p.y+1)*size.y-1)/(2*dest.y);\n" \
+  "#if defined(GML_SCENE_CONSTANT_FILTER) && (GML_SCENE_CONSTANT_FILTER==53 || GML_SCENE_CONSTANT_FILTER==55)\n" \
   "      }\n" \
+  "#endif\n" \
   "      if(v_span_y.w>0.0 && (any(lessThan(at,ivec2(0))) || any(greaterThanEqual(at,size)))) discard;\n" \
   "      at=clamp(at,ivec2(0),size-ivec2(1));\n" \
   "      if(v_step.x!=0.0) at.y=size.y-1-at.y;\n" \
