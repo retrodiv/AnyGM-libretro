@@ -572,6 +572,13 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
     /* Vertex format/buffer API. All paths feed the same bounded software
      * vertex store and renderer; aliases cover API generations that exposed
      * colour/color and the early textcoord spelling. */
+    if(!strcmp(nm,"vertex_buffer_exists") || !strcmp(nm,"vertex_format_exists")){
+      double id=N(a,n,0);
+      if(n<1 || !isfinite(id) || id<0 || id>INT_MAX) return vreal(0);
+      return vreal(!strcmp(nm,"vertex_buffer_exists")?
+        gml_software3d_vertex_buffer_exists(GML_GRAPHICS,(int)id):
+        gml_software3d_vertex_format_exists(GML_GRAPHICS,(int)id));
+    }
     if(!strcmp(nm,"vertex_format_begin")){
       gml_software3d_vertex_format_begin(GML_GRAPHICS); return vreal(0); }
     if(!strcmp(nm,"vertex_format_add_position")){

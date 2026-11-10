@@ -85,6 +85,13 @@ int software3d_operation_boundary_fixture(void){
     goto done;
   }
   gml_software3d_vertex_format_begin(graphics);
+  if(gml_software3d_vertex_format_exists(NULL,0) ||
+     gml_software3d_vertex_buffer_exists(NULL,0) ||
+     gml_software3d_vertex_format_exists(graphics,-1) ||
+     gml_software3d_vertex_buffer_exists(graphics,2147483647)){
+    fprintf(stderr,"software-3D invalid resource existence mismatch\n");
+    goto done;
+  }
   if(!gml_software3d_vertex_format_add(
        graphics,GML_SOFTWARE3D_VERTEX_POSITION3,0,0,3,12) ||
      (format=gml_software3d_vertex_format_finish(graphics))<0 ||
@@ -96,6 +103,8 @@ int software3d_operation_boundary_fixture(void){
   const double position[4]={1,2,3,0};
   if(!gml_software3d_vertex_buffer_attribute(
        graphics,buffer,GML_SOFTWARE3D_VERTEX_POSITION3,position,3) ||
+     !gml_software3d_vertex_buffer_exists(graphics,buffer) ||
+     !gml_software3d_vertex_format_exists(graphics,format) ||
      gml_software3d_vertex_buffer_number(graphics,buffer)!=1 ||
      gml_software3d_vertex_buffer_size(graphics,buffer)!=12 ||
      !gml_software3d_vertex_buffer_freeze(graphics,buffer)){
@@ -130,6 +139,8 @@ int software3d_operation_boundary_fixture(void){
 done:
   if(buffer>=0) gml_software3d_vertex_buffer_delete(graphics,buffer);
   if(format>=0) gml_software3d_vertex_format_delete(graphics,format);
+  if(gml_software3d_vertex_buffer_exists(graphics,buffer) ||
+     gml_software3d_vertex_format_exists(graphics,format)) ok=0;
   if(model>=0 && gml_software3d_model_is_live(graphics,model))
     gml_software3d_model_destroy(graphics,model);
   gml_render_bind_software3d(&render,NULL);

@@ -155,9 +155,11 @@ int gml_software3d_vertex_format_add(GmlSoftware3D *software3d,
                                      int count,int bytes);
 int gml_software3d_vertex_format_finish(GmlSoftware3D *software3d);
 void gml_software3d_vertex_format_delete(GmlSoftware3D *software3d,int id);
+int gml_software3d_vertex_format_exists(const GmlSoftware3D *software3d,int id);
 int gml_software3d_vertex_buffer_create(GmlSoftware3D *software3d,
                                         int reserve_bytes);
 void gml_software3d_vertex_buffer_delete(GmlSoftware3D *software3d,int id);
+int gml_software3d_vertex_buffer_exists(const GmlSoftware3D *software3d,int id);
 int gml_software3d_vertex_buffer_begin(GmlSoftware3D *software3d,
                                        int id,int format);
 void gml_software3d_vertex_buffer_end(GmlSoftware3D *software3d,int id);

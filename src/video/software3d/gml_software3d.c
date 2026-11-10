@@ -292,6 +292,16 @@ void gml_software3d_vertex_format_delete(GmlSoftware3D *graphics,int id){
     memset(&graphics->vertex_format[id],0,sizeof(graphics->vertex_format[id]));
 }
 
+int gml_software3d_vertex_format_exists(const GmlSoftware3D *graphics,int id){
+  return graphics && id>=0 && id<GML_VERTEX_FORMAT_MAX &&
+         graphics->vertex_format[id].used;
+}
+
+int gml_software3d_vertex_buffer_exists(const GmlSoftware3D *graphics,int id){
+  return graphics && id>=0 && id<GML_VERTEX_BUFFER_MAX &&
+         graphics->vertex_buffer[id].used;
+}
+
 void gml_software3d_vertex_buffer_delete(GmlSoftware3D *graphics,int id){
   if(!graphics || id<0 || id>=GML_VERTEX_BUFFER_MAX ||
      !graphics->vertex_buffer[id].used) return;

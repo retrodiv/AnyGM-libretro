@@ -18,6 +18,52 @@ static GmlVal query(GmlVM *vm,const char *name,GmlVal *args,int count,int cached
   return gml_builtin_call_fast_id(vm,id,name,args,count);
 }
 static int real_is(GmlVal v,double number){ return v.t==V_REAL && v.d==number; }
+static int vertex_resource_existence_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlRender render={0};
+    GmlVM vm={.render=&render};
+    const char *queries[]={"vertex_buffer_exists","vertex_format_exists"};
+    GmlVal zero=vreal(0),negative=vreal(-1);
+    for(int i=0;i<2;i++){
+      ok &= real_is(query(&vm,queries[i],&zero,1,cached,&ok),0);
+      ok &= real_is(query(&vm,queries[i],&negative,1,cached,&ok),0);
+    }
+    GmlVal buffer=gml_builtin_call(&vm,"vertex_create_buffer",NULL,0);
+    gml_builtin_call(&vm,"vertex_format_begin",NULL,0);
+    gml_builtin_call(&vm,"vertex_format_add_position_3d",NULL,0);
+    GmlVal format=gml_builtin_call(&vm,"vertex_format_end",NULL,0);
+    ok &= buffer.t==V_REAL && buffer.d>=0 && format.t==V_REAL && format.d>=0;
+    /* Allocated empty buffers exist even though their byte/vertex counts are zero. */
+    ok &= real_is(query(&vm,queries[0],&buffer,1,cached,&ok),1);
+    ok &= real_is(query(&vm,queries[1],&format,1,cached,&ok),1);
+    GmlVal begin[]={buffer,format};
+    gml_builtin_call(&vm,"vertex_begin",begin,2);
+    GmlVal position[]={buffer,vreal(2),vreal(3),vreal(4)};
+    gml_builtin_call(&vm,"vertex_position_3d",position,4);
+    gml_builtin_call(&vm,"vertex_end",&buffer,1);
+    gml_builtin_call(&vm,"vertex_freeze",&buffer,1);
+    ok &= real_is(query(&vm,queries[0],&buffer,1,cached,&ok),1);
+    gml_builtin_call(&vm,"vertex_format_delete",&format,1);
+    ok &= real_is(query(&vm,queries[1],&format,1,cached,&ok),0);
+    ok &= real_is(query(&vm,queries[0],&buffer,1,cached,&ok),1);
+    gml_builtin_call(&vm,"vertex_delete_buffer",&buffer,1);
+    ok &= real_is(query(&vm,queries[0],&buffer,1,cached,&ok),0);
+    buffer=gml_builtin_call(&vm,"vertex_create_buffer",NULL,0);
+    ok &= real_is(query(&vm,queries[0],&buffer,1,cached,&ok),1);
+    gml_builtin_call(&vm,"vertex_format_begin",NULL,0);
+    gml_builtin_call(&vm,"vertex_format_add_position",NULL,0);
+    format=gml_builtin_call(&vm,"vertex_format_end",NULL,0);
+    ok &= real_is(query(&vm,queries[1],&format,1,cached,&ok),1);
+    const double invalid[]={-1,2147483647.0,2147483648.0,1e100,NAN,INFINITY,-INFINITY};
+    for(int i=0;i<2;i++) for(size_t j=0;j<sizeof invalid/sizeof invalid[0];j++){
+      GmlVal value=vreal(invalid[j]);
+      ok &= real_is(query(&vm,queries[i],&value,1,cached,&ok),0);
+    }
+    gml_vm_free(&vm);
+  }
+  return ok;
+}
 static int string_is(GmlVal v,const char *text){
   int ok=v.t==V_STR && v.s && !strcmp(v.s,text);
   if(v.t==V_STR && v.d!=0) free((void *)v.s);
@@ -571,7 +617,8 @@ int main(int argc,char **argv){
   const char *filter=NULL;
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2];
   else if(argc!=1) return EXIT_FAILURE;
-  const AnygmTestCase cases[]={{"display_frequency",display_frequency_case},
+  const AnygmTestCase cases[]={{"vertex_resource_existence",vertex_resource_existence_case},
+    {"display_frequency",display_frequency_case},
     {"explicit_default_speed",explicit_default_speed_case},{"circle_precision",circle_case},
     {"application_surface_lifetime",application_surface_lifetime_case},{"shader_asset_names",shader_case},
     {"all_live_layers_at_depth",layers_case},{"retired_alpha_controls",alpha_case},
