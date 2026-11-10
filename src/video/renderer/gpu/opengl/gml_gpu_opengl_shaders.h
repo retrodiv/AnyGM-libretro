@@ -877,9 +877,14 @@
   "    vec4 sampled=unit_texel?source_texel(ivec2(floor(uv*extent)),0):\n" \
   "      margin!=0?hardware_physical_sprite_sample(v_texcoord,\n" \
   "        ivec2(v_clamp.xy),ivec2(v_clamp.zw),margin):source_texture(uv);\n" \
+  "#ifndef GML_SCENE_ZERO_ALPHA_BLEND\n" \
   "    if(!covered_row && physical_filter<112 && u_alpha_test>=0 && sampled.a*255.0<=float(u_alpha_test)) discard;\n" \
+  "#endif\n" \
   "    if(physical_filter>=79){\n" \
-  "      float alpha=sampled.a*v_colour.a; if(alpha<=0.0 && physical_filter<112) discard;\n" \
+  "      float alpha=sampled.a*v_colour.a;\n" \
+  "#ifndef GML_SCENE_ZERO_ALPHA_BLEND\n" \
+  "      if(alpha<=0.0 && physical_filter<112) discard;\n" \
+  "#endif\n" \
   "      vec3 rgb=sampled.rgb*v_colour.rgb;\n" \
   "      if(unit_texel){\n" \
   "        uvec3 bytes=uvec3(floor(sampled.rgb*255.0+0.5));\n" \

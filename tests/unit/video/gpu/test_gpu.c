@@ -2309,6 +2309,70 @@ static int scene_white_tint_programs_case(void){
   return 1;
 }
 
+static int scene_native_zero_alpha_blend_case(void){
+  const uint32_t pixels[]={0x001267B9u,0x552679B3u,0xAAC39526u,0xFF7193C5u};
+  for(unsigned api=0;api<2u;api++)for(unsigned variant=0;variant<7u;variant++){
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"native blend context created");
+    gml_gpu_device_services(gpu,&device);
+    GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,245u,1u,1u};
+    GmlRenderImageUpload upload={.image=source,.storage_width=2u,.storage_height=2u,
+      .region={0,0,2u,2u},.pixel_format=GML_RENDER_PIXEL_RGBA8888,
+      .stride_bytes=8u,.byte_capacity=sizeof pixels,.bytes=pixels};
+    REQUIRE(device.upload(device.context,&upload),"native blend source uploaded");
+    GmlRenderDrawStateSnapshot state={.colour=0xFFFFFFFFu,.alpha=255u,.write_mask=15u,
+      .sampler_count=1u,.rgb_equation=GML_RENDER_BLEND_ADD,.alpha_equation=GML_RENDER_BLEND_ADD,
+      .rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA,
+      .rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
+      .alpha_source_factor=GML_RENDER_BLEND_ONE,
+      .alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA};
+    state.samplers[0]=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_HARDWARE_BILINEAR,
+      GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,2u,2u},GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN,0u};
+    if(variant==2u){state.alpha_test_enabled=1u;state.alpha_test_reference=127u;}
+    if(variant==3u || variant==6u)state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+    if(variant==4u)state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    if(variant==5u)state.samplers[0].logical_margin_mask=GML_RENDER_MARGIN_UNIT_TEXEL;
+    if(variant==6u)state.samplers[0].filter=GML_RENDER_FILTER_NEAREST;
+    GmlRenderDrawOp ops[2]={0};
+    for(unsigned index=0;index<2u;index++)ops[index].target=(GmlRenderTargetRef){
+      {GML_RENDER_RESOURCE_SCREEN,246u,1u,index+1u},1u,8u,8u,GML_RENDER_PIXEL_ARGB8888,{0,0,8u,8u}};
+    ops[0].opcode=GML_RENDER_OP_CLEAR;ops[0].payload.clear_colour=0x78273859u;
+    ops[1].opcode=GML_RENDER_OP_TEXTURED_QUAD;ops[1].scene_family=GML_RENDER_SCENE_SPRITE;
+    ops[1].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;ops[1].sources=&source;ops[1].source_count=1u;
+    GmlRenderQuad *q=&ops[1].payload.quad;
+    q->shape=variant==6u?GML_RENDER_QUAD_GENERAL:GML_RENDER_QUAD_AXIS_ALIGNED;
+    q->sampling=state.samplers[0];q->filtered_draw_alpha=variant==1u?.5:1.0;
+    q->x[1]=q->x[2]=q->y[2]=q->y[3]=variant==5u?2.0:8.0;
+    q->u[1]=q->u[2]=q->v[2]=q->v[3]=1.0;
+    q->inverse_x[0]=q->inverse_y[1]=variant==5u?1.0:4.0;
+    for(unsigned corner=0;corner<4u;corner++)q->corner_colour[corner]=
+      variant==1u?0x803470D0u:0xFFFFFFFFu;
+    GmlRenderDrawBatch batch={ops,2u,&state,1u};
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    GmlGpuCounters work={0};gml_gpu_counters(gpu,&work);
+    if(result.status==GML_RENDER_EXEC_UNSUPPORTED){
+      REQUIRE(variant==2u && !result.accepted_prefix && !anygm_test_graphics_scene_draw_calls(),
+        "only the positive cutoff may retain ordinary prewrite refusal");
+    }else REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED,"native blend packet accepted");
+    unsigned separate_alpha=variant==3u || variant==6u;
+    unsigned eligible=variant<2u || separate_alpha;
+    REQUIRE(work.scene_zero_alpha_blend_quads==eligible && !anygm_test_graphics_read_pixels(),
+      "only plain native source-over with nonpositive cutoff uses the zero-alpha identity");
+    const char *fragment=anygm_test_graphics_shader_source(1);
+    REQUIRE(fragment && !!strstr(fragment,"#define GML_SCENE_ZERO_ALPHA_BLEND 1")==
+      (eligible && !separate_alpha),
+      "alternate-alpha, margin and positive-cutoff fragments retain their discard policy");
+    if(separate_alpha) REQUIRE(anygm_test_graphics_scene_draw_calls()==2 &&
+      anygm_test_graphics_scene_mask_draws(7u)==1u &&
+      anygm_test_graphics_scene_mask_draws(8u)==1u &&
+      gpu->backend->scene.compact_programs[46].program,
+      "native RGB masks alpha while the ordinary positive-coverage stamp writes it");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_white_tint_batches_case(void){
   const uint32_t pixels[]={0x001267B9u,0x552679B3u,0xAAC39526u,0xFF7193C5u};
   for(unsigned api=0;api<2u;api++)for(unsigned surface=0;surface<2u;surface++)
@@ -5404,8 +5468,9 @@ static int scene_opaque_native_alpha_case(void){
       GmlGpuCounters work={0};gml_gpu_counters(gpu,&work);
       REQUIRE(work.scene_white_tint_quads==(nearest && !tinted?repeat+1u:0u),
         "successful white point sampling contributes only its admitted quads");
-      REQUIRE(work.scene_zero_alpha_blend_quads==(nearest && !tinted && !cutoff?repeat+1u:0u),
-        "only successful white point RGB with nonpositive cutoff counts blend-identity work");
+      REQUIRE(work.scene_zero_alpha_blend_quads==
+        ((!nearest || !tinted) && !cutoff?repeat+1u:0u),
+        "successful native RGB and white point RGB count only their admitted blend-identity work");
       if(nearest){
         const char *fragment=anygm_test_graphics_shader_source(1);
         REQUIRE(fragment && strstr(fragment,expected==1u?
@@ -7894,6 +7959,7 @@ int main(int argc,char **argv){
     {"scene_native_textured_triangles",scene_native_textured_triangle_case},
     {"scene_hot_constant_programs",scene_hot_constant_programs_case},
     {"scene_white_tint_programs",scene_white_tint_programs_case},
+    {"scene_native_zero_alpha_blend",scene_native_zero_alpha_blend_case},
     {"scene_white_tint_batches",scene_white_tint_batches_case},
     {"scene_opaque_unit_surface_copy",scene_opaque_unit_surface_copy_case},
     {"scene_general_program_demand",scene_general_program_demand_case},

@@ -2757,6 +2757,20 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
       }
     }
   }
+  /* Native source-over has the same zero-alpha RGB identity for every finite
+   * normalized tint. Filter 80 masks alpha here; its separate stamp keeps the
+   * ordinary discard, as do positive cutoffs. */
+  if(plain_native && (filter==79u || filter==80u ||
+      filter==GL_SCENE_NATIVE_POINT_FILTER || filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER) &&
+     blend==1 && alpha_test<=0){
+    native_flags|=GL_SCENE_NATIVE_ZERO_ALPHA_BLEND;
+    for(size_t vertex=0;vertex<(size_t)count*6u;vertex++){
+      const float *colour=scene->vertices+vertex*GL_SCENE_VERTEX_FLOATS+4u;
+      for(unsigned channel=0;channel<4u;channel++)
+        if(!(colour[channel]>=0.0f && colour[channel]<=1.0f))
+          native_flags&=~GL_SCENE_NATIVE_ZERO_ALPHA_BLEND;
+    }
+  }
   program=gml_gpu_opengl_scene_draw_program(backend,filter,native_flags,NULL,0);
   if(!program) return 0;
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
