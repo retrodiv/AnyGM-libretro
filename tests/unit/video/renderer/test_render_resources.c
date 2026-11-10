@@ -20526,11 +20526,17 @@ static int skip_cpu_draw_policy_preserves_observers(void){
 static int opaque_rectangle_clear_complement(void){
   static const int rectangles[][4]={{2,1,7,5},{-2,1,6,5},{2,-2,7,4},
     {2,1,12,5},{2,1,7,10},{0,0,8,6},{-2,-2,10,8},{2,2,2,5},{10,1,12,5}};
+  for(unsigned owner=0;owner<2u;owner++)
   for(unsigned variant=0;variant<3u;variant++)
   for(unsigned rect=0;rect<sizeof rectangles/sizeof rectangles[0];rect++){
-    GmlRender *r=calloc(1,sizeof *r);uint32_t pixels[8*6];
+    GmlRender *r=calloc(1,sizeof *r);uint32_t base[8*6],*pixels=base;
     CHECK(r && !gml_render_init(r,NULL));
-    gml_render_begin(r,pixels,8,6,0,0);
+    gml_render_begin(r,base,8,6,0,0);
+    if(owner){
+      int surface=gml_surface_create(r,8,6);
+      CHECK(surface>0 && gml_surface_set_target(r,surface));pixels=r->fb;
+      CHECK(gml_render_surface_resource_ensure(r,surface));
+    }
     for(unsigned pixel=0;pixel<48u;pixel++) pixels[pixel]=0xA1527394u;
     gml_render_set_pending_fill(r,0x40273859u);
     if(variant==1u) r->color_write_mask=7u;
@@ -20552,6 +20558,7 @@ static int opaque_rectangle_clear_complement(void){
     }
     gml_render_free(r);free(r);
   }
+  for(unsigned owner=0;owner<2u;owner++)
   for(unsigned variant=0;variant<9u;variant++){
     uint32_t reference[48]={0};int reference_flags[3]={0};
     for(unsigned deferred=0;deferred<2u;deferred++){
@@ -20561,6 +20568,8 @@ static int opaque_rectangle_clear_complement(void){
       int source=gml_surface_create(r,8,6);CHECK(source>0 && gml_surface_set_target(r,source));
       gml_render_set_pending_fill(r,variant==4u?0x80417395u:0xFF417395u);
       gml_render_flush_pending_fill(r);gml_surface_reset_target(r);
+      if(owner){int target=gml_surface_create(r,8,6);
+        CHECK(target>0 && gml_surface_set_target(r,target));}
       gml_render_set_pending_fill(r,0x40273859u);
       if(!deferred) gml_render_flush_pending_fill(r);
       r->color_write_mask=variant==1u?7u:15u;r->interp=variant==2u;
@@ -20568,6 +20577,7 @@ static int opaque_rectangle_clear_complement(void){
       gml_draw_surface_stretched(r,source,variant==7u?-2:0,variant==8u?-1:0,
         7,5,variant==3u?0x80A0C0u:0xFFFFFFu,variant==5u?.5:1.0);
       gml_render_maybe_prepare_draw(r);
+      if(owner) memcpy(screen,r->fb,sizeof screen);
       int flags[3]={r->fb_opaque_known,r->fb_all_opaque,r->fb_all_transparent};
       if(!deferred){memcpy(reference,screen,sizeof screen);memcpy(reference_flags,flags,sizeof flags);}
       else CHECK(!memcmp(reference,screen,sizeof screen) && !memcmp(reference_flags,flags,sizeof flags));

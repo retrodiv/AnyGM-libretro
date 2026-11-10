@@ -1154,7 +1154,8 @@ void gml_render_set_pending_fill(GmlRender *r, uint32_t color){
     gml_render_dispatch_cpu_record(r,GML_RENDER_SCENE_PRIMITIVE,
                                      gml_render_dispatch_cpu_reason(r),1u);
 }
-static void render_flush_pending_fill(GmlRender *r,int independent_allowed){
+static void render_flush_pending_fill(GmlRender *r,int independent_allowed,
+                                      const GmlRenderRect *covered){
   /* Device preparation often asks to realize a nonexistent fill. That is not
    * a CPU rotation barrier; explicit clear setters and scene completion are. */
   if(!r || !r->resident_application_pass || r->pending_fill || r->rotated_batch_count)
@@ -1233,19 +1234,31 @@ static void render_flush_pending_fill(GmlRender *r,int independent_allowed){
   r->fb_opaque_known=1;
   r->fb_all_opaque=((color>>24)==255u);
   r->fb_all_transparent=((color>>24)==0u);
-  size_t n=(size_t)r->fbw*(size_t)r->fbh;
-  uint32_t *p=r->fb;
-  while(n>0){
-    int run=n>(size_t)INT_MAX?INT_MAX:(int)n;
-    gml_render_cpu_backend_fill_xrgb(p,run,color);
-    p+=run;
-    n-=(size_t)run;
+  if(covered){
+    int right=covered->x+(int)covered->width,bottom=covered->y+(int)covered->height;
+    for(int y=0;y<r->fbh;y++){
+      uint32_t *row=r->fb+(size_t)y*r->fbw;
+      if(y<covered->y || y>=bottom) gml_render_cpu_backend_fill_xrgb(row,r->fbw,color);
+      else {
+        if(covered->x) gml_render_cpu_backend_fill_xrgb(row,covered->x,color);
+        if(right<r->fbw) gml_render_cpu_backend_fill_xrgb(row+right,r->fbw-right,color);
+      }
+    }
+  }else{
+    size_t n=(size_t)r->fbw*(size_t)r->fbh;
+    uint32_t *p=r->fb;
+    while(n>0){
+      int run=n>(size_t)INT_MAX?INT_MAX:(int)n;
+      gml_render_cpu_backend_fill_xrgb(p,run,color);
+      p+=run;
+      n-=(size_t)run;
+    }
   }
   if(r->dispatch_metrics.enabled)
     gml_render_dispatch_cpu_record(r,GML_RENDER_SCENE_PRIMITIVE,reason,1u);
 }
 void gml_render_flush_pending_fill(GmlRender *r){
-  render_flush_pending_fill(r,1);
+  render_flush_pending_fill(r,1,NULL);
 }
 /* This entry only resolves a clear for an already selected software suffix;
  * it cannot admit or submit a GPU clear through either target policy. */
@@ -1260,7 +1273,7 @@ static void render_cpu_flush_pending_fill(GmlRender *r){
     if(!resource || !gml_render_resource_acquire_cpu_write(resource,&pixels) || pixels!=r->fb ||
        !gml_render_resource_commit_cpu_write(resource)) return;
   }
-  render_flush_pending_fill(r,0);
+  render_flush_pending_fill(r,0,NULL);
 }
 int gml_render_resident_application_cpu_barrier(GmlRender *r){
   uint32_t *pixels=NULL;
@@ -1652,7 +1665,7 @@ void gml_render_discard_deferred_presentation(GmlRender *r){
  * ordinary realization path so this cannot discard queued resource or presentation work. */
 static int render_fill_opaque_complement(GmlRender *r,int x0,int y0,int x1,int y1){
   if(!r || !r->pending_fill || !r->fb || r->fbw<=0 || r->fbh<=0 ||
-     r->target_id!=-1 || r->target_sp || r->scene_device_enabled ||
+     r->scene_device_enabled ||
      r->resident_application_pass || r->pending_underlay || r->pending_presentation ||
      r->rotated_batch_count || r->rotated_scene_batch || r->color_write_mask!=15u ||
      gml_render_cpu_draws_disabled(r)) return 0;
@@ -1661,23 +1674,10 @@ static int render_fill_opaque_complement(GmlRender *r,int x0,int y0,int x1,int y
   if(x1>r->fbw) x1=r->fbw;
   if(y1>r->fbh) y1=r->fbh;
   if(x0>=x1 || y0>=y1) return 0;
-  uint32_t colour=r->pending_fill_color;
-  for(int y=0;y<r->fbh;y++){
-    uint32_t *row=r->fb+(size_t)y*r->fbw;
-    if(y<y0 || y>=y1) gml_render_cpu_backend_fill_xrgb(row,r->fbw,colour);
-    else {
-      if(x0) gml_render_cpu_backend_fill_xrgb(row,x0,colour);
-      if(x1<r->fbw) gml_render_cpu_backend_fill_xrgb(row+x1,r->fbw-x1,colour);
-    }
-  }
-  r->pending_fill=0;
-  r->fb_opaque_known=1;
-  r->fb_all_opaque=(colour>>24)==255u;
-  r->fb_all_transparent=(colour>>24)==0u;
-  if(r->dispatch_metrics.enabled)
-    gml_render_dispatch_cpu_record(r,GML_RENDER_SCENE_PRIMITIVE,
-                                    gml_render_dispatch_cpu_reason(r),1u);
-  return 1;
+  GmlRenderRect covered={x0,y0,(uint32_t)(x1-x0),(uint32_t)(y1-y0)};
+  /* Retain the ordinary resource acquisition, versions and opacity bookkeeping. */
+  render_flush_pending_fill(r,0,&covered);
+  return !r->pending_fill;
 }
 
 void gml_render_prepare_opaque_rect(GmlRender *r, int x0, int y0, int x1, int y1){
