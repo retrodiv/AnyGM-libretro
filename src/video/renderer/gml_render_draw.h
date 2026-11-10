@@ -205,7 +205,9 @@ enum {
   /* Geometry-prepared constant texel rows;colour and blending stay on device. */
   GML_RENDER_QUANTISE_SURFACE_ROTATED_POINT=24u,
   /* Shared positioned coverage supplies constant nearest/bilinear sample rows. */
-  GML_RENDER_QUANTISE_POSITIONED_SAMPLE=25u
+  GML_RENDER_QUANTISE_POSITIONED_SAMPLE=25u,
+  /* Binary-alpha, full-opacity numbered rotations retain native device geometry. */
+  GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION=26u
 };
 
 /* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors

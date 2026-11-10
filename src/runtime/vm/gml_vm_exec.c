@@ -302,9 +302,9 @@ int gml_vm_declare_globalvar(GmlVM *vm,const char *name){
   return 1;
 }
 static int is_dynamic_globalvar(GmlVM *vm,int inst,const char *name,uint32_t name_hash){
-  if(!strcmp(name,"background_color") || !strcmp(name,"background_colour")) return 0;
   if(inst!=IT_SELF || !vm || !vm->win ||
-     !anygm_policy_uses_classic_runtime(vm->win) ||
+     !anygm_policy_uses_classic_runtime(vm->win)) return 0;
+  if(!strcmp(name,"background_color") || !strcmp(name,"background_colour") ||
      !gml_varmap_get_hashed(&vm->globals,name,name_hash)) return 0;
   char marker[160];
   if(!dynamic_global_marker_name(name,marker,sizeof marker)) return 0;
@@ -313,6 +313,7 @@ static int is_dynamic_globalvar(GmlVM *vm,int inst,const char *name,uint32_t nam
   return declared && (declared->t!=V_REAL || declared->d!=0.0);
 }
 static int argument_index(const char *name){
+  if(name[0]!='a') return -1;
   if(strncmp(name,"argument",8)) return -1;
   const char *p=name+8;
   if(*p<'0' || *p>'9') return -1;
@@ -334,6 +335,7 @@ static GmlVal argument_missing(GmlVM *vm){
   return (vm && vm->win && anygm_policy_uses_classic_runtime(vm->win)) ? vreal(0) : vundef();
 }
 static int argument_get(GmlVM *vm, const char *name, GmlVal *out){
+  if(name[0]!='a') return 0;
   if(!strcmp(name,"argument_count")){ *out=vreal(vm->script_argc); return 1; }
   int idx=argument_index(name);
   if(idx>=0){ *out=(idx<vm->script_argc)? vm->script_args[idx] : argument_missing(vm); return 1; }
@@ -452,6 +454,7 @@ double gml_vm_get_timer_us(GmlVM *vm){
   return (double)vm->frame * (1000000.0 / gml_room_speed(vm)) + intra_frame_ms(vm)*1000.0;
 }
 static int inst_sprite_metric_get(GmlVM *vm, GmlInstance *in, const char *name, GmlVal *out){
+  if(name[0]!='s') return 0;
   if(!in || !vm || !vm->render) return 0;
   GmlRender *R=(GmlRender*)vm->render;
   int si=(int)in->sprite_index;
@@ -628,6 +631,9 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
     unset_read(vm,"unset",0,self,name);
     return vreal(0);
   }
+  /* Argument names cannot match the global constants below. Keep dynamic
+   * global and Classic policies above, then use the established argument reader. */
+  if(argument_get(vm,name,&out)) return out;
   if(!strcmp(name,"undefined")) return vundef();   /* GMS2.3 builtin literal used by optional-arg prologues */
   if(!strcmp(name,"infinity")) return vreal(INFINITY); /* unbounded numeric literal */
   if(!strcmp(name,"room")) return vreal(vm->room_index);   /* GM built-in: current room index */
@@ -714,7 +720,7 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   if(!strcmp(name,"event_number")) return vreal(vm->event_number);
   if(!strcmp(name,"current_time")) return vreal(current_time_value(vm));
   if(current_calendar_value(vm,name,&out)) return out;
-  if(argument_get(vm,name,&out)) return out;
+
   if(!strcmp(name,"room_width")||!strcmp(name,"room_height")){   /* GM built-in: current room size */
     GmlRoom r; if(gml_vm_room_get(vm,vm->room_index,&r)==0)
       return vreal(name[5]=='w'? (double)r.width : (double)r.height);
@@ -1310,6 +1316,10 @@ static GmlVal inst_get_any_h(GmlVM *vm, GmlInstance *t, const char *nm, uint32_t
     GmlVal *p=struct_field_get_h(vm,t,nm,nh);
     return p?*p:vreal(0);
   }
+  if(!var_name_maybe_special(vm,nm,nh)){
+    GmlVal *slot=gml_varmap_get_hashed(&t->vars,nm,nh);
+    return slot?*slot:vreal(0);
+  }
   GmlVal o; if(inst_builtin_get(vm,t,nm,&o)) return o;
   /* Same sprite-derived builtins var_get resolves for `self.X`, so a REFERENCED instance
    * (`other.image_number`, `foo.bbox_left`) reads them too — not 0. `expr.image_number` returning
@@ -1459,7 +1469,8 @@ static void gc_scan_vm(GmlVM *vm, GmlVarMap *m, GmlInstance ***wl, int *wn, int 
   for(int i=0;i<m->cap;i++) if(m->slots[i].key) gc_scan_val(vm,m->slots[i].val,wl,wn,wcap);
 }
 void gml_struct_gc(GmlVM *vm){
-  if(vm->n_structs<=0) return;
+  /* No slot can be reached or swept when the complete pool is already free. */
+  if(vm->n_structs<=0 || vm->n_struct_free==vm->n_structs) return;
   /* A fresh array carries epoch 0, so a pass never claims one it has not reached. Skipping 0 on
    * wrap keeps that true for as long as the process runs. */
   if(++vm->gc_epoch==0) vm->gc_epoch=1;

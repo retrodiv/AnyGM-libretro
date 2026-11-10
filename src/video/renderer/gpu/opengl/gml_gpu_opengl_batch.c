@@ -296,6 +296,9 @@ static int native_numbered_point(const GmlRenderDrawOp *op,
 
 static uint32_t scene_filter(const GmlRenderQuad *quad,
                              const GmlRenderDrawStateSnapshot *state,uint32_t family){
+  if(quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION)
+    return GL_SCENE_NATIVE_POINT_FILTER;
+
   if(family==GML_RENDER_SCENE_SURFACE && quad->shape==GML_RENDER_QUAD_GENERAL &&
      quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC)
     return state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA?149u:147u;
@@ -1212,10 +1215,22 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
   const GmlRenderDrawStateSnapshot *state,const GlSceneImage *source){
   const GmlRenderQuad *quad=&op->payload.quad;
   GmlRenderRect crop=quad->sampling.source_region;
-  int numbered=op->target.image.resource_class==GML_RENDER_RESOURCE_SURFACE &&
+  int binary_numbered=op->target.image.resource_class==GML_RENDER_RESOURCE_SURFACE &&
+    quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION &&
+    state->write_mask==15u && !state->alpha_test_enabled && !state->alpha_test_reference &&
+    !state->coverage_policy && qualified_blend(state)==3 &&
+    quad->filtered_draw_alpha==1.0 && (quad->corner_colour[0]>>24)==255u &&
+    state->sampler_count==1u &&
+    state->samplers[0].quantisation==GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION &&
+    state->samplers[0].filter==GML_RENDER_FILTER_NEAREST &&
+    state->samplers[0].edge_rule==GML_RENDER_EDGE_CLAMP_SUBIMAGE &&
+    !state->samplers[0].logical_margin_mask && same_region(state->samplers[0].source_region,crop);
+  int numbered=quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN &&
+    op->target.image.resource_class==GML_RENDER_RESOURCE_SURFACE &&
     state->write_mask==7u && !state->alpha_test_enabled && !state->alpha_test_reference &&
     !state->coverage_policy && qualified_blend(state)==3;
-  int screen=(op->target.image.resource_class==GML_RENDER_RESOURCE_SCREEN ||
+  int screen=quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN &&
+    (op->target.image.resource_class==GML_RENDER_RESOURCE_SCREEN ||
               op->target.image.resource_class==GML_RENDER_RESOURCE_APPLICATION) &&
     state->write_mask==15u && state->alpha_test_enabled<=1u && state->alpha_test_reference<=255u &&
     state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA && qualified_blend(state)==1;
@@ -1224,12 +1239,13 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
      source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
      op->scene_family!=GML_RENDER_SCENE_SPRITE || op->source_count!=1u || !op->sources ||
      op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS ||
-     (!numbered && !screen) ||
+     (!numbered && !screen && !binary_numbered) ||
      op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
      op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
      quad->shape!=GML_RENDER_QUAD_GENERAL || quad->span_active ||
      quad->source_endpoint_rgb_mask ||
-     quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN ||
+     (quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN &&
+      quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION) ||
      quad->sampling.filter!=GML_RENDER_FILTER_NEAREST ||
      quad->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
      quad->sampling.logical_margin_mask || !valid_region(crop,source->width,source->height) ||
@@ -1811,6 +1827,12 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
            !native_surface_multiply(op,state,source) ||
            !gml_render_gpu_opengl_draw_textured_quad(op,state,source->width,source->height,
                                                      source->rendered_origin,probe)) return 0;
+        continue;
+      }
+      if(sampling->quantisation==GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION){
+        if(!backend->gl.BlendFuncSeparate || !backend->gl.BlendEquationSeparate ||
+           !hardware_masked_rotated_sprite_valid(op,state,source) ||
+           !gml_render_gpu_opengl_draw_textured_quad(op,state,source->width,source->height,0,probe)) return 0;
         continue;
       }
       if(sampling->quantisation==GML_RENDER_QUANTISE_POSITIONED_SAMPLE){

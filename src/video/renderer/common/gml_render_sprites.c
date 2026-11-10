@@ -24,6 +24,13 @@ static int resident_filtered_font_crop(GmlRender *r,GmlTpag *page,
                                        double left,double top,double xs,double ys,
                                        uint32_t colour,double alpha);
 
+static int flat_fog_part_policy(GmlRender *r){
+  return r && r->fog_flat && !r->classic && !r->interp && !r->gui_pass_active &&
+    r->active_shader<0 && !r->alpha_test_enable && r->alphablend && !r->blendmode &&
+    r->target_id>0 && r->target_sp>0 && r->color_write_mask==15u &&
+    anygm_policy_has_modern_layer_semantics(r->win) && !gml_d3_is_active(r);
+}
+
 static int resident_sprite_program_blocks(const GmlRender *r){
   GmlRenderSourcePalette palette;
   return !r || (r->active_shader>=0 && !gml_render_shader_cpu_passthrough(r) &&
@@ -633,6 +640,13 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
                                        left,top,xs,ys,GML_RENDER_SCENE_SPRITE,blend,alpha,
                                        r->classic && (xs!=1.0 || ys!=1.0)?3:
                                        (!r->classic && !r->interp),NULL)) return 1;
+  /* A complete unit sprite already has a bounded point packet that retains
+   * the CPU owner's snapped-copy versus fractional general source phase. */
+  if(normal_integer && !r->classic && r->target_id>0 && !r->gui_pass_active &&
+     r->alphablend && !r->blendmode && !r->alpha_test_enable &&
+     anygm_policy_has_modern_layer_semantics(r->win) && fabs(xs)==1.0 && fabs(ys)==1.0 &&
+     resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,
+       left,top,xs,ys,GML_RENDER_SCENE_SPRITE,blend,alpha,7,NULL)) return 1;
   /* Preserve the established numbered nearest predecessor recipe. Its
    * separately qualified replacement must not be selected merely because
    * this ordinary integer extension precedes the filtered entry. */
@@ -796,7 +810,8 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   int rotated_sprite_function=physical_sprite_page==16 || rotated_sample_rows;
   int replacement_sprite=physical_sprite_page==20;
   int flat_fog_sprite=r && r->fog_flat && family==GML_RENDER_SCENE_SPRITE &&
-    (physical_sprite_page==22 || replacement_sprite);
+    (physical_sprite_page==22 || replacement_sprite ||
+     (physical_sprite_page==18 && flat_fog_part_policy(r)));
   /* The preserved rotation leaf treats these presets as ordinary source-over.
    * Resolve the packet without changing public draw state. */
   int fog_rotated_normal=r && r->fog_flat &&
@@ -1432,7 +1447,9 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     GmlRenderQuad *quad=&operation.payload.quad;
     const GmlRenderRect *crop=&native_geometry->source_region;
     quad->shape=GML_RENDER_QUAD_GENERAL;
-    quad->sampling.quantisation=GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN;
+    quad->sampling.quantisation=r->target_id>0 && r->color_write_mask==15u &&
+      page->scene_binary_alpha && draw_alpha==1.0?GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION:
+      GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN;
     memcpy(quad->x,native_geometry->x,sizeof quad->x);
     memcpy(quad->y,native_geometry->y,sizeof quad->y);
     quad->sampling.source_region=*crop;
@@ -3981,6 +3998,26 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
      (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
   if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
+  /* Reuse native placement for full-channel numbered source-over draws.
+   * Device sampling and blending own the filled quad; no CPU rows are emitted. */
+  int native_binary_numbered=!screen_axis && r->target_id>0 && !r->alpha_test_enable &&
+    r->active_shader<0 && !gml_d3_is_active(r) &&
+     alpha==1.0 &&
+     fabs(fmod(rotation,360.0))>=0.001 &&
+     fabs(fabs(fmod(rotation,360.0))-360.0)>=0.001 &&
+     page->sw<=4096 && page->sh<=4096;
+  if(native_binary_numbered) resident_classify_page(r,page,&r->atlas[page->atlas]);
+  if(native_binary_numbered && page->scene_binary_alpha){
+    if(page->scene_ax1<page->scene_ax0 || page->scene_ay1<page->scene_ay0) return 1;
+    GmlRenderRotatedPlacement placement;
+    int placed=gml_render_rotated_sprite_placement(r,sprite,page,x,y,xs,ys,rotation,&placement);
+    if(placed>0) for(unsigned corner=0;corner<4u;corner++)
+      if(fabs(placement.x[corner])>65536.0 || fabs(placement.y[corner])>65536.0) placed=-1;
+    if(placed>=0) return !placed || resident_atlas_crop_from_page_impl(r,page,
+      0,0,page->sw,page->sh,0,0,1,1,GML_RENDER_SCENE_SPRITE,colour,alpha,
+      16,NULL,NULL,0u,0,NULL,&placement);
+  }
+
   unsigned empty_cutoff=0u;
   if(screen_axis){
     if(!r->color_write_mask || !gml_render_rotated_alpha16_factor(255u,alpha)) return 1;
@@ -6353,7 +6390,7 @@ static int resident_sprite_part_function(GmlRender *r,int page_index,const GmlTp
   if(!r || !view || !device || !device->observe_on_demand ||
      !device->observe_on_demand(device->context) || !r->resident_application_pass ||
      page_index<0 || page_index>=r->n_tpag || r->active_shader>=0 ||
-     r->fog_flat || gml_d3_is_active(r) || r->blendmode<0 ||
+     (r->fog_flat && !flat_fog_part_policy(r)) || gml_d3_is_active(r) || r->blendmode<0 ||
      r->blendmode>11 ||
      r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
      !gml_render_scene_target_matches(r)) return 0;

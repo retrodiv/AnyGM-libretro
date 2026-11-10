@@ -311,9 +311,50 @@ static int draw_item_sort_order(void){
   return 0;
 }
 
+static void argument_and_receiver_resolution(void){
+  GmlWin content={.bytecode=17};GmlVM vm={0};GmlInstance instance={0};
+  vm.win=&content;vm.cur_self=&instance;vm.cur_code_index=0;
+  vm.script_argc=2;vm.script_args[0]=vreal(17);vm.script_args[1]=vstr("neutral");
+  const char *names[]={"argument0","argument_count","argumentative","argument16"};
+  *gml_varmap_put(&instance.vars,"argumentative")=vreal(31);
+  *gml_varmap_put(&instance.vars,"argument16")=vreal(37);
+  const double expected[]={17,2,31,37};
+  for(unsigned i=0;i<4u;i++){
+    GmlVal value=gml_vm_variable_get_h(&vm,IT_SELF,names[i],gml_value_name_hash(names[i]));
+    if(value.t!=V_REAL || value.d!=expected[i])fail("argument or ordinary-prefix resolution changed");
+  }
+  GmlVal value=gml_vm_variable_get_h(&vm,IT_SELF,"argument1",gml_value_name_hash("argument1"));
+  if(value.t!=V_STR || strcmp(value.s,"neutral"))fail("argument value category changed");
+  value=gml_vm_variable_get_h(&vm,IT_SELF,"argument2",gml_value_name_hash("argument2"));
+  if(value.t!=V_UNDEF)fail("a missing Studio argument lost undefined");
+  GmlVarMap statics={0};vm.code_static=&statics;vm.code_static_count=1;
+  *gml_varmap_put(&statics,"argument0")=vreal(91);
+  value=gml_vm_variable_get_h(&vm,IT_STATIC,"argument0",gml_value_name_hash("argument0"));
+  if(value.t!=V_REAL || value.d!=91)fail("static scope lost priority over an argument name");
+  content.classic_version=800;content.compatibility=NULL;
+  *gml_varmap_put(&vm.globals,"argument0")=vreal(43);
+  if(!gml_vm_declare_globalvar(&vm,"argument0"))fail("could not declare the Classic argument-name global");
+  value=gml_vm_variable_get_h(&vm,IT_SELF,"argument0",gml_value_name_hash("argument0"));
+  if(value.t!=V_REAL || value.d!=43)fail("a declared Classic global lost priority over an argument");
+  value=gml_vm_variable_get_h(&vm,IT_SELF,"argument2",gml_value_name_hash("argument2"));
+  if(value.t!=V_REAL || value.d!=0)fail("a missing Classic argument lost zero");
+  content.classic_version=0;content.compatibility=NULL;
+  GmlInstance *record=gml_struct_new(&vm);
+  if(!record)fail("could not create a field receiver");
+  else{
+    *gml_varmap_put(&record->vars,"argument0")=vreal(99);
+    int found=0;value=gml_inst_var_get_val(&vm,vobject((uint32_t)record->id),"argument0",&found);
+    if(!found || value.t!=V_REAL || value.d!=99)fail("a struct field was replaced by a script argument");
+  }
+  gml_varmap_free_ex(&instance.vars,1);gml_varmap_free_ex(&statics,1);gml_varmap_free_ex(&vm.globals,1);
+  for(int i=0;i<vm.n_structs;i++)if(vm.structs[i]){gml_varmap_free_ex(&vm.structs[i]->vars,1);free(vm.structs[i]);}
+  free(vm.structs);free(vm.struct_gen);free(vm.struct_free);free(vm.special_var_hash);
+}
+
 int main(void){
   special_name_gate();
   global_lookup_semantics();
+  argument_and_receiver_resolution();
   draw_item_sort_order();
   if(failures) return 1;
   puts("vm hot paths: ok");

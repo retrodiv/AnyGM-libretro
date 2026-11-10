@@ -52,15 +52,10 @@ static int a_shared_graph_is_walked_once_per_array(void){
     slot->t=V_ARR; slot->arr=chain[0]; }
 
   /* n_structs>0 is what asks for a collection at all; the sweep then finds nothing to free. */
-  vm.structs=calloc(1,sizeof *vm.structs);
-  if(!vm.structs){ fprintf(stderr,"out of memory\n"); free_chain(chain,DEPTH); return 0; }
-  vm.n_structs=0;
-  vm.cap_structs=1;
-
-  GmlInstance *keeper=calloc(1,sizeof *keeper);
-  if(!keeper){ free(vm.structs); free_chain(chain,DEPTH); return 0; }
-  vm.structs[0]=keeper;
-  vm.n_structs=1;
+  GmlInstance *keeper=gml_struct_new(&vm);
+  if(!keeper){ free_chain(chain,DEPTH); return 0; }
+  /* Keep a real struct reachable through the graph on both collections. */
+  chain[DEPTH-1]->data[0]=vobject((uint32_t)keeper->id);
 
   gml_struct_gc(&vm);
 
@@ -84,7 +79,7 @@ static int a_shared_graph_is_walked_once_per_array(void){
 
   gml_varmap_free_ex(&vm.globals,1);  /* the fixture owns the arrays; escaped ones are freed below */
   for(int i=0;i<vm.n_structs;i++) if(vm.structs[i]) free(vm.structs[i]);
-  free(vm.structs);
+  free(vm.structs);free(vm.struct_gen);free(vm.struct_free);
   free_chain(chain,DEPTH);
   return ok;
 }
@@ -116,9 +111,41 @@ static int a_cycle_terminates(void){
 
   gml_varmap_free_ex(&vm.globals,1);  /* the fixture owns the arrays; escaped ones are freed below */
   if(vm.structs[0]) free(vm.structs[0]);
-  free(vm.structs);
+  free(vm.structs);free(vm.struct_gen);free(vm.struct_free);
   free(self->data); free(self);
   free(peer->data); free(peer);
+  return ok;
+}
+
+static int an_empty_pool_skips_roots_and_reused_slots_resume_collection(void){
+  GmlVM vm={0};GmlArr *root=array_of(1);
+  if(!root) return 0;
+  GmlInstance *temporary=gml_struct_new(&vm);
+  if(!temporary){free_chain(&root,1);return 0;}
+  GmlVal value=vundef();value.t=V_ARR;value.arr=root;
+  *gml_varmap_put(&vm.globals,"root")=value;
+  gml_struct_gc(&vm);
+  int ok=vm.n_structs==1 && vm.n_struct_free==1 && !vm.structs[0];
+  unsigned epoch=vm.gc_epoch,array_epoch=root->gc_epoch;
+  int free_slot=vm.struct_free[0];
+  gml_struct_gc(&vm);
+  if(vm.gc_epoch!=epoch || root->gc_epoch!=array_epoch || vm.struct_free[0]!=free_slot){
+    fprintf(stderr,"an empty pool walked roots or changed slot order\n");ok=0;
+  }
+  GmlInstance *keeper=gml_struct_new(&vm);
+  if(!keeper){ok=0;goto done;}
+  root->data[0]=vobject((uint32_t)keeper->id);
+  gml_struct_gc(&vm);
+  if(vm.gc_epoch==epoch || root->gc_epoch!=vm.gc_epoch || vm.structs[0]!=keeper || vm.n_struct_free){
+    fprintf(stderr,"reusing an empty slot failed to resume reachable collection\n");ok=0;
+  }
+  root->data[0]=vreal(0);
+  gml_struct_gc(&vm);
+  if(vm.structs[0] || vm.n_struct_free!=1){fprintf(stderr,"unrooted reused slot survived\n");ok=0;}
+ done:
+  gml_varmap_free_ex(&vm.globals,1);
+  for(int i=0;i<vm.n_structs;i++)if(vm.structs[i]){gml_varmap_free_ex(&vm.structs[i]->vars,1);free(vm.structs[i]);}
+  free(vm.structs);free(vm.struct_gen);free(vm.struct_free);free_chain(&root,1);
   return ok;
 }
 
@@ -126,6 +153,7 @@ int main(void){
   int ok=1;
   ok &= a_shared_graph_is_walked_once_per_array();
   ok &= a_cycle_terminates();
-  if(ok) printf("vm gc: shared graphs and cycles are walked once per array\n");
+  ok &= an_empty_pool_skips_roots_and_reused_slots_resume_collection();
+  if(ok) printf("vm gc: shared graphs and cycles are walked once per array; empty pools skip roots\n");
   return ok?0:1;
 }

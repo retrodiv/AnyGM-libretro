@@ -9574,7 +9574,7 @@ static int resident_integer_endpoint_sprite_part(void){
             metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays &&
             !metrics.journal_bytes && !metrics.retained_mutable_bytes &&
             !memcmp(shadow,r->fb,sizeof shadow));
-    }else if(excluded==2 || excluded==3 || excluded==4 || excluded==6 ||
+    }else if(excluded==2 || excluded==3 || excluded==4 || excluded==6 || excluded==7 ||
              excluded==8 || excluded==9 || excluded==10 || excluded==11 ||
              (excluded>=13 && excluded<=16)){
       /* The function-wide part path supersedes these old admission limits;
@@ -9583,6 +9583,10 @@ static int resident_integer_endpoint_sprite_part(void){
       CHECK(r->resident_application_pass && !fake.readbacks);
       CHECK(gml_render_scene_submit_pending(r));
       gml_render_resource_journal_metrics(gml_render_scene_target_resource_ensure(r),&metrics);
+      /* Flat fog now has an explicit point-packet owner; preserve its colour,
+       * alpha policy and device authority instead of requiring the old fence. */
+      if(excluded==7) CHECK(fake.last_quad.sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_FLAT_RGB &&
+        fake.last_quad.corner_colour[0]==(0xFF000000u|r->fog_flat_rgb) && r->fog_flat);
       if(fake.last_source_count!=1u) fprintf(stderr,"part new no-source: case=%d world=%d opcode=%u\n",excluded,world,fake.last_opcode);
       CHECK((fake.last_source_count==1u || (excluded==14 && fake.last_opcode==GML_RENDER_OP_CLEAR)) &&
         metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
@@ -16664,9 +16668,9 @@ static int resident_lazy_native_atlas(void){
 
 static int resident_numbered_rotated_native_quad(void){
   enum { W=256,H=192,SW=128,SH=96 };
-  for(unsigned owner=0;owner<2u;owner++) for(unsigned angle=0;angle<1u+owner;angle++)
+  for(unsigned owner=0;owner<3u;owner++) for(unsigned angle=0;angle<(owner==1u?2u:1u);angle++)
   for(unsigned signs=0;signs<4u;signs++)
-  for(unsigned fog=0;fog<(owner && !angle?2u:1u);fog++){
+  for(unsigned fog=0;fog<(owner==1u && !angle?2u:1u);fog++){
     GmlRender *r=calloc(1,sizeof *r);GmlWin content={.bytecode=17};
     FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
     uint32_t *screen=calloc(W*H,sizeof *screen),*shadow=calloc(W*H,sizeof *shadow);
@@ -16679,7 +16683,7 @@ static int resident_numbered_rotated_native_quad(void){
       r->atlas[0].px[p*4u]=(uint8_t)(p*7u);
       r->atlas[0].px[p*4u+1u]=(uint8_t)(p*13u);
       r->atlas[0].px[p*4u+2u]=(uint8_t)(p*23u);
-      r->atlas[0].px[p*4u+3u]=128u;
+      r->atlas[0].px[p*4u+3u]=owner==2u?((p&3u)==1u?0u:255u):128u;
     }
     r->n_tpag=r->n_spr=1;
     r->tpag[0]=(GmlTpag){.sw=SW,.sh=SH,.tw=SW,.th=SH,.bw=SW,.bh=SH};
@@ -16687,10 +16691,10 @@ static int resident_numbered_rotated_native_quad(void){
     r->spr[0].frame=calloc(1,sizeof(int));CHECK(r->spr[0].frame);
     device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
     CHECK(gml_render_begin_resident_base(r,screen,W,H,0,0));
-    if(!owner){
+    if(owner!=1u){
       int surface=gml_surface_create(r,W,H);CHECK(surface>0 && gml_surface_set_target(r,surface));
     }
-    gml_render_set_pending_fill(r,owner?0xFF403050u:0xA5403050u);gml_render_flush_pending_fill(r);
+    gml_render_set_pending_fill(r,owner==1u?0xFF403050u:0xA5403050u);gml_render_flush_pending_fill(r);
     CHECK(gml_render_scene_submit_pending(r));
     memcpy(shadow,r->fb,W*H*sizeof *shadow);
     uint64_t before=fake.textured_families[GML_RENDER_SCENE_SPRITE];
@@ -16702,13 +16706,14 @@ static int resident_numbered_rotated_native_quad(void){
     r->blendmode=fog?3:0;r->alpha_test_enable=(int)fog;r->alpha_test_ref=0;
     double xs=angle?4.0:1.75,ys=angle?4.0:1.25;
     gml_draw_sprite_ext(r,0,0,128,96,signs&1u?-xs:xs,
-                       signs&2u?-ys:ys,angle?0:31,0xD0A070u,.55);
+                       signs&2u?-ys:ys,angle?0:31,0xD0A070u,owner==2u?1.0:.55);
     CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r));
     CHECK(fake.textured_families[GML_RENDER_SCENE_SPRITE]==before+1u);
+    if(owner==2u) CHECK(fake.last_quad.sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION);
     CHECK(fake.last_quad.shape==GML_RENDER_QUAD_GENERAL && !fake.last_quad.span_active &&
       fake.last_filter==GML_RENDER_FILTER_NEAREST && fake.last_write_mask==(owner?15u:7u));
     CHECK(!fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,W*H*sizeof *shadow));
-    if(owner) CHECK(r->fb_opaque_known && r->fb_all_opaque);
+    if(owner==1u) CHECK(r->fb_opaque_known && r->fb_all_opaque);
     CHECK(r->fog_flat==(int)fog && r->fog_flat_rgb==0x315A9Cu &&
       r->blendmode==(fog?3:0) && r->alpha_test_enable==(int)fog && !r->alpha_test_ref);
     CHECK(fake.last_target_image.identity==previous.identity &&
@@ -16941,6 +16946,26 @@ static int resident_flat_fog_sprite_function(void){
     CHECK(fake.last_batch_operations>=8u && fake.last_quad.corner_colour[0]==0xFF315A9Cu);
     CHECK(!memcmp(shadow,r->fb,sizeof shadow) && r->fog_flat && r->interp==(int)interpolation &&
       r->blendmode==(preset?3:0));
+    if(generation==5u && kind==3u && !gui && !interpolation && !preset){
+      submitted=fake.submits;
+      for(unsigned draw=0;draw<8u;draw++)
+        gml_draw_sprite_part_ext(r,0,0,1,1,1,2,12,12,1,1,0x103070u,.375);
+      CHECK(r->resident_application_pass && !fake.readbacks && !fake.rgb_queries &&
+        gml_render_scene_submit_pending(r) && fake.submits==submitted+1);
+      CHECK(fake.last_batch_operations>=8u &&
+        fake.last_quad.sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_FLAT_RGB &&
+        fake.last_quad.corner_colour[0]==0x60315A9Cu && !memcmp(shadow,r->fb,sizeof shadow));
+      r->fog_flat=0;submitted=fake.submits;
+      for(unsigned draw=0;draw<8u;draw++)
+        gml_draw_sprite_ext(r,0,0,12.25,12.5,1,1,0,0xFFFFFFu,.375);
+      CHECK(r->resident_application_pass && !fake.readbacks && !fake.rgb_queries &&
+        gml_render_scene_submit_pending(r) && fake.submits==submitted+1);
+      CHECK(fake.last_batch_operations>=8u &&
+        fake.last_quad.sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND &&
+        fake.last_quad.x[0]==11.0 && fake.last_quad.x[1]==13.0 &&
+        fake.last_quad.y[0]==12.0 && fake.last_quad.y[2]==14.0 &&
+        fake.last_quad.corner_colour[0]==0x60FFFFFFu && !memcmp(shadow,r->fb,sizeof shadow));
+    }
     gml_render_free(r);free(r);
   }
   return 1;
