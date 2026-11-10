@@ -2307,9 +2307,15 @@ static int resident_modern_point_regions(GmlRender *r,GmlTpag *page,
   uint32_t nx,ny;
   double bias_x=0.0,bias_y=0.0;
   int clamp=operation->scene_family==GML_RENDER_SCENE_TILE && page->project_authored_edges;
-  int nearest_sprite=operation->scene_family==GML_RENDER_SCENE_SPRITE &&
+  /* Immutable modern glyphs share the already qualified sampler-edge
+   * fences. A fractional camera phase must not turn one cell into a
+   * Cartesian product of one-texel packets. Keep other text owners intact. */
+  int nearest_cell=(operation->scene_family==GML_RENDER_SCENE_SPRITE ||
+    (operation->scene_family==GML_RENDER_SCENE_TEXT && source->borrowed_immutable && xs>0.0 && ys>0.0 &&
+     !r->classic && !r->interp && !r->fog_flat && r->alphablend && !r->blendmode &&
+     anygm_policy_has_modern_layer_semantics(r->win))) &&
     original->sampling.filter==GML_RENDER_FILTER_NEAREST;
-  int local_edges=clamp || ((operation->scene_family==GML_RENDER_SCENE_BACKGROUND || nearest_sprite) &&
+  int local_edges=clamp || ((operation->scene_family==GML_RENDER_SCENE_BACKGROUND || nearest_cell) &&
     original->sampling.filter==GML_RENDER_FILTER_NEAREST);
   int coherent=0;
   if(maps){
@@ -2367,17 +2373,17 @@ static int resident_modern_point_regions(GmlRender *r,GmlTpag *page,
     }
     if(stable_x && !constant_x){
       nx=1u;columns[0]=(ModernPointRegion){x0,x1,-1};
-    } else if(stable_x && (operation->scene_family==GML_RENDER_SCENE_BACKGROUND || nearest_sprite || clamp)){
+    } else if(stable_x && (operation->scene_family==GML_RENDER_SCENE_BACKGROUND || nearest_cell || clamp)){
       nx=modern_bounded_point_axis_regions(left,xs,phase_x,page->sw,x0,x1,bias_x,clamp,columns);
     } else nx=modern_point_axis_regions(left,xs,phase_x,page->sw,x0,x1,constant_x,clamp,local_edges,columns);
     if(stable_y && !constant_y){
       ny=1u;rows[0]=(ModernPointRegion){y0,y1,-1};
-    } else if(stable_y && (operation->scene_family==GML_RENDER_SCENE_BACKGROUND || nearest_sprite || clamp)){
+    } else if(stable_y && (operation->scene_family==GML_RENDER_SCENE_BACKGROUND || nearest_cell || clamp)){
       ny=modern_bounded_point_axis_regions(top,ys,phase_y,page->sh,y0,y1,bias_y,clamp,rows);
     } else ny=modern_point_axis_regions(top,ys,phase_y,page->sh,y0,y1,constant_y,clamp,local_edges,rows);
   }
   uint32_t count=nx*ny;
-  if((!count || count>2048u) && !maps && nearest_sprite && !clamp){
+  if((!count || count>2048u) && !maps && nearest_cell && !clamp){
     nx=modern_coherent_axis_regions(left,xs,phase_x,page->sw,fmax(0.0,original->x[0]),
       fmin(r->fbw,original->x[1]),columns,column_biases);
     ny=modern_coherent_axis_regions(top,ys,phase_y,page->sh,fmax(0.0,original->y[0]),

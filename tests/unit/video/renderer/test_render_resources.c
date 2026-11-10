@@ -16764,6 +16764,50 @@ static int resident_sprite_function(int geometry){
 }
 
 /* Authority only; the real-context function matrix owns all RGBA comparisons. */
+/* Sampler edge fences keep a glyph bounded independently of its texel count.
+ * Actual-context pairs own pixel/alpha equivalence for the same placements. */
+static int resident_nearest_text_sampler_edges(void){
+  enum { W=96,H=80,SW=12,SH=10 };
+  const double phase[][2]={{0,0},{.25,.3},{.5,.5},{-.4,.2}};
+  const double scale[][2]={{1,1},{2,2},{4,1}};
+  for(unsigned offset=0;offset<4u;offset++) for(unsigned size=0;size<3u;size++)
+  for(unsigned owner=0;owner<2u;owner++) for(unsigned gui=0;gui<2u;gui++){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={.bytecode=17,.has_room_layers=1};
+    FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+    uint32_t screen[W*H]={0},shadow[W*H];CHECK(r && !gml_render_init(r,NULL));r->win=&content;
+    free(r->atlas[0].px);r->atlas[0].px=malloc(SW*SH*4u);CHECK(r->atlas[0].px);
+    r->atlas[0].w=SW;r->atlas[0].h=SH;
+    for(unsigned pixel=0;pixel<SW*SH;pixel++){
+      r->atlas[0].px[4u*pixel]=(uint8_t)(pixel*7u);
+      r->atlas[0].px[4u*pixel+1u]=(uint8_t)(pixel*13u);
+      r->atlas[0].px[4u*pixel+2u]=(uint8_t)(pixel*23u);
+      r->atlas[0].px[4u*pixel+3u]=(uint8_t)(pixel*31u);
+    }
+    device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
+    CHECK(gml_render_begin_resident_base(r,screen,W,H,0,0));
+    if(owner){int surface=gml_surface_create(r,W,H);CHECK(surface>0 && gml_surface_set_target(r,surface));}
+    if(gui) gml_render_gui_begin(r,W,H);
+    gml_render_set_pending_fill(r,0x40273859u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));memcpy(shadow,r->fb,sizeof shadow);
+    r->interp=0;r->blendmode=0;r->alphablend=1;
+    uint64_t before=fake.textured_families[GML_RENDER_SCENE_TEXT];
+    CHECK(gml_render_resident_font_glyph(r,0,0,0,SW,SH,8+phase[offset][0],6+phase[offset][1],
+      scale[size][0],scale[size][1],0xD0A070u,1));
+    CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r));
+    uint64_t packets=fake.textured_families[GML_RENDER_SCENE_TEXT]-before;
+    if(!packets || packets>9u) fprintf(stderr,"nearest text sampler edges: offset=%u size=%u owner=%u gui=%u packets=%llu\n",
+      offset,size,owner,gui,(unsigned long long)packets);
+    CHECK(packets && packets<=9u && fake.last_filter==GML_RENDER_FILTER_NEAREST &&
+      !fake.last_quad.span_active && !fake.readbacks && !fake.rgb_queries);
+    CHECK(!memcmp(shadow,r->fb,sizeof shadow) && !r->interp && !r->blendmode && r->alphablend);
+    GmlRenderJournalMetrics metrics={0};GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);CHECK(target);
+    gml_render_resource_journal_metrics(target,&metrics);
+    CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays && !metrics.journal_operations);
+    gml_render_abandon_device(r);gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int resident_flat_fog_sprite_function(void){
   enum { W=24,H=20 };
   const int generations[]={530,700,800,13,15,17};
@@ -20431,6 +20475,7 @@ int main(void){
     else if(!strcmp(selected,"large-rotated-rows")) passed=resident_large_rotated_sample_row_metadata();
     else if(!strcmp(selected,"numbered-rotated-native-quad")) passed=resident_numbered_rotated_native_quad();
     else if(!strcmp(selected,"flat-fog-sprite")) passed=resident_flat_fog_sprite_function();
+    else if(!strcmp(selected,"nearest-text-sampler-edges")) passed=resident_nearest_text_sampler_edges();
     else if(!strcmp(selected,"bounded-axis-screen")) passed=resident_bounded_axis_screen_sprite();
     else if(!strcmp(selected,"large-screen-byte-axis")) passed=resident_large_screen_byte_axis();
     else if(!strcmp(selected,"shaded-plane-authority")) passed=shaded_plane_preserves_device_target();
@@ -20663,6 +20708,7 @@ int main(void){
   passed+=resident_sprite_axis_frontier(0);
   passed+=resident_sprite_axis_frontier(1);
   passed+=resident_flat_fog_sprite_function();
+  passed+=resident_nearest_text_sampler_edges();
   passed+=resident_first_generation_rotated_point_sprite_function();
   passed+=resident_tiled_sprite_function();
   passed+=resident_tiled_sprite_underlay_noops();
@@ -20776,6 +20822,6 @@ int main(void){
   passed+=skip_cpu_draw_policy_preserves_observers();
   passed+=resident_numbered_rotated_native_quad();
   passed+=resident_unit_texel_magnification();
-  printf("render resource cases: passed=%d failed=%d\n",passed,325-passed);
-  return passed==325?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,326-passed);
+  return passed==326?EXIT_SUCCESS:EXIT_FAILURE;
 }
