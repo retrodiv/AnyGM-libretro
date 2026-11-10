@@ -934,11 +934,36 @@ int collision_shape_list_query(GmlVM *vm, int kind, double *p, GmlVal target,
   return found;
 }
 
+static GmlVal motion_grid_draw(GmlVM *vm,GmlVal *args,int count){
+  double handle=N(args,count,0);
+  GmlRender *render=(GmlRender*)vm->render;
+  if(!render || count<1 || !isfinite(handle) || handle<0 || handle>=GML_MP_GRID_MAX)
+    return vreal(0);
+  GmlBuiltinState *state=builtin_state_ensure(vm);
+  GmlMpGrid *grid=state?&state->mp_grid[(int)handle]:NULL;
+  if(!grid || !grid->live || !grid->cell) return vreal(0);
+  GmlRenderTargetMetrics target=builtin_target_metrics(render);
+  for(int row=0;row<grid->vc;row++) for(int column=0;column<grid->hc;column++){
+    double left=grid->left+(double)column*grid->cw;
+    double top=grid->top+(double)row*grid->ch;
+    double x0=floor(draw_gui_x(render,left)-target.camera_x);
+    double y0=floor(draw_gui_y(render,top)-target.camera_y);
+    double x1=floor(draw_gui_x(render,left+grid->cw)-target.camera_x)-1;
+    double y1=floor(draw_gui_y(render,top+grid->ch)-target.camera_y)-1;
+    if(!isfinite(x0) || !isfinite(y0) || !isfinite(x1) || !isfinite(y1) ||
+       x0<INT_MIN || y0<INT_MIN || x1>INT_MAX || y1>INT_MAX || x1<x0 || y1<y0)
+      continue;
+    uint32_t colour=grid->cell[(size_t)row*grid->hc+column]?0x0000FFu:0x00FF00u;
+    gml_render_primitive_rectangle(render,(int)x0,(int)y0,(int)x1,(int)y1,colour,0);
+  }
+  return vreal(1);
+}
+
 GmlVal gml_builtin_try_collision_planning(GmlVM *vm, const char *nm, GmlVal *a, int n){
   GmlRender *R=(GmlRender*)vm->render;
   (void)R;
-  /* ---- mp_grid: motion-planning grids (A*). Transient AI aids are owned by this VM and are not
-   * serialized because the runtime rebuilds them for each room or level. ---- */
+  if(!strcmp(nm,"mp_grid_draw")) return motion_grid_draw(vm,a,n);
+  /* Motion-planning grids share the existing VM-owned, serialized builtin state. */
   if(!strcmp(nm,"mp_grid_create")||!strcmp(nm,"mp_grid_destroy")||
      !strcmp(nm,"mp_grid_path")||!strcmp(nm,"mp_grid_add_instances")||
      !strncmp(nm,"mp_grid_",8)){
@@ -963,20 +988,27 @@ GmlVal gml_builtin_try_collision_planning(GmlVM *vm, const char *nm, GmlVal *a, 
     GmlMpGrid *g = (gi>=0 && gi<GML_MP_GRID_MAX && mp[gi].live) ? &mp[gi] : NULL;
     if(!g) return vreal(0);
     if(!strcmp(sub,"destroy")){ free(g->cell); memset(g,0,sizeof *g); return vreal(0); }
-    if(!strcmp(sub,"clear_all")){ memset(g->cell,0,(size_t)g->hc*g->vc); return vreal(0); }
-    if(!strcmp(sub,"add_cell")||!strcmp(sub,"clear_cell")){
+    if(!strcmp(nm,"mp_grid_clear_all")){ memset(g->cell,0,(size_t)g->hc*g->vc); return vreal(0); }
+    if(!strcmp(nm,"mp_grid_add_cell")||!strcmp(nm,"mp_grid_clear_cell")){
       int h=(int)N(a,n,1), v=(int)N(a,n,2);
       if(h>=0&&h<g->hc&&v>=0&&v<g->vc) g->cell[v*g->hc+h]=(sub[0]=='a');
       return vreal(0); }
-    if(!strcmp(sub,"get_cell")){ int h=(int)N(a,n,1), v=(int)N(a,n,2);
-      return vreal((h>=0&&h<g->hc&&v>=0&&v<g->vc)? -(double)g->cell[v*g->hc+h] : -1); }
-    if(!strcmp(sub,"add_rectangle")||!strcmp(sub,"clear_rectangle")){
-      int h0=(int)floor((N(a,n,1)-g->left)/g->cw), v0=(int)floor((N(a,n,2)-g->top)/g->ch);
-      int h1=(int)floor((N(a,n,3)-g->left)/g->cw), v1=(int)floor((N(a,n,4)-g->top)/g->ch);
-      if(h0>h1){int t=h0;h0=h1;h1=t;} if(v0>v1){int t=v0;v0=v1;v1=t;}
+    if(!strcmp(nm,"mp_grid_get_cell")){ int h=(int)N(a,n,1), v=(int)N(a,n,2);
+      return vreal((h>=0&&h<g->hc&&v>=0&&v<g->vc)? -(int)g->cell[v*g->hc+h] : -1); }
+    if(!strcmp(nm,"mp_grid_add_rectangle")||!strcmp(nm,"mp_grid_clear_rectangle")){
+      double x0=N(a,n,1),y0=N(a,n,2),x1=N(a,n,3),y1=N(a,n,4);
+      if(!isfinite(x0) || !isfinite(y0) || !isfinite(x1) || !isfinite(y1) ||
+         !isfinite(g->left) || !isfinite(g->top)) return vreal(0);
+      double first_h=floor((fmin(x0,x1)-g->left)/g->cw);
+      double first_v=floor((fmin(y0,y1)-g->top)/g->ch);
+      double last_h=floor((fmax(x0,x1)-g->left)/g->cw);
+      double last_v=floor((fmax(y0,y1)-g->top)/g->ch);
+      if(last_h<0 || last_v<0 || first_h>=g->hc || first_v>=g->vc) return vreal(0);
+      int h0=(int)fmax(0,first_h),v0=(int)fmax(0,first_v);
+      int h1=(int)fmin(g->hc-1,last_h),v1=(int)fmin(g->vc-1,last_v);
       uint8_t val = (sub[0]=='a');
       for(int v=v0;v<=v1;v++) for(int h=h0;h<=h1;h++)
-        if(h>=0&&h<g->hc&&v>=0&&v<g->vc) g->cell[v*g->hc+h]=val;
+        g->cell[v*g->hc+h]=val;
       return vreal(0); }
     if(!strcmp(sub,"add_instances")){
       int obj=(int)N(a,n,1);
@@ -1057,7 +1089,6 @@ GmlVal gml_builtin_try_collision_planning(GmlVM *vm, const char *nm, GmlVal *a, 
       free(prev); free(cost); free(heap); free(fsco);
       return vreal(found);
     }
-    if(!strcmp(sub,"draw")) return vreal(0);
     return vreal(0);
   }
   /* runtime paths (path_add / mp_grid_path targets). Appended to vm->paths; indices stay stable. */

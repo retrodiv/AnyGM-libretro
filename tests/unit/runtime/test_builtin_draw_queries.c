@@ -27,6 +27,87 @@ static int struct_number_is(GmlInstance *value,const char *name,double number){
   GmlVal *field=value?gml_varmap_get(&value->vars,name):NULL;
   return field && real_is(*field,number);
 }
+static int motion_grid_edits_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlVM vm={0};
+    GmlVal create[]={vreal(10),vreal(20),vreal(4),vreal(3),vreal(3),vreal(2)};
+    GmlVal grid=gml_builtin_call(&vm,"mp_grid_create",create,6);
+    GmlVal cell[]={grid,vreal(2),vreal(1)};
+    GmlVal empty=query(&vm,"mp_grid_get_cell",cell,3,cached,&ok);
+    ok &= real_is(empty,0) && !signbit(empty.d);
+    query(&vm,"mp_grid_add_cell",cell,3,cached,&ok);
+    ok &= real_is(query(&vm,"mp_grid_get_cell",cell,3,cached,&ok),-1);
+    query(&vm,"mp_grid_clear_cell",cell,3,cached,&ok);
+    empty=query(&vm,"mp_grid_get_cell",cell,3,cached,&ok);
+    ok &= real_is(empty,0) && !signbit(empty.d);
+    GmlVal rectangle[]={grid,vreal(19),vreal(24),vreal(13),vreal(22)};
+    query(&vm,"mp_grid_add_rectangle",rectangle,5,cached,&ok);
+    for(int row=0;row<3;row++) for(int column=0;column<4;column++){
+      cell[1]=vreal(column);cell[2]=vreal(row);
+      ok &= real_is(query(&vm,"mp_grid_get_cell",cell,3,cached,&ok),
+                    row>=1 && column>=1?-1:0);
+    }
+    rectangle[1]=rectangle[3]=vreal(16);rectangle[2]=rectangle[4]=vreal(22);
+    query(&vm,"mp_grid_clear_rectangle",rectangle,5,cached,&ok);
+    cell[1]=vreal(2);cell[2]=vreal(1);
+    ok &= real_is(query(&vm,"mp_grid_get_cell",cell,3,cached,&ok),0);
+    cell[1]=vreal(3);
+    ok &= real_is(query(&vm,"mp_grid_get_cell",cell,3,cached,&ok),-1);
+    query(&vm,"mp_grid_clear_all",&grid,1,cached,&ok);
+    ok &= real_is(query(&vm,"mp_grid_get_cell",cell,3,cached,&ok),0);
+    cell[1]=vreal(-1);
+    ok &= real_is(query(&vm,"mp_grid_get_cell",cell,3,cached,&ok),-1);
+    GmlVal huge[]={grid,vreal(-1e100),vreal(-1e100),vreal(1e100),vreal(1e100)};
+    query(&vm,"mp_grid_add_rectangle",huge,5,cached,&ok);
+    for(int row=0;row<3;row++) for(int column=0;column<4;column++){
+      cell[1]=vreal(column);cell[2]=vreal(row);
+      ok &= real_is(query(&vm,"mp_grid_get_cell",cell,3,cached,&ok),-1);
+    }
+    query(&vm,"mp_grid_clear_rectangle",huge,5,cached,&ok);
+    for(int row=0;row<3;row++) for(int column=0;column<4;column++){
+      cell[1]=vreal(column);cell[2]=vreal(row);
+      ok &= real_is(query(&vm,"mp_grid_get_cell",cell,3,cached,&ok),0);
+    }
+    gml_vm_free(&vm);
+  }
+  return ok;
+}
+static int motion_grid_drawing_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++) for(int camera=0;camera<2;camera++){
+    GmlRender *render=calloc(1,sizeof *render);
+    if(!render || gml_render_init(render,NULL)){ free(render); return 0; }
+    uint32_t screen[20*12];
+    for(unsigned index=0;index<20u*12u;index++) screen[index]=0xFF26486Au;
+    gml_render_begin(render,screen,20,12,camera,camera);
+    render->color=0x123456u;render->alpha=1;
+    GmlVM vm={.render=render};
+    GmlVal create[]={vreal(3),vreal(2),vreal(4),vreal(3),vreal(3),vreal(2)};
+    GmlVal grid=gml_builtin_call(&vm,"mp_grid_create",create,6);
+    GmlVal cell[]={grid,vreal(1),vreal(1)};
+    gml_builtin_call(&vm,"mp_grid_add_cell",cell,3);
+    ok &= real_is(query(&vm,"mp_grid_draw",&grid,1,cached,&ok),1);
+    gml_render_flush_pending_fill(render);
+    for(int y=0;y<12;y++) for(int x=0;x<20;x++){
+      int gx=x+camera-3,gy=y+camera-2;
+      uint32_t expected=0xFF26486Au;
+      if(gx>=0 && gx<12 && gy>=0 && gy<6)
+        expected=gx/3==1 && gy/2==1?0xFFFF0000u:0xFF00FF00u;
+      if(screen[y*20+x]!=expected) ok=0;
+    }
+    ok &= render->color==0x123456u && render->alpha==1;
+    render->alpha=0;
+    uint32_t before[20*12];memcpy(before,screen,sizeof before);
+    ok &= real_is(query(&vm,"mp_grid_draw",&grid,1,cached,&ok),1);
+    gml_render_flush_pending_fill(render);
+    ok &= !memcmp(before,screen,sizeof before) && render->alpha==0;
+    GmlVal invalid=vreal(-1);
+    ok &= real_is(query(&vm,"mp_grid_draw",&invalid,1,cached,&ok),0);
+    vm.render=NULL;gml_vm_free(&vm);gml_render_free(render);free(render);
+  }
+  return ok;
+}
 static int surface_pixel_alpha_case(void){
   int ok=1;
   const uint32_t pixels[]={0x00123456u,0x7FABCDEFu,0xFF102030u,0x800100FEu};
@@ -776,7 +857,9 @@ int main(int argc,char **argv){
   const char *filter=NULL;
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2];
   else if(argc!=1) return EXIT_FAILURE;
-  const AnygmTestCase cases[]={{"surface_pixel_alpha",surface_pixel_alpha_case},
+  const AnygmTestCase cases[]={{"motion_grid_edits",motion_grid_edits_case},
+    {"motion_grid_drawing",motion_grid_drawing_case},
+    {"surface_pixel_alpha",surface_pixel_alpha_case},
     {"buffer_surface_transfer",buffer_surface_transfer_case},
     {"vertex_format_information",vertex_format_information_case},
     {"vertex_resource_existence",vertex_resource_existence_case},
