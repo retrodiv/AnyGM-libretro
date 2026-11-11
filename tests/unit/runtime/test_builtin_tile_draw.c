@@ -320,6 +320,75 @@ static int legacy_dynamic_tile_scale(void){
   }
   return ok;
 }
+static GmlVal tile_query(TileFixture *f,const char *name,GmlVal arg,int cached){
+  if(!cached) return gml_builtin_call(&f->vm,name,&arg,1);
+  int id=gml_builtin_fast_id(&f->vm,name);
+  return id>0?gml_builtin_call_fast_id(&f->vm,id,name,&arg,1):vundef();
+}
+static int tile_query_ids(TileFixture *f,double depth,const double *expected,int count,int cached){
+  GmlVal result=tile_query(f,"tile_get_ids_at_depth",vreal(depth),cached);
+  int ok=gml_val_array_length(result)==count;
+  for(int i=0;i<count;i++){
+    GmlVal value=gml_arr_get(result,i);
+    ok &= value.t==V_REAL && value.d==expected[i];
+  }
+  gml_values_release_owned(&result,1);
+  return ok;
+}
+static int legacy_tile_queries(void){
+  static const double none[]={-1},authored_id=10000000,other_id=10000001;
+  int ok=1;
+  for(int generation=0;generation<4;generation++) for(int cached=0;cached<2;cached++){
+    TileFixture f; setup(&f);
+    uint8_t data[288]={0};
+    char *strings[]={"room"}; uint32_t string_offsets[]={240};
+    GmlWin win={.data=data,.size=sizeof data,.n_chunks=1,
+      .strs=strings,.str_charoff=string_offsets,.n_strs=1,
+      .bytecode=generation?13+generation:16,.classic_version=generation?0:800};
+    win.chunks[0]=(GmlChunk){"ROOM",16,224};
+    word(data+16,1); word(data+20,32); word(data+32,240);
+    word(data+40,16); word(data+44,16); word(data+84,100);
+    word(data+100,3); word(data+104,120); word(data+108,168); word(data+112,280);
+    word(data+120,3); word(data+124,4);
+    word(data+128,5); word(data+132,7); word(data+136,11);
+    word(data+148,17); word(data+152,(uint32_t)authored_id);
+    word(data+196,21); word(data+200,(uint32_t)other_id);
+    f.vm.win=&win;
+    GmlVal args[]={vreal(3),vreal(13),vreal(19),vreal(2),vreal(2),
+                   vreal(27),vreal(29),vreal(17)};
+    GmlVal tile=gml_builtin_call(&f.vm,"tile_add",args,8);
+    GmlRtElem *element=gml_rt_elem_find(&f.vm,(int)tile.d);
+    if(!element){ cleanup(&f); return 0; }
+    element->visible=0;
+    GmlVal authored=vreal(authored_id);
+    ok &= tile_query(&f,"tile_get_background",authored,cached).d==5;
+    ok &= tile_query(&f,"tile_get_left",authored,cached).d==7;
+    ok &= tile_query(&f,"tile_get_top",authored,cached).d==11;
+    ok &= tile_query(&f,"tile_get_background",tile,cached).d==3;
+    ok &= tile_query(&f,"tile_get_left",tile,cached).d==13;
+    ok &= tile_query(&f,"tile_get_top",tile,cached).d==19;
+    const double both[]={authored_id,tile.d},dynamic[]={tile.d};
+    ok &= tile_query_ids(&f,17,both,2,cached);
+    ok &= tile_query_ids(&f,21,&other_id,1,cached);
+    ok &= tile_query_ids(&f,99,none,1,cached);
+
+    gml_tile_layer_hide(&f.vm,17,1);
+    gml_tile_layer_depth(&f.vm,17,23);
+    gml_tile_layer_shift(&f.vm,17,2.75,-1.75);
+    ok &= tile_query_ids(&f,17,none,1,cached);
+    ok &= tile_query_ids(&f,23,both,2,cached);
+    gml_tile_layer_delete_at(&f.vm,23,5,3);
+    ok &= tile_query_ids(&f,23,dynamic,1,cached);
+    ok &= tile_query(&f,"tile_get_left",authored,cached).d==0;
+    gml_tile_layer_delete(&f.vm,17);
+    ok &= tile_query_ids(&f,23,none,1,cached);
+    ok &= tile_query(&f,"tile_get_top",tile,cached).d==0;
+    ok &= tile_query_ids(&f,21,&other_id,1,cached);
+    cleanup(&f);
+  }
+  if(ok) puts("legacy tile queries: authored and dynamic sources, depth, visibility and deletion passed");
+  return ok;
+}
 static int modern_dynamic_tile_resource(void){
   int ok=1;
   for(int revision=15;revision<=17;revision+=2){
@@ -376,6 +445,7 @@ int main(int argc,char **argv){
     {"bounded_empty_maps",bounded_empty_maps},{"rectangular_tile_extent",rectangular_tile_extent},
     {"legacy_dynamic_tiles",legacy_dynamic_tiles},
     {"legacy_dynamic_tile_scale",legacy_dynamic_tile_scale},
+    {"legacy_tile_queries",legacy_tile_queries},
     {"modern_dynamic_tile_resource",modern_dynamic_tile_resource}};
   const AnygmTestGroup group={"tile_draw",cases,sizeof cases/sizeof cases[0]};
   const char *filter=NULL;

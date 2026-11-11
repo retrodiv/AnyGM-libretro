@@ -2580,6 +2580,93 @@ void gml_vm_rooms_step_timelines(GmlVM *vm, int count){
   }
 }
 
+/* Authored legacy tiles are immutable ROOM records. Dynamic tiles use runtime
+ * layer elements. Both participate in the current room's depth queries. */
+static uint32_t legacy_tile_records(GmlVM *vm, uint32_t *list){
+  GmlRoom room;
+  if(gml_vm_room_get(vm,vm->room_index,&room)!=0 || !room.tile_ptr ||
+     room.tile_ptr>vm->win->size || vm->win->size-room.tile_ptr<4) return 0;
+  uint32_t count=gml_vm_read_u32_le(vm->win->data,room.tile_ptr);
+  if(count>=100000 || count>(vm->win->size-room.tile_ptr-4)/4) return 0;
+  *list=room.tile_ptr;
+  return count;
+}
+
+static int legacy_tile_layer_query(GmlVM *vm, double *depth, double *x, double *y){
+  double authored_depth=trunc(*depth);
+  for(int i=0;i<vm->n_tile_mut;i++){
+    if(vm->tile_mut[i].depth!=authored_depth) continue;
+    if(vm->tile_mut[i].flags&GML_VM_TILE_MUT_DELETED) return 0;
+    if(vm->tile_mut[i].has_remap) *depth=vm->tile_mut[i].remap;
+    if(x) *x+=trunc(vm->tile_mut[i].dx);
+    if(y) *y+=trunc(vm->tile_mut[i].dy);
+    break;
+  }
+  return 1;
+}
+
+static const uint8_t *legacy_tile_record(GmlVM *vm, uint32_t list, uint32_t index){
+  const uint8_t *data=vm->win->data;
+  uint32_t offset=gml_vm_read_u32_le(data+list+4+4*index,0);
+  return offset && offset<=vm->win->size && vm->win->size-offset>=48?data+offset:NULL;
+}
+
+static int legacy_tile_record_depth(GmlVM *vm, const uint8_t *record, double *depth){
+  *depth=(int32_t)gml_vm_read_u32_le(record,28);
+  double x=(int32_t)gml_vm_read_u32_le(record,0),y=(int32_t)gml_vm_read_u32_le(record,4);
+  if(!legacy_tile_layer_query(vm,depth,&x,&y)) return 0;
+  for(int i=0;i<vm->n_tile_del_at;i++)
+    if(vm->tile_del_at[i].depth==*depth &&
+       vm->tile_del_at[i].x==x && vm->tile_del_at[i].y==y) return 0;
+  return 1;
+}
+
+static int legacy_tile_element_depth(GmlVM *vm, const GmlRtElem *tile, double *depth){
+  GmlRtLayer *layer=gml_rt_layer_find(vm,tile->layer);
+  if(!layer) return 0;
+  *depth=layer->depth;
+  return legacy_tile_layer_query(vm,depth,NULL,NULL);
+}
+
+int gml_legacy_tile_source(GmlVM *vm, double id, int source[3]){
+  if(!isfinite(id) || id<0 || id>UINT32_MAX) return 0;
+  id=trunc(id);
+  GmlRtElem *tile=id<=INT_MAX?gml_rt_elem_find(vm,(int)id):NULL;
+  double depth;
+  if(tile && tile->type==7 && legacy_tile_element_depth(vm,tile,&depth)){
+    source[0]=tile->sprite; source[1]=tile->sx; source[2]=tile->sy;
+    return 1;
+  }
+  uint32_t list=0,count=legacy_tile_records(vm,&list);
+  for(uint32_t i=0;i<count;i++){
+    const uint8_t *record=legacy_tile_record(vm,list,i);
+    if(!record || gml_vm_read_u32_le(record,32)!=id ||
+       !legacy_tile_record_depth(vm,record,&depth)) continue;
+    for(int j=0;j<3;j++) source[j]=(int32_t)gml_vm_read_u32_le(record,8+4*j);
+    return 1;
+  }
+  return 0;
+}
+
+GmlVal gml_legacy_tile_ids_at_depth(GmlVM *vm, double depth){
+  GmlVal ids=gml_arr_new(0,vreal(0));
+  uint32_t list=0,count=legacy_tile_records(vm,&list);
+  for(uint32_t i=0;i<count;i++){
+    const uint8_t *record=legacy_tile_record(vm,list,i);
+    double tile_depth;
+    if(record && legacy_tile_record_depth(vm,record,&tile_depth) && tile_depth==depth)
+      gml_arr_set(ids,gml_val_array_length(ids),vreal(gml_vm_read_u32_le(record,32)));
+  }
+  for(int i=0;i<vm->n_rte;i++){
+    const GmlRtElem *tile=&vm->rte[i];
+    double tile_depth;
+    if(tile->used && tile->type==7 && legacy_tile_element_depth(vm,tile,&tile_depth) &&
+       tile_depth==depth) gml_arr_set(ids,gml_val_array_length(ids),vreal(tile->id));
+  }
+  if(!gml_val_array_length(ids)) gml_arr_set(ids,0,vreal(-1));
+  return ids;
+}
+
 /* ---- tile-layer runtime mutations (tile_layer_delete/depth/shift/hide/show) ----
  * GM tiles live in a tile layer keyed by depth. The room's tiles are read immutably from the
  * data.win each frame, so we keep a small list of per-depth mutations applied at gather time.

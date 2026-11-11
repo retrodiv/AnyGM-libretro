@@ -622,6 +622,8 @@ GmlInstance *gml_struct_find(GmlVM *vm, unsigned id);
 void         gml_instance_change(GmlVM *vm, GmlInstance *in, int obj, int perform_events);
 void         gml_path_start(GmlVM *vm, GmlInstance *in, int path, double speed, double endaction, int absolute);
 /* tile-layer runtime mutations (tile_layer_* builtins) on the current room's tiles */
+int          gml_legacy_tile_source(GmlVM *vm, double id, int source[3]);
+GmlVal       gml_legacy_tile_ids_at_depth(GmlVM *vm, double depth);
 void         gml_tile_layer_delete(GmlVM *vm, int depth);
 void         gml_tile_layer_depth(GmlVM *vm, int depth, int newdepth);
 void         gml_tile_layer_shift(GmlVM *vm, int depth, double dx, double dy);

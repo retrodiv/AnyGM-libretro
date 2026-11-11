@@ -5,6 +5,7 @@
 #include "gml_builtin_internal.h"
 #include "gml_render.h"
 #include "anygm_host.h"
+#include "anygm_compatibility.h"
 
 #include <limits.h>
 #include <math.h>
@@ -375,6 +376,16 @@ GmlVal gml_builtin_try_layers_early(GmlVM *vm, const char *nm, GmlVal *a, int n)
 GmlVal gml_builtin_try_layers(GmlVM *vm, const char *nm, GmlVal *a, int n){
   GmlRender *R=(GmlRender*)vm->render;
   (void)R;
+  if(!strcmp(nm,"tile_get_ids_at_depth"))
+    return gml_legacy_tile_ids_at_depth(vm,n>0?N(a,n,0):NAN);
+  if(!strcmp(nm,"tile_get_background") || !strcmp(nm,"tile_get_left") ||
+     !strcmp(nm,"tile_get_top")){
+    int background=!strcmp(nm,"tile_get_background");
+    int source[3];
+    if(n<1 || !gml_legacy_tile_source(vm,N(a,n,0),source))
+      return vreal(background && anygm_policy_has_modern_layer_semantics(vm->win)?-1:0);
+    return vreal(source[background?0:!strcmp(nm,"tile_get_left")?1:2]);
+  }
   if(!strcmp(nm,"tile_exists")){
     GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0));
     return vreal(e && e->type==7);
