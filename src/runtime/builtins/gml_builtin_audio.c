@@ -2113,6 +2113,7 @@ GmlVal gml_builtin_try_audio(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strncmp(nm,"FAudioGMS_",10)) return builtin_faudio_gms(vm,nm,a,n);
   /* ---- audio ---- */
   { GmlAudio *AU=(GmlAudio*)vm->audio;
+    if(!strcmp(nm,"audio_system_is_available")) return vreal(AU!=NULL);
     if(!strcmp(nm,"audio_play_music")){
       if(!anygm_policy_has_legacy_music_controls(vm->win)) return vundef();
       double sound=N(a,n,0),loop=N(a,n,1);

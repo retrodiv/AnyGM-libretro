@@ -1939,3 +1939,28 @@ int expect_legacy_music_controls(void){
   if(!ok) fprintf(stderr,"legacy music PCM/dispatch/fade/state controls failed\n");
   return ok;
 }
+
+int expect_audio_system_availability(void){
+  int ok=1;
+  for(int revision=13;revision<=17;revision+=4) for(int cached=0;cached<2;cached++){
+    GmlWin win={0}; win.bytecode=revision;
+    GmlVM vm={0}; vm.win=&win;
+    const char *name="audio_system_is_available";
+    int id=gml_builtin_fast_id(&vm,name);
+#define AVAILABILITY() (cached?gml_builtin_call_fast_id(&vm,id,name,NULL,0):gml_builtin_call(&vm,name,NULL,0))
+    ok=ok && id>0 && AVAILABILITY().d==0;
+    GmlAudio *audio=gml_audio_create(&win); vm.audio=audio;
+    const int16_t pcm[]={1200,-1200,2400,-2400};
+    int sound=gml_audio_add_pcm16(audio,pcm,4,1,44100,(const uint8_t*)pcm,sizeof pcm);
+    int16_t out[2]={0};
+    ok=ok && audio && AVAILABILITY().d==1 && gml_audio_play(audio,sound,1)>=1000000;
+    gml_audio_mix(audio,out,1); ok=ok && out[0]==1200 && out[1]==1200;
+    gml_audio_pause_all(audio,1); ok=ok && AVAILABILITY().d==1;
+    gml_audio_pause_all(audio,0); ok=ok && AVAILABILITY().d==1;
+    vm.audio=NULL; ok=ok && AVAILABILITY().d==0;
+    gml_vm_free(&vm); gml_audio_free(audio);
+#undef AVAILABILITY
+  }
+  if(!ok) fprintf(stderr,"native audio context availability fixture failed\n");
+  return ok;
+}

@@ -100,6 +100,7 @@ int main(int argc,char **argv){
     {"dynamic_extension_state",expect_dynamic_audio_extension_state},
     {"builtin_sound_fade",expect_builtin_sound_fade},
     {"legacy_music_controls",expect_legacy_music_controls},
+    {"system_availability",expect_audio_system_availability},
     {"saudio_portable_playback",expect_saudio_portable_playback},
     {"faudio_gms_portable_playback",expect_faudio_gms_portable_playback},
     {"wwise_portable_bank_state",expect_wwise_portable_bank_state},
