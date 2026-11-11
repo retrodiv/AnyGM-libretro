@@ -4,6 +4,7 @@
 #include "engine_internal.h"
 #include "gml_hash.h"
 #include "gml_image_codec.h"
+#include "gml_builtin.h"
 #include "stdio_vfs.h"
 #include "synthetic_content.h"
 #include <assert.h>
@@ -432,7 +433,220 @@ static void candidate_inputs(void){
   assert(!remove(ini) && !remove(path)); anygm_synthetic_content_destroy(&fixture);
 }
 
+static void renderer_declarations(void){
+  CheatSlot slots[GML_MAX_CHEATS];int count=0;char error[256],effective[4096];
+  assert(engine_boot_overrides_parse("renderer|cpu\nrenderer|opengl\nrenderer|auto\n",
+                                     slots,&count,error,sizeof error));
+  assert(count==1 && engine_boot_overrides_text(slots,count,effective,sizeof effective));
+  assert(!strcmp(effective,"renderer|auto\n"));
+  const char *invalid[]={"renderer|","renderer|GPU","renderer|opengl|cpu",
+                         "?crt renderer|opengl","?crt setcall|setting|nan|anchor_call",
+                         "setcall|setting|1junk|anchor_call","setcall||1|anchor_call",
+                         "setcall|setting|1|","setcall|setting|1|anchor_call|extra",
+                         "setcall|setting|1|anchor_call||refresh",
+                         "setcall|setting|1|anchor_call|obj_fixture|refresh|extra",
+                         "sync|obj_fixture:x=1","?crt sync|call|anchor_call",
+                         "?crt sync|obj_fixture:health=7",
+                         "?crt ?instance. sync|obj_fixture:x=1",
+                         "?crt layer_x|obj_fixture|layer|1",
+                         "?crt sync|layer_x|obj_fixture||1"};
+  for(size_t i=0;i<sizeof invalid/sizeof invalid[0];i++)
+    assert(!engine_boot_overrides_parse(invalid[i],slots,&count,error,sizeof error));
+  assert(engine_boot_overrides_parse("?crt setcall|setting|1|apply_a\n"
+    "?crt setcall|setting|2|apply_b|obj_fixture|refresh\n",
+    slots,&count,error,sizeof error) && count==1);
+  AnygmSyntheticContent fixture;assert(anygm_synthetic_content_create(&fixture));
+  char anchor[256],text[512];
+  snprintf(anchor,sizeof anchor,"%s/renderer.anygm",fixture.directory);
+  const char *name=strrchr(fixture.path,'/');name=name?name+1:fixture.path;
+  AnygmHostServices host={0};host.struct_size=sizeof host;
+  host.abi_version=ANYGM_HOST_SERVICES_VERSION;anygm_stdio_vfs_services_init(&host);
+  AnygmEngine *engine=NULL;assert(anygm_create(&host,&engine)==ANYGM_OK);
+  AnygmContentSource source={0};source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;source.path=anchor;
+  source.system_directory=fixture.directory;source.cache_directory=fixture.directory;
+  const char *values[]={"cpu","opengl","opengl_nofallback","auto"};
+  for(unsigned host_scene=0;host_scene<=2;host_scene++){
+    for(unsigned enabled=0;enabled<=1;enabled++){
+      for(unsigned declared=0;declared<4;declared++){
+        snprintf(text,sizeof text,"[anygm]\npayload=%s\n[overrides]\nrenderer|%s\n",
+                 name,values[declared]);write_text(anchor,text);
+        AnygmConfigDelta delta={0};delta.struct_size=sizeof delta;
+        delta.values.struct_size=sizeof delta.values;
+        delta.fields=ANYGM_CONFIG_SCENE_RENDERER|ANYGM_CONFIG_CONTENT_OVERRIDES;
+        delta.values.scene_renderer=host_scene;delta.values.content_overrides=enabled;
+        assert(anygm_set_config(engine,&delta)==ANYGM_OK);
+        AnygmContentInfo info={0};info.struct_size=sizeof info;
+        assert(anygm_load_prepare(engine,&source,NULL,&info)==ANYGM_OK);
+        unsigned want=enabled && declared<3?declared:host_scene;
+        assert(!!(info.flags&ANYGM_CONTENT_SCENE_OPENGL)==(want!=0));
+        assert(!!(info.flags&ANYGM_CONTENT_SCENE_NO_FALLBACK)==(want==2));
+        assert(engine->scene_renderer_session==(want?ANYGM_SCENE_RENDERER_OPENGL:0));
+        assert(engine->scene_skip_cpu_draws_session==(want==2));
+        /* A live option change cannot renegotiate the prepared session. */
+        delta.values.scene_renderer=2-host_scene;
+        delta.values.content_overrides=!enabled;
+        assert(anygm_set_config(engine,&delta)==ANYGM_OK);
+        assert(engine->scene_renderer_session==(want?ANYGM_SCENE_RENDERER_OPENGL:0));
+        assert(engine->scene_skip_cpu_draws_session==(want==2));
+        anygm_unload(engine);
+      }
+    }
+  }
+  anygm_destroy(engine);assert(!remove(anchor));anygm_synthetic_content_destroy(&fixture);
+}
+
+static void crt_setting_callback(void){
+  AnygmSyntheticContent fixture;assert(anygm_synthetic_anchor_script_content_create(&fixture));
+  char anchor[256],text[512];
+  snprintf(anchor,sizeof anchor,"%s/setting.anygm",fixture.directory);
+  const char *name=strrchr(fixture.path,'/');name=name?name+1:fixture.path;
+  snprintf(text,sizeof text,"[anygm]\npayload=%s\n[overrides]\n"
+           "?crt setcall|fixture_setting|1|anchor_call\n",name);write_text(anchor,text);
+  AnygmHostServices host={0};host.struct_size=sizeof host;
+  host.abi_version=ANYGM_HOST_SERVICES_VERSION;anygm_stdio_vfs_services_init(&host);
+  AnygmEngine *engine=NULL;assert(anygm_create(&host,&engine)==ANYGM_OK);
+  AnygmContentSource source={0};source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;source.path=anchor;
+  source.system_directory=fixture.directory;source.cache_directory=fixture.directory;
+  assert(anygm_load(engine,&source,NULL)==ANYGM_OK);frame(engine);
+  assert(gml_global_num(&engine->vm,"fixture_setting")==0);
+  assert(gml_global_num(&engine->vm,"fixture_anchor_calls")==0);
+  AnygmConfigDelta delta={0};delta.struct_size=sizeof delta;
+  delta.values.struct_size=sizeof delta.values;
+  delta.fields=ANYGM_CONFIG_ADJUST_CRT_TV|ANYGM_CONFIG_PRESENT_LOGICAL_RASTER;
+  delta.values.adjust_crt_tv=1;delta.values.present_logical_raster=1;
+  assert(anygm_set_config(engine,&delta)==ANYGM_OK);frame(engine);
+  assert(gml_global_num(&engine->vm,"fixture_setting")==1);
+  assert(gml_global_num(&engine->vm,"fixture_anchor_calls")==1);
+  for(int i=0;i<4;i++) frame(engine);
+  assert(gml_global_num(&engine->vm,"fixture_anchor_calls")==1);
+  size_t capacity=anygm_state_size(engine),on_size=0,off_size=0;
+  uint8_t *on=malloc(capacity),*off=malloc(capacity);assert(on && off);
+  assert(anygm_state_save(engine,on,capacity,&on_size)==ANYGM_OK);
+  delta.values.adjust_crt_tv=0;assert(anygm_set_config(engine,&delta)==ANYGM_OK);frame(engine);
+  assert(gml_global_num(&engine->vm,"fixture_setting")==0);
+  assert(gml_global_num(&engine->vm,"fixture_anchor_calls")==2);
+  assert(anygm_state_save(engine,off,capacity,&off_size)==ANYGM_OK);
+  assert(anygm_state_load(engine,on,on_size)==ANYGM_OK);
+  assert(gml_global_num(&engine->vm,"fixture_setting")==0);
+  assert(gml_global_num(&engine->vm,"fixture_anchor_calls")==2);
+  delta.values.adjust_crt_tv=1;assert(anygm_set_config(engine,&delta)==ANYGM_OK);frame(engine);
+  assert(anygm_state_load(engine,on,on_size)==ANYGM_OK);
+  assert(gml_global_num(&engine->vm,"fixture_setting")==1);
+  assert(gml_global_num(&engine->vm,"fixture_anchor_calls")==1);
+  assert(anygm_state_load(engine,off,off_size)==ANYGM_OK);
+  assert(gml_global_num(&engine->vm,"fixture_setting")==1);
+  assert(gml_global_num(&engine->vm,"fixture_anchor_calls")==3);
+  delta.fields=ANYGM_CONFIG_CONTENT_OVERRIDES;delta.values.content_overrides=0;
+  assert(anygm_set_config(engine,&delta)==ANYGM_OK);frame(engine);
+  assert(gml_global_num(&engine->vm,"fixture_setting")==0);
+  assert(gml_global_num(&engine->vm,"fixture_anchor_calls")==4);
+  delta.values.content_overrides=1;assert(anygm_set_config(engine,&delta)==ANYGM_OK);frame(engine);
+  assert(gml_global_num(&engine->vm,"fixture_setting")==1);
+  assert(gml_global_num(&engine->vm,"fixture_anchor_calls")==5);
+  assert(anygm_reset(engine)==ANYGM_OK);frame(engine);
+  assert(gml_global_num(&engine->vm,"fixture_setting")==1);
+  assert(gml_global_num(&engine->vm,"fixture_anchor_calls")==1);
+  delta.fields=ANYGM_CONFIG_PRESENT_LOGICAL_RASTER;delta.values.present_logical_raster=0;
+  assert(anygm_set_config(engine,&delta)==ANYGM_OK);frame(engine);
+  assert(gml_global_num(&engine->vm,"fixture_setting")==0);
+  assert(gml_global_num(&engine->vm,"fixture_anchor_calls")==2);
+  delta.values.present_logical_raster=1;
+  assert(anygm_set_config(engine,&delta)==ANYGM_OK);frame(engine);
+  assert(gml_global_num(&engine->vm,"fixture_setting")==1);
+  assert(gml_global_num(&engine->vm,"fixture_anchor_calls")==3);
+  anygm_destroy(engine);free(on);free(off);
+  assert(!remove(anchor));anygm_synthetic_content_destroy(&fixture);
+}
+
+static void crt_setting_layout(void){
+  AnygmSyntheticContent fixture;assert(anygm_synthetic_setting_content_create(&fixture));
+  char anchor[256],text[1024];
+  snprintf(anchor,sizeof anchor,"%s/layout.anygm",fixture.directory);
+  const char *name=strrchr(fixture.path,'/');name=name?name+1:fixture.path;
+  snprintf(text,sizeof text,"[anygm]\npayload=%s\n[overrides]\n"
+    "?crt setcall|fixture_setting|1|anchor_call|obj_fixture|anchor_call\n"
+    "?crt sync|obj_fixture:x=$port_w/2\n"
+    "?crt sync|layer_x|obj_fixture|panel_layer|$port_w/2-16\n",name);
+  write_text(anchor,text);
+  AnygmHostServices host={0};host.struct_size=sizeof host;
+  host.abi_version=ANYGM_HOST_SERVICES_VERSION;anygm_stdio_vfs_services_init(&host);
+  AnygmEngine *engine=NULL;assert(anygm_create(&host,&engine)==ANYGM_OK);
+  AnygmContentSource source={0};source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;source.path=anchor;
+  source.system_directory=fixture.directory;source.cache_directory=fixture.directory;
+  assert(anygm_load(engine,&source,NULL)==ANYGM_OK);frame(engine);
+  int object=gml_object_index_by_name(&engine->vm,"obj_fixture");
+  GmlInstance *instance=gml_find_instance(&engine->vm,object);assert(instance);
+  unsigned instance_id=instance->id;
+  gml_set_inst_var_all(&engine->vm,"obj_fixture","x",7);
+  GmlVal args[]={vreal(0),vstr("panel")};
+  GmlVal handle=gml_builtin_call(&engine->vm,"layer_create",args,2);
+  assert(handle.t==V_REAL && handle.d>=0);
+  int layer_id=(int)handle.d;
+  gml_set_inst_var_all(&engine->vm,"obj_fixture","panel_layer",handle.d);
+  assert(gml_rt_layer_find(&engine->vm,layer_id));
+  frame(engine);
+  assert(gml_find_instance(&engine->vm,object)->x==7);
+  AnygmConfigDelta delta={0};delta.struct_size=sizeof delta;
+  delta.values.struct_size=sizeof delta.values;
+  delta.fields=ANYGM_CONFIG_ADJUST_CRT_TV|ANYGM_CONFIG_PRESENT_LOGICAL_RASTER;
+  delta.values.adjust_crt_tv=1;delta.values.present_logical_raster=1;
+  assert(anygm_set_config(engine,&delta)==ANYGM_OK);frame(engine);
+  assert(gml_global_num(&engine->vm,"fixture_anchor_calls")==2);
+  assert(gml_global_num(&engine->vm,"fixture_setting_self")==instance_id);
+  assert(gml_find_instance(&engine->vm,object)->x==32);
+  assert(gml_rt_layer_find(&engine->vm,layer_id)->x==16);
+  frame(engine);assert(gml_global_num(&engine->vm,"fixture_anchor_calls")==2);
+  size_t capacity=anygm_state_size(engine),written=0,again_size=0;
+  uint8_t *state=malloc(capacity),*again=malloc(capacity);assert(state && again);
+  assert(anygm_state_save(engine,state,capacity,&written)==ANYGM_OK);
+  assert(anygm_state_load(engine,state,written)==ANYGM_OK);
+  assert(anygm_state_save(engine,again,capacity,&again_size)==ANYGM_OK);
+  assert(written==again_size && !memcmp(state,again,written));
+  /* Consume the restored completed picture before starting a new live layout transition. */
+  frame(engine);
+  assert(gml_global_num(&engine->vm,"fixture_anchor_calls")==2);
+  gml_set_global_arr(&engine->vm,"view_wview",0,256);
+  gml_set_global_arr(&engine->vm,"view_wport",0,128);
+  delta.values.adjust_crt_tv=0;
+  assert(anygm_set_config(engine,&delta)==ANYGM_OK);frame(engine);
+  assert(gml_find_instance(&engine->vm,object)->x==64);
+  assert(gml_rt_layer_find(&engine->vm,layer_id)->x==48);
+  assert(gml_global_num(&engine->vm,"fixture_anchor_calls")==4);
+  gml_set_inst_var_all(&engine->vm,"obj_fixture","x",19);frame(engine);
+  assert(gml_find_instance(&engine->vm,object)->x==19);
+  assert(gml_global_num(&engine->vm,"fixture_anchor_calls")==4);
+  assert(anygm_state_load(engine,state,written)==ANYGM_OK);
+  assert(gml_global_num(&engine->vm,"fixture_setting")==0);
+  assert(gml_global_num(&engine->vm,"fixture_anchor_calls")==4);
+  assert(gml_find_instance(&engine->vm,object)->x==32);
+  assert(gml_rt_layer_find(&engine->vm,layer_id)->x==16);
+  frame(engine);
+  int owner_object=gml_object_index_by_name(&engine->vm,"obj_layout_owner");
+  assert(owner_object>=0);
+  GmlInstance *owner=gml_instance_create(&engine->vm,0,0,owner_object);assert(owner);
+  unsigned owner_id=owner->id;
+  char guard[128];snprintf(guard,sizeof guard,"?crt ?instance.%s sync|obj_fixture:y=$port_h",
+                            engine->vm.objects[owner_object].name);
+  gml_set_global_arr(&engine->vm,"view_hport",0,64);
+  assert(anygm_set_runtime_override(engine,0,1,guard)==ANYGM_OK);
+  delta.values.adjust_crt_tv=1;
+  assert(anygm_set_config(engine,&delta)==ANYGM_OK);frame(engine);
+  assert(gml_find_instance(&engine->vm,object)->y==64);
+  gml_instance_destroy(&engine->vm,gml_vm_instance_by_id(&engine->vm,owner_id));
+  gml_set_inst_var_all(&engine->vm,"obj_fixture","y",19);frame(engine);
+  /* A layout owner disappearing must not recenter an incoming shared target during cleanup. */
+  assert(gml_find_instance(&engine->vm,object)->y==19);
+  anygm_destroy(engine);free(state);free(again);
+  assert(!remove(anchor));anygm_synthetic_content_destroy(&fixture);
+}
+
 int main(void){
+  renderer_declarations();
+  crt_setting_callback();
+  crt_setting_layout();
   state_reserve_declarations();
   candidate_inputs();
   memory_pipeline();

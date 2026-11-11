@@ -302,6 +302,10 @@ Existing OpenGL configurations therefore preserve their behaviour. The retired
 separately and show the fallback choice as `OpenGL`; version-1 and version-2
 menus show all three labels above.
 
+Enabled content configuration may override this load-time selection through
+[`renderer|...`](docs/CONTENT_CONFIGURATION.md#content-renderer-selection).
+It requests the same rendering policy and graphics availability as the corresponding menu option.
+
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)

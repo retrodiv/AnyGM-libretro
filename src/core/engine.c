@@ -533,6 +533,10 @@ static AnygmResult engine_load_content_prepare(AnygmEngine *engine,
   engine->state_content_locator[0]='\0';
   engine->launch_parameters[0]='\0';
   engine_adopt_boot_overrides(engine,&prepared);
+  uint32_t scene_renderer=engine_overrides_declared_renderer(engine);
+  engine->scene_skip_cpu_draws_session=scene_renderer==ANYGM_SCENE_RENDERER_OPENGL_NO_FALLBACK;
+  engine->scene_renderer_session=engine->scene_skip_cpu_draws_session?
+    ANYGM_SCENE_RENDERER_OPENGL:scene_renderer;
   state_identity_refresh(engine);
   engine_state_peak_load(engine);
   engine->loaded = 1;
@@ -543,6 +547,10 @@ static AnygmResult engine_load_content_prepare(AnygmEngine *engine,
   if(info){
     info->flags=gml_render_content_device_candidate_present(&engine->render)
       ?ANYGM_CONTENT_GLSL_DEVICE_CANDIDATE:0u;
+    if(engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL){
+      info->flags|=ANYGM_CONTENT_SCENE_OPENGL;
+      if(engine->scene_skip_cpu_draws_session) info->flags|=ANYGM_CONTENT_SCENE_NO_FALLBACK;
+    }
   }
   return ANYGM_OK;
 }
@@ -2889,10 +2897,6 @@ AnygmResult anygm_load_prepare(AnygmEngine *engine,const AnygmContentSource *sou
     engine_errorf(engine,ANYGM_ERROR_OUT_OF_MEMORY,"Could not allocate the primary frame buffers");
     return ANYGM_ERROR_OUT_OF_MEMORY;
   }
-  engine->scene_skip_cpu_draws_session=
-    engine->config.scene_renderer==ANYGM_SCENE_RENDERER_OPENGL_NO_FALLBACK;
-  engine->scene_renderer_session=engine->scene_skip_cpu_draws_session?
-    ANYGM_SCENE_RENDERER_OPENGL:engine->config.scene_renderer;
   engine->scene_graphics_reported=0u;
   memset(&engine->diagnostics.dispatch_retired,0,sizeof engine->diagnostics.dispatch_retired);
   engine->diagnostics.dispatch_renderer_epochs=0;

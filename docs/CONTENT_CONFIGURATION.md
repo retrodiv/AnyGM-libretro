@@ -44,7 +44,7 @@ operation kind and conditions. For example, `$counter=5` replaces `$counter=3`,
 but `?gameres $counter=5` and `$counter=3` remain distinct scoped operations.
 Indexes distinguish array/list items; camera destinations use the normalized
 handle mask and field. A surface resize is one operation with two dimensions.
-`ostype`, `gamepad`, `introskip`, `introauto`, `monitorview` and the menu declaration are
+`ostype`, `renderer`, `gamepad`, `introskip`, `introauto`, `monitorview` and the menu declaration are
 singletons within their applicable scope. Menu rows replace the same label;
 `keybind` declarations replace the same virtual key, with `auto` restoring its default mapping.
 `mset` replaces the same menu variable. Repeated calls to the same script and
@@ -119,6 +119,81 @@ introskip|1,3-5
 The operating-system declaration is 6. The global is held at 5 when the hash
 matches, and at 3 otherwise. A global override holds a value while enabled;
 it is not merely an initial-value declaration.
+
+## Content renderer selection
+
+An enabled load-time declaration overrides the host's Renderer option:
+
+```ini
+[anygm]
+payload=data.win
+
+[overrides]
+renderer|opengl_nofallback
+```
+
+`cpu` selects software, `opengl` selects OpenGL with CPU fallback, and
+`opengl_nofallback` selects OpenGL (Experimental), including its ordinary omission of unsupported
+draws. `auto` withdraws a lower-priority renderer declaration and uses the host option. Normal
+INI/anchor/hash precedence applies. The Content override directives switch must be enabled at
+load. The effective policy is frozen until unload: changing that switch or the frontend Renderer
+option during play does not renegotiate the context. Close/reopen content to select again.
+
+The declaration requests the same policy as the corresponding frontend option. It cannot supply
+an unavailable graphics API and does not change existing context-refusal behavior, pixel reads,
+state transport or draw coverage. Preparing hosts read the scene bits in `AnygmContentInfo` before
+requesting a context; CPU has no scene bit, and the separate content-GLSL candidate bit retains
+its independent meaning. No content event runs before this negotiation.
+
+## CRT-dependent settings
+
+`?crt` scopes a runtime directive to effective CRT adjustment: logical-raster rendering and
+Adjust for CRT TV are both enabled. It follows live option changes and Content override directives.
+For a game whose scalar setting needs a zero-argument recalculation script, use:
+
+```ini
+?crt setcall|screen_mode|1|apply_screen_mode
+```
+
+`setcall|global_name|finite_number|script_name` holds that global at the literal numeric value.
+It calls the named content script only when the stored value changes, including when disabling
+the scope restores the captured original value. The script reads the newly written setting.
+Stable frames do not rerun it. Select a recalculation script whose side effects are appropriate
+for that setting; this does not replay a menu input event. As with other scoped writes, Reset
+captures fresh values and state restoration reconciles the target with the live presentation
+policy. The actual global and script names come from the game's own settings implementation.
+
+An optional final `|object_name|refresh_script` pair refreshes cached UI after the setting's
+application script. It runs on the first active instance of that object (including descendants),
+with the real instance as `self`, no arguments and no `other`. A missing instance skips that
+refresh. Both callbacks run only when the numeric setting changes, including its restoration.
+
+Some native settings paths also reposition instances or decorative layers outside their common
+application script. A `sync|` prefix on a numeric instance override recomputes the expression
+while its `?crt` or `?gameres` scope is active and once on withdrawal. It recalculates from the
+current geometry instead of restoring a stale coordinate captured under another layout:
+
+```ini
+?crt sync|obj_caption:x=$view_w/2
+?crt sync|layer_x|obj_options|decoration_layer|$view_w/2-160
+```
+
+The `layer_x`/`layer_y` forms use the first active owner's numeric layer-handle variable and the
+existing runtime layer setter. They are valid only within a scoped `sync|` policy. Missing owners,
+invalid handles and non-finite values do nothing; unchanged offsets avoid another layer mutation.
+Declare synchronization after the setting so its new dimensions are available. Withdrawal includes
+Content overrides Off, and state restoration reconciles the synchronized coordinates. This prefix
+accepts instance coordinates and layer offsets, not scripts, renderer declarations or arbitrary
+state mutations.
+
+An optional `?instance.object_name` condition after the presentation/global conditions requires
+an active instance of that object (including descendants). Use it when a layout target is shared
+by several rooms. A synchronized layout does not execute its withdrawal calculation after that
+owner disappears, so a title-only policy cannot reposition a newly entered room's shared objects.
+
+`$port_w` and `$port_h` read the current `view_wport[0]` and `view_hport[0]`. Use these for
+port-relative layout rather than `$view_w`/`$view_h`, which read the authored legacy view arrays:
+modern content may resize its camera while leaving those legacy view arrays unchanged.
 
 ## Measured state reserve in a sibling anchor
 

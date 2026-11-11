@@ -93,7 +93,7 @@ void anygm_destroy(AnygmEngine *engine){ (void)engine; release_content_files(); 
 AnygmResult anygm_load_prepare(AnygmEngine *engine,const AnygmContentSource *source,
                                const AnygmLoadConfig *config,AnygmContentInfo *info){
   (void)engine; (void)config;
-  if(info) info->flags=0;
+  if(info) info->flags=delay_start?ANYGM_CONTENT_SCENE_OPENGL:0u;
   if(!source) return ANYGM_ERROR_INVALID_ARGUMENT;
   loaded_save_present=source->save_directory!=NULL;
   loaded_cache_present=source->cache_directory!=NULL;

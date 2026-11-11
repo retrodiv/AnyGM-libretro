@@ -142,12 +142,13 @@ enum {
 typedef enum {
   CK_NONE=0, CK_ROOM, CK_GARR, CK_GSCALAR, CK_INST, CK_INST_SET, CK_ENGINE, CK_ROUTE,
   CK_CAMERA, CK_SURFACE, CK_MONITOR_VIEW, CK_ALARM_PAUSE, CK_SCRIPT, CK_LIST_SET,
-  CK_DRAW_HOLD, CK_SURFACE_CANVAS, CK_AFTER_DRAW
+  CK_DRAW_HOLD, CK_SURFACE_CANVAS, CK_AFTER_DRAW, CK_GSCALAR_CALL, CK_LAYER_OFFSET
 } CheatKind;
 typedef enum {
   TK_LIT=0, TK_BASE_W, TK_BASE_H, TK_FORCED_W, TK_FORCED_H, TK_EXTRA_W, TK_EXTRA_H,
   TK_MONITOR_W, TK_MONITOR_H, TK_MONITOR_VIEW_W, TK_MONITOR_VIEW_H,
-  TK_MONITOR_EXTRA_W, TK_MONITOR_EXTRA_H, TK_VIEW_W, TK_VIEW_H, TK_GLOBAL
+  TK_MONITOR_EXTRA_W, TK_MONITOR_EXTRA_H, TK_VIEW_W, TK_VIEW_H, TK_GLOBAL,
+  TK_PORT_W, TK_PORT_H
 } CheatTok;
 typedef enum { EF_WINDOW_W=0, EF_WINDOW_H, EF_GUI_W, EF_GUI_H, EF_FBW, EF_FBH,
                EF_APPLICATION_W, EF_APPLICATION_H,
@@ -162,12 +163,16 @@ typedef struct {
   int scope_aspect;
   int scope_monitor;
   int scope_gameres;
+  int scope_crt;
+  int scope_sync;
   /* A value scope: the directive applies only while this content global is non-zero. Empty for a
    * directive that carries no such condition. */
   char scope_global[64];
+  char scope_instance[64];
   int scope_mode;
   char obj[64];
   char var[64];
+  char refresh_object[64],refresh_script[64];
   int idx,idx2,has_index;
   EngField eng;
   CameraField camera_field;
@@ -479,6 +484,7 @@ void menu_run(AnygmEngine *engine);
 void room_skip_hook(AnygmEngine *engine);
 void introskip_hook(AnygmEngine *engine);
 int  engine_overrides_declared_os_type(AnygmEngine *engine);
+uint32_t engine_overrides_declared_renderer(AnygmEngine *engine);
 int  engine_overrides_keyboard_emulation(AnygmEngine *engine);
 int  engine_overrides_key_binding(AnygmEngine *engine,int virtual_key,unsigned *port);
 unsigned engine_overrides_keyboard_bindings(AnygmEngine *engine,

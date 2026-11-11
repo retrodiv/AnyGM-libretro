@@ -79,6 +79,7 @@ int core_opt_redirect_room_order(AnygmEngine *engine) {
  *   alarmpause|obj|i            hold alarm i still on every instance of `obj` and its descendants
  *   drawhold|name|V             hold global `name` at V for the length of one frame's drawing
  *   call|script                 invoke a zero-argument content script once after the first Step
+ *   setcall|global|V|script      hold a scalar setting; recalculate only on changes or restoration
  *   afterdraw|obj|script|V      invoke a script with one numeric argument after ordinary Draw
  *   listset|target|var[i]|j|V   keep a DS-list item at V; target is an object or `global`
  *   camera[LIST]:field=V        write x, y, width, or height on selected live camera handles
@@ -95,6 +96,7 @@ int core_opt_redirect_room_order(AnygmEngine *engine) {
  *   ?aspect=4:3  ...            only while that specific force mode is active (4:3|16:9|21:9)
  *   ?monitor     ...            once, on each live virtual-monitor size change
  *   ?gameres     ...            only while the logical-raster presentation is selected
+ *   ?crt         ...            only while effective CRT adjustment is enabled
  * Un-scoped freezes run every frame after the step (god mode, lives, ...). Aspect-scoped writes
  * run from the aspect hook while a force is active (screensizer / view / engine reshaping).
  *
@@ -117,6 +119,7 @@ int core_opt_redirect_room_order(AnygmEngine *engine) {
  *   $monitor_extra_w/_h         monitor view minus the native room resolution
  *   $view_w  $view_h            current room's authored view_wview/view_hview, read live
  *                                before room-scoped geometry is decided
+ *   $port_w  $port_h            current view_wport/view_hport, independent of camera extent
  * e.g.  some_object:some_width=$forced_w            view_wport[0]=$forced_w
  *       some_object:some_x=$forced_w-115            some_object:some_offset=$extra_w*0.5
  * ============================================================================================ */
@@ -171,6 +174,8 @@ static void cheat_parse_val(const char *s, CheatVal *v){
     else if(L==15 && !strncmp(n,"monitor_extra_h",15)) v->tok=TK_MONITOR_EXTRA_H;
     else if(L==6 && !strncmp(n,"view_w",6)) v->tok=TK_VIEW_W;
     else if(L==6 && !strncmp(n,"view_h",6)) v->tok=TK_VIEW_H;
+    else if(L==6 && !strncmp(n,"port_w",6)) v->tok=TK_PORT_W;
+    else if(L==6 && !strncmp(n,"port_h",6)) v->tok=TK_PORT_H;
     /* Global values are read when presentation directives are evaluated, so dependent
      * targets follow the current frame's value. */
     else if(L>7 && !strncmp(n,"global.",7)){
@@ -208,6 +213,8 @@ static double cheat_val_eval(AnygmEngine *engine,const CheatVal *v){
      * override settles its geometry. */
     case TK_VIEW_W: x=gml_global_arr(&engine->vm,"view_wview",0); break;
     case TK_VIEW_H: x=gml_global_arr(&engine->vm,"view_hview",0); break;
+    case TK_PORT_W: x=gml_global_arr(&engine->vm,"view_wport",0); break;
+    case TK_PORT_H: x=gml_global_arr(&engine->vm,"view_hport",0); break;
     case TK_GLOBAL: x=gml_global_num(&engine->vm,v->name); break;
     default:          return v->lit;
   }
@@ -250,7 +257,7 @@ static int cheat_parse_camera_mask(const char **cursor,uint64_t *mask){
   return 1;
 }
 
-static void cheat_parse(const char *code, CheatAct *a){
+static void cheat_parse_body(const char *code, CheatAct *a){
   memset(a,0,sizeof *a);
   const char *s=code; while(*s==' '||*s=='\t') s++;
   if(!strncmp(s,"?aspect",7)){
@@ -268,6 +275,9 @@ static void cheat_parse(const char *code, CheatAct *a){
   } else if(!strncmp(s,"?gameres",8)){
     a->scope_gameres=1; s+=8;
     while(*s==' '||*s=='\t') s++;
+  } else if(!strncmp(s,"?crt",4) && (s[4]==' ' || s[4]=='\t')){
+    a->scope_crt=1; s+=4;
+    while(*s==' '||*s=='\t') s++;
   }
   /* A value scope may follow the first scope. A zero global disables the
    * directive and restores its captured destination value. */
@@ -278,6 +288,14 @@ static void cheat_parse(const char *code, CheatAct *a){
     memcpy(a->scope_global,n,L); a->scope_global[L]=0;
     while(*s==' '||*s=='\t') s++;
   }
+  if(!strncmp(s,"?instance.",10)){
+    s+=10; const char *name=s;while(*s && CHEAT_NAMECH(*s)) s++;
+    size_t length=(size_t)(s-name);
+    if(!length || length>=sizeof a->scope_instance) return;
+    memcpy(a->scope_instance,name,length);a->scope_instance[length]=0;
+    while(*s==' ' || *s=='\t') s++;
+  }
+  if(!strncmp(s,"sync|",5)){ a->scope_sync=1; s+=5; }
   if(!strncmp(s,"monitorview|",12)){
     const char *height=s+12,*end=NULL;
     char *height_end=NULL;
@@ -328,6 +346,44 @@ static void cheat_parse(const char *code, CheatAct *a){
       a->kind=CK_NONE; return;
     }
     a->kind=CK_AFTER_DRAW; return;
+  }
+  if(!strncmp(s,"setcall|",8)){
+    s+=8; const char *name=s;
+    while(*s && CHEAT_NAMECH(*s)) s++;
+    size_t length=(size_t)(s-name);
+    if(!length || length>=sizeof a->obj || *s!='|') return;
+    memcpy(a->obj,name,length); a->obj[length]=0;
+    char *end=NULL;
+    a->val.lit=strtod(s+1,&end);
+    if(end==s+1 || *end!='|' || !isfinite(a->val.lit)) return;
+    s=end+1; name=s;
+    while(*s && CHEAT_NAMECH(*s)) s++;
+    length=(size_t)(s-name);
+    if(!length || length>=sizeof a->var || (*s && *s!='|')) return;
+    memcpy(a->var,name,length); a->var[length]=0;
+    if(*s=='|'){
+      char *names[]={a->refresh_object,a->refresh_script};
+      for(int i=0;i<2;i++){
+        name=++s;
+        while(*s && CHEAT_NAMECH(*s)) s++;
+        length=(size_t)(s-name);
+        if(!length || length>=64 || (i==0?*s!='|':*s!=0)) return;
+        memcpy(names[i],name,length); names[i][length]=0;
+      }
+    }
+    a->kind=CK_GSCALAR_CALL; return;
+  }
+  if(!strncmp(s,"layer_x|",8) || !strncmp(s,"layer_y|",8)){
+    a->idx=s[6]=='y';s+=8;
+    char *names[]={a->obj,a->var};
+    for(int i=0;i<2;i++){
+      const char *name=s;while(*s && CHEAT_NAMECH(*s)) s++;
+      size_t length=(size_t)(s-name);
+      if(!length || length>=64 || *s!='|') return;
+      memcpy(names[i],name,length);names[i][length]=0;s++;
+    }
+    if(!*s) return;
+    cheat_parse_val(s,&a->val);a->kind=CK_LAYER_OFFSET;return;
   }
   if(!strncmp(s,"call|",5)){
     s+=5; const char *name=s; while(*s && CHEAT_NAMECH(*s)) s++;
@@ -486,9 +542,45 @@ static void cheat_parse(const char *code, CheatAct *a){
   if(*s!='='){ a->kind=CK_NONE; return; }
   s++; cheat_parse_val(s,&a->val); a->kind=CK_GARR;
 }
+static void cheat_parse(const char *code,CheatAct *a){
+  cheat_parse_body(code,a);
+  /* Synchronizing layout recomputes on release instead of restoring a stale coordinate.
+   * Restrict it to explicit presentation scopes and numeric instance/layer operations. */
+  if(a->scope_sync && (!(a->scope_crt || a->scope_gameres) ||
+     (a->kind!=CK_INST && a->kind!=CK_LAYER_OFFSET))) a->kind=CK_NONE;
+  if(a->scope_sync && a->kind==CK_INST && strcmp(a->var,"x") && strcmp(a->var,"y"))
+    a->kind=CK_NONE;
+  if(a->kind==CK_LAYER_OFFSET && !a->scope_sync) a->kind=CK_NONE;
+}
+/* Apply a setting through the content's own zero-argument recalculation script, only when the
+ * stored value changes. Restoration uses the same path; stable frames incur no script call. */
+static void cheat_setting_apply(AnygmEngine *engine,const CheatAct *a,double value){
+  double previous=gml_global_num(&engine->vm,a->obj);
+  gml_set_global_scalar(&engine->vm,a->obj,value);
+  if(previous!=value){
+    (void)gml_vm_run_script_named(&engine->vm,a->var);
+    if(a->refresh_object[0]){
+      int object=gml_object_index_by_name(&engine->vm,a->refresh_object);
+      GmlInstance *receiver=object>=0?gml_find_instance(&engine->vm,object):NULL;
+      if(receiver)
+        (void)gml_vm_run_script_on_instance(&engine->vm,a->refresh_script,receiver,NULL,0);
+    }
+  }
+}
 static void cheat_apply_one(AnygmEngine *engine,const CheatAct *a){
   switch(a->kind){
     case CK_GSCALAR: gml_set_global_scalar(&engine->vm, a->obj, cheat_val_eval(engine,&a->val)); break;
+    case CK_GSCALAR_CALL: cheat_setting_apply(engine,a,a->val.lit); break;
+    case CK_LAYER_OFFSET: {
+      double handle=0,value=cheat_val_eval(engine,&a->val);
+      if(!gml_inst_var_first_real(&engine->vm,a->obj,a->var,&handle) ||
+         !isfinite(handle) || handle<0 || handle>INT_MAX || floor(handle)!=handle ||
+         !isfinite(value)) break;
+      GmlRtLayer *layer=gml_rt_layer_find(&engine->vm,(int)handle);
+      if(!layer || (a->idx?layer->y:layer->x)==value) break;
+      GmlVal args[]={vreal(handle),vreal(value)};
+      (void)gml_builtin_call(&engine->vm,a->idx?"layer_y":"layer_x",args,2);
+      break; }
     case CK_GARR:    gml_set_global_arr(&engine->vm, a->obj, a->idx, cheat_val_eval(engine,&a->val)); break;
     case CK_INST:
     case CK_INST_SET: gml_set_inst_var_all(&engine->vm, a->obj, a->var,
@@ -568,8 +660,15 @@ static void cheat_apply_one(AnygmEngine *engine,const CheatAct *a){
     default: break;   /* CK_ROOM handled at set-time; CK_ROUTE consulted in the draw hook */
   }
 }
+static int cheat_scope_instance_ok(AnygmEngine *engine,const CheatAct *a){
+  if(!a->scope_instance[0]) return 1;
+  if(!engine->loaded) return 0;
+  int object=gml_object_index_by_name(&engine->vm,a->scope_instance);
+  return object>=0 && gml_find_instance(&engine->vm,object)!=NULL;
+}
 /* phase: 0 = normal post-step sticky pass, 1 = aspect reshaping, 2 = monitor-change edge. */
 static int cheat_scope_ok(AnygmEngine *engine,const CheatAct *a,int phase){
+  if(!cheat_scope_instance_ok(engine,a)) return 0;
   /* Before content is loaded there is no global to read, and a directive that answers to one
    * has nothing to answer yet. */
   if(a->scope_global[0] &&
@@ -583,6 +682,8 @@ static int cheat_scope_ok(AnygmEngine *engine,const CheatAct *a,int phase){
   /* Read live rather than latched: the selection can change between two frames, and the pass that
    * gives the content its own numbers back is the same pass that took them. */
   if(a->scope_gameres) return phase==0 && engine->config.present_logical_raster!=0;
+  if(a->scope_crt) return phase==0 && engine->config.present_logical_raster!=0 &&
+                         engine->config.adjust_crt_tv!=0;
   return phase==0;
 }
 /* ============================================================================================
@@ -766,12 +867,15 @@ static int boot_same_target(const CheatSlot *left,const CheatSlot *right){
   const CheatAct *a=&left->act,*b=&right->act;
   if(a->kind!=b->kind || a->scope_aspect!=b->scope_aspect ||
      a->scope_monitor!=b->scope_monitor || a->scope_gameres!=b->scope_gameres ||
-     a->scope_mode!=b->scope_mode || strcmp(a->scope_global,b->scope_global)) return 0;
+     a->scope_crt!=b->scope_crt || a->scope_sync!=b->scope_sync ||
+     a->scope_mode!=b->scope_mode || strcmp(a->scope_global,b->scope_global) ||
+     strcmp(a->scope_instance,b->scope_instance)) return 0;
+  if(a->kind==CK_GSCALAR_CALL) return !strcmp(a->obj,b->obj);
   if(a->kind!=CK_NONE)
     return !strcmp(a->obj,b->obj) && !strcmp(a->var,b->var) &&
       a->idx==b->idx && a->idx2==b->idx2 && a->has_index==b->has_index &&
       a->eng==b->eng && a->camera_field==b->camera_field && a->camera_mask==b->camera_mask;
-  static const char *singletons[]={"ostype|","gamepad|","introskip|","introauto|","menu|"};
+  static const char *singletons[]={"ostype|","renderer|","gamepad|","introskip|","introauto|","menu|"};
   for(size_t i=0;i<sizeof singletons/sizeof singletons[0];i++){
     size_t length=strlen(singletons[i]);
     if(!strncmp(left->code,singletons[i],length) && !strncmp(right->code,singletons[i],length)) return 1;
@@ -852,6 +956,15 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
           if(!value_ok || !digits){
             snprintf(error,error_capacity,
                      "directive %d: ostype| takes one non-negative os_type value",line_number);
+            return 0;
+          }
+        } else if(!strncmp(slot->code,"renderer|",9)){
+          const char *value=slot->code+9;
+          if(strcmp(value,"cpu") && strcmp(value,"opengl") &&
+             strcmp(value,"opengl_nofallback") && strcmp(value,"auto")){
+            snprintf(error,error_capacity,
+                     "directive %d: renderer| takes cpu, opengl, opengl_nofallback or auto",
+                     line_number);
             return 0;
           }
         } else if(!strncmp(slot->code,"statereserve|",13)){
@@ -982,15 +1095,17 @@ static int cheat_engine_field_mutable(const CheatAct *a){
   return a->kind==CK_ENGINE && a->eng>=EF_WINDOW_W && a->eng<=EF_PRESENT_CROP_BOTTOM;
 }
 static int cheat_slot_capturable(const CheatAct *a){
+  if(a->scope_sync) return 0;
   if(a->kind==CK_SURFACE_CANVAS) return 1;
-  if(a->kind==CK_GSCALAR || a->kind==CK_GARR) return 1;
-  return a->scope_gameres &&
+  if(a->kind==CK_GSCALAR || a->kind==CK_GSCALAR_CALL || a->kind==CK_GARR) return 1;
+  return (a->scope_gameres || a->scope_crt) &&
          (a->kind==CK_INST || a->kind==CK_SURFACE || cheat_engine_field_mutable(a));
 }
 static void cheat_slot_capture(AnygmEngine *engine,CheatSlot *slot){
   slot->saved_valid=0;
   if(!engine->loaded || !cheat_slot_capturable(&slot->act)) return;
   switch(slot->act.kind){
+    case CK_GSCALAR_CALL:
     case CK_GSCALAR:
       slot->saved=gml_global_num(&engine->vm, slot->act.obj);
       slot->saved_valid=1;
@@ -1056,11 +1171,17 @@ static void cheat_slot_capture(AnygmEngine *engine,CheatSlot *slot){
  * content will not recompute it. A frontend slot being dropped keeps the old behaviour of
  * forgetting, so a re-armed slot captures the current value rather than a stale one. */
 static void cheat_slot_restore_keep(AnygmEngine *engine,CheatSlot *slot,int keep){
+  if(slot->act.scope_sync){
+    if(slot->applied && engine->loaded && cheat_scope_instance_ok(engine,&slot->act))
+      cheat_apply_one(engine,&slot->act);
+    return;
+  }
   if(!slot->saved_valid) return;
   if(!keep) slot->saved_valid=0;
   if(!engine->loaded) return;
   switch(slot->act.kind){
     case CK_GSCALAR: gml_set_global_scalar(&engine->vm, slot->act.obj, slot->saved); break;
+    case CK_GSCALAR_CALL: cheat_setting_apply(engine,&slot->act,slot->saved); break;
     case CK_GARR:    gml_set_global_arr(&engine->vm, slot->act.obj, slot->act.idx, slot->saved);
                      break;
     case CK_INST:    gml_set_inst_var_all(&engine->vm, slot->act.obj, slot->act.var, slot->saved);
@@ -1197,7 +1318,7 @@ static void cheat_sticky_pass(AnygmEngine *engine,CheatSlot *arr, int n, int cha
 static void cheat_gameres_pass(AnygmEngine *engine,CheatSlot *arr,int n,int channel_on){
   for(int i=0;i<n;i++){
     CheatSlot *slot=&arr[i];
-    if(!slot->act.scope_gameres || slot->act.kind==CK_NONE) continue;
+    if((!slot->act.scope_gameres && !slot->act.scope_crt) || slot->act.kind==CK_NONE) continue;
     int applies=channel_on && slot->enabled && cheat_scope_ok(engine,&slot->act,0);
     if(applies){
       if(!slot->saved_valid) cheat_slot_capture(engine,slot);
@@ -1330,7 +1451,8 @@ void engine_overrides_prepare_state_load(AnygmEngine *engine){
     CheatSlot *slots=table?engine->boot_cheats:engine->cheats;
     int count=table?engine->boot_cheat_count:engine->cheat_count;
     for(int i=0;i<count;i++)
-      if(slots[i].enabled && slots[i].act.scope_gameres && !slots[i].saved_valid)
+      if(slots[i].enabled && (slots[i].act.scope_gameres || slots[i].act.scope_crt) &&
+         !slots[i].saved_valid)
         cheat_slot_capture(engine,&slots[i]);
   }
 }
@@ -1340,10 +1462,12 @@ void engine_overrides_prepare_state_load(AnygmEngine *engine){
 void engine_overrides_note_state_load(AnygmEngine *engine){
   if(!engine) return;
   for(int i=0;i<engine->cheat_count;i++)
-    if(engine->cheats[i].saved_valid || engine->cheats[i].act.kind==CK_SCRIPT)
+    if(engine->cheats[i].saved_valid || engine->cheats[i].act.scope_sync ||
+       engine->cheats[i].act.kind==CK_SCRIPT)
       engine->cheats[i].applied=1;
   for(int i=0;i<engine->boot_cheat_count;i++)
-    if(engine->boot_cheats[i].saved_valid || engine->boot_cheats[i].act.kind==CK_SCRIPT)
+    if(engine->boot_cheats[i].saved_valid || engine->boot_cheats[i].act.scope_sync ||
+       engine->boot_cheats[i].act.kind==CK_SCRIPT)
       engine->boot_cheats[i].applied=1;
   engine_overrides_presentation_apply(engine);
 }
@@ -1629,6 +1753,18 @@ int engine_overrides_declared_os_type(AnygmEngine *engine){
     if(engine->boot_cheats[i].enabled && !strncmp(engine->boot_cheats[i].code,"ostype|",7))
       return atoi(engine->boot_cheats[i].code+7);
   return -1;
+}
+uint32_t engine_overrides_declared_renderer(AnygmEngine *engine){
+  int active=engine_boot_cheats_active(engine);
+  for(int i=0;i<active;i++){
+    const CheatSlot *slot=&engine->boot_cheats[i];
+    if(!slot->enabled || strncmp(slot->code,"renderer|",9)) continue;
+    const char *value=slot->code+9;
+    if(!strcmp(value,"cpu")) return ANYGM_SCENE_RENDERER_CPU;
+    if(!strcmp(value,"opengl")) return ANYGM_SCENE_RENDERER_OPENGL;
+    if(!strcmp(value,"opengl_nofallback")) return ANYGM_SCENE_RENDERER_OPENGL_NO_FALLBACK;
+  }
+  return engine->config.scene_renderer;
 }
 /* The declaration is already layered and fingerprinted with other content directives.
  * Auto withdraws a lower-priority declaration and leaves the frontend option in charge. */

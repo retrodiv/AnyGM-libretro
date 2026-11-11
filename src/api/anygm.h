@@ -15,7 +15,7 @@ extern "C" {
  * runtime library version, and every publishable metadata file declares the literal "Git" instead
  * of a number, so no copy can promise a value that has gone stale. CONTRIBUTING.md owns the single
  * increment step. */
-#define ANYGM_VERSION "0.1.792"
+#define ANYGM_VERSION "0.1.793"
 #define ANYGM_API_VERSION 7u
 #define ANYGM_HOST_SERVICES_VERSION 2u
 #define ANYGM_STATE_SCHEMA 50u
@@ -348,7 +348,11 @@ typedef struct AnygmContentInfo {
 enum {
   /* The payload contains at least one valid GLSL program that the software renderer does not
    * recognize. This says the program may be used, not that later game code will select it. */
-  ANYGM_CONTENT_GLSL_DEVICE_CANDIDATE=1u<<0
+  ANYGM_CONTENT_GLSL_DEVICE_CANDIDATE=1u<<0,
+  /* Effective session renderer after enabled content declarations override the host request.
+   * No scene bit selects CPU. Hosts negotiate a context from this prepared answer. */
+  ANYGM_CONTENT_SCENE_OPENGL=1u<<1,
+  ANYGM_CONTENT_SCENE_NO_FALLBACK=1u<<2
 };
 
 typedef struct AnygmConfig {
@@ -406,7 +410,9 @@ typedef struct AnygmConfig {
    * This is independent of content_shader_device_expected: either policy may use a context alone,
    * and both share it when enabled together. */
   uint32_t hybrid_gpu_presentation;
-  /* Requested executor for ordinary scene drawing. CPU is the default; OpenGL uses the same
+  /* Host-requested executor for ordinary scene drawing. Enabled content renderer declarations
+   * take precedence during preparation; AnygmContentInfo reports the effective selection.
+   * CPU is the default; OpenGL uses the same
    * engine and falls back operation by operation. OPENGL_NO_FALLBACK omits unsupported
    * draws while retaining pixel observations and resource/state operations. This request is frozen when content is prepared
    * and is not part of game state. A missing graphics context keeps ordinary OpenGL on CPU;the explicit

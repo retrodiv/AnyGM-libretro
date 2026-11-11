@@ -44,6 +44,7 @@ static const char *option_value;
 static const char *shader_option_value;
 static const char *scene_option_value;
 static int content_candidate;
+static int prepared_scene_renderer;
 static int preferred_available;
 static unsigned preferred_context;
 static int accept_desktop;
@@ -264,7 +265,14 @@ AnygmResult anygm_load_prepare(AnygmEngine *engine,const AnygmContentSource *sou
                                const AnygmLoadConfig *config,AnygmContentInfo *info){
   (void)engine; (void)source; (void)config;
   prepare_sequence=++sequence;
-  if(info) info->flags=content_candidate?ANYGM_CONTENT_GLSL_DEVICE_CANDIDATE:0u;
+  if(info){
+    uint32_t scene=prepared_scene_renderer>=0?(uint32_t)prepared_scene_renderer:
+      latest_config.values.scene_renderer;
+    info->flags=content_candidate?ANYGM_CONTENT_GLSL_DEVICE_CANDIDATE:0u;
+    if(scene!=ANYGM_SCENE_RENDERER_CPU) info->flags|=ANYGM_CONTENT_SCENE_OPENGL;
+    if(scene==ANYGM_SCENE_RENDERER_OPENGL_NO_FALLBACK)
+      info->flags|=ANYGM_CONTENT_SCENE_NO_FALLBACK;
+  }
   return ANYGM_OK;
 }
 AnygmResult anygm_load_start(AnygmEngine *engine){
@@ -392,6 +400,7 @@ static void begin(const char *value,int available,unsigned preferred,int desktop
   shader_option_value=NULL;
   scene_option_value=NULL;
   content_candidate=0;
+  prepared_scene_renderer=-1;
   preferred_available=available;
   preferred_context=preferred;
   accept_desktop=desktop;
@@ -1022,7 +1031,32 @@ static int controller_updates_preserve_keyboard_authority(void){
   return 0;
 }
 
+static int prepared_renderer_controls_negotiation(void){
+  begin("CPU",0,0,1,1);
+  prepared_scene_renderer=ANYGM_SCENE_RENDERER_OPENGL_NO_FALLBACK;
+  REQUIRE(load(),"a prepared content renderer overrides the frontend CPU request");
+  REQUIRE(declared_count==1 && request_sequence>prepare_sequence,
+          "the effective content renderer requests a context after preparation");
+  REQUIRE(g_libretro.scene_gpu_selected &&
+          g_libretro.config.scene_renderer==ANYGM_SCENE_RENDERER_OPENGL_NO_FALLBACK,
+          "the adapter retains the exact prepared draw-omission policy");
+  finish();
+  begin("OpenGL (Experimental)",0,0,1,1);
+  prepared_scene_renderer=ANYGM_SCENE_RENDERER_CPU;
+  REQUIRE(load(),"a prepared CPU declaration overrides the frontend GPU request");
+  REQUIRE(declared_count==0 && !g_libretro.scene_gpu_selected && start_calls==1,
+          "an effective CPU renderer starts without scene context negotiation");
+  finish();
+  begin("CPU",0,0,0,0);
+  prepared_scene_renderer=ANYGM_SCENE_RENDERER_OPENGL_NO_FALLBACK;
+  REQUIRE(load() && rejected_requests==2 && start_calls==1,
+          "a content GPU selection follows the ordinary unavailable-context path");
+  finish();
+  return 0;
+}
+
 int main(void){
+  if(prepared_renderer_controls_negotiation()) return EXIT_FAILURE;
   if(controller_updates_preserve_keyboard_authority()) return EXIT_FAILURE;
   if(option_none_negotiates_nothing()) return EXIT_FAILURE;
   if(rejection_keeps_software()) return EXIT_FAILURE;

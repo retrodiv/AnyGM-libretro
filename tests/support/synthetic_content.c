@@ -97,7 +97,9 @@ static int synthetic_content_create(
                   "ds_list_add(fixture_list, 0, 0);\n"
                   "fixture_lists[0] = fixture_list;\n")) ||
      !write_text(step,step_text) ||
-     (anchor_script && !write_text(anchor_call,anchor_script==2?
+     (anchor_script && !write_text(anchor_call,anchor_script==3?
+                  "global.fixture_anchor_calls += 1;\n"
+                  "global.fixture_setting_self = id;\n":anchor_script==2?
                   "global.fixture_anchor_calls += 1;\n"
                   "global.fixture_after_arg = argument0;\n"
                   "global.fixture_after_self = id;\n"
@@ -175,6 +177,15 @@ static int synthetic_content_create(
   instance.sx=instance.sy=1.0f;
   instance.color=0xFFFFFFFFu;
 
+  GmlcObject setting_objects[2]={0};
+  if(anchor_script==3){
+    setting_objects[0]=object;
+    setting_objects[1].id=setting_objects[1].name=(char *)"obj_layout_owner";
+    setting_objects[1].sprite_id=setting_objects[1].mask_id=setting_objects[1].parent_id=-1;
+    project.objects=setting_objects;
+    project.n_objects=project.cap_objects=2;
+  }
+
   char error[256]={0};
   if(!gmlc_package_write_structural(&project,fixture->path,error,sizeof error)){
     fprintf(stderr,"synthetic package failed: %s\n",error);
@@ -195,6 +206,9 @@ int anygm_synthetic_list_override_content_create(AnygmSyntheticContent *fixture)
 }
 int anygm_synthetic_anchor_script_content_create(AnygmSyntheticContent *fixture){
   return synthetic_content_create(fixture,1,0,64,48);
+}
+int anygm_synthetic_setting_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_content_create(fixture,3,0,64,48);
 }
 int anygm_synthetic_after_draw_content_create(AnygmSyntheticContent *fixture){
   return synthetic_content_create(fixture,2,0,64,48);

@@ -450,6 +450,11 @@ bool retro_load_game(const struct retro_game_info *info){
     return false;
   }
   g_libretro.prepared=true;
+  g_libretro.scene_gpu_selected=(content_info.flags&ANYGM_CONTENT_SCENE_OPENGL)!=0;
+  g_libretro.config.scene_renderer=g_libretro.scene_gpu_selected?
+    ((content_info.flags&ANYGM_CONTENT_SCENE_NO_FALLBACK)?
+     ANYGM_SCENE_RENDERER_OPENGL_NO_FALLBACK:ANYGM_SCENE_RENDERER_OPENGL):
+    ANYGM_SCENE_RENDERER_CPU;
   g_libretro.content_glsl_candidate=
     (content_info.flags&ANYGM_CONTENT_GLSL_DEVICE_CANDIDATE)!=0;
   bool needs_context=g_libretro.scene_gpu_selected ||

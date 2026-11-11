@@ -43,6 +43,9 @@ cut: it neither compiles nor links the libretro adapter.
    renderer internals. When a graphics decision depends on content, use `anygm_load_prepare`, read
    `AnygmContentInfo`, settle the context and configuration, and call `anygm_load_start`. The
    one-shot `anygm_load` remains the ordinary path when no negotiation is needed.
+   Enabled content renderer declarations override the host's request. The prepared
+   `ANYGM_CONTENT_SCENE_OPENGL` and `ANYGM_CONTENT_SCENE_NO_FALLBACK` flags report that session
+   policy; negotiate from those flags rather than the original host option. Neither flag means CPU.
 6. Store bytes returned by the complete public state API for ordinary save states. A frequent
    in-memory resume ring may use `anygm_state_resume_size`,
    `anygm_state_resume_capacity_hint`, and `anygm_state_save_for_resume` to omit only the optional

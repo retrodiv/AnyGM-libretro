@@ -105,6 +105,9 @@ mapping on port 1. The port is explicit in every declaration; the old three-fiel
 is rejected. Update content declarations when updating a core that used that syntax.
 These content-only declarations share ordinary override disabling and save-state identity.
 
+Load-time `renderer|...` declarations and reversible `?crt setcall|...` settings are documented
+in [Content configuration](CONTENT_CONFIGURATION.md#content-renderer-selection).
+
 `call|script_name` invokes the named zero-argument GMS script exactly once,
 after the first Step of a fresh content load. The name is the script asset
 name, not a CODE entry name: `call|configure_input` resolves only
