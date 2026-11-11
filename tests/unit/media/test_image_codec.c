@@ -22,6 +22,63 @@ static uint64_t fnv64(const uint8_t *data,size_t size){
   return hash;
 }
 
+static int large_png_bytes(void){
+  enum { WIDTH=257, HEIGHT=129, STRIDE=1037 };
+  static const size_t expected_size[]={1877u,132829u};
+  static const uint64_t expected_hash[]={
+    UINT64_C(0x4d8aae5336368498),UINT64_C(0x9686cd0ff957a69c)
+  };
+  static const size_t expected_deflate_size[]={4201u,133804u};
+  static const uint64_t expected_deflate_hash[]={
+    UINT64_C(0x597a583ddde301c1),UINT64_C(0x94874aea9667112f)
+  };
+  uint8_t pixels[STRIDE*HEIGHT];
+  int ok=1;
+  for(unsigned pattern=0;pattern<2u;pattern++){
+    memset(pixels,0xa5,sizeof pixels);
+    uint32_t random=UINT32_C(0x12345678);
+    for(int y=0;y<HEIGHT;y++) for(int x=0;x<WIDTH*4;x++){
+      random=random*UINT32_C(1664525)+UINT32_C(1013904223);
+      pixels[y*STRIDE+x]=pattern?(uint8_t)(random>>24):(uint8_t)(x/4+y*3);
+    }
+    GmlMediaBuffer png={0},decoded={0};
+    if(!expect(gml_image_encode_png(pixels,WIDTH,HEIGHT,4,STRIDE,&png),
+               "large padded PNG encode")) return 0;
+    /* Preserve the established encoder bytes across compiler optimization,
+     * including repeated rows and incompressible input with growing tables. */
+    ok&=expect(png.size==expected_size[pattern] &&
+               fnv64(png.data,png.size)==expected_hash[pattern],
+               "large PNG retains established compressed bytes");
+    int width=0,height=0,components=0;
+    int decoded_ok=gml_image_decode_rgba(png.data,png.size,&decoded,
+                                        &width,&height,&components);
+    ok&=expect(decoded_ok && width==WIDTH && height==HEIGHT && components==4 &&
+               decoded.size==(size_t)WIDTH*HEIGHT*4u,
+               "large PNG decode extent");
+    if(decoded_ok && decoded.size==(size_t)WIDTH*HEIGHT*4u)
+      for(int y=0;y<HEIGHT;y++)
+        ok&=expect(!memcmp(decoded.data+(size_t)y*WIDTH*4u,
+                           pixels+(size_t)y*STRIDE,WIDTH*4u),
+                   "large PNG exact pixels exclude stride padding");
+    gml_media_buffer_release(&decoded);
+    gml_media_buffer_release(&png);
+    /* The buffer encoder shares the compressor but uses a different quality. */
+    int deflated=gml_deflate_encode_zlib(pixels,sizeof pixels,&png);
+    ok&=expect(deflated && png.size==expected_deflate_size[pattern] &&
+               fnv64(png.data,png.size)==expected_deflate_hash[pattern],
+               "large zlib retains established compressed bytes");
+    if(deflated){
+      decoded_ok=gml_deflate_decode(png.data,png.size,GML_DEFLATE_ZLIB,&decoded);
+      ok&=expect(decoded_ok && decoded.size==sizeof pixels &&
+                 !memcmp(decoded.data,pixels,sizeof pixels),
+                 "large zlib exact round trip includes padding bytes");
+    }
+    gml_media_buffer_release(&decoded);
+    gml_media_buffer_release(&png);
+  }
+  return ok;
+}
+
 int main(void){
   static const uint8_t rgba[]={
     0xff,0x00,0x00,0xff, 0x00,0xff,0x00,0x80,
@@ -48,6 +105,7 @@ int main(void){
     0x3b
   };
   int ok=1;
+  ok&=large_png_bytes();
 
   GmlMediaBuffer png={0};
   ok&=expect(gml_image_encode_png(rgba,2,2,4,8,&png),"encode PNG");

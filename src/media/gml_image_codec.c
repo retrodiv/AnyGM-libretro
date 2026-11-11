@@ -23,8 +23,9 @@
 #define STB_IMAGE_STATIC
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
-/* This bundled stb_image_write revision miscompiles its PNG compressor at
- * GCC -O2. Keep only the third-party implementation at its verified level. */
+/* The bundled writer warns against strict-aliasing optimization. GCC can
+ * optimize its byte loops with alias analysis disabled; keep Clang's
+ * established profile. The encoded-byte controls cover both profiles. */
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #pragma clang diagnostic push
@@ -35,7 +36,7 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma GCC push_options
-#pragma GCC optimize ("O1")
+#pragma GCC optimize ("O3,no-strict-aliasing")
 #endif
 #define STB_IMAGE_WRITE_STATIC
 #define STB_IMAGE_WRITE_IMPLEMENTATION
