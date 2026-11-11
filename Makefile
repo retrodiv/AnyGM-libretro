@@ -175,6 +175,9 @@ RUNTIME_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(ANYGM_RUNTIME_SOURCES))
 	$(patsubst %.cpp,$(BUILD_DIR)/obj/%.o,$(ANYGM_RUNTIME_CXX_SOURCES))
 CORE_RUNTIME_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(ANYGM_CORE_SOURCES))
 LIBRETRO_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(ANYGM_LIBRETRO_SOURCES))
+LIBRETRO_CONTRACT_HEADERS := src/api/anygm.h \
+	src/adapters/libretro/libretro_internal.h \
+	src/third_party/libretro/include/libretro.h
 TEST_HOST_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(ANYGM_TEST_HOST_SOURCES))
 VENDORED_BZIP2_OBJECTS := $(filter $(BUILD_DIR)/obj/src/third_party/bzip2/%,$(RUNTIME_OBJECTS))
 DELTA_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(ANYGM_DELTA_SOURCES))
@@ -964,9 +967,10 @@ $(TEST_DIR)/dummy_host: tests/contract/dummy_host.c tests/support/synthetic_cont
 
 $(TEST_DIR)/test_libretro_state_transport: tests/contract/libretro_state_transport.c \
 	src/adapters/libretro/libretro_entry.c src/adapters/libretro/libretro_context.c \
-	src/adapters/libretro/libretro_cache.c src/adapters/libretro/libretro_display.c
+	src/adapters/libretro/libretro_cache.c src/adapters/libretro/libretro_display.c \
+	Makefile Makefile.common $(COMPILE_CONFIG) $(LIBRETRO_CONTRACT_HEADERS)
 	mkdir -p $(dir $@)
-	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm
+	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $(filter %.c,$^) -o $@ -lm
 
 $(TEST_DIR)/test_libretro_tilemap_state: tests/contract/libretro_tilemap_state.c \
 	tests/support/synthetic_content.c $(CORE_OBJECTS) $(TEST_HOST_OBJECTS)
@@ -1002,7 +1006,8 @@ windows-dll-lifetime-check: windows-dll-lifetime-probe
 
 # Explicit Windows-only contract; its controlled APIs never change the host display.
 $(TEST_DIR)/test_libretro_display_windows.exe: tests/contract/libretro_display_windows.c \
-	src/adapters/libretro/libretro_display.c
+	src/adapters/libretro/libretro_display.c \
+	Makefile Makefile.common $(COMPILE_CONFIG) $(LIBRETRO_CONTRACT_HEADERS)
 	mkdir -p $(dir $@)
 	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $< -o $@
 
@@ -1013,9 +1018,10 @@ $(TEST_DIR)/test_libretro_dynamic_rewind: tests/contract/libretro_dynamic_rewind
 	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS)
 
 $(TEST_DIR)/test_libretro_option_defaults: tests/contract/libretro_option_defaults.c \
-	src/adapters/libretro/libretro_options.c
+	src/adapters/libretro/libretro_options.c \
+	Makefile Makefile.common $(COMPILE_CONFIG) $(LIBRETRO_CONTRACT_HEADERS)
 	mkdir -p $(dir $@)
-	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
+	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $(filter %.c,$^) -o $@
 
 $(TEST_DIR)/test_libretro_crt_output: tests/contract/libretro_crt_output.c \
 	tests/support/synthetic_content.c $(CORE_OBJECTS) $(TEST_HOST_OBJECTS)
@@ -1023,46 +1029,54 @@ $(TEST_DIR)/test_libretro_crt_output: tests/contract/libretro_crt_output.c \
 	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS)
 
 $(TEST_DIR)/test_libretro_keyboard_source: tests/contract/libretro_keyboard_source.c \
-	src/adapters/libretro/libretro_input.c
+	src/adapters/libretro/libretro_input.c \
+	Makefile Makefile.common $(COMPILE_CONFIG) $(LIBRETRO_CONTRACT_HEADERS)
 	mkdir -p $(dir $@)
-	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
+	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $(filter %.c,$^) -o $@
 
 $(TEST_DIR)/test_libretro_gamepad_ports: tests/contract/libretro_gamepad_ports.c \
-	src/adapters/libretro/libretro_input.c
+	src/adapters/libretro/libretro_input.c \
+	Makefile Makefile.common $(COMPILE_CONFIG) $(LIBRETRO_CONTRACT_HEADERS)
 	mkdir -p $(dir $@)
-	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
+	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $(filter %.c,$^) -o $@
 
 $(TEST_DIR)/test_libretro_locale_variables: tests/contract/libretro_locale_variables.c \
-	src/adapters/libretro/libretro_context.c src/adapters/libretro/libretro_display.c
+	src/adapters/libretro/libretro_context.c src/adapters/libretro/libretro_display.c \
+	Makefile Makefile.common $(COMPILE_CONFIG) $(LIBRETRO_CONTRACT_HEADERS)
 	mkdir -p $(dir $@)
-	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm
+	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $(filter %.c,$^) -o $@ -lm
 
 $(TEST_DIR)/test_libretro_wall_time: tests/contract/libretro_wall_time.c \
-	src/adapters/libretro/libretro_context.c src/adapters/libretro/libretro_display.c
+	src/adapters/libretro/libretro_context.c src/adapters/libretro/libretro_display.c \
+	Makefile Makefile.common $(COMPILE_CONFIG) $(LIBRETRO_CONTRACT_HEADERS)
 	mkdir -p $(dir $@)
-	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm
+	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $(filter %.c,$^) -o $@ -lm
 
 $(TEST_DIR)/test_libretro_content_directories: tests/contract/libretro_content_directories.c \
 	src/adapters/libretro/libretro_entry.c src/adapters/libretro/libretro_context.c \
 	src/adapters/libretro/libretro_cache.c src/adapters/libretro/libretro_vfs.c \
-	src/adapters/libretro/libretro_display.c
+	src/adapters/libretro/libretro_display.c \
+	Makefile Makefile.common $(COMPILE_CONFIG) $(LIBRETRO_CONTRACT_HEADERS)
 	mkdir -p $(dir $@)
-	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm
+	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $(filter %.c,$^) -o $@ -lm
 
 $(TEST_DIR)/test_libretro_vfs_transport: tests/contract/libretro_vfs_transport.c \
-	src/adapters/libretro/libretro_vfs.c
+	src/adapters/libretro/libretro_vfs.c \
+	Makefile Makefile.common $(COMPILE_CONFIG) $(LIBRETRO_CONTRACT_HEADERS)
 	mkdir -p $(dir $@)
-	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
+	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $(filter %.c,$^) -o $@
 
 $(TEST_DIR)/test_libretro_cache_vfs: tests/contract/libretro_cache_vfs.c \
-	src/adapters/libretro/libretro_cache.c src/adapters/libretro/libretro_vfs.c
+	src/adapters/libretro/libretro_cache.c src/adapters/libretro/libretro_vfs.c \
+	Makefile Makefile.common $(COMPILE_CONFIG) $(LIBRETRO_CONTRACT_HEADERS)
 	mkdir -p $(dir $@)
-	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
+	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $(filter %.c,$^) -o $@
 
 $(TEST_DIR)/test_libretro_hardware_render: tests/contract/libretro_hardware_render.c \
-	$(ANYGM_LIBRETRO_SOURCES)
+	$(ANYGM_LIBRETRO_SOURCES) \
+	Makefile Makefile.common $(COMPILE_CONFIG) $(LIBRETRO_CONTRACT_HEADERS)
 	mkdir -p $(dir $@)
-	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm
+	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $(filter %.c,$^) -o $@ -lm
 
 diagnostic-tests: $(TEST_DIR)/test_load $(TEST_DIR)/test_vm
 
