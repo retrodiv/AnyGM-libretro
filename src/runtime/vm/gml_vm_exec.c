@@ -483,6 +483,7 @@ static const char *const g_special_var_names[]={
   "view_left","view_top","view_width","view_height","view_x","view_y",
   "brush_color","brush_style","pen_color","pen_size",
   "bs_hollow","bs_solid",
+  "bboxmode_automatic","bboxmode_fullimage","bboxmode_manual",
   "event_type","event_number","mouse_x","mouse_y",
   "current_time","current_second","current_minute","current_hour","current_day","current_weekday",
   "current_month","current_year","os_type","os_windows","os_uwp","os_xboxone","os_ps3","os_ps4","os_psvita",
@@ -642,6 +643,9 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   }
   if(!strcmp(name,"undefined")) return vundef();   /* GMS2.3 builtin literal used by optional-arg prologues */
   if(!strcmp(name,"game_id")) return vreal(vm->win?vm->win->gameid:0);
+  if(!strcmp(name,"bboxmode_automatic")) return vreal(0);
+  if(!strcmp(name,"bboxmode_fullimage")) return vreal(1);
+  if(!strcmp(name,"bboxmode_manual")) return vreal(2);
   if(!strcmp(name,"instance_id") &&
      (inst==IT_GLOBAL || !inst_is_struct_ref(var_target(vm,inst)))) return vreal(IT_NOONE);
   if(!strcmp(name,"infinity")) return vreal(INFINITY); /* unbounded numeric literal */

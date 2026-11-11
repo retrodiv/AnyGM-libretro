@@ -145,19 +145,21 @@ int gml_sprite_collision(GmlRender *r, int sprite, int frame, int lx, int ly){
   if(sprite<0||sprite>=r->n_spr) return 0;
   GmlSprite *s=&r->spr[sprite];
   if(lx<0||ly<0||lx>=s->w||ly>=s->h) return 0;
-  if(lx<s->ml||lx>s->mr||ly<s->mt||ly>s->mb) return 0;
+  int left=s->bbox_mode==1?0:s->ml, top=s->bbox_mode==1?0:s->mt;
+  int right=s->bbox_mode==1?s->w-1:s->mr, bottom=s->bbox_mode==1?s->h-1:s->mb;
+  if(lx<left||lx>right||ly<top||ly>bottom) return 0;
   if(s->collision_kind==1) return 1;
   if(s->collision_kind==2){
-    double hw=(s->mr-s->ml+1)/2.0, hh=(s->mb-s->mt+1)/2.0;
+    double hw=((double)right-left+1)/2.0, hh=((double)bottom-top+1)/2.0;
     if(hw<=0||hh<=0) return 0;
-    double cx=s->ml+hw-0.5, cy=s->mt+hh-0.5;
+    double cx=left+hw-0.5, cy=top+hh-0.5;
     double dx=(lx-cx)/hw, dy=(ly-cy)/hh;
     return dx*dx+dy*dy<=1.0;
   }
   if(s->collision_kind==3){
-    double hw=(s->mr-s->ml+1)/2.0, hh=(s->mb-s->mt+1)/2.0;
+    double hw=((double)right-left+1)/2.0, hh=((double)bottom-top+1)/2.0;
     if(hw<=0||hh<=0) return 0;
-    double cx=s->ml+hw-0.5, cy=s->mt+hh-0.5;
+    double cx=left+hw-0.5, cy=top+hh-0.5;
     return fabs((lx-cx)/hw)+fabs((ly-cy)/hh)<=1.0;
   }
   if(s->mask && s->mask_count>0){

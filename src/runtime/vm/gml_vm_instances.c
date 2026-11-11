@@ -1287,7 +1287,7 @@ static int vm_bbox_at(GmlVM *vm, GmlInstance *in, double atx, double aty,
   GmlRender *R=(GmlRender*)vm->render; if(!R) return 0;
   int si=inst_mask_sprite_index(in);
   GmlRenderSpriteMetrics sprite;
-  if(si<0 || !gml_render_sprite_metrics(R,si,&sprite) ||
+  if(si<0 || !gml_render_sprite_collision_metrics(R,si,&sprite) ||
      sprite.collision_right<sprite.collision_left ||
      sprite.collision_bottom<sprite.collision_top) return 0;
   double xs=in->image_xscale, ys=in->image_yscale;
@@ -1363,7 +1363,7 @@ static int vm_masks_overlap(GmlVM *vm, GmlInstance *a, GmlInstance *b,
   GmlRender *R=(GmlRender*)vm->render; if(!R) return 1;
   int as=inst_mask_sprite_index(a), bs=inst_mask_sprite_index(b); if(as<0||bs<0) return 1;
   GmlRenderSpriteMetrics ap,bp;
-  if(!gml_render_sprite_metrics(R,as,&ap) || !gml_render_sprite_metrics(R,bs,&bp)) return 1;
+  if(!gml_render_sprite_collision_metrics(R,as,&ap) || !gml_render_sprite_collision_metrics(R,bs,&bp)) return 1;
   /* The caller has established inclusive bbox overlap. Sampling that edge again relative to
    * fractional origins can incorrectly discard it. Keep mixed/rotated masks on the pixel path. */
   if(ap.collision_box && bp.collision_box && a->image_angle==0 && b->image_angle==0)

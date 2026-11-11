@@ -117,7 +117,7 @@ typedef struct GmlSprite { const char *name; int originx, originy, w, h, n_frame
                  int ml, mr, mt, mb;                /* collision bbox coordinates: left,right,top,bottom */
                  const uint8_t *mask; int mask_rowb, mask_count;  /* SPRT collision mask: 1bpp */
                  uint8_t *runtime_mask;                           /* owned copy for runtime assets */
-                 int collision_kind, collision_tolerance;
+                 int collision_kind, collision_tolerance, bbox_mode;
                  float playback_speed; int playback_speed_type, playback_speed_valid;
                  uint8_t *runtime_rgba; int runtime_owned, runtime_extra, runtime_opaque; char *owned_name;
                  int runtime_scene_binary, runtime_scene_used;
@@ -133,7 +133,7 @@ typedef struct GmlSprite { const char *name; int originx, originy, w, h, n_frame
                  char *runtime_source_path; int runtime_source_imgnum, runtime_source_removeback;
                  int base_valid, base_originx, base_originy, base_w, base_h, base_n_frames;
                  int base_ml, base_mr, base_mt, base_mb, base_mask_rowb, base_mask_count;
-                 int base_collision_kind, base_collision_tolerance;
+                 int base_collision_kind, base_collision_tolerance, base_bbox_mode;
                  const uint8_t *base_mask;
                  GmlSpine *spine;
                  /* GMS2.3+ nine-slice: draw scaled with fixed-size borders (corners never scale;
@@ -862,6 +862,9 @@ int gml_render_runtime_sprite_scene_retire(GmlRender *r,GmlSprite *sprite);
 int gml_render_runtime_frame_index(GmlSprite *sprite,int frame);
 void gml_render_sprite_cache_free(GmlSprite *sprite);
 void gml_render_sprite_state_cache_clear(GmlSprite *sprite);
+/* Restore collision metadata without replacing pixels or recomputing saved bounds. */
+int gml_render_sprite_collision_metadata_set(GmlRender *r,int sprite,int mode,
+                                               int left,int top,int right,int bottom);
 void blit(GmlRender *r,GmlTpag *tpag,double x,double y,double xscale,double yscale,
           uint32_t blend,double alpha);
 void blit_rgba_sprite(GmlRender *r,GmlSprite *owner,const uint8_t *source,

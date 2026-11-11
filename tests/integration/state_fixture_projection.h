@@ -138,11 +138,11 @@ static void fixture_map(FixtureProjection *p){
     (void)fixture_value(p,0);
   }
 }
-/* Only the current neutral fixture is projected, with each omitted playback field checked
+/* Only the current neutral fixture is projected, with each omitted sprite field checked
  * against the live fixture. Direct state controls cover mutation/restoration of these fields. */
 static int project_fixture_playback(AnygmEngine *engine,uint8_t **data,size_t *written){
   uint8_t *bytes=*data;
-  if(*written<112 || (uint32_t)read_u64(bytes+4)!=53 || engine->render.n_spr<0)return 0;
+  if(*written<112 || (uint32_t)read_u64(bytes+4)!=56 || engine->render.n_spr<0)return 0;
   /* Only a neutral current blend may disappear from this historical scratch pin. */
   size_t render=112+(size_t)read_u64(bytes+64),render_size=(size_t)read_u64(bytes+72);
   const uint8_t neutral_blend[12]={0,0,0,0,1,0,0,0,1,0,0,0};
@@ -186,18 +186,33 @@ static int project_fixture_playback(AnygmEngine *engine,uint8_t **data,size_t *w
   write_u64(bytes+56,state_checksum(bytes+112,*written-112));
   size_t start=112+(size_t)read_u64(bytes+64),size=(size_t)read_u64(bytes+72);
   size_t count=(size_t)engine->render.n_spr;
-  if(count>(SIZE_MAX-4)/12)return 0;
-  size_t trailer=4+12*count;
+  size_t trailer=4;
+  for(size_t i=0;i<count;i++){
+    size_t row=engine->render.spr[i].runtime_rgba?16:32;
+    if(row>SIZE_MAX-trailer)return 0;
+    trailer+=row;
+  }
   if(start>*written || size>*written-start || trailer>size)return 0;
   size_t at=start+size-trailer;
   if((uint32_t)read_u64(bytes+at)!=(uint32_t)count)return 0;
+  size_t row_at=at+4;
   for(size_t i=0;i<count;i++){
     GmlSprite *sprite=&engine->render.spr[i];uint32_t bits=0;
     memcpy(&bits,&sprite->playback_speed,sizeof bits);
-    if((uint32_t)read_u64(bytes+at+4+12*i)!=bits ||
-       (uint32_t)read_u64(bytes+at+8+12*i)!=(uint32_t)sprite->playback_speed_type ||
-       (uint32_t)read_u64(bytes+at+12+12*i)!=(uint32_t)sprite->playback_speed_valid)return 0;
+    if((uint32_t)read_u64(bytes+row_at)!=bits ||
+       (uint32_t)read_u64(bytes+row_at+4)!=(uint32_t)sprite->playback_speed_type ||
+       (uint32_t)read_u64(bytes+row_at+8)!=(uint32_t)sprite->playback_speed_valid ||
+       (uint32_t)read_u64(bytes+row_at+12)!=(uint32_t)sprite->bbox_mode)return 0;
+    row_at+=16;
+    if(!sprite->runtime_rgba){
+      if((uint32_t)read_u64(bytes+row_at)!=(uint32_t)sprite->ml ||
+         (uint32_t)read_u64(bytes+row_at+4)!=(uint32_t)sprite->mt ||
+         (uint32_t)read_u64(bytes+row_at+8)!=(uint32_t)sprite->mr ||
+         (uint32_t)read_u64(bytes+row_at+12)!=(uint32_t)sprite->mb)return 0;
+      row_at+=16;
+    }
   }
+  if(row_at!=at+trailer)return 0;
   uint8_t *result=malloc(*written-trailer);
   if(!result)return 0;
   memcpy(result,bytes,at);memcpy(result+at,bytes+at+trailer,*written-at-trailer);
@@ -231,7 +246,7 @@ static int project_fixture_vm(AnygmEngine *engine,uint8_t **data,size_t *written
   if((uint32_t)read_u64(p->input+timeline_at)!=0 ||
      (uint32_t)read_u64(p->input+timeline_at+4)!=(uint32_t)engine->vm.n_objects){free(p);return 0;}
   fixture_copy(p,132);
-  if((uint32_t)read_u64(p->output+4)!=31)p->ok=0;
+  if((uint32_t)read_u64(p->output+4)!=33)p->ok=0;
   write_u32(p->output+4,19);
   for(unsigned i=0;i<16;i++)(void)fixture_value(p,0);
   fixture_copy(p,76+26*4+616*8+10*4); /* RNG and unchanged software-3D scalars */

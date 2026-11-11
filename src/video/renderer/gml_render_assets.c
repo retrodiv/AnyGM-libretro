@@ -35,6 +35,17 @@ int gml_render_sprite_metrics(const GmlRender *R,int sprite,
   return 1;
 }
 
+int gml_render_sprite_collision_metrics(const GmlRender *r,int sprite,
+                                        GmlRenderSpriteMetrics *metrics){
+  if(!gml_render_sprite_metrics(r,sprite,metrics)) return 0;
+  if(metrics && r->spr[sprite].bbox_mode==1){
+    metrics->collision_left=metrics->collision_top=0;
+    metrics->collision_right=metrics->width-1;
+    metrics->collision_bottom=metrics->height-1;
+  }
+  return 1;
+}
+
 int gml_render_sprite_set_playback(GmlRender *R,int sprite,
                                    double speed,int speed_type){
   if(!R || sprite<0 || sprite>=R->n_spr) return 0;

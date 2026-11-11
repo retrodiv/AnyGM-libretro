@@ -9,6 +9,7 @@
 #include "stdio_vfs.h"
 
 #include <stdint.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -161,7 +162,116 @@ static int surface_subimages_retain_existing_frames(void){
   return 0;
 }
 
+static int bbox_authored_fixture(GmlRender *render,GmlWin *win){
+  if(gml_render_init(render,win)) return 0;
+  render->spr=calloc(1,sizeof *render->spr);
+  render->tpag=calloc(1,sizeof *render->tpag);
+  render->atlas=calloc(1,sizeof *render->atlas);
+  if(!render->spr || !render->tpag || !render->atlas) return 0;
+  render->n_spr=render->spr_cap=render->base_n_spr=1;
+  render->n_tpag=render->n_atlas=1;
+  GmlSprite *s=&render->spr[0];
+  s->name="authored_bounds";s->w=4;s->h=3;s->n_frames=1;
+  s->originx=5;s->originy=7;s->mr=3;s->mb=2;s->bbox_mode=2;
+  s->collision_kind=1;s->collision_tolerance=63;
+  s->frame=calloc(1,sizeof *s->frame);
+  *render->tpag=(GmlTpag){.sw=4,.sh=3,.tw=4,.th=3,.bw=4,.bh=3,.atlas=0};
+  render->atlas[0].w=4;render->atlas[0].h=3;render->atlas[0].decode_attempted=1;
+  render->atlas[0].px=calloc(12,4);
+  if(!s->frame || !render->atlas[0].px) return 0;
+  render->atlas[0].px[(1*4+1)*4+3]=255;
+  render->atlas[0].px[(1*4+2)*4+3]=255;
+  render->atlas[0].px[(2*4+3)*4+3]=32;
+  return 1;
+}
+
+static int sprite_bounds_metadata_contract(void){
+  GmlWin win={0};GmlRender render,restored;GmlVM vm;
+  REQUIRE(bbox_authored_fixture(&render,&win) && bbox_authored_fixture(&restored,&win),
+          "authored bounds fixtures");
+  REQUIRE(gml_vm_init(&vm,&win,NULL)==0,"bounds VM fixture");
+  vm.render=&render;
+  uint8_t original[48];memcpy(original,render.atlas[0].px,sizeof original);
+  uint8_t *pixels=render.atlas[0].px;int *frame=render.spr[0].frame;
+  int bounds_id=gml_builtin_fast_id(&vm,"sprite_set_bbox");
+  int mode_id=gml_builtin_fast_id(&vm,"sprite_set_bbox_mode");
+  REQUIRE(bounds_id>=0 && mode_id>=0,"bounds named and cached registration");
+  for(int cached=0;cached<2;cached++){
+    GmlVal bounds[]={vreal(0),vreal(1),vreal(1),vreal(2),vreal(1)};
+    GmlVal mode[]={vreal(0),vreal(2)};
+    (void)gml_sprite_set_bbox_mode(&render,0,2);
+    GmlVal result=cached?gml_builtin_call_fast_id(&vm,bounds_id,"sprite_set_bbox",bounds,5):
+                         gml_builtin_call(&vm,"sprite_set_bbox",bounds,5);
+    REQUIRE(result.t==V_UNDEF,"bounds setter has no numeric result");
+    REQUIRE(render.spr[0].ml==1 && render.spr[0].mt==1 &&
+            render.spr[0].mr==2 && render.spr[0].mb==1 &&
+            gml_sprite_collision(&render,0,0,1,1) && !gml_sprite_collision(&render,0,0,0,0),
+            "authored bounds change the existing collision owner");
+    for(int full=1;full>=0;full--){
+      mode[1]=vreal(full);
+      result=cached?gml_builtin_call_fast_id(&vm,mode_id,"sprite_set_bbox_mode",mode,2):
+                    gml_builtin_call(&vm,"sprite_set_bbox_mode",mode,2);
+      REQUIRE(result.t==V_UNDEF,"mode setter has no numeric result");
+      REQUIRE(render.spr[0].bbox_mode==full && render.spr[0].ml==1 &&
+              render.spr[0].mt==1 && render.spr[0].mr==2 && render.spr[0].mb==1 &&
+              render.spr[0].collision_tolerance==63,
+              "mode changes preserve the stored bounds and collision tolerance");
+      GmlRenderSpriteMetrics geometry;
+      REQUIRE(gml_render_sprite_collision_metrics(&render,0,&geometry) &&
+              geometry.collision_left==(full?0:1) && geometry.collision_top==(full?0:1) &&
+              geometry.collision_right==(full?3:2) && geometry.collision_bottom==(full?2:1) &&
+              gml_sprite_collision(&render,0,0,0,0)==full,
+              "full image changes collision geometry without replacing raw bounds");
+    }
+  }
+  REQUIRE(render.spr[0].runtime_rgba==NULL && render.atlas[0].px==pixels &&
+          render.spr[0].frame==frame && !memcmp(original,pixels,sizeof original) &&
+          render.spr[0].originx==5 && render.spr[0].originy==7,
+          "bounds are metadata only: no pixel copy, texture replacement or origin change");
+  REQUIRE(gml_sprite_set_bbox_mode(&render,0,1) && gml_sprite_set_bbox(&render,0,-2,-3,8,9) &&
+          gml_sprite_set_bbox_mode(&render,0,1) && render.spr[0].ml==-2 &&
+          render.spr[0].mt==-3 && render.spr[0].mr==8 && render.spr[0].mb==9,
+          "explicit image coordinates and repeated mode are retained");
+  uint8_t *rgba=malloc(sizeof original);REQUIRE(rgba!=NULL,"runtime bounds pixels");
+  memcpy(rgba,original,sizeof original);
+  int runtime=gml_sprite_append_from_rgba(&render,rgba,4,3,1,1,"runtime_bounds");
+  REQUIRE(runtime==1 && gml_sprite_set_bbox_mode(&render,runtime,2) &&
+          gml_sprite_set_bbox(&render,runtime,1,1,2,1),"runtime manual bounds");
+  int duplicate=gml_sprite_duplicate(&render,runtime);
+  REQUIRE(duplicate==2 && render.spr[duplicate].bbox_mode==2 &&
+          render.spr[duplicate].ml==1 && render.spr[duplicate].mb==1,
+          "duplicate retains collision metadata");
+  REQUIRE(gml_sprite_assign(&render,duplicate,0) && render.spr[duplicate].bbox_mode==1 &&
+          render.spr[duplicate].ml==-2,"assign retains the mode with its bounds");
+  size_t size=gml_render_state_size(&render,-1),written=0,used=0;
+  uint8_t *state=malloc(size),*again=malloc(size);
+  REQUIRE(state && again && gml_render_state_save(&render,-1,state,size,&written) &&
+          written==size && gml_render_state_load(&restored,state,size,&used) && used==size &&
+          gml_render_state_save(&restored,-1,again,size,&written) && written==size &&
+          !memcmp(state,again,size),"authored and runtime metadata save-load-save is exact");
+  REQUIRE(restored.spr[0].runtime_rgba==NULL && restored.spr[0].bbox_mode==1 &&
+          restored.spr[0].ml==-2 && restored.spr[0].mb==9 &&
+          restored.spr[1].bbox_mode==2 && restored.spr[1].ml==1,
+          "restore does not recompute saved bounds or copy authored pixels");
+  GmlVal invalid[]={vreal(0),vreal(1),vreal(NAN),vreal(2),vreal(1)};
+  (void)gml_builtin_call(&vm,"sprite_set_bbox",invalid,5);
+  invalid[1]=vreal(3);
+  (void)gml_builtin_call_fast_id(&vm,mode_id,"sprite_set_bbox_mode",invalid,2);
+  (void)gml_builtin_call(&vm,"sprite_set_bbox",NULL,0);
+  REQUIRE(gml_render_state_save(&render,-1,again,size,&written) && written==size &&
+          !memcmp(state,again,size),"invalid bounds input leaves the owner unchanged");
+  gml_render_clear_runtime_sprites(&restored);
+  REQUIRE(restored.spr[0].bbox_mode==2 && restored.spr[0].ml==0 &&
+          restored.spr[0].mr==3 && restored.spr[0].mb==2,
+          "restored metadata retains the original authored reset baseline");
+  free(state);free(again);gml_vm_free(&vm);
+  gml_render_free(&restored);gml_render_free(&render);
+  puts("sprite bounds: named/cached authored/runtime metadata, masks and exact state passed");
+  return 0;
+}
+
 int main(void){
+  REQUIRE(sprite_bounds_metadata_contract()==0,"sprite bounds contract");
   REQUIRE(surface_subimages_retain_existing_frames()==0,"surface subimage regression");
   REQUIRE(runtime_sprite_names_survive_state()==0,"runtime sprite name state regression");
   char root[]="build/renderer-assets-XXXXXX";

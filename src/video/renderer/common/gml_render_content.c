@@ -43,6 +43,7 @@ static void parse_sprt(GmlRender *r){
     s->playback_speed=1.0f; s->playback_speed_type=1; s->playback_speed_valid=0;
     s->w=(int)u32(d,p+4); s->h=(int)u32(d,p+8);
     s->ml=(int)u32(d,p+12); s->mr=(int)u32(d,p+16); s->mb=(int)u32(d,p+20); s->mt=(int)u32(d,p+24);
+    s->bbox_mode=u32(d,p+40)<=2?(int)u32(d,p+40):0;
     /* The native mask type selects an axis-aligned box (0) or a precise plane (1).
      * It is not a separate-subimage flag: one shared plane can still be precise.
      * Other native types retain their existing sampled geometry. */

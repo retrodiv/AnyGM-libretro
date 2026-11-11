@@ -21,6 +21,7 @@ static void sprite_backup(GmlSprite *s){
   s->base_ml=s->ml; s->base_mr=s->mr; s->base_mt=s->mt; s->base_mb=s->mb;
   s->base_mask=s->mask; s->base_mask_rowb=s->mask_rowb; s->base_mask_count=s->mask_count;
   s->base_collision_kind=s->collision_kind; s->base_collision_tolerance=s->collision_tolerance;
+  s->base_bbox_mode=s->bbox_mode;
 }
 static void sprite_restore_base(GmlSprite *s){
   if(!s->base_valid) return;
@@ -29,6 +30,7 @@ static void sprite_restore_base(GmlSprite *s){
   s->ml=s->base_ml; s->mr=s->base_mr; s->mt=s->base_mt; s->mb=s->base_mb;
   s->mask=s->base_mask; s->mask_rowb=s->base_mask_rowb; s->mask_count=s->base_mask_count;
   s->collision_kind=s->base_collision_kind; s->collision_tolerance=s->base_collision_tolerance;
+  s->bbox_mode=s->base_bbox_mode;
   s->base_valid=0;
 }
 int gml_render_runtime_sprite_scene_source_view(GmlRender *r,GmlSprite *sprite,int frame,
@@ -101,6 +103,7 @@ static int sprite_set_runtime_rgba(GmlRender *r,GmlSprite *s, uint8_t *rgba, int
   s->ml=0; s->mt=0; s->mr=w>0?w-1:0; s->mb=h>0?h-1:0;
   s->mask=NULL; s->mask_rowb=0; s->mask_count=0;
   s->collision_kind=0; s->collision_tolerance=63;
+  s->bbox_mode=0;
   size_t rows=(size_t)frames*(size_t)h;
   s->runtime_row_min=malloc(rows*sizeof(int));
   s->runtime_row_max=malloc(rows*sizeof(int));
@@ -259,6 +262,7 @@ int gml_sprite_duplicate(GmlRender *r, int sprite){
     dst->mask_count=src->mask_count;
     dst->collision_kind=src->collision_kind;
     dst->collision_tolerance=src->collision_tolerance;
+    dst->bbox_mode=src->bbox_mode;
     dst->ns_enabled=src->ns_enabled;
     dst->ns_l=src->ns_l; dst->ns_t=src->ns_t; dst->ns_r=src->ns_r; dst->ns_b=src->ns_b;
     for(int i=0;i<5;i++) dst->ns_tile[i]=src->ns_tile[i];
@@ -290,6 +294,7 @@ int gml_sprite_assign(GmlRender *r,int destination,int source){
   dst->mask_count=src->mask_count;
   dst->collision_kind=src->collision_kind;
   dst->collision_tolerance=src->collision_tolerance;
+  dst->bbox_mode=src->bbox_mode;
   dst->playback_speed=src->playback_speed;
   dst->playback_speed_type=src->playback_speed_type;
   dst->playback_speed_valid=src->playback_speed_valid;
@@ -557,6 +562,28 @@ static void sprite_auto_bbox(GmlRender *r, int sprite, int tolerance, int *ml, i
 static int clamp_i(int v, int lo, int hi){
   return v<lo?lo:(v>hi?hi:v);
 }
+int gml_render_sprite_collision_metadata_set(GmlRender *r,int sprite,int mode,
+                                               int left,int top,int right,int bottom){
+  if(!r || !gml_sprite_exists(r,sprite) || mode<0 || mode>2) return 0;
+  GmlSprite *s=&r->spr[sprite];
+  if(s->bbox_mode==mode && s->ml==left && s->mt==top && s->mr==right && s->mb==bottom)
+    return 1;
+  if(!s->runtime_extra) sprite_backup(s);
+  s->bbox_mode=mode;
+  s->ml=left; s->mt=top; s->mr=right; s->mb=bottom;
+  return 1;
+}
+int gml_sprite_set_bbox(GmlRender *r,int sprite,int left,int top,int right,int bottom){
+  if(!r || !gml_sprite_exists(r,sprite)) return 0;
+  return gml_render_sprite_collision_metadata_set(r,sprite,r->spr[sprite].bbox_mode,
+                                                  left,top,right,bottom);
+}
+int gml_sprite_set_bbox_mode(GmlRender *r,int sprite,int mode){
+  if(!r || !gml_sprite_exists(r,sprite) || mode<0 || mode>2) return 0;
+  GmlSprite *s=&r->spr[sprite];
+  if(s->bbox_mode==mode) return 1;
+  return gml_render_sprite_collision_metadata_set(r,sprite,mode,s->ml,s->mt,s->mr,s->mb);
+}
 int gml_sprite_collision_mask(GmlRender *r, int sprite, int sepmasks, int bboxmode,
                               int bbleft, int bbtop, int bbright, int bbbottom,
                               int kind, int tolerance){
@@ -581,6 +608,7 @@ int gml_sprite_collision_mask(GmlRender *r, int sprite, int sepmasks, int bboxmo
   s->mask=NULL; s->mask_rowb=0; s->mask_count=0;
   s->collision_kind=kind;
   s->collision_tolerance=tolerance;
+  s->bbox_mode=bboxmode==0 || bboxmode==2?bboxmode:1;
   return 1;
 }
 void gml_render_clear_runtime_sprites(GmlRender *r){
@@ -687,6 +715,7 @@ int gml_sprite_add_from_surface(GmlRender *r,int sprite,int surf,int x,int y,int
   int ml=s->ml,mt=s->mt,mr=s->mr,mb=s->mb;
   int kind=s->collision_kind;
   int tolerance=s->collision_tolerance;
+  int bbox_mode=s->bbox_mode;
   if(!sprite_set_runtime_rgba(r,s,rgba,s->w,s->h,s->n_frames+1,
                               s->originx,s->originy,s->runtime_extra)){
     free(mask);free(rgba);return 0;
@@ -694,6 +723,7 @@ int gml_sprite_add_from_surface(GmlRender *r,int sprite,int surf,int x,int y,int
   s->ml=ml;s->mt=mt;s->mr=mr;s->mb=mb;
   s->runtime_mask=mask;s->mask=mask;s->mask_rowb=rowb;s->mask_count=masks;
   s->collision_kind=kind;s->collision_tolerance=tolerance;
+  s->bbox_mode=bbox_mode;
   return 1;
 }
 int gml_sprite_replace_from_file(GmlRender *r, int sprite, const char *path, int imgnumb,

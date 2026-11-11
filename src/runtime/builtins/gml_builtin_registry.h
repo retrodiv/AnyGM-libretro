@@ -1985,7 +1985,9 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1887, GPU_GET_BLENDMODE_EXT_SEPALPHA, "gpu_get_blendmode_ext_sepalpha", PLATFORM, PLATFORM_TAIL, ALWAYS) \
   ENTRY(1888, GAMEPAD_GET_BUTTON_THRESHOLD, "gamepad_get_button_threshold", INPUT, INPUT, ALWAYS) \
   ENTRY(1889, INSTANCE_COPY, "instance_copy", INSTANCES, INSTANCES, ALWAYS) \
-  ENTRY(1890, INSTANCE_ID_GET, "instance_id_get", INSTANCES, INSTANCES_QUERIES, ALWAYS)
+  ENTRY(1890, INSTANCE_ID_GET, "instance_id_get", INSTANCES, INSTANCES_QUERIES, ALWAYS) \
+  ENTRY(1891, SPRITE_SET_BBOX, "sprite_set_bbox", DRAW, DRAW, ALWAYS) \
+  ENTRY(1892, SPRITE_SET_BBOX_MODE, "sprite_set_bbox_mode", DRAW, DRAW, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -2000,7 +2002,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1891
+  GML_BUILTIN_ID_LIMIT = 1893
 } GmlBuiltinId;
 
 #endif

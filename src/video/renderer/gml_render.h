@@ -945,6 +945,8 @@ void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double x, do
 int  gml_sprite_exists(GmlRender *r, int sprite);
 int  gml_render_sprite_metrics(const GmlRender *r, int sprite,
                                GmlRenderSpriteMetrics *metrics);
+int  gml_render_sprite_collision_metrics(const GmlRender *r, int sprite,
+                                         GmlRenderSpriteMetrics *metrics);
 int  gml_render_sprite_set_playback(GmlRender *r, int sprite,
                                     double speed, int speed_type);
 int  gml_render_sprite_texture_handle(int sprite, int image);
@@ -980,6 +982,8 @@ void gml_sprite_delete(GmlRender *r, int sprite);
 int  gml_sprite_collision_mask(GmlRender *r, int sprite, int sepmasks, int bboxmode,
                                int bbleft, int bbtop, int bbright, int bbbottom,
                                int kind, int tolerance);
+int  gml_sprite_set_bbox(GmlRender *r,int sprite,int left,int top,int right,int bottom);
+int  gml_sprite_set_bbox_mode(GmlRender *r,int sprite,int mode);
 int  gml_sprite_frames(GmlRender *r, int sprite);
 int  gml_sprite_alpha(GmlRender *r, int sprite, int frame, int lx, int ly);
 int  gml_sprite_set_alpha_from_sprite(GmlRender *r, int sprite, int alpha_sprite);

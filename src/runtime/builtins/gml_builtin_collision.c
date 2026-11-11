@@ -29,7 +29,7 @@ int inst_bbox(GmlVM *vm, GmlInstance *in, double atx, double aty,
                      double *l, double *t, double *r, double *b){
   GmlRender *R=(GmlRender*)vm->render; if(!R) return 0;
   int si=inst_mask_sprite_index(in); GmlRenderSpriteMetrics sprite;
-  if(!gml_render_sprite_metrics(R,si,&sprite) ||
+  if(!gml_render_sprite_collision_metrics(R,si,&sprite) ||
      sprite.collision_right<sprite.collision_left ||
      sprite.collision_bottom<sprite.collision_top) return 0;
   double xs=in->image_xscale, ys=in->image_yscale;
@@ -150,8 +150,8 @@ static int masks_overlap(GmlVM *vm, GmlInstance *self, double sx, double sy, Gml
   GmlRender *R=(GmlRender*)vm->render; if(!R) return 1;
   int ss=inst_mask_sprite_index(self), os=inst_mask_sprite_index(o); if(ss<0||os<0) return 1;
   GmlRenderSpriteMetrics sp,op;
-  if(!gml_render_sprite_metrics(R,ss,&sp) ||
-     !gml_render_sprite_metrics(R,os,&op)) return 1;
+  if(!gml_render_sprite_collision_metrics(R,ss,&sp) ||
+     !gml_render_sprite_collision_metrics(R,os,&op)) return 1;
   int round_origin=vm->win && anygm_policy_uses_classic_runtime(vm->win);
   double sl,st,sr,sb,ol,ot,orr,ob;
   if(!inst_bbox(vm,self,sx,sy,&sl,&st,&sr,&sb)) return 0;
@@ -628,7 +628,7 @@ static int point_hits_instance_prec(GmlVM *vm, GmlInstance *o, double px, double
   /* bbox hit; refine with the per-pixel mask when available */
   if(R){ int si=inst_mask_sprite_index(o);
     GmlRenderSpriteMetrics sprite;
-    if(gml_render_sprite_metrics(R,si,&sprite)){
+    if(gml_render_sprite_collision_metrics(R,si,&sprite)){
       if(!mask_hit_world(R,o,&sprite,si,o->x,o->y,vm->win&&anygm_policy_uses_classic_runtime(vm->win),
                          (int)floor(px),(int)floor(py))) return 0; } }
   return 1;
@@ -693,7 +693,7 @@ static int line_hits_instance(GmlVM *vm, GmlInstance *o,
   GmlRender *render=(GmlRender*)vm->render;
   int sprite=inst_mask_sprite_index(o),round_origin=0;
   GmlRenderSpriteMetrics metrics;
-  int refine=precise && render && gml_render_sprite_metrics(render,sprite,&metrics);
+  int refine=precise && render && gml_render_sprite_collision_metrics(render,sprite,&metrics);
   if(refine) round_origin=vm->win&&anygm_policy_uses_classic_runtime(vm->win);
   int first=0,last=steps;
   if(!line_sample_range(x1,x2,ol,orr,steps,&first,&last) ||
@@ -813,7 +813,7 @@ static int shape_hits_instance(GmlVM *vm, GmlInstance *o, int kind, double *p, i
     }
     if(precise && R){ int si=inst_mask_sprite_index(o);
       GmlRenderSpriteMetrics sprite;
-      if(gml_render_sprite_metrics(R,si,&sprite) &&
+      if(gml_render_sprite_collision_metrics(R,si,&sprite) &&
          !mask_hit_world(R,o,&sprite,si,o->x,o->y,
                          vm->win&&anygm_policy_uses_classic_runtime(vm->win),wx,wy)) continue; }
     return 1;

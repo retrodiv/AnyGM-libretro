@@ -208,9 +208,12 @@ int expect_object_state_bounds(void){
     gml_vm_state_save(&vm,bytes,size,&written) && written==size;
   GmlObject original[3]; memcpy(original,vm.objects,sizeof original);
   if(ok){
-    /* The new order table is empty in this property-only fixture. */
-    size_t table=size-92;
-    ok=fixture_u32(bytes,table)==3 && fixture_u32(bytes,size-4)==0;
+    /* This property-only fixture has empty instance order and array ownership trailers. */
+    size_t body=size>=20?size-20:0;
+    ok=body>=92 && !vm.next_array_owner &&
+      !memcmp(bytes+body,(const uint8_t[20]){0},20);
+    size_t table=body>=92?body-92:0;
+    ok=ok && fixture_u32(bytes,table)==3 && fixture_u32(bytes,body-4)==0;
     const struct { size_t offset; uint32_t value; const char *label; } changes[]={
       {table,UINT32_MAX,"negative object count"},
       {table,2,"missing object record"},
@@ -232,7 +235,7 @@ int expect_object_state_bounds(void){
       ok=object_expect(!gml_vm_state_load(&vm,candidate,size,&used) &&
         !memcmp(original,vm.objects,sizeof original),"longer parent cycle cannot publish");
     }
-    if(ok) ok=object_expect(!gml_vm_state_load(&vm,bytes,size-5,&used) &&
+    if(ok) ok=object_expect(!gml_vm_state_load(&vm,bytes,body-5,&used) &&
       !memcmp(original,vm.objects,sizeof original),"truncated property record cannot publish");
     if(ok){
       memcpy(candidate,bytes,size);

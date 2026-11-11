@@ -20,9 +20,17 @@ failed partial reads leave the canonical image unpublished and invalid as a
 current resource. See R03-P9-INCREMENTAL-CHECKPOINT in
 [the renderer map](RENDERER_BACKENDS.md) for owners and controls.
 
-The current AnyGM save-state schema is `55`. It is the format transported by
+The current AnyGM save-state schema is `56`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `56` retains each sprite's bounding-box mode in the renderer's existing
+resource-metadata table. Authored sprites also retain their four mutable bounds;
+runtime-sprite bounds remain in their existing pixel-resource record. Metadata
+restoration preserves the saved coordinates without recomputing automatic bounds
+or copying authored pixels. The mode domain is zero through two. Cold capacity
+includes these rows before a game changes its bounds. VM schema `33`, audio and
+graphics-resource schemas are unchanged; earlier root schemas are rejected.
 
 Schema `55` introduces VM schema `33`. A DS grid containing only exact scalar
 values (reals, object handles, strings, and undefined values) stores one bounded

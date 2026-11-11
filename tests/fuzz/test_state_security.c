@@ -44,7 +44,7 @@ static void write_u64(uint8_t *data,uint64_t value){
  * array-owner records. Never skip a populated or unknown trailer. */
 static size_t neutral_vm_body_end(const AnygmEngine *engine,const uint8_t *bytes,size_t size){
   if(engine->vm.next_array_owner) return SIZE_MAX;
-  if(size<STATE_HEADER_SIZE || (uint32_t)read_u64(bytes+4)!=53) return SIZE_MAX;
+  if(size<STATE_HEADER_SIZE || (uint32_t)read_u64(bytes+4)!=ANYGM_STATE_SCHEMA) return SIZE_MAX;
   size_t start=STATE_HEADER_SIZE;
   for(unsigned offset=64;offset<=72;offset+=8){
     uint64_t part=read_u64(bytes+offset);
@@ -52,7 +52,7 @@ static size_t neutral_vm_body_end(const AnygmEngine *engine,const uint8_t *bytes
     start+=(size_t)part;
   }
   uint64_t length=read_u64(bytes+80);
-  if(length<28 || length>size-start || (uint32_t)read_u64(bytes+start+4)!=31)
+  if(length<28 || length>size-start || (uint32_t)read_u64(bytes+start+4)!=33)
     return SIZE_MAX;
   size_t end=start+(size_t)length;
   if(memcmp(bytes+end-20,(const uint8_t[20]){0},20)) return SIZE_MAX;
@@ -279,6 +279,20 @@ static int runtime_mask_state_cases(AnygmEngine *engine){
          record.width==WIDTH && record.height==HEIGHT && record.frames==FRAMES &&
          record.row_bytes==ROW_BYTES && record.count==FRAMES;
   if(!ok) fail("runtime mask record could not be located");
+
+  if(ok){
+    size_t render_start=STATE_HEADER_SIZE+(size_t)read_u64(baseline+64);
+    size_t render_size=(size_t)read_u64(baseline+72);
+    size_t mode_at=render_start+render_size-16;
+    if(render_size<16 || mode_at>state_size-4 ||
+       !engine->render.spr[engine->render.n_spr-1].runtime_rgba ||
+       (uint32_t)read_u64(baseline+mode_at)!=(uint32_t)runtime->bbox_mode)
+      ok=fail("runtime bounding-box mode locator mismatch");
+    const uint32_t invalid_modes[]={3,UINT32_MAX,INT32_MAX};
+    for(unsigned i=0;ok && i<sizeof invalid_modes/sizeof invalid_modes[0];i++)
+      ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                              mode_at,invalid_modes[i],"invalid sprite bounding-box mode");
+  }
 
   if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
                                record.row_bytes_offset,(uint32_t)(ROW_BYTES+1),
@@ -1230,7 +1244,8 @@ static int sprite_playback_state_cases(const AnygmHostServices *services,const A
     gml_render_sprite_set_playback(&engine->render,sprite,0.125,0) && save_state(engine,&baseline,&size);
   if(!ok){free(baseline);anygm_destroy(engine);return 0;}
   size_t render_start=112+(size_t)read_u64(baseline+64),render_size=(size_t)read_u64(baseline+72);
-  size_t count=(size_t)engine->render.n_spr,trailer=4+12*count+12;
+  size_t count=(size_t)engine->render.n_spr,trailer=4+12;
+  for(size_t i=0;i<count;i++) trailer+=engine->render.spr[i].runtime_rgba?16:32;
   if(trailer>render_size){free(baseline);anygm_destroy(engine);return 0;}
   size_t at=render_start+render_size-trailer;
   ok=(uint32_t)read_u64(baseline+at)==count &&
@@ -1242,7 +1257,9 @@ static int sprite_playback_state_cases(const AnygmHostServices *services,const A
   if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,at+12,2,"invalid playback validity");
   if(ok){
     memcpy(candidate,baseline,size);write_u32(candidate+at+4,0);
-    write_u32(candidate+at+12+12*(count-1),2);refresh_checksum(candidate);
+    size_t last=at+4;
+    for(size_t i=0;i+1<count;i++) last+=engine->render.spr[i].runtime_rgba?16:32;
+    write_u32(candidate+last+8,2);refresh_checksum(candidate);
     ok=reject_unchanged(engine,candidate,size,baseline,size,"late playback rejection restores prior resource metadata");
   }
   if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,4,43,"previous playback-free public schema");

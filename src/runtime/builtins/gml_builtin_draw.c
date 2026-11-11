@@ -1693,6 +1693,18 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"sprite_restore")) return vreal(R&&gml_sprite_exists(R,(int)N(a,n,0)));
     if(!strcmp(nm,"sprite_set_alpha_from_sprite")) return vreal(R?gml_sprite_set_alpha_from_sprite(R,(int)N(a,n,0),(int)N(a,n,1)):0);
     if(!strcmp(nm,"sprite_set_offset")){ if(R) gml_sprite_set_offset(R,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2)); return vreal(0); }
+    if(!strcmp(nm,"sprite_set_bbox") || !strcmp(nm,"sprite_set_bbox_mode")){
+      int mode=!strcmp(nm,"sprite_set_bbox_mode"),count=mode?2:5,values[5];
+      if(!R || n<count) return vundef();
+      for(int i=0;i<count;i++){
+        double value=N(a,n,i);
+        if(!isfinite(value) || value<INT_MIN || value>INT_MAX) return vundef();
+        values[i]=(int)value;
+      }
+      if(mode) (void)gml_sprite_set_bbox_mode(R,values[0],values[1]);
+      else (void)gml_sprite_set_bbox(R,values[0],values[1],values[2],values[3],values[4]);
+      return vundef();
+    }
     if(!strcmp(nm,"sprite_save")) return vreal(0);
     if(!strcmp(nm,"sprite_save_strip")) return vreal(0);
     if(!strcmp(nm,"sprite_collision_mask")){
