@@ -996,7 +996,7 @@ void gml_vm_fire_game_end(GmlVM *vm){
  * depth = behind). Merging them preserves layer ordering between tile layers,
  * scripted background instances, and gameplay instances. */
 typedef struct {
-  double x,y,xs,ys;
+  double x,y,xs,ys,alpha;
   int def,sx,sy,w,h,mirror,flip,rotate,order;
 } GmlDrawTile;
 static void draw_tile_add(GmlDrawTile **tiles, double **depth, int *nt, int *cap, GmlDrawTile t, double dep, int order){
@@ -1460,6 +1460,7 @@ void gml_vm_draw(GmlVM *vm){
   double *tdepth=scratch->tile_depth;
   GmlRoom rm={0};
   if(gml_vm_room_get(vm,vm->room_index,&rm)==0 && rm.tile_ptr){
+    GmlVal appearance=gml_vm_legacy_tile_appearance(vm,vm->room_index);
     const uint8_t *d=vm->win->data; uint32_t tc=gml_vm_read_u32_le(d,rm.tile_ptr);
     if(tc>0 && tc<100000){
       for(uint32_t i=0;i<tc;i++){ uint32_t p=gml_vm_read_u32_le(d,rm.tile_ptr+4+i*4);
@@ -1473,6 +1474,8 @@ void gml_vm_draw(GmlVM *vm){
             if(vm->tile_del_at[da].depth==tdep && vm->tile_del_at[da].x==tx && vm->tile_del_at[da].y==ty){ drop=1; break; }
           if(drop) continue; }
 	GmlDrawTile dt;
+        dt.alpha=1;
+        if(appearance.t==V_ARR && !gml_vm_legacy_tile_draw_appearance(appearance,i,&dt.alpha)) continue;
 	dt.x=tx; dt.y=ty; dt.xs=gml_vm_read_f32_le(d,p+36); dt.ys=gml_vm_read_f32_le(d,p+40);
 	dt.def=(int)gml_vm_read_u32_le(d,p+8);
 	dt.sx=(int)gml_vm_read_u32_le(d,p+12); dt.sy=(int)gml_vm_read_u32_le(d,p+16);
@@ -1631,6 +1634,7 @@ void gml_vm_draw(GmlVM *vm){
       uint32_t datum=gml_vm_read_u32_le(cell,0); GmlRenderTileSource source;
       if(!gml_render_tileset_source(R,&layout,datum,animation_frame,&source)) continue;
       GmlDrawTile dt;
+      dt.alpha=1;
       dt.x=tmx + (double)cx*tm->tw; dt.y=tmy + (double)cy*tm->th; dt.xs=1; dt.ys=1;
       dt.mirror=(int)((datum>>28)&1);
       dt.flip=(int)((datum>>29)&1);
@@ -1823,7 +1827,7 @@ void gml_vm_draw(GmlVM *vm){
     if(it[k].type==1){ GmlDrawTile *t=&tiles[it[k].idx];
       gml_draw_background_tile(R,t->def,t->sx,t->sy,t->w,t->h,
                                t->x,t->y,t->xs,t->ys,
-                               t->mirror,t->flip,t->rotate,0xFFFFFF,1);
+                               t->mirror,t->flip,t->rotate,0xFFFFFF,t->alpha);
       continue; }
     if(it[k].type==2){ struct LayTile *t=&ltl[it[k].idx];
       if(vm->win && !anygm_policy_has_modern_layer_semantics(vm->win))

@@ -1125,6 +1125,27 @@ static void room_state_key(char *out, size_t cap, int room, const char *field, i
   snprintf(out,cap,"__gmlc_room_state_%d_%s_%d",room,field,index);
 }
 
+static GmlVal *legacy_tile_appearance_slot(GmlVM *vm,int room,int create){
+  char key[128]; room_state_key(key,sizeof key,room,"tile_appearance",0);
+  GmlVal *slot=gml_varmap_get(&vm->globals,key);
+  if(slot || !create) return slot;
+  char *stable=strdup(key);
+  return stable?gml_varmap_put_owned_hashed(&vm->globals,stable,gml_value_name_hash(stable)):NULL;
+}
+
+GmlVal gml_vm_legacy_tile_appearance(GmlVM *vm,int room){
+  GmlVal *slot=legacy_tile_appearance_slot(vm,room,0);
+  return slot?*slot:vundef();
+}
+
+static void legacy_tile_appearance_clear(GmlVM *vm,int room){
+  GmlVal *slot=legacy_tile_appearance_slot(vm,room,0);
+  if(slot && slot->t==V_ARR){
+    gml_values_release_owned(slot,1);
+    *slot=vundef();
+  }
+}
+
 static void room_state_store_number(GmlVM *vm, int room, const char *field, int index, double value){
   char key[128]; room_state_key(key,sizeof(key),room,field,index);
   GmlVal *slot=gml_varmap_get(&vm->globals,key);
@@ -2200,6 +2221,7 @@ void gml_room_enter(GmlVM *vm, int room_index){
      * released by the deduped full teardown, like everywhere else. */
     gml_obj_alive_adjust(vm,vm->inst[i].obj,-1); gml_vm_instances_unlink(vm,&vm->inst[i],vm->inst[i].obj);
     gml_varmap_free_ex(&vm->inst[i].vars,1); vm->inst[i].active=0; vm->inst[i].deactivated=0; }
+  if(prev_room>=0 && !store_previous) legacy_tile_appearance_clear(vm,prev_room);
   vm->room_index=room_index; vm->pending_room=-1;
   for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].persistent && (vm->inst[i].active||vm->inst[i].deactivated))
     vm->inst[i].room_owner=room_index;
@@ -2238,6 +2260,7 @@ void gml_room_enter(GmlVM *vm, int room_index){
     gml_vm_warm_audio_for_room(vm,vm->room_index); gml_vm_prefetch_room_assets(vm);
     return;
   }
+  legacy_tile_appearance_clear(vm,room_index);
   const uint8_t *d=vm->win->data; uint32_t op=r.obj_ptr, cnt=gml_vm_read_u32_le(d,op);
   if(gml_vm_room_placements_cleared(vm,room_index)) cnt=0;
   for(int i=0;anygm_policy_uses_classic_runtime(vm->win) && i<8;i++){
@@ -2628,24 +2651,90 @@ static int legacy_tile_element_depth(GmlVM *vm, const GmlRtElem *tile, double *d
   return legacy_tile_layer_query(vm,depth,NULL,NULL);
 }
 
-int gml_legacy_tile_source(GmlVM *vm, double id, int source[3]){
-  if(!isfinite(id) || id<0 || id>UINT32_MAX) return 0;
-  id=trunc(id);
+static GmlRtElem *legacy_tile_element(GmlVM *vm,uint32_t id){
   GmlRtElem *tile=id<=INT_MAX?gml_rt_elem_find(vm,(int)id):NULL;
   double depth;
-  if(tile && tile->type==7 && legacy_tile_element_depth(vm,tile,&depth)){
-    source[0]=tile->sprite; source[1]=tile->sx; source[2]=tile->sy;
-    return 1;
-  }
+  return tile && tile->type==7 && legacy_tile_element_depth(vm,tile,&depth)?tile:NULL;
+}
+
+static const uint8_t *legacy_tile_find_record(GmlVM *vm,uint32_t id,uint32_t *index){
   uint32_t list=0,count=legacy_tile_records(vm,&list);
   for(uint32_t i=0;i<count;i++){
     const uint8_t *record=legacy_tile_record(vm,list,i);
+    double depth;
     if(!record || gml_vm_read_u32_le(record,32)!=id ||
        !legacy_tile_record_depth(vm,record,&depth)) continue;
-    for(int j=0;j<3;j++) source[j]=(int32_t)gml_vm_read_u32_le(record,8+4*j);
+    *index=i;
+    return record;
+  }
+  return NULL;
+}
+
+int gml_legacy_tile_source(GmlVM *vm, double id, int source[3]){
+  if(!isfinite(id) || id<0 || id>UINT32_MAX) return 0;
+  GmlRtElem *tile=legacy_tile_element(vm,(uint32_t)id);
+  if(tile){
+    source[0]=tile->sprite; source[1]=tile->sx; source[2]=tile->sy;
     return 1;
   }
-  return 0;
+  uint32_t index;
+  const uint8_t *record=legacy_tile_find_record(vm,(uint32_t)id,&index);
+  if(!record) return 0;
+  for(int i=0;i<3;i++) source[i]=(int32_t)gml_vm_read_u32_le(record,8+4*i);
+  return 1;
+}
+
+/* Page by ROOM record index so editing a late tile does not allocate every
+ * preceding entry. An unset field is -1, distinct from transparent or hidden. */
+enum {
+  LEGACY_TILE_ALPHA, LEGACY_TILE_VISIBLE, LEGACY_TILE_APPEARANCE_FIELDS,
+  LEGACY_TILE_APPEARANCE_PAGE=32,
+  LEGACY_TILE_APPEARANCE_PAGE_VALUES=LEGACY_TILE_APPEARANCE_FIELDS*LEGACY_TILE_APPEARANCE_PAGE
+};
+
+int gml_vm_legacy_tile_draw_appearance(GmlVal appearance,uint32_t index,double *alpha){
+  GmlVal page=gml_arr_get(appearance,index/LEGACY_TILE_APPEARANCE_PAGE);
+  if(gml_val_array_length(page)!=LEGACY_TILE_APPEARANCE_PAGE_VALUES) return 1;
+  int offset=LEGACY_TILE_APPEARANCE_FIELDS*(index%LEGACY_TILE_APPEARANCE_PAGE);
+  double opacity=gml_arr_get(page,offset+LEGACY_TILE_ALPHA).d;
+  if(opacity>=0) *alpha=opacity;
+  return gml_arr_get(page,offset+LEGACY_TILE_VISIBLE).d!=0;
+}
+
+static void legacy_tile_set_appearance(GmlVM *vm,double id,int field,double value){
+  if(!isfinite(id) || id<0 || id>UINT32_MAX) return;
+  GmlRtElem *tile=legacy_tile_element(vm,(uint32_t)id);
+  if(tile){
+    if(field==LEGACY_TILE_ALPHA) tile->alpha=value;
+    else tile->visible=(int)value;
+    return;
+  }
+  uint32_t index;
+  if(!legacy_tile_find_record(vm,(uint32_t)id,&index)) return;
+  GmlVal *slot=legacy_tile_appearance_slot(vm,vm->room_index,1);
+  if(!slot) return;
+  if(slot->t!=V_ARR || !slot->arr) *slot=gml_arr_new(0,vreal(0));
+  int page_index=(int)(index/LEGACY_TILE_APPEARANCE_PAGE);
+  GmlVal page=gml_arr_get(*slot,page_index);
+  if(gml_val_array_length(page)!=LEGACY_TILE_APPEARANCE_PAGE_VALUES){
+    page=gml_arr_new(LEGACY_TILE_APPEARANCE_PAGE_VALUES,vreal(-1));
+    if(gml_val_array_length(page)==LEGACY_TILE_APPEARANCE_PAGE_VALUES)
+      gml_arr_set(*slot,page_index,page);
+    if(!page.arr || page.arr!=gml_arr_get(*slot,page_index).arr){
+      gml_values_release_owned(&page,1);
+      return;
+    }
+  }
+  int offset=LEGACY_TILE_APPEARANCE_FIELDS*(index%LEGACY_TILE_APPEARANCE_PAGE);
+  gml_arr_set(page,offset+field,vreal(value));
+}
+
+void gml_legacy_tile_set_alpha(GmlVM *vm,double id,double alpha){
+  if(isfinite(alpha)) legacy_tile_set_appearance(vm,id,LEGACY_TILE_ALPHA,fmax(0,fmin(1,alpha)));
+}
+
+void gml_legacy_tile_set_visible(GmlVM *vm,double id,GmlVal visible){
+  legacy_tile_set_appearance(vm,id,LEGACY_TILE_VISIBLE,gml_vm_value_is_true(visible));
 }
 
 GmlVal gml_legacy_tile_ids_at_depth(GmlVM *vm, double depth){

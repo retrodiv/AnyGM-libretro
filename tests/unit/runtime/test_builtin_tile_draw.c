@@ -3,6 +3,7 @@
  */
 #include "gml_builtin.h"
 #include "gml_render_internal.h"
+#include "gml_particle.h"
 #include "anygm_compatibility.h"
 #include "anygm_test_runner.h"
 #include <limits.h>
@@ -389,6 +390,95 @@ static int legacy_tile_queries(void){
   if(ok) puts("legacy tile queries: authored and dynamic sources, depth, visibility and deletion passed");
   return ok;
 }
+static int legacy_tile_pixels(TileFixture *f,unsigned authored,unsigned dynamic){
+  for(int i=0;i<16*16;i++) f->pixels[i]=0xff000000u;
+  gml_vm_draw(&f->vm);
+  gml_render_flush_rotated_batch(&f->render);
+  for(int y=0;y<16;y++) for(int x=0;x<16;x++){
+    unsigned red=0;
+    if(y>=5 && y<7){
+      if(x>=3 && x<5) red=authored;
+      if(x>=8 && x<10) red=dynamic;
+    }
+    uint32_t expected=0xff000000u|(red<<16);
+    if(f->pixels[y*16+x]!=expected){
+      fprintf(stderr,"legacy tile appearance (%d,%d): %08x != %08x\n",x,y,f->pixels[y*16+x],expected);
+      return 0;
+    }
+  }
+  return 1;
+}
+static int legacy_tile_appearance(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    TileFixture f; setup(&f);
+    uint8_t data[320]={0};
+    char *strings[]={"room"}; uint32_t string_offsets[]={288};
+    GmlWin win={.data=data,.size=sizeof data,.n_chunks=1,.bytecode=15,.classic_version=800,
+                .strs=strings,.str_charoff=string_offsets,.n_strs=1};
+    win.chunks[0]=(GmlChunk){"ROOM",16,272};
+    word(data+16,2); word(data+20,32); word(data+24,96);
+    for(int room=32;room<=96;room+=64){
+      word(data+room,288); word(data+room+8,16); word(data+room+12,16); word(data+room+16,60);
+    }
+    word(data+52,1); word(data+84,160);
+    word(data+160,1); word(data+164,176);
+    word(data+176,3); word(data+180,5); word(data+188,2);
+    word(data+196,2); word(data+200,2); word(data+204,17); word(data+208,10000000);
+    word(data+212,0x3f800000u); word(data+216,0x3f800000u); word(data+220,0xffffffffu);
+    for(int y=0;y<2;y++) for(int x=2;x<4;x++){
+      int at=(y*6+x)*4; f.rgba[at]=255; f.rgba[at+1]=f.rgba[at+2]=0;
+    }
+    f.vm.win=&win; f.render.win=&win;
+    f.vm.tilemaps=NULL; f.vm.n_tilemaps=0;
+    f.vm.rtl=NULL; f.vm.n_rtl=0;
+    f.vm.room_index=-1;
+    f.vm.room_stored=calloc(2,sizeof *f.vm.room_stored);
+    f.vm.room_state_count=2;
+    f.vm.particles=gml_particle_state_create(&f.vm);
+    gml_vm_software3d_reset(&f.vm);
+    if(!f.vm.room_stored || !f.vm.particles){ cleanup(&f); return 0; }
+    gml_room_enter(&f.vm,0);
+    GmlVal args[]={vreal(0),vreal(2),vreal(0),vreal(2),vreal(2),vreal(8),vreal(5),vreal(17)};
+    GmlVal tile=gml_builtin_call(&f.vm,"tile_add",args,8);
+    GmlVal authored[]={vreal(10000000),vreal(64.0/255.0)},dynamic[]={tile,vreal(192.0/255.0)};
+    ok &= legacy_tile_pixels(&f,255,255);
+    ok &= call(&f,"tile_set_alpha",authored,2,cached);
+    ok &= call(&f,"tile_set_alpha",dynamic,2,cached);
+    ok &= legacy_tile_pixels(&f,64,192);
+    authored[1]=dynamic[1]=vreal(0);
+    ok &= call(&f,"tile_set_visible",authored,2,cached);
+    ok &= call(&f,"tile_set_visible",dynamic,2,cached);
+    ok &= legacy_tile_pixels(&f,0,0);
+    gml_room_enter(&f.vm,1);
+    ok &= f.vm.room_index==1 && legacy_tile_pixels(&f,0,0);
+    gml_room_enter(&f.vm,0);
+    ok &= f.vm.room_index==0 && legacy_tile_pixels(&f,0,0);
+    authored[1]=dynamic[1]=vreal(1);
+    ok &= call(&f,"tile_set_visible",authored,2,cached);
+    ok &= call(&f,"tile_set_visible",dynamic,2,cached);
+    ok &= legacy_tile_pixels(&f,64,192);
+
+    size_t size=gml_vm_state_size(&f.vm),written=0,used=0;
+    void *state=malloc(size);
+    int saved=state && gml_vm_state_save(&f.vm,state,size,&written);
+    authored[1]=dynamic[1]=vreal(0);
+    call(&f,"tile_set_alpha",authored,2,cached);
+    call(&f,"tile_set_alpha",dynamic,2,cached);
+    ok &= legacy_tile_pixels(&f,0,0);
+    ok &= saved && gml_vm_state_load(&f.vm,state,written,&used) && used==written;
+    ok &= legacy_tile_pixels(&f,64,192);
+    free(state);
+    *gml_varmap_put(&f.vm.globals,"room_persistent")=vreal(0);
+    gml_room_enter(&f.vm,1);
+    gml_room_enter(&f.vm,0);
+    ok &= f.vm.room_index==0 && legacy_tile_pixels(&f,255,0);
+    free(f.vm.rtl);
+    cleanup(&f);
+  }
+  if(ok) puts("legacy tile appearance: alpha, visibility, room lifecycle and restore passed");
+  return ok;
+}
 static int modern_dynamic_tile_resource(void){
   int ok=1;
   for(int revision=15;revision<=17;revision+=2){
@@ -446,6 +536,7 @@ int main(int argc,char **argv){
     {"legacy_dynamic_tiles",legacy_dynamic_tiles},
     {"legacy_dynamic_tile_scale",legacy_dynamic_tile_scale},
     {"legacy_tile_queries",legacy_tile_queries},
+    {"legacy_tile_appearance",legacy_tile_appearance},
     {"modern_dynamic_tile_resource",modern_dynamic_tile_resource}};
   const AnygmTestGroup group={"tile_draw",cases,sizeof cases/sizeof cases[0]};
   const char *filter=NULL;

@@ -378,6 +378,14 @@ GmlVal gml_builtin_try_layers(GmlVM *vm, const char *nm, GmlVal *a, int n){
   (void)R;
   if(!strcmp(nm,"tile_get_ids_at_depth"))
     return gml_legacy_tile_ids_at_depth(vm,n>0?N(a,n,0):NAN);
+  if(!strcmp(nm,"tile_set_alpha")){
+    if(n>=2) gml_legacy_tile_set_alpha(vm,N(a,n,0),N(a,n,1));
+    return vundef();
+  }
+  if(!strcmp(nm,"tile_set_visible")){
+    if(n>=2) gml_legacy_tile_set_visible(vm,N(a,n,0),a[1]);
+    return vundef();
+  }
   if(!strcmp(nm,"tile_get_background") || !strcmp(nm,"tile_get_left") ||
      !strcmp(nm,"tile_get_top")){
     int background=!strcmp(nm,"tile_get_background");
