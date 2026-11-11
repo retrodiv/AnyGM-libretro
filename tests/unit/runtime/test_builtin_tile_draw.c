@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "gml_builtin.h"
+#include "gml_vm_internal.h"
 #include "gml_render_internal.h"
 #include "gml_particle.h"
 #include "anygm_compatibility.h"
@@ -185,6 +186,89 @@ static int local_map_position(void){
   GmlVal explicit_position[]={vreal(7),vreal(3),vreal(5)};
   ok &= call(&f,"draw_tilemap",explicit_position,3,1) && region(&f,3,5,colors);
   f.vm.win=NULL; cleanup(&f); return ok;
+}
+static int moved_tilemap_draw(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    TileFixture f; setup(&f);
+    GmlWin win={.bytecode=15,.classic_version=800};
+    f.vm.win=&win; f.render.win=&win;
+    GmlRtLayer layers[]={
+      {.id=70,.used=1,.order=2,.x=2,.y=3,.depth=17,.visible=1,.script_begin=-1,.script_end=-1},
+      {.id=71,.used=1,.order=3,.x=8,.y=5,.depth=4,.visible=1,.script_begin=-1,.script_end=-1,.name="destination"}
+    };
+    f.vm.rtl=layers; f.vm.n_rtl=2;
+    f.map.x=1; f.map.y=2; f.map.cols=1; f.map.visible=1;
+    gml_vm_draw(&f.vm); gml_render_flush_rotated_batch(&f.render);
+    ok &= region(&f,3,5,colors);
+    GmlVal move[]={vreal(f.map.id),cached?vreal(71):vstr("destination")};
+    ok &= call(&f,"layer_element_move",move,2,cached);
+    memset(f.pixels,0,sizeof f.pixels);
+    gml_vm_draw(&f.vm); gml_render_flush_rotated_batch(&f.render);
+    ok &= region(&f,9,7,colors);
+    GmlVal create[]={vreal(0),vreal(0),vreal(0),vreal(2),vreal(2),vreal(1),vreal(2),vreal(4)};
+    GmlVal tile=gml_builtin_call(&f.vm,"tile_add",create,8);
+    ok &= tile.d>=0;
+    memset(f.pixels,0,sizeof f.pixels);
+    gml_vm_draw(&f.vm); gml_render_flush_rotated_batch(&f.render);
+    ok &= region(&f,9,7,colors);
+    move[0]=tile;
+    ok &= call(&f,"layer_element_move",move,2,cached);
+    memset(f.pixels,0,sizeof f.pixels);
+    gml_vm_draw(&f.vm); gml_render_flush_rotated_batch(&f.render);
+    const uint32_t grey[]={0xff808080u,0xff808080u,0xff808080u,0xff808080u};
+    ok &= region(&f,9,7,grey);
+    GmlVal elements=gml_builtin_call(&f.vm,"layer_get_all_elements",move+1,1);
+    ok &= gml_val_array_length(elements)==2 &&
+          gml_arr_get(elements,0).d==f.map.id && gml_arr_get(elements,1).d==tile.d;
+    gml_values_release_owned(&elements,1);
+    layers[1].visible=0;
+    memset(f.pixels,0,sizeof f.pixels);
+    gml_vm_draw(&f.vm); gml_render_flush_rotated_batch(&f.render);
+    const uint32_t empty[4]={0}; ok &= region(&f,9,7,empty);
+    cleanup(&f);
+  }
+  if(ok) puts("layer move: destination position, append order and visibility passed");
+  return ok;
+}
+static int moved_authored_background(void){
+  TileFixture f; setup(&f);
+  uint8_t data[320]={0};
+  char *strings[]={"room","authored"}; uint32_t offsets[]={260,280};
+  memcpy(data+260,"room",5); memcpy(data+280,"authored",9);
+  GmlWin win={.data=data,.size=sizeof data,.bytecode=17,.n_chunks=1,
+              .strs=strings,.str_charoff=offsets,.n_strs=2};
+  win.chunks[0]=(GmlChunk){"ROOM",16,244};
+  word(data+16,1); word(data+20,32); word(data+32,260);
+  word(data+40,16); word(data+44,16);
+  word(data+120,128); word(data+128,1); word(data+132,144);
+  word(data+144,280); word(data+152,1); word(data+176,1);
+  word(data+180,1); word(data+188,UINT32_MAX); word(data+204,0xff0000ffu);
+  f.vm.win=&win; f.render.win=&win;
+  f.vm.rtl=NULL; f.vm.n_rtl=0; f.vm.tilemaps=NULL; f.vm.n_tilemaps=0;
+  gml_vm_room_reload_layers_mode(&f.vm,0,1);
+  GmlRtLayer *destination=gml_rt_layer_new(&f.vm);
+  int ok=destination && f.vm.n_rte==1 && f.vm.rte[0].type==1;
+  if(ok){
+    destination->visible=0;
+    GmlVal move[]={vreal(f.vm.rte[0].id),vreal(destination->id)};
+    gml_vm_draw(&f.vm); gml_render_flush_rotated_batch(&f.render);
+    gml_render_flush_pending_fill(&f.render);
+    ok &= f.pixels[0]==0xffff0000u;
+    gml_builtin_call(&f.vm,"layer_element_move",move,2);
+    memset(f.pixels,0,sizeof f.pixels);
+    gml_vm_draw(&f.vm); gml_render_flush_rotated_batch(&f.render);
+    gml_render_flush_pending_fill(&f.render);
+    ok &= f.pixels[0]==0;
+    destination->visible=1;
+    gml_vm_draw(&f.vm); gml_render_flush_rotated_batch(&f.render);
+    gml_render_flush_pending_fill(&f.render);
+    ok &= f.pixels[0]==0xffff0000u;
+  }
+  if(!ok) fputs("moved authored background must only draw from its current layer\n",stderr);
+  free(f.vm.rtl);
+  cleanup(&f);
+  return ok;
 }
 static int prepared_layouts(void){
   TileFixture f; setup(&f);
@@ -530,7 +614,8 @@ int main(int argc,char **argv){
     {"draw_state_and_animation",draw_state_and_animation},{"explicit_map",explicit_map},
     {"invalid_arguments",invalid_arguments},{"automatic_animated_empty",automatic_map},
     {"static_room_tile_scale",static_room_tile_scale},
-    {"local_map_position",local_map_position},
+    {"local_map_position",local_map_position},{"moved_tilemap_draw",moved_tilemap_draw},
+    {"moved_authored_background",moved_authored_background},
     {"prepared_layouts",prepared_layouts},{"scaled_map",scaled_map},
     {"bounded_empty_maps",bounded_empty_maps},{"rectangular_tile_extent",rectangular_tile_extent},
     {"legacy_dynamic_tiles",legacy_dynamic_tiles},

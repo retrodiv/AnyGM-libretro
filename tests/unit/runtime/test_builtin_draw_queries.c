@@ -568,6 +568,11 @@ static int layer_instance_elements_case(void){
     query(&vm,"instance_deactivate_layer",&destination,1,cached,&ok);
     ok &= real_is(query(&vm,get_instance,&element,1,cached,&ok),instance.d);
     query(&vm,"instance_activate_layer",&destination,1,cached,&ok);
+    GmlVal move[]={element,vstr("destination")};
+    ok &= query(&vm,"layer_element_move",move,2,cached,&ok).t==V_UNDEF;
+    GmlInstance *moved=gml_vm_instance_by_id(&vm,instance.d);
+    int move_order=moved?moved->draw_layer_element_order:-1;
+    ok &= moved && move_order>=GML_LAYER_MOVED_ORDER_BASE;
 
     size_t size=gml_vm_state_size(&vm),written=0,used=0;
     void *state=malloc(size);
@@ -579,6 +584,7 @@ static int layer_instance_elements_case(void){
     ok &= real_is(query(&vm,get_instance,&element,1,cached,&ok),instance.d);
     GmlInstance *live=gml_vm_instance_by_id(&vm,instance.d);
     if(!live){ gml_vm_free(&vm); return 0; }
+    ok &= live->draw_layer_element_order==move_order;
     gml_instance_destroy(&vm,live);
     gml_vm_instances_reap(&vm);
     spawn[2]=destination;

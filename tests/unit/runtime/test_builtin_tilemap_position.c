@@ -387,6 +387,53 @@ static int state_layer_slot_bindings(void){
   }
   room_cleanup(&f); return ok;
 }
+static int moved_tilemap_state(void){
+  RoomFixture f; if(!room_setup_mode(&f,1)) return 0;
+  GmlTileMap *map=&f.vm.tilemaps[0];
+  GmlVal map_id=vreal(map->id),source=vreal(f.vm.rtl[0].id);
+  int authored_order=map->order;
+  GmlRtLayer *target=gml_rt_layer_new(&f.vm);
+  if(!target){ room_cleanup(&f); return 0; }
+  strcpy(target->name,"destination");
+  target->x=31; target->y=18; target->depth=-7;
+  GmlVal target_name=vstr("destination"),target_id=vreal(target->id);
+  gml_tilemap_set_position(map,4,6);
+  int ok=gml_tilemap_set_cell(map,1,1,9);
+  GmlVal args[]={map_id,target_name};
+  int builtin=gml_builtin_fast_id(&f.vm,"layer_element_move");
+  ok &= builtin>0 &&
+    gml_builtin_call_fast_id(&f.vm,builtin,"layer_element_move",args,2).t==V_UNDEF;
+  ok &= number("moved tilemap type",gml_builtin_call(&f.vm,"layer_get_element_type",&map_id,1),5);
+  ok &= number("moved tilemap owner",gml_builtin_call(&f.vm,"layer_get_element_layer",&map_id,1),target_id.d);
+  ok &= number("map found by destination name",gml_builtin_call(&f.vm,"layer_tilemap_get_id",&target_name,1),map_id.d);
+  ok &= number("original layer no longer owns map",gml_builtin_call(&f.vm,"layer_tilemap_get_id",&source,1),-1);
+  GmlVal elements=gml_builtin_call(&f.vm,"layer_get_all_elements",&target_id,1);
+  ok &= gml_val_array_length(elements)==1 && gml_arr_get(elements,0).d==map_id.d;
+  gml_values_release_owned(&elements,1);
+  double x,y,depth;
+  gml_tilemap_effective(&f.vm,map,&x,&y,&depth,NULL);
+  ok &= x==35 && y==24 && depth==-7 && map->order==authored_order;
+  gml_room_enter(&f.vm,1);
+  size_t size=gml_vm_state_size(&f.vm),written=0,used=0;
+  void *state=malloc(size);
+  int saved=state && gml_vm_state_save(&f.vm,state,size,&written);
+  gml_room_enter(&f.vm,0);
+  ok &= saved && gml_vm_state_load(&f.vm,state,written,&used) && used==written;
+  free(state);
+  gml_room_enter(&f.vm,0);
+  map=gml_tilemap_find(&f.vm,(int)map_id.d);
+  target=gml_tilemap_parent(&f.vm,map,NULL);
+  ok &= map && map->order==authored_order && map->tiles[12]==9 &&
+        target && target->id==(int)target_id.d;
+  *gml_varmap_put(&f.vm.globals,"room_persistent")=vreal(0);
+  gml_room_enter(&f.vm,1); gml_room_enter(&f.vm,0);
+  map=f.vm.n_tilemaps==1?&f.vm.tilemaps[0]:NULL;
+  target=gml_tilemap_parent(&f.vm,map,NULL);
+  ok &= map && map->id!=(int)map_id.d && target && !strcmp(target->name,"map_layer");
+  if(ok) puts("moved tilemap: current parent, dormant restore and fresh entry passed");
+  room_cleanup(&f);
+  return ok;
+}
 int main(int argc,char **argv){
   const char *filter=NULL;
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2];
@@ -404,7 +451,8 @@ int main(int argc,char **argv){
     {"persistent_visual_ownership",persistent_visual_ownership},
     {"persistent_destroyed_map",persistent_destroyed_map},
     {"persistent_mode_disabled",persistent_mode_disabled},
-    {"state_layer_slot_bindings",state_layer_slot_bindings}
+    {"state_layer_slot_bindings",state_layer_slot_bindings},
+    {"moved_tilemap_state",moved_tilemap_state}
   };
   const AnygmTestGroup group={"tilemap_position",cases,sizeof cases/sizeof cases[0]};
   AnygmTestResult result={0};

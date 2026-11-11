@@ -49,10 +49,27 @@ static GmlRtLayer *instance_element_layer(GmlVM *vm,const GmlRtElem *element){
   return instance && instance->draw_layer_order>=0
     ?gml_rt_layer_find_by_order(vm,instance->draw_layer_order):NULL;
 }
+static GmlRtLayer *layer_argument(GmlVM *vm,GmlVal *args,int count){
+  double handle=N(args,count,0);
+  return count>0 && (args[0].t==V_STR || (handle>=0 && handle<=INT_MAX))
+    ?rt_layer_resolve(vm,args,count):NULL;
+}
+typedef struct { int id,order; } LayerElementId;
+static int layer_move_order_compare(const void *left,const void *right){
+  const LayerElementId *a=left,*b=right;
+  return (a->order>b->order)-(a->order<b->order);
+}
+static void append_layer_element(GmlVal result,LayerElementId *moved,int *count,int id,int order){
+  if(moved && order>=GML_LAYER_MOVED_ORDER_BASE) moved[(*count)++]=(LayerElementId){id,order};
+  else gml_arr_set(result,gml_val_array_length(result),vreal(id));
+}
 static GmlVal layer_elements(GmlVM *vm,GmlRtLayer *layer){
   GmlVal result=gml_arr_new(0,vreal(0));
   if(!layer || !result.arr) return result;
-  int *instance_elements=NULL;
+  LayerElementId *moved=NULL,*instance_elements=NULL;
+  int moved_count=0;
+  if(gml_global_num(vm,"__gml_layer_move_order")>=GML_LAYER_MOVED_ORDER_BASE)
+    moved=malloc(((size_t)vm->n_rte+(size_t)vm->n_tilemaps)*sizeof *moved);
   for(int slot=0;slot<vm->inst_count;slot++){
     const GmlInstance *instance=&vm->inst[slot];
     if(layer_instance_present(vm,instance) && instance->draw_layer_order==layer->order){
@@ -67,15 +84,21 @@ static GmlVal layer_elements(GmlVM *vm,GmlRtLayer *layer){
       GmlInstance *instance=layer_element_instance(vm,element);
       if(!instance) element->used=0;
       else if(instance_elements && instance->draw_layer_order==layer->order)
-        instance_elements[element->instance_slot]=element->id;
+        instance_elements[element->instance_slot]=(LayerElementId){element->id,element->move_order};
     }else if(element->layer==layer->id){
-      gml_arr_set(result,gml_val_array_length(result),vreal(element->id));
+      append_layer_element(result,moved,&moved_count,element->id,gml_rt_elem_move_order(element));
     }
+  }
+  for(int i=0;i<vm->n_tilemaps;i++){
+    const GmlTileMap *map=&vm->tilemaps[i];
+    int order;
+    if(map->used && gml_tilemap_parent(vm,map,&order)==layer)
+      append_layer_element(result,moved,&moved_count,map->id,order);
   }
   if(instance_elements) for(int slot=0;slot<vm->inst_count;slot++){
     GmlInstance *instance=&vm->inst[slot];
     if(!layer_instance_present(vm,instance) || instance->draw_layer_order!=layer->order) continue;
-    int id=instance_elements[slot];
+    int id=instance_elements[slot].id;
     if(!id){
       /* Keep instance element IDs in the same namespace as the other elements.
        * Mint them on enumeration and retain them in the serialized element table. */
@@ -88,10 +111,43 @@ static GmlVal layer_elements(GmlVM *vm,GmlRtLayer *layer){
       element->visible=0;
       id=element->id;
     }
-    gml_arr_set(result,gml_val_array_length(result),vreal(id));
+    append_layer_element(result,moved,&moved_count,id,instance_elements[slot].order);
   }
   free(instance_elements);
+  if(moved_count>1) qsort(moved,(size_t)moved_count,sizeof *moved,layer_move_order_compare);
+  for(int i=0;i<moved_count;i++) gml_arr_set(result,gml_val_array_length(result),vreal(moved[i].id));
+  free(moved);
   return result;
+}
+static GmlVal layer_element_move(GmlVM *vm,GmlVal *args,int count){
+  double handle=N(args,count,0);
+  if(count<1 || !(handle>=0 && handle<=INT_MAX)) return vreal(-1);
+  GmlRtElem *element=gml_rt_elem_find_any(vm,(int)handle);
+  GmlTileMap *map=element?NULL:gml_tilemap_find(vm,(int)handle);
+  if(!element && !map) return vreal(-1);
+  GmlInstance *instance=layer_element_instance(vm,element);
+  if(element && element->type==GML_LAYER_ELEMENT_INSTANCE && !instance) return vreal(-1);
+  GmlRtLayer *target=count>=2?layer_argument(vm,args+1,count-1):NULL;
+  if(!target) return vundef();
+  double last=gml_global_num(vm,"__gml_layer_move_order");
+  if(!(last>=0 && last<INT_MAX)) return vundef();
+  int order=last<GML_LAYER_MOVED_ORDER_BASE?GML_LAYER_MOVED_ORDER_BASE:(int)last+1;
+  if(map){
+    if(!gml_tilemap_move(vm,map,target->id,order)) return vundef();
+  }else{
+    if(element->type==1 && element->layer!=target->id)
+      gml_vm_suppress_moved_background(vm,gml_rt_layer_find(vm,element->layer));
+    element->layer=target->id;
+    if(element->type==7) element->tile_move_order=order;
+    else element->move_order=order;
+    if(instance){
+      instance->depth=target->depth;
+      instance->draw_layer_order=target->order;
+      instance->draw_layer_element_order=order;
+    }
+  }
+  gml_set_global_scalar(vm,"__gml_layer_move_order",order);
+  return vundef();
 }
 int builtin_layer_exact(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out){
   if(!vm || !nm || !out) return 0;
@@ -141,10 +197,10 @@ int builtin_layer_exact(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out
     *out=value; return 1;
   }
   if(!strcmp(nm,"layer_get_all_elements")){
-    double handle=N(a,n,0);
-    GmlRtLayer *layer=n>0 && (a[0].t==V_STR || (handle>=0 && handle<=INT_MAX))
-      ?rt_layer_resolve(vm,a,n):NULL;
-    *out=layer_elements(vm,layer); return 1;
+    *out=layer_elements(vm,layer_argument(vm,a,n)); return 1;
+  }
+  if(!strcmp(nm,"layer_element_move")){
+    *out=layer_element_move(vm,a,n); return 1;
   }
   if(!strcmp(nm,"layer_get_element_type") || !strcmp(nm,"layer_get_element_layer") ||
      !strcmp(nm,"layer_instance_get_instance")){
@@ -154,6 +210,14 @@ int builtin_layer_exact(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out
     GmlRtLayer *owner=instance_element_layer(vm,element);
     if(!strcmp(nm,"layer_instance_get_instance")){
       *out=vreal(owner?(double)(uint32_t)element->instance_id:-4); return 1;
+    }
+    if(!element && n>0 && handle>=0 && handle<=INT_MAX){
+      GmlTileMap *map=gml_tilemap_find(vm,(int)handle);
+      GmlRtLayer *parent=gml_tilemap_parent(vm,map,NULL);
+      if(parent){
+        *out=vreal(!strcmp(nm,"layer_get_element_type")?GML_LAYER_ELEMENT_TILEMAP:parent->id);
+        return 1;
+      }
     }
     if(element && element->type==GML_LAYER_ELEMENT_INSTANCE && !owner) element=NULL;
     if(!strcmp(nm,"layer_get_element_type")){
@@ -211,6 +275,9 @@ int builtin_layer_exact(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out
          (int)candidate->id==instance_id){ in=candidate; break; }
     }
     if(l && in){
+      if(in->draw_layer_element_order>=GML_LAYER_MOVED_ORDER_BASE)
+        for(int i=0;i<vm->n_rte;i++)
+          if(layer_element_instance(vm,&vm->rte[i])==in) vm->rte[i].move_order=0;
       in->depth=l->depth;
       in->draw_layer_order=l->order;
       in->draw_layer_element_order=-1;

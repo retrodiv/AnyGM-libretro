@@ -1125,12 +1125,15 @@ static void room_state_key(char *out, size_t cap, int room, const char *field, i
   snprintf(out,cap,"__gmlc_room_state_%d_%s_%d",room,field,index);
 }
 
-static GmlVal *legacy_tile_appearance_slot(GmlVM *vm,int room,int create){
-  char key[128]; room_state_key(key,sizeof key,room,"tile_appearance",0);
+static GmlVal *room_state_slot(GmlVM *vm,int room,const char *field,int index,int create){
+  char key[128]; room_state_key(key,sizeof key,room,field,index);
   GmlVal *slot=gml_varmap_get(&vm->globals,key);
   if(slot || !create) return slot;
   char *stable=strdup(key);
   return stable?gml_varmap_put_owned_hashed(&vm->globals,stable,gml_value_name_hash(stable)):NULL;
+}
+static GmlVal *legacy_tile_appearance_slot(GmlVM *vm,int room,int create){
+  return room_state_slot(vm,room,"tile_appearance",0,create);
 }
 
 GmlVal gml_vm_legacy_tile_appearance(GmlVM *vm,int room){
@@ -1161,6 +1164,14 @@ static double room_state_restore_number(GmlVM *vm, int room, const char *field, 
   char key[128]; room_state_key(key,sizeof(key),room,field,index);
   GmlVal *value=gml_varmap_get(&vm->globals,key);
   return value?gml_vm_value_as_number(*value):0.0;
+}
+
+void gml_vm_suppress_moved_background(GmlVM *vm,const GmlRtLayer *source){
+  if(source) room_state_store_number(vm,vm->room_index,"background_moved",source->order,source->id);
+}
+int gml_vm_room_background_moved(GmlVM *vm,int order,const GmlRtLayer *layer){
+  double source=room_state_restore_number(vm,vm->room_index,"background_moved",order);
+  return source>0 && (!layer || layer->id==source);
 }
 
 int gml_vm_room_camera_get(GmlVM *vm,int room_index,int view_index){
@@ -1628,20 +1639,60 @@ void gml_tilemap_set_position(GmlTileMap *tm,double x,double y){
   if(!tm || !tm->used || !isfinite(x) || !isfinite(y)) return;
   tm->x=x; tm->y=y;
 }
-/* find the tile layer backing a given layer id OR name (layer_tilemap_get_id accepts either) */
+/* Keep the authored order for grid rebinding. The map ID guards the override
+ * across fresh entries, which allocate a new ID for that same authored slot. */
+GmlRtLayer *gml_tilemap_parent(GmlVM *vm,const GmlTileMap *tm,int *move_order){
+  if(move_order) *move_order=-1;
+  if(!vm || !tm) return NULL;
+  GmlVal *record=room_state_slot(vm,vm->room_index,"tilemap_move",tm->order,0);
+  if(record && gml_val_array_length(*record)==3 && gml_arr_get(*record,0).d==tm->id){
+    double target=gml_arr_get(*record,1).d, order=gml_arr_get(*record,2).d;
+    if(target>0 && target<=INT_MAX && order>=GML_LAYER_MOVED_ORDER_BASE && order<=INT_MAX){
+      if(move_order) *move_order=(int)order;
+      return gml_rt_layer_find(vm,(int)target);
+    }
+  }
+  return gml_rt_layer_find_by_order(vm,tm->order);
+}
+int gml_tilemap_move(GmlVM *vm,const GmlTileMap *tm,int layer_id,int move_order){
+  GmlVal *record=room_state_slot(vm,vm->room_index,"tilemap_move",tm->order,1);
+  if(!record) return 0;
+  if(gml_val_array_length(*record)!=3){
+    GmlVal entry=gml_arr_new(3,vreal(0));
+    if(gml_val_array_length(entry)!=3){ gml_values_release_owned(&entry,1); return 0; }
+    *record=entry;
+  }
+  gml_arr_set(*record,0,vreal(tm->id));
+  gml_arr_set(*record,1,vreal(layer_id));
+  gml_arr_set(*record,2,vreal(move_order));
+  return 1;
+}
+/* Find the tilemap on a layer by ID or name, or accept its direct map handle. */
 GmlTileMap *gml_tilemap_by_layer(GmlVM *vm, GmlVal v){
-  if(v.t==V_STR && v.s){ for(int i=0;i<vm->n_tilemaps;i++) if(vm->tilemaps[i].used && !strcmp(vm->tilemaps[i].name,v.s)) return &vm->tilemaps[i]; return NULL; }
-  int lid=(int)gml_vm_value_as_number(v);
-  GmlRtLayer *rl=gml_rt_layer_find(vm,lid);   /* a layer id → match the authored layer order */
-  if(rl){ for(int i=0;i<vm->n_tilemaps;i++) if(vm->tilemaps[i].used && vm->tilemaps[i].order==rl->order) return &vm->tilemaps[i]; }
-  return gml_tilemap_find(vm,lid);            /* or it's already a tilemap id */
+  const char *name=v.t==V_STR?v.s:NULL;
+  double handle=gml_vm_value_as_number(v);
+  int lid=handle>=0 && handle<=INT_MAX?(int)handle:-1;
+  GmlRtLayer *layer=name?gml_rt_layer_find_by_name(vm,name):gml_rt_layer_find(vm,lid);
+  GmlTileMap *first=NULL;
+  int first_order=-1;
+  for(int i=0;i<vm->n_tilemaps;i++){
+    GmlTileMap *map=&vm->tilemaps[i];
+    if(!map->used) continue;
+    int move_order;
+    GmlRtLayer *parent=gml_tilemap_parent(vm,map,&move_order);
+    if(layer && parent==layer && (!first || move_order<first_order)){
+      first=map; first_order=move_order;
+    }else if(!layer && name && move_order<0 && !strcmp(map->name,name)) return map;
+  }
+  return first?first:name?NULL:gml_tilemap_find(vm,lid);
 }
 void gml_tilemap_effective(GmlVM *vm, const GmlTileMap *tm,
                            double *x, double *y, double *depth, int *visible){
   double ex=tm?tm->x:0.0, ey=tm?tm->y:0.0, ed=tm?tm->depth:0.0;
   int ev=tm?tm->visible:0;
   if(vm && tm){
-    GmlRtLayer *rl=gml_rt_layer_find_by_order(vm,tm->order);
+    int move_order;
+    GmlRtLayer *rl=gml_tilemap_parent(vm,tm,&move_order);
     if(rl){
       ev=rl->visible;
       ed=rl->depth;
@@ -1653,7 +1704,7 @@ void gml_tilemap_effective(GmlVM *vm, const GmlTileMap *tm,
         ex+=rl->x + rl->hs*fin;
         ey+=rl->y + rl->vs*fin;
       }
-    }
+    }else if(move_order>=0) ev=0;
   }
   if(x) *x=ex;
   if(y) *y=ey;
@@ -1805,6 +1856,18 @@ static void room_bind_instance_layers(GmlVM *vm,int room_index,int reset){
         }
     }
   }
+  if(!reset) for(int i=0;i<vm->n_rte;i++){
+    const GmlRtElem *element=&vm->rte[i];
+    if(!element->used || element->type!=GML_LAYER_ELEMENT_INSTANCE ||
+       element->move_order<GML_LAYER_MOVED_ORDER_BASE ||
+       element->instance_slot<0 || element->instance_slot>=vm->inst_count) continue;
+    GmlInstance *in=&vm->inst[element->instance_slot];
+    if((!in->active && !in->deactivated) || in->room_owner!=room_index ||
+       in->id!=(uint32_t)element->instance_id) continue;
+    GmlRtLayer *target=gml_rt_layer_find(vm,element->layer);
+    in->draw_layer_order=target?target->order:-1;
+    in->draw_layer_element_order=target?element->move_order:-1;
+  }
 }
 
 /* Reuse the same immutable grid expansion for active and dormant rooms. The
@@ -1882,7 +1945,10 @@ void gml_vm_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_runti
   uint32_t lcnt=0;
   uint32_t lay=gml_vm_rooms_layer_list(vm,room_index,&lcnt);
   gml_vm_rooms_clear_tilemaps(vm);
-  if(!lay) return;
+  if(!lay){
+    if(!rebuild_runtime_layers) room_bind_instance_layers(vm,room_index,0);
+    return;
+  }
   if(rebuild_runtime_layers && lcnt<512) for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=gml_vm_read_u32_le(rd,lay+4+i*4);
     if(!lp || lp+40>vm->win->size) continue;
     uint32_t np=gml_vm_read_u32_le(rd,lp+0); if(!np || np>=vm->win->size) continue;

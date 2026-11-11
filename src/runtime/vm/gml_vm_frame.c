@@ -997,7 +997,7 @@ void gml_vm_fire_game_end(GmlVM *vm){
  * scripted background instances, and gameplay instances. */
 typedef struct {
   double x,y,xs,ys,alpha;
-  int def,sx,sy,w,h,mirror,flip,rotate,order;
+  int def,sx,sy,w,h,mirror,flip,rotate,order,element_order;
 } GmlDrawTile;
 static void draw_tile_add(GmlDrawTile **tiles, double **depth, int *nt, int *cap, GmlDrawTile t, double dep, int order){
   if(*nt>=*cap){
@@ -1019,6 +1019,10 @@ int gml_vm_draw_item_cmp(const void *pa, const void *pb){
   if(a->depth!=b->depth) return a->depth>b->depth? -1:1;     /* higher depth first (behind) */
   if(a->order>=0 && b->order>=0 && a->order!=b->order)
     return a->order>b->order? -1:1;                           /* GMS2 layer list: later/back layers first */
+  /* A move appends the element after the existing items on its new layer. */
+  if(a->order>=0 && a->order==b->order && a->element_order!=b->element_order &&
+     (a->element_order>=GML_LAYER_MOVED_ORDER_BASE || b->element_order>=GML_LAYER_MOVED_ORDER_BASE))
+    return a->element_order<b->element_order?-1:1;
 /* Equal-depth ordering:
    *  - ROOM-chunk tiles draw on top of same-depth instances.
    *  - ROOM-chunk tiles retain list order, so later tiles draw on top.
@@ -1162,9 +1166,9 @@ static int *vm_draw_order_scratch(GmlVM *vm, int need){
 }
 /* GMS2 runtime-layer draw records. File scope so the per-frame scratch buffers below can persist
  * across frames (reused, grown by doubling) instead of malloc/free + realloc(n+1) every frame. */
-struct LayBg { int sprite,subimg; int th,tv,stretch,order,native; double x,y,xs,ys; uint32_t blend; double alpha; double depth; };
-struct LayTile { int sprite; int sx,sy,w,h,order; double x,y,xs,ys; uint32_t blend; double alpha; double depth; };
-struct LaySprite { int sprite, subimg,order; double x,y,xs,ys,angle; uint32_t blend; double alpha; double depth; };
+struct LayBg { int sprite,subimg; int th,tv,stretch,order,move_order,native; double x,y,xs,ys; uint32_t blend; double alpha; double depth; };
+struct LayTile { int sprite; int sx,sy,w,h,order,move_order; double x,y,xs,ys; uint32_t blend; double alpha; double depth; };
+struct LaySprite { int sprite,subimg,order,move_order; double x,y,xs,ys,angle; uint32_t blend; double alpha; double depth; };
 struct LayEffect { GmlLayerFilter effect; int order; double depth; };
 struct LayAttachedFilter { GmlLayerFilter effect; int order; };
 struct ClassicBg { int def,th,tv,stretch,repeat; double x,y,xs,ys; uint32_t blend; double alpha,depth; };
@@ -1475,6 +1479,7 @@ void gml_vm_draw(GmlVM *vm){
           if(drop) continue; }
 	GmlDrawTile dt;
         dt.alpha=1;
+        dt.element_order=-1;
         if(appearance.t==V_ARR && !gml_vm_legacy_tile_draw_appearance(appearance,i,&dt.alpha)) continue;
 	dt.x=tx; dt.y=ty; dt.xs=gml_vm_read_f32_le(d,p+36); dt.ys=gml_vm_read_f32_le(d,p+40);
 	dt.def=(int)gml_vm_read_u32_le(d,p+8);
@@ -1560,7 +1565,8 @@ void gml_vm_draw(GmlVM *vm){
           }
         }
         if(ltype==1){
-          if(rl && rt_layer_has_background(vm,rl->id)) continue;
+          if((rl && rt_layer_has_background(vm,rl->id)) ||
+             gml_vm_room_background_moved(vm,(int)i,rl)) continue;
           uint32_t b=gml_room_layer_type_off(vm,lp);
           if(b+28>vm->win->size) continue;
           if(!gml_vm_read_u32_le(d,b)) continue;     /* background not visible */
@@ -1577,6 +1583,7 @@ void gml_vm_draw(GmlVM *vm){
           lbg[nlb].xs=lbg[nlb].ys=1;
           lbg[nlb].blend=col&0xFFFFFF; lbg[nlb].alpha=((col>>24)&0xFF)/255.0;
           lbg[nlb].x=lox; lbg[nlb].y=loy; lbg[nlb].depth=ldep; lbg[nlb].order=lorder;
+          lbg[nlb].move_order=-1;
           nlb++;
         } else if(ltype==3){
           uint32_t tb3=gml_room_layer_type_off(vm,lp);
@@ -1594,6 +1601,7 @@ void gml_vm_draw(GmlVM *vm){
             ltl[nlt].w=(int32_t)gml_vm_read_u32_le(d,tp+20); ltl[nlt].h=(int32_t)gml_vm_read_u32_le(d,tp+24);
             ltl[nlt].depth=ldep;
             ltl[nlt].order=lorder;
+            ltl[nlt].move_order=-1;
             ltl[nlt].xs=gml_vm_read_f32_le(d,tp+36); ltl[nlt].ys=gml_vm_read_f32_le(d,tp+40);
             uint32_t col=gml_vm_read_u32_le(d,tp+44);
             ltl[nlt].blend=col&0xFFFFFF; ltl[nlt].alpha=((col>>24)&0xFF)/255.0;
@@ -1621,6 +1629,8 @@ void gml_vm_draw(GmlVM *vm){
     double tmx,tmy,tmdepth; int tmvis;
     gml_tilemap_effective(vm,tm,&tmx,&tmy,&tmdepth,&tmvis);
     if(!tm->used || !tmvis || !tm->tiles || tm->tileset<0 || tm->tw<=0 || tm->th<=0) continue;
+    int move_order;
+    GmlRtLayer *parent=gml_tilemap_parent(vm,tm,&move_order);
     GmlRenderTilesetLayout layout;
     if(!gml_render_tileset_layout(R,tm->tileset,tm->tw,tm->th,&layout)) continue;
     double speed=gml_room_speed(vm);
@@ -1635,12 +1645,13 @@ void gml_vm_draw(GmlVM *vm){
       if(!gml_render_tileset_source(R,&layout,datum,animation_frame,&source)) continue;
       GmlDrawTile dt;
       dt.alpha=1;
+      dt.element_order=move_order;
       dt.x=tmx + (double)cx*tm->tw; dt.y=tmy + (double)cy*tm->th; dt.xs=1; dt.ys=1;
       dt.mirror=(int)((datum>>28)&1);
       dt.flip=(int)((datum>>29)&1);
       dt.rotate=(int)((datum>>30)&1);
       dt.def=tm->tileset; dt.sx=source.x; dt.sy=source.y; dt.w=source.width; dt.h=source.height;
-      draw_tile_add(&tiles,&tdepth,&nt,&tcap,dt,tmdepth,tm->order);
+      draw_tile_add(&tiles,&tdepth,&nt,&tcap,dt,tmdepth,parent?parent->order:tm->order);
     }
   }
   /* runtime layer elements (layer_tile_create / layer_background_create): converted GM8 games
@@ -1669,6 +1680,7 @@ void gml_vm_draw(GmlVM *vm){
       ltl[nlt].sprite=e->sprite; ltl[nlt].sx=e->sx; ltl[nlt].sy=e->sy; ltl[nlt].w=e->w; ltl[nlt].h=e->h;
       ltl[nlt].x=lx+e->x; ltl[nlt].y=ly+e->y; ltl[nlt].xs=e->xs; ltl[nlt].ys=e->ys;
       ltl[nlt].blend=e->blend; ltl[nlt].alpha=e->alpha; ltl[nlt].depth=ldepth; ltl[nlt].order=l->order;
+      ltl[nlt].move_order=gml_rt_elem_move_order(e);
       nlt++;
     } else if(e->type==1){
       if(!dl_grow((void**)&scratch->layer_background,
@@ -1680,6 +1692,7 @@ void gml_vm_draw(GmlVM *vm){
       lbg[nlb].th=e->htiled; lbg[nlb].tv=e->vtiled; lbg[nlb].stretch=e->stretch;
       lbg[nlb].xs=e->xs; lbg[nlb].ys=e->ys;
       lbg[nlb].x=lx; lbg[nlb].y=ly; lbg[nlb].blend=e->blend; lbg[nlb].alpha=e->alpha; lbg[nlb].depth=l->depth; lbg[nlb].order=l->order;
+      lbg[nlb].move_order=gml_rt_elem_move_order(e);
       nlb++;
     } else if(e->type==3){
       if(!dl_grow((void**)&scratch->layer_sprite,
@@ -1688,6 +1701,7 @@ void gml_vm_draw(GmlVM *vm){
       lsp[nls].sprite=e->sprite; lsp[nls].subimg=(int)e->image_index;
       lsp[nls].x=lx+e->x; lsp[nls].y=ly+e->y; lsp[nls].xs=e->xs; lsp[nls].ys=e->ys;
       lsp[nls].angle=e->image_angle; lsp[nls].blend=e->blend; lsp[nls].alpha=e->alpha; lsp[nls].depth=l->depth; lsp[nls].order=l->order;
+      lsp[nls].move_order=gml_rt_elem_move_order(e);
       nls++;
     } else if(e->type==9 && e->sprite>=0 && e->sprite<vm->n_sequences){
       /* Sample each graphic track at the element head into the existing layer-sprite list so
@@ -1718,6 +1732,7 @@ void gml_vm_draw(GmlVM *vm){
         lsp[nls].blend=sequence_blend_colour(argb,e->blend);
         lsp[nls].alpha=e->alpha*(double)((argb>>24)&0xFFu)/255.0;
         lsp[nls].depth=l->depth; lsp[nls].order=l->order;
+        lsp[nls].move_order=gml_rt_elem_move_order(e);
         nls++;
       }
     }
@@ -1741,11 +1756,11 @@ void gml_vm_draw(GmlVM *vm){
     it[m].classic=(vm->win&&anygm_policy_uses_classic_runtime(vm->win))?
       (vm->win->classic_executable_layout?2:1):0; it[m].obj=vm->inst[i].obj;
     it[m].placed=it[m].classic && vm->inst[i].room_placed; m++; } }
-  for(int i=0;i<nt;i++){ it[m].depth=tdepth[i]; it[m].type=1; it[m].idx=i; it[m].seq=m; it[m].order=tiles[i].order; it[m].classic=0; it[m].obj=-1; m++; }
-  for(int i=0;i<nlt;i++){ it[m].depth=ltl[i].depth; it[m].type=2; it[m].idx=i; it[m].seq=m; it[m].order=ltl[i].order; it[m].classic=0; it[m].obj=-1; m++; }
-  for(int i=0;i<nlb;i++){ it[m].depth=lbg[i].depth; it[m].type=3; it[m].idx=i; it[m].seq=m; it[m].order=lbg[i].order; it[m].classic=0; it[m].obj=-1; m++; }
-  for(int i=0;i<nls;i++){ it[m].depth=lsp[i].depth; it[m].type=5; it[m].idx=i; it[m].seq=m; it[m].order=lsp[i].order; it[m].classic=0; it[m].obj=-1; m++; }
-  for(int i=0;i<nlf;i++){ it[m].depth=lfx[i].depth; it[m].type=7; it[m].idx=i; it[m].seq=m; it[m].order=lfx[i].order; it[m].classic=0; it[m].obj=-1; m++; }
+  for(int i=0;i<nt;i++){ it[m].depth=tdepth[i]; it[m].type=1; it[m].idx=i; it[m].seq=m; it[m].order=tiles[i].order; it[m].element_order=tiles[i].element_order; it[m].classic=0; it[m].obj=-1; m++; }
+  for(int i=0;i<nlt;i++){ it[m].depth=ltl[i].depth; it[m].type=2; it[m].idx=i; it[m].seq=m; it[m].order=ltl[i].order; it[m].element_order=ltl[i].move_order; it[m].classic=0; it[m].obj=-1; m++; }
+  for(int i=0;i<nlb;i++){ it[m].depth=lbg[i].depth; it[m].type=3; it[m].idx=i; it[m].seq=m; it[m].order=lbg[i].order; it[m].element_order=lbg[i].move_order; it[m].classic=0; it[m].obj=-1; m++; }
+  for(int i=0;i<nls;i++){ it[m].depth=lsp[i].depth; it[m].type=5; it[m].idx=i; it[m].seq=m; it[m].order=lsp[i].order; it[m].element_order=lsp[i].move_order; it[m].classic=0; it[m].obj=-1; m++; }
+  for(int i=0;i<nlf;i++){ it[m].depth=lfx[i].depth; it[m].type=7; it[m].idx=i; it[m].seq=m; it[m].order=lfx[i].order; it[m].element_order=-1; it[m].classic=0; it[m].obj=-1; m++; }
   for(int i=0;i<ncb;i++){ it[m].depth=cbg[i].depth; it[m].type=6; it[m].idx=i; it[m].seq=m; it[m].order=-1; it[m].classic=0; it[m].obj=-1; m++; }
   for(int i=0;i<npart;i++){ int pid=0; double dep=0;
     if(gml_part_system_auto_draw_nth(vm->particles,i,&pid,&dep)){ it[m].depth=dep; it[m].type=4; it[m].idx=pid; it[m].seq=m; it[m].order=-1; it[m].classic=0; it[m].obj=-1; m++; } }
