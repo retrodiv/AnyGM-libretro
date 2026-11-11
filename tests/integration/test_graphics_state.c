@@ -2935,7 +2935,31 @@ static int resident_identity_application_host_case(void){
           selected.engine->host_plan.operations[1].axis_y.intermediate_extent==selected.engine->output_height,
           "identity application fits on device without an ordinary CPU completion");
   GmlRenderPlan retained_plan=selected.engine->host_plan;
-  for(unsigned exclusion=0;exclusion<9u;exclusion++){
+  {
+    GmlGpuCounters before={0},after={0};
+    unsigned canvas_before=selected.engine->canvas_pass_frames;
+    selected.engine->render.presentation=record;
+    selected.engine->host_crt_active=1;
+    gml_gpu_counters(selected.engine->gpu,&before);
+    REQUIRE(engine_present_hardware_screen(selected.engine,NULL,NULL),
+            "identity application CRT fit stays on the device");
+    gml_gpu_counters(selected.engine->gpu,&after);
+    REQUIRE(after.passes_accepted==before.passes_accepted+1u &&
+            after.cpu_upload_frames==before.cpu_upload_frames &&
+            after.full_uploads==before.full_uploads &&
+            after.scene_readbacks==before.scene_readbacks &&
+            selected.engine->canvas_pass_frames==canvas_before+1u &&
+            selected.engine->host_plan.operations[1].opcode==
+              GML_PLAN_OP_BLIT_OPAQUE_SHARP_BILINEAR &&
+            selected.engine->host_plan.operations[1].alpha_write==0xFFu &&
+            selected.engine->host_plan.images[0].resident_image.resource_class==
+              GML_RENDER_RESOURCE_APPLICATION &&
+            !selected.engine->host_plan.images[0].cpu_pixels,
+            "CRT sharp fit adds one resident draw without CPU transport");
+    selected.engine->host_crt_active=0;
+    selected.engine->host_plan=retained_plan;
+  }
+  for(unsigned exclusion=0;exclusion<8u;exclusion++){
     GmlGpuCounters before={0},after={0};
     GmlRenderResourceMetrics resources_before={0},resources_after={0};
     selected.engine->render.presentation=record;
@@ -2944,10 +2968,9 @@ static int resident_identity_application_host_case(void){
     if(exclusion==2u) selected.engine->render.presentation.source_pixels=record.target_pixels;
     if(exclusion==3u) selected.engine->render.presentation.shader=0;
     if(exclusion==4u) selected.engine->render.presentation.destination_width--;
-    if(exclusion==8u) selected.engine->render.presentation.source_pixels=record.target_pixels+1;
-    selected.engine->host_crt_active=exclusion==5u;
-    selected.engine->present_shift_x=exclusion==6u;
-    selected.engine->present_crop_left=exclusion==7u;
+    if(exclusion==7u) selected.engine->render.presentation.source_pixels=record.target_pixels+1;
+    selected.engine->present_shift_x=exclusion==5u;
+    selected.engine->present_crop_left=exclusion==6u;
     gml_gpu_counters(selected.engine->gpu,&before);
     gml_render_resource_metrics(&selected.engine->render,&resources_before);
     REQUIRE(!engine_present_hardware_screen(selected.engine,NULL,NULL),
@@ -2962,7 +2985,7 @@ static int resident_identity_application_host_case(void){
     selected.engine->host_plan=retained_plan;
   }
   selected.engine->render.presentation=record;
-  selected.engine->host_crt_active=selected.engine->present_shift_x=selected.engine->present_crop_left=0;
+  selected.engine->present_shift_x=selected.engine->present_crop_left=0;
   REQUIRE(engine_materialize_completed_frame(selected.engine),
           "identity application retains the original logical recovery recipe");
   size_t cpu_size=0,gpu_size=0;
@@ -3759,10 +3782,27 @@ static int presentation_filter_variant(
     AnygmFrameOutput cpu={0},gpu={0};
     const uint32_t *selected_host=NULL;
     unsigned selected_host_width=0,selected_host_height=0;
+    GmlGpuCounters presented={0};
+    unsigned presented_materializations=0;
+    unsigned presented_canvas_passes=0;
+    int presented_resident_crt=0;
     cpu.struct_size=gpu.struct_size=sizeof cpu;
     if(frame==2) anygm_graphics_context_destroy(selected.engine,1u);
     matching=anygm_run_frame(plain.engine,&input,&cpu)==ANYGM_OK &&
-             anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK &&
+             anygm_run_frame(selected.engine,&input,&gpu)==ANYGM_OK;
+    gml_gpu_counters(selected.engine->gpu,&presented);
+    presented_materializations=selected.engine->frame_materializations;
+    presented_canvas_passes=selected.engine->canvas_pass_frames;
+    presented_resident_crt=selected.engine->host_plan_valid &&
+      (selected.engine->host_plan.images[0].resident_image.resource_class==
+         GML_RENDER_RESOURCE_APPLICATION ||
+       selected.engine->host_plan.images[0].resident_image.resource_class==
+         GML_RENDER_RESOURCE_SCREEN) &&
+      !selected.engine->host_plan.images[0].cpu_pixels &&
+      selected.engine->host_plan.operations[1].opcode==
+        GML_PLAN_OP_BLIT_OPAQUE_SHARP_BILINEAR &&
+      selected.engine->host_plan.operations[1].alpha_write==0xFFu;
+    matching=matching &&
              cpu.pixels && plain.engine->screen && selected.engine->screen &&
              plain.engine->output_width==selected.engine->output_width &&
              plain.engine->output_height==selected.engine->output_height &&
@@ -3776,27 +3816,27 @@ static int presentation_filter_variant(
              cpu.pitch==(size_t)cpu.width*sizeof(uint32_t) &&
              !compare_scene_pixels(cpu.pixels,selected_host,(size_t)cpu.pitch*cpu.height);
     if(frame==0){
-      GmlGpuCounters counters={0};
-      gml_gpu_counters(selected.engine->gpu,&counters);
       unsigned source_width=variant==0?64u:variant==1?400u:128u;
       unsigned source_height=variant==0?32u:variant==1?300u:96u;
       unsigned host_width=variant==0?64u:variant==1?640u:64u;
       unsigned host_height=variant==0?48u:variant==1?480u:64u;
       unsigned fallback=variant==2?GML_PLAN_FALLBACK_BOX_REDUCTION:
                                    GML_PLAN_FALLBACK_UNSUPPORTED_OPERATION;
+      int resident_crt=variant!=2;
       int filter_ok=selected.engine->output_width==source_width &&
         selected.engine->output_height==source_height &&
         cpu.width==host_width && cpu.height==host_height &&
         selected.engine->host_canvas_active &&
         selected.engine->host_crt_active==(variant!=2) &&
         selected.engine->host_canvas_y==(variant==1?0:8) &&
-        counters.scene_batches_accepted==counters.scene_batches_offered &&
-        counters.scene_batches_accepted>=2u &&
-        counters.scene_families[GML_RENDER_SCENE_SPRITE]>=1u &&
-        counters.scene_readbacks==0u &&
-        counters.fallbacks[fallback]==1u &&
-        counters.cpu_upload_frames==1u &&
-        selected.engine->frame_materializations==1u;
+        presented.scene_batches_accepted==presented.scene_batches_offered &&
+        presented.scene_batches_accepted>=2u &&
+        presented.scene_families[GML_RENDER_SCENE_SPRITE]>=1u &&
+        presented.scene_readbacks==0u &&
+        presented.fallbacks[fallback]==(resident_crt?0u:1u) &&
+        presented.cpu_upload_frames==(resident_crt?0u:1u) &&
+        presented_materializations==(resident_crt?0u:1u) &&
+        (!resident_crt || (presented_canvas_passes==1u && presented_resident_crt));
       if(!filter_ok)
         fprintf(stderr,"filter %s source=%ux%u host=%ux%u canvas=%d crt=%d y=%d "
                 "scene=%llu/%llu sprite=%llu fallback=%u transport=%u "
@@ -3804,11 +3844,11 @@ static int presentation_filter_variant(
                 selected.engine->output_height,cpu.width,cpu.height,
                 selected.engine->host_canvas_active,selected.engine->host_crt_active,
                 selected.engine->host_canvas_y,
-                (unsigned long long)counters.scene_batches_accepted,
-                (unsigned long long)counters.scene_batches_offered,
-                (unsigned long long)counters.scene_families[GML_RENDER_SCENE_SPRITE],
-                counters.fallbacks[fallback],counters.cpu_upload_frames,
-                selected.engine->frame_materializations);
+                (unsigned long long)presented.scene_batches_accepted,
+                (unsigned long long)presented.scene_batches_offered,
+                (unsigned long long)presented.scene_families[GML_RENDER_SCENE_SPRITE],
+                presented.fallbacks[fallback],presented.cpu_upload_frames,
+                presented_materializations);
       matching=matching && filter_ok;
     }
     if(matching){
@@ -3825,7 +3865,7 @@ static int presentation_filter_variant(
   }
   session_close(&selected);
   session_close(&plain);
-  REQUIRE(matching,"filter CPU and selected images remain visibly identical");
+  REQUIRE(matching,"filter output remains visible and its selected execution boundary holds");
   return 1;
 }
 
@@ -6128,7 +6168,7 @@ int main(void){
      presentation_geometry_case},
     {"forced owned scene retains geometry and narrow-room fallback",
      forced_owned_scene_case},
-    {"CRT and box presentation preserve a resident scene through CPU filtering",
+    {"CRT and box presentation preserve a resident scene through selected filtering",
      presentation_filter_case},
     {"scene-only cold canvas retains CPU presentation without failed device work",
      scene_canvas_cpu_source_case},

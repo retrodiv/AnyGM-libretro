@@ -596,6 +596,9 @@ static int engine_present_indirect_gui_host(AnygmEngine *engine,
   int application=(record.resident_image.resource_class==GML_RENDER_RESOURCE_APPLICATION ||
                    record.resident_image.resource_class==GML_RENDER_RESOURCE_SCREEN) &&
     record.sampling_rule==GML_RENDER_PRESENTATION_LEADING_EDGE && !record.cpu_rgb_only;
+  int crt_identity=application && engine->host_crt_active && engine->host_canvas_active &&
+    record.source_width==(int)engine->output_width &&
+    record.source_height==(int)engine->output_height;
   if(application){
     /* A complete automatic application recipe has its own inner sampling rule.
      * It must not inherit the GUI magnifier's inner-enlargement restriction. */
@@ -604,8 +607,9 @@ static int engine_present_indirect_gui_host(AnygmEngine *engine,
        (unsigned)record.source_height>GML_PLAN_MAX_EXTENT ||
        record.source_pitch!=record.source_width || record.local_offset_x || record.local_offset_y ||
        record.linear ||
-       !engine_indirect_gui_host_nearest(engine,(int)engine->output_width,
-                                        (int)engine->output_height)) return 0;
+       (!crt_identity &&
+        !engine_indirect_gui_host_nearest(engine,(int)engine->output_width,
+                                         (int)engine->output_height))) return 0;
     uintptr_t source_address=(uintptr_t)record.source_pixels;
     uintptr_t target_address=(uintptr_t)record.target_pixels;
     uint64_t source_bytes=(uint64_t)(unsigned)record.source_width*(unsigned)record.source_height*4u;
@@ -631,12 +635,15 @@ static int engine_present_indirect_gui_host(AnygmEngine *engine,
     source->identity=record.identity;
     source->content_generation=source->pixel_generation=record.generation;
   }
-  blit->axis_x.rule=blit->axis_y.rule=application
-    ?GML_PLAN_AXIS_COMPOSED_LEADING_NEAREST:GML_PLAN_AXIS_COMPOSED_NEAREST;
-  blit->axis_x.source_extent=source->width;
-  blit->axis_y.source_extent=source->height;
-  blit->axis_x.intermediate_extent=engine->output_width;
-  blit->axis_y.intermediate_extent=engine->output_height;
+  if(crt_identity) blit->alpha_write=0xFFu;
+  else {
+    blit->axis_x.rule=blit->axis_y.rule=application
+      ?GML_PLAN_AXIS_COMPOSED_LEADING_NEAREST:GML_PLAN_AXIS_COMPOSED_NEAREST;
+    blit->axis_x.source_extent=source->width;
+    blit->axis_y.source_extent=source->height;
+    blit->axis_x.intermediate_extent=engine->output_width;
+    blit->axis_y.intermediate_extent=engine->output_height;
+  }
   if(!engine_execute_host_plan(engine,&engine->host_plan,host_width,host_height)) return 0;
   /* Retain the logical presentation recipe for explicit observation. The host-sized attachment
    * is never state authority; ordinary play produces no CPU shadow or extra persistent texture. */
@@ -668,8 +675,9 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
   if(scene && (engine->present_shift_x || engine->present_shift_y) &&
      !engine_graphics_is_current(engine)) return 0;
   int crt_readback=engine->host_crt_active && engine->host_canvas_active;
-  if(engine->host_canvas_active && !crt_readback)
-    return scene && engine_present_indirect_gui_host(engine,width,height);
+  if(engine->host_canvas_active && scene &&
+     engine_present_indirect_gui_host(engine,width,height)) return 1;
+  if(engine->host_canvas_active && !crt_readback) return 0;
   if(!gml_render_deferred_presentation(&engine->render,&record)){
     if(scene && crt_readback)
       return engine_present_hardware_canvas_plan(engine,width,height,1);
