@@ -30,6 +30,10 @@ int gml_audio_queue_event_pop(GmlAudio *a,int *queue,int *buffer,int *shutdown);
 
 /* play sound resource `snd` (SOND index); loop!=0 repeats. Returns a voice handle. */
 int  gml_audio_play(GmlAudio *a, int snd, int loop);
+int  gml_audio_music_play(GmlAudio *a, int snd, int loop);
+void gml_audio_music_stop(GmlAudio *a);
+int  gml_audio_music_is_playing(GmlAudio *a);
+void gml_audio_music_gain(GmlAudio *a, double gain, int milliseconds);
 int  gml_audio_play_on(GmlAudio *a, int snd, int loop, int emitter);
 /* Prepare playback while retaining the bounded decode policy of streamed sounds. */
 int  gml_audio_prefetch_sound(GmlAudio *a, int snd);

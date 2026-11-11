@@ -158,6 +158,18 @@ int main(void){
     if(anygm_policy_uses_early_background_compositing(&content) ||
        anygm_policy_uses_early_background_compositing(NULL)) return 1;
   }
+  {
+    AnygmCompatibilityProfile earliest;
+    if(!resolve(0,13,0,0,&earliest) || !earliest.has_legacy_music_controls ||
+       first_early.has_legacy_music_controls || first_late.has_legacy_music_controls ||
+       second.has_legacy_music_controls || !classic_early.has_legacy_music_controls) return 1;
+    GmlWin content={0}; content.bytecode=13;
+    if(!anygm_policy_has_legacy_music_controls(&content)) return 1;
+    content.bytecode=14;
+    if(anygm_policy_has_legacy_music_controls(&content)) return 1;
+    content.compatibility=&earliest;
+    if(!anygm_policy_has_legacy_music_controls(&content)) return 1;
+  }
   if(!resolve(0,17,0,0,&repeated) || memcmp(&repeated,&second,sizeof second)){
     fputs("compatibility resolution was not deterministic\n",stderr);
     return 1;

@@ -4,6 +4,7 @@
 #include "libretro_internal.h"
 #include "engine_internal.h"
 #include "gml_builtin.h"
+#include "gml_audio.h"
 #include "gml_software3d_internal.h"
 #include "synthetic_content.h"
 
@@ -490,10 +491,63 @@ done:
   return ok;
 }
 
+static int run_music_case(int response){
+  AnygmSyntheticContent fixture={0}; Ring ring={0};
+  uint8_t *cold=NULL,*saved=NULL; size_t saved_size=0;
+  int ok=1;
+  negotiation=response; monitor_changed=option_update=0;
+  REQUIRE(anygm_synthetic_tilemap_content_create(&fixture),"create music capacity fixture");
+  retro_set_environment(environment); retro_set_video_refresh(video); retro_init();
+  struct retro_game_info info={fixture.path,NULL,0,NULL};
+  REQUIRE(retro_load_game(&info),"load music capacity fixture");
+  ring.initial=ring.capacity=retro_serialize_size();
+  REQUIRE(ring.capacity>0 && g_libretro.startup_ring_compact,"music cold compact policy");
+  ring.bytes=malloc(ring.capacity); cold=malloc(ring.capacity);
+  REQUIRE(ring.bytes && cold && push(&ring),"music ring before first frame");
+  memcpy(cold,ring.bytes,ring.initial); retro_run(); REQUIRE(push(&ring),"music first completed frame");
+  GmlVM *vm=&g_libretro.engine->vm;
+  GmlVal create[]={vreal(65536),vreal(0),vreal(1)};
+  GmlVal source=gml_builtin_call(vm,"buffer_create",create,3);
+  GmlVal queue_args[]={vreal(4),vreal(44100),vreal(0)};
+  GmlVal queue=gml_builtin_call(vm,"audio_create_play_queue",queue_args,3);
+  GmlVal submit[]={queue,source,vreal(0),vreal(65536)};
+  gml_builtin_call(vm,"audio_queue_sound",submit,4);
+  /* Seed the same audio owner directly: this neutral transport fixture is a later profile,
+   * while public legacy-profile dispatch is proved by the PCM and language controls. */
+  gml_audio_music_gain(g_libretro.engine->audio,0.75,0);
+  int voice=gml_audio_music_play(g_libretro.engine->audio,(int)queue.d,0);
+  gml_audio_music_gain(g_libretro.engine->audio,0.25,1000);
+  REQUIRE(voice>=1000000 && gml_audio_music_is_playing(g_libretro.engine->audio),"music voice after cold capacity query");
+  REQUIRE(push(&ring),"largest music/PCM queue transition fits cold ring");
+  saved_size=ring.capacity; saved=malloc(saved_size);
+  REQUIRE(saved,"retain music snapshot"); memcpy(saved,ring.bytes,saved_size);
+  gml_audio_music_stop(g_libretro.engine->audio);
+  REQUIRE(!gml_audio_music_is_playing(g_libretro.engine->audio) && push(&ring),"stopped music push");
+  REQUIRE(retro_unserialize(saved,saved_size) && gml_audio_music_is_playing(g_libretro.engine->audio),
+          "rewind restores music identity and pending PCM");
+  monitor_changed=option_update=1; retro_run(); REQUIRE(push(&ring),"music ring after live geometry");
+  retro_reset(); REQUIRE(!gml_audio_music_is_playing(g_libretro.engine->audio),"Reset clears music ownership");
+  REQUIRE(push(&ring),"music ring immediately across Reset");
+  REQUIRE(retro_unserialize(saved,saved_size)==(response>0),"music Reset fixed/variable policy");
+  retro_run(); REQUIRE(push(&ring),"music ring after first reset frame");
+  REQUIRE(retro_unserialize(saved,saved_size) && gml_audio_music_is_playing(g_libretro.engine->audio) && push(&ring),
+          "music resource and fade restore after Reset");
+  REQUIRE(retro_unserialize(cold,ring.initial) && !gml_audio_music_is_playing(g_libretro.engine->audio) && push(&ring),
+          "cold state removes later music ownership");
+  REQUIRE(ring.accepted==9 && ring.rejected==0,"every music frontend push accepted");
+  printf("music frontend: negotiation=%d cold=%zu final=%zu accepted=%u rejected=%u\n",
+         response,ring.initial,ring.capacity,ring.accepted,ring.rejected);
+done:
+  free(cold); free(saved); free(ring.bytes);
+  retro_unload_game(); retro_deinit(); anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 int main(void){
   for(int response=-1;response<=1;response++) if(!run_case(response)) return 1;
   for(int response=-1;response<=1;response++) if(!run_ds_case(response)) return 1;
   for(int response=-1;response<=1;response++) if(!run_vertex_case(response)) return 1;
   for(int response=-1;response<=1;response++) if(!run_timeline_case(response)) return 1;
+  for(int response=-1;response<=1;response++) if(!run_music_case(response)) return 1;
   return 0;
 }

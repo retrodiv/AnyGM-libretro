@@ -3,6 +3,7 @@
  */
 /* Audio builtin argument adaptation, spatial-emitter policy, and ordered dispatch. */
 #include "gml_builtin_internal.h"
+#include "anygm_compatibility.h"
 #include "gml_render.h"
 #include "gml_audio.h"
 #include "gml_pxtone.h"
@@ -2112,6 +2113,27 @@ GmlVal gml_builtin_try_audio(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strncmp(nm,"FAudioGMS_",10)) return builtin_faudio_gms(vm,nm,a,n);
   /* ---- audio ---- */
   { GmlAudio *AU=(GmlAudio*)vm->audio;
+    if(!strcmp(nm,"audio_play_music")){
+      if(!anygm_policy_has_legacy_music_controls(vm->win)) return vundef();
+      double sound=N(a,n,0),loop=N(a,n,1);
+      if(n>=2 && audio_queue_integer(sound) && isfinite(loop))
+        return vreal(gml_audio_music_play(AU,(int)sound,loop!=0));
+      return vreal(-1);
+    }
+    if(!strcmp(nm,"audio_stop_music")){
+      if(!anygm_policy_has_legacy_music_controls(vm->win)) return vundef();
+      gml_audio_music_stop(AU);
+      return vreal(0);
+    }
+    if(!strcmp(nm,"audio_music_is_playing")) return vreal(gml_audio_music_is_playing(AU));
+    if(!strcmp(nm,"audio_music_gain")){
+      if(!anygm_policy_has_legacy_music_controls(vm->win)) return vundef();
+      double gain=N(a,n,0),milliseconds=N(a,n,1);
+      if(n>=2 && isfinite(gain) && isfinite(milliseconds) &&
+         milliseconds>=INT_MIN && milliseconds<=INT_MAX)
+        gml_audio_music_gain(AU,gain,(int)milliseconds);
+      return vreal(0);
+    }
     if(!strcmp(nm,"audio_create_play_queue")){
       double format=N(a,n,0),rate=N(a,n,1),channels=N(a,n,2);
       if(n<3 || !audio_queue_integer(format) || !audio_queue_integer(rate) ||

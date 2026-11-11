@@ -323,11 +323,14 @@ int expect_pcm_queue_resampling_and_state(void){
   /* Truncation, an invalid event and an older schema reject without changing the live mixer. */
   if(ok){
     ok=!gml_audio_state_load(restored,state,size-1,NULL);
-    state[size-4]=2;
+    /* The music trailer follows the queued event's shutdown flag in the current format. */
+    size_t event_shutdown=size-24u-4u;
+    unsigned char current_schema=state[4];
+    state[event_shutdown]=2;
     ok=ok && !gml_audio_state_load(restored,state,size,NULL);
-    state[size-4]=0; state[4]=2;
+    state[event_shutdown]=0; state[4]=2;
     ok=ok && !gml_audio_state_load(restored,state,size,NULL);
-    state[4]=3;
+    state[4]=current_schema;
     ok=ok && gml_audio_state_save(restored,again,size,NULL) && !memcmp(state,again,size);
   }
   gml_audio_mix(chunked,out,32); gml_audio_mix(restored,control,32);
@@ -1847,5 +1850,92 @@ int expect_wwise_portable_bank_state(void){
   gml_audio_free(audio);
   unlink(path); rmdir(directory);
   if(!ok) fprintf(stderr,"portable Wwise bank/state fixture failed\n");
+  return ok;
+}
+
+/* The early music API selects one voice while ordinary effects keep their own gains. Numeric
+ * PCM vectors exercise the selected compatibility contract, not a historical runner capture. */
+int expect_legacy_music_controls(void){
+  int ok=1;
+  for(int cached=0;cached<2 && ok;cached++){
+    GmlWin win={0}; win.bytecode=13;
+    GmlAudio *audio=gml_audio_create(&win);
+    if(!audio) return 0;
+    GmlVM vm={0}; vm.win=&win; vm.audio=audio;
+    int16_t first[64],second[64],mixed[2048],replay[2048];
+    for(int i=0;i<64;i++){ first[i]=4000; second[i]=2000; }
+    int sound=gml_audio_add_pcm16(audio,first,64,1,44100,(const uint8_t*)first,sizeof first);
+    int other=gml_audio_add_pcm16(audio,second,64,1,44100,(const uint8_t*)second,sizeof second);
+    const char *names[]={"audio_play_music","audio_stop_music","audio_music_is_playing","audio_music_gain"};
+    int ids[4]; for(int i=0;i<4;i++){ ids[i]=gml_builtin_fast_id(&vm,names[i]); if(ids[i]<=0) ok=0; }
+#define MUSIC_CALL(index,args,count) (cached?gml_builtin_call_fast_id(&vm,ids[index],names[index],args,count):gml_builtin_call(&vm,names[index],args,count))
+    GmlVal gain[]={vreal(0),vreal(0)};
+    MUSIC_CALL(3,gain,2);
+    GmlVal play[]={vreal(sound),vreal(1)};
+    GmlVal music=MUSIC_CALL(0,play,2);
+    int effect=gml_audio_play(audio,sound,1);
+    ok=ok && sound>=0 && other>=0 && music.d>=1000000 && effect>=1000000 && MUSIC_CALL(2,NULL,0).d==1;
+    gml_audio_mix(audio,mixed,16);
+    for(int i=0;i<32;i++) ok=ok && mixed[i]==4000;
+    gain[0]=vreal(0.5); MUSIC_CALL(3,gain,2); gml_audio_mix(audio,mixed,16);
+    for(int i=0;i<32;i++) ok=ok && mixed[i]==6000;
+    play[0]=vreal(other); GmlVal replaced=MUSIC_CALL(0,play,2);
+    ok=ok && replaced.d>=1000000 && !gml_audio_is_playing(audio,(int)music.d) && gml_audio_is_playing(audio,effect);
+    gml_audio_mix(audio,mixed,16);
+    for(int i=0;i<32;i++) ok=ok && mixed[i]==5000;
+    play[0]=vreal(99999); ok=ok && MUSIC_CALL(0,play,2).d==-1 && MUSIC_CALL(2,NULL,0).d==1;
+    MUSIC_CALL(1,NULL,0); gml_audio_mix(audio,mixed,16);
+    ok=ok && MUSIC_CALL(2,NULL,0).d==0 && gml_audio_is_playing(audio,effect);
+    for(int i=0;i<32;i++) ok=ok && mixed[i]==4000;
+    gml_audio_stop(audio,effect);
+    gain[0]=vreal(1); MUSIC_CALL(3,gain,2); play[0]=vreal(sound); music=MUSIC_CALL(0,play,2);
+    gain[0]=vreal(0); gain[1]=vreal(10); MUSIC_CALL(3,gain,2);
+    gml_audio_mix(audio,mixed,220);
+    for(int i=0;i<220;i++){
+      int16_t expected=(int16_t)lrint(4000.0*(1.0-(double)i/441.0));
+      ok=ok && mixed[2*i]==expected && mixed[2*i+1]==expected;
+    }
+    size_t bytes=gml_audio_state_size(audio),written=0,used=0;
+    uint8_t *state=malloc(bytes),*again=malloc(bytes),*bad=malloc(bytes);
+    int saved=state && again && bad && gml_audio_state_save(audio,state,bytes,&written) && written==bytes;
+    ok=ok && saved;
+    if(saved){
+      gml_audio_mix(audio,mixed,221); MUSIC_CALL(1,NULL,0);
+      ok=ok && gml_audio_state_load(audio,state,bytes,&used) && used==bytes && MUSIC_CALL(2,NULL,0).d==1;
+      ok=ok && gml_audio_state_save(audio,again,bytes,&written) && written==bytes && !memcmp(state,again,bytes);
+      gml_audio_mix(audio,replay,221); ok=ok && !memcmp(mixed,replay,442*sizeof(int16_t));
+      ok=ok && gml_audio_state_load(audio,state,bytes,&used);
+      static const int offsets[]={24,20,12,4};
+      for(int i=0;i<4 && ok;i++){
+        memcpy(bad,state,bytes);
+        if(i==0) memset(bad+bytes-offsets[i],0,4);
+        else if(i==3) memset(bad+bytes-offsets[i],255,4);
+        else { uint64_t nan=UINT64_C(0x7ff8000000000000); for(int j=0;j<8;j++) bad[bytes-offsets[i]+j]=(uint8_t)(nan>>(8*j)); }
+        ok=!gml_audio_state_load(audio,bad,bytes,&used) && gml_audio_state_save(audio,again,bytes,&written) &&
+          written==bytes && !memcmp(state,again,bytes);
+      }
+      ok=ok && !gml_audio_state_load(audio,state,bytes-1,&used);
+      memcpy(bad,state,bytes); bad[4]=3;
+      ok=ok && !gml_audio_state_load(audio,bad,bytes,&used);
+    }
+    free(state); free(again); free(bad);
+    /* The fade bus advances without a voice, and global pause freezes its sample clock. */
+    MUSIC_CALL(1,NULL,0); gain[0]=vreal(0); gain[1]=vreal(0); MUSIC_CALL(3,gain,2);
+    gain[0]=vreal(1); gain[1]=vreal(10); MUSIC_CALL(3,gain,2);
+    gml_audio_mix(audio,mixed,220); gml_audio_pause_all(audio,1); gml_audio_mix(audio,mixed,500);
+    gml_audio_pause_all(audio,0); play[0]=vreal(sound); play[1]=vreal(1); MUSIC_CALL(0,play,2);
+    gml_audio_mix(audio,mixed,1);
+    ok=ok && mixed[0]==(int16_t)lrint(4000.0*220.0/441.0);
+    MUSIC_CALL(1,NULL,0); gain[0]=vreal(1); gain[1]=vreal(0); MUSIC_CALL(3,gain,2);
+    play[1]=vreal(0); MUSIC_CALL(0,play,2); gml_audio_mix(audio,mixed,65);
+    ok=ok && MUSIC_CALL(2,NULL,0).d==0;
+    /* Later source profiles retain the obsolete no-op; authored script priority is unchanged. */
+    win.bytecode=14; play[1]=vreal(1);
+    GmlVal modern=MUSIC_CALL(0,play,2);
+    ok=ok && modern.t==V_UNDEF && !gml_audio_music_is_playing(audio);
+    gml_vm_free(&vm); gml_audio_free(audio);
+#undef MUSIC_CALL
+  }
+  if(!ok) fprintf(stderr,"legacy music PCM/dispatch/fade/state controls failed\n");
   return ok;
 }

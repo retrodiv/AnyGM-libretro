@@ -1605,6 +1605,17 @@ int main(void){
                                vm_start+8,UINT32_MAX,"extreme VM instance count");
   if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
                                audio_start,0,"invalid audio magic");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               audio_start+4,3,"previous music-free audio schema");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               4,46,"previous music-free public schema");
+  if(ok){
+    memcpy(candidate,baseline,state_size);
+    write_u64(candidate+audio_start+(size_t)audio_size-20,UINT64_C(0x7ff8000000000000));
+    refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,state_size,baseline,state_size,"nonfinite music gain after VM publication");
+  }
+
 
   if(ok&&render_size>=4){
     memcpy(candidate,baseline,state_size);

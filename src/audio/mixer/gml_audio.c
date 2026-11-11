@@ -101,6 +101,8 @@ struct GmlAudio {
   int next_voice_id;
   int channel_num;     /* requested GM audio_channel_num; playback uses min(requested, GML_MAX_VOICES) */
   double master_gain;
+  int music_voice, music_fade_frames;
+  double music_gain, music_target;
   double group_gain[GML_MAX_AUDIOGROUPS], group_target[GML_MAX_AUDIOGROUPS];
   int group_fade_frames[GML_MAX_AUDIOGROUPS];
   GmlFmodBanks *fmod;  /* optional FMOD Studio bank set; see gml_fmod.c */
@@ -543,6 +545,7 @@ static int audio_sound_load_loose(GmlAudio *a,GmlSound *sound){
 }
 GmlAudio *gml_audio_create(GmlWin *win){
   GmlAudio *a=calloc(1,sizeof(GmlAudio)); a->win=win; a->next_voice_id=1000000; a->channel_num=128; a->master_gain=1.0;
+  a->music_voice=-1; a->music_gain=a->music_target=1.0;
   for(int g=0;g<GML_MAX_AUDIOGROUPS;g++) a->group_gain[g]=a->group_target[g]=1.0;
   a->fmod=gml_fmod_banks_load(win->host,win->content_dir);   /* optional FMOD bank set */
   const uint8_t *d=win->data;
@@ -1164,6 +1167,20 @@ int gml_audio_play_on(GmlAudio *a, int snd, int loop, int emitter){
   return id;
 }
 int gml_audio_play(GmlAudio *a, int snd, int loop){ return gml_audio_play_on(a,snd,loop,-1); }
+int gml_audio_music_play(GmlAudio *a, int snd, int loop){
+  if(!a || snd<0 || snd>=a->n_snd || !sound_ensure_playable(a,&a->snd[snd])) return -1;
+  gml_audio_music_stop(a);
+  a->music_voice=gml_audio_play(a,snd,loop);
+  return a->music_voice;
+}
+void gml_audio_music_stop(GmlAudio *a){
+  if(!a) return;
+  if(a->music_voice>=1000000) gml_audio_stop(a,a->music_voice);
+  a->music_voice=-1;
+}
+int gml_audio_music_is_playing(GmlAudio *a){
+  return a && a->music_voice>=1000000 && gml_audio_is_playing(a,a->music_voice);
+}
 void gml_audio_stop(GmlAudio *a, int snd){
   if(!a) return;
   for(int i=0;i<GML_MAX_VOICES;i++)
@@ -1233,17 +1250,32 @@ void gml_audio_set_master_gain(GmlAudio *a, double gain){
 double gml_audio_get_master_gain(GmlAudio *a){
   return a ? a->master_gain : 1.0;
 }
-void gml_audio_group_gain(GmlAudio *a, int group, double gain, int milliseconds){
-  if(!a || group<0 || group>=GML_MAX_AUDIOGROUPS) return;
+static void audio_gain_ramp_set(double *level, double *target, int *remaining,
+                                double gain, int milliseconds){
   if(!isfinite(gain) || gain<0.0) gain=0.0;
-  a->group_target[group]=gain;
+  *target=gain;
   if(milliseconds<=0){
-    a->group_gain[group]=gain;
-    a->group_fade_frames[group]=0;
+    *level=gain; *remaining=0;
     return;
   }
   double frames=ceil((double)milliseconds*44.1);
-  a->group_fade_frames[group]=frames>(double)INT32_MAX?INT32_MAX:(int)frames;
+  *remaining=frames>(double)INT32_MAX?INT32_MAX:(int)frames;
+}
+static void audio_gain_ramp_advance(double *level, double target, int *remaining, int frames){
+  if(*remaining<=0) return;
+  int advance=frames<*remaining?frames:*remaining;
+  double step=(target-*level)/(double)*remaining;
+  *level+=step*(double)advance;
+  *remaining-=advance;
+  if(!*remaining) *level=target;
+}
+void gml_audio_music_gain(GmlAudio *a, double gain, int milliseconds){
+  if(a) audio_gain_ramp_set(&a->music_gain,&a->music_target,&a->music_fade_frames,gain,milliseconds);
+}
+void gml_audio_group_gain(GmlAudio *a, int group, double gain, int milliseconds){
+  if(!a || group<0 || group>=GML_MAX_AUDIOGROUPS) return;
+  audio_gain_ramp_set(&a->group_gain[group],&a->group_target[group],
+                      &a->group_fade_frames[group],gain,milliseconds);
 }
 double gml_audio_group_get_gain(GmlAudio *a, int group){
   return a && group>=0 && group<GML_MAX_AUDIOGROUPS ? a->group_gain[group] : 1.0;
@@ -1533,6 +1565,8 @@ static void audio_mix_audo(GmlAudio *a, int16_t *out, int frames){
   if(!mix) return;
   if(mix==stack_mix) memset(mix,0,(size_t)nvals*sizeof(*mix));
   int limit=audio_voice_limit(a);
+  double music_step=a->music_fade_frames>0
+    ? (a->music_target-a->music_gain)/(double)a->music_fade_frames : 0.0;
   for(int v=0;v<limit;v++){
     GmlVoice *vo=&a->voice[v]; if(!vo->active || vo->paused) continue;
     if(!audio_voice_prepare(a,vo)) continue;
@@ -1599,6 +1633,9 @@ static void audio_mix_audo(GmlAudio *a, int16_t *out, int frames){
         vo->pos+=vo->pitch*rate_scale;
       }
       double group_level=group_remaining>f?group_start+group_step*(double)f:group_target;
+      if(vo->id==a->music_voice)
+        group_level*=a->music_fade_frames>f
+          ? a->music_gain+music_step*(double)f : a->music_target;
       double sound_level=gain_remaining>f
         ? gain_start+gain_step*(double)f
         : (gain_remaining>0?gain_target:vo->gain);
@@ -1619,13 +1656,9 @@ static void audio_mix_audo(GmlAudio *a, int16_t *out, int frames){
       if(voice_matches(a,&a->voice[voice],sound))
         a->voice[voice].gain=entry->gain;
   }
-  for(int g=0;g<GML_MAX_AUDIOGROUPS;g++) if(a->group_fade_frames[g]>0){
-    int advance=frames<a->group_fade_frames[g]?frames:a->group_fade_frames[g];
-    double step=(a->group_target[g]-a->group_gain[g])/(double)a->group_fade_frames[g];
-    a->group_gain[g]+=step*(double)advance;
-    a->group_fade_frames[g]-=advance;
-    if(!a->group_fade_frames[g]) a->group_gain[g]=a->group_target[g];
-  }
+  for(int g=0;g<GML_MAX_AUDIOGROUPS;g++)
+    audio_gain_ramp_advance(&a->group_gain[g],a->group_target[g],&a->group_fade_frames[g],frames);
+  audio_gain_ramp_advance(&a->music_gain,a->music_target,&a->music_fade_frames,frames);
   /* Apply the classic post-mix attenuation at the bus, after authored
    * resource gain. Studio retains a linear bus so its half-volume
    * resource is not attenuated again. */
@@ -1644,7 +1677,7 @@ void gml_audio_mix(GmlAudio *a, int16_t *out, int frames){
   if(a && a->fmod) gml_fmod_mix(a->fmod,out,frames,44100);
 }
 
-enum { GML_AUDIO_STATE_SCHEMA=3 };
+enum { GML_AUDIO_STATE_SCHEMA=4 };
 #define GML_AUDIO_STATE_MAGIC UINT32_C(0x53554141)
 typedef struct { uint8_t *data; size_t cap, pos; int ok; } AudW;
 typedef struct { const uint8_t *data; size_t cap, pos; int ok; } AudR;
@@ -1727,6 +1760,9 @@ static void audio_state_write(AudW *s, GmlAudio *a){
   if(a) for(GmlAudioBlock *event=a->event_head;event;event=event->next){
     aw_i32(s,event->queue); aw_i32(s,event->buffer); aw_i32(s,event->shutdown);
   }
+  aw_i32(s,a?a->music_voice:-1);
+  aw_d(s,a?a->music_gain:1.0); aw_d(s,a?a->music_target:1.0);
+  aw_i32(s,a?a->music_fade_frames:0);
 }
 size_t gml_audio_state_size(GmlAudio *a){ AudW s={0}; s.ok=1; audio_state_write(&s,a); return s.pos; }
 int gml_audio_state_save(GmlAudio *a, void *data, size_t len, size_t *written){
@@ -1900,6 +1936,14 @@ int gml_audio_state_load(GmlAudio *a, const void *data, size_t len, size_t *used
   if(!audio_queues_read(&s,&stage,stored_sounds,a?a->n_base_snd:0)){
     audio_queues_discard(&stage); free(sound_state); return 0;
   }
+  int music_voice=ar_i32(&s);
+  double music_gain=ar_d(&s), music_target=ar_d(&s);
+  int music_fade_frames=ar_i32(&s);
+  if(!s.ok || (music_voice!=-1 && music_voice<1000000) ||
+     !isfinite(music_gain) || music_gain<0 || !isfinite(music_target) || music_target<0 ||
+     music_fade_frames<0){
+    audio_queues_discard(&stage); free(sound_state); return 0;
+  }
   /* Owned queues and canonical empty slots can be reconstructed without external media. */
   for(int i=restored_count;i<stored_sounds;i++)
     if(stage.snd[i].queue_format ||
@@ -1945,6 +1989,8 @@ int gml_audio_state_load(GmlAudio *a, const void *data, size_t len, size_t *used
     memcpy(a->group_gain,group_gain,sizeof group_gain);
     memcpy(a->group_target,group_target,sizeof group_target);
     memcpy(a->group_fade_frames,group_fade_frames,sizeof group_fade_frames);
+    a->music_voice=music_voice; a->music_gain=music_gain;
+    a->music_target=music_target; a->music_fade_frames=music_fade_frames;
     /* Only the sounds the state can actually name are rewritten. A sound the state says nothing
      * trustworthy about keeps what it has, rather than being reset to defaults it never carried. */
     int restore_limit=a->n_snd<stored_sounds?a->n_snd:stored_sounds;

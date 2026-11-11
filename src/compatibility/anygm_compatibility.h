@@ -90,6 +90,7 @@ typedef struct AnygmCompatibilityProfile {
   uint32_t has_modern_struct_semantics;
   uint32_t has_modern_layer_semantics;
   uint32_t has_modern_screen_stage;
+  uint32_t has_legacy_music_controls;
   uint32_t uses_room_speed_cadence;
   uint32_t uses_legacy_room_cameras;
   uint32_t advances_animation_before_step;
@@ -129,6 +130,11 @@ static inline const AnygmCompatibilityProfile *anygm_profile(const GmlWin *conte
 static inline int anygm_policy_uses_classic_runtime(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);
   return p?(int)p->uses_classic_runtime:(content&&content->classic_version>0);
+}
+static inline int anygm_policy_has_legacy_music_controls(const GmlWin *content){
+  const AnygmCompatibilityProfile *p=anygm_profile(content);
+  return p?(int)p->has_legacy_music_controls:
+    (content && (content->classic_version>0 || content->bytecode==13));
 }
 /* The collision engine keeps inclusive bounds. This policy controls only language-visible
  * bbox_right and bbox_bottom: a recognized later-format marker selects one-past far edges

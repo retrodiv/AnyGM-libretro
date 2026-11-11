@@ -141,3 +141,14 @@ To add support for another revision:
 The profile schema and fingerprint are serialized as part of compatibility
 identity. A state produced under one resolved semantic profile is rejected if
 loaded under another.
+
+## Legacy music controls
+
+The shared audio owner supports one legacy music voice independently of ordinary effects,
+including effects playing the same sound resource. The early Studio profile exposes the legacy
+music controls; later Studio profiles retain obsolete play/stop/gain no-ops. Classic source
+carriers can exercise these controls as a runtime compatibility extension, without claiming
+historical editor API exposure. Music volume retains a pre-play value, and its linear sample-clock
+fade continues across silence and replacement while global audio pause freezes it. These lifetime
+choices are selected compatibility behavior, not a claim of measured native-runner equivalence.
+Music voice identity and fade progress participate in the current transactional audio state.
