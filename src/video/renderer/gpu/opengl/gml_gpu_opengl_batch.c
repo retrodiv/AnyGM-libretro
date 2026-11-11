@@ -3391,7 +3391,7 @@ cleanup:
   return outcome;
 }
 
-unsigned gml_gpu_opengl_prepare_native_surface_draws(GmlGpuBackend *backend,GLuint source_texture){
+unsigned gml_gpu_opengl_prepare_fixed_scene_draws(GmlGpuBackend *backend,GLuint source_texture){
   GlSceneImage target={.texture=backend->readback_texture,
     .framebuffer=backend->readback_framebuffer,.width=1u,.height=1u,
     .pixel_format=GML_RENDER_PIXEL_ARGB8888};
@@ -3400,20 +3400,35 @@ unsigned gml_gpu_opengl_prepare_native_surface_draws(GmlGpuBackend *backend,GLui
   static const float corner[6][2]={{0,0},{2,0},{0,2},{0,0},{0,2},{0,2}};
   if(!source_texture || !target.texture || !target.framebuffer || !backend->scene.vertices)
     return 0;
-  /* The private draw uses the native triangle stream and the same blend, sampler
-   * and write-mask states as an ordinary textured draw on a numbered surface. */
+  /* The private target exercises the ordinary instanced draw states. Prepare the
+   * colour and alpha passes separately so each uses the same write mask as play. */
   for(unsigned i=0;i<6u;i++){
     float *vertex=backend->scene.vertices+i*GL_SCENE_VERTEX_FLOATS;
     memset(vertex,0,GL_SCENE_VERTEX_FLOATS*sizeof *vertex);
     vertex[0]=vertex[2]=corner[i][0];
     vertex[1]=vertex[3]=corner[i][1];
     vertex[4]=vertex[5]=vertex[6]=vertex[7]=vertex[8]=1.0f;
+    vertex[14]=vertex[15]=vertex[16]=vertex[17]=1.0f;
   }
+  static const struct {
+    uint32_t filter;
+    int blend;
+    uint32_t mask;
+    int alpha_test;
+    int textured;
+  } passes[]={
+    {GL_SCENE_NATIVE_TEXTURE_SURFACE_NEAREST_FILTER,3,15u,0,1},
+    {GL_SCENE_NATIVE_TEXTURE_SURFACE_LINEAR_FILTER,3,15u,0,1},
+    {34u,3,15u,-1,0}, /* Rectangle with destination alpha writes. */
+    {35u,3,7u,-1,0},  /* Rectangle colour. */
+    {36u,0,8u,-1,0},  /* Rectangle covered alpha. */
+    {53u,1,7u,0,1},   /* Identity surface colour. */
+    {55u,0,8u,0,1}    /* Identity surface covered alpha. */
+  };
   unsigned draws=0;
-  const uint32_t filters[]={GL_SCENE_NATIVE_TEXTURE_SURFACE_NEAREST_FILTER,
-                            GL_SCENE_NATIVE_TEXTURE_SURFACE_LINEAR_FILTER};
-  for(unsigned i=0;i<sizeof filters/sizeof filters[0];i++)
-    if(flush_quads(backend,&target,&source,filters[i],3,1u,15u,0,0u,NULL)) draws++;
+  for(unsigned i=0;i<sizeof passes/sizeof passes[0];i++)
+    if(flush_quads(backend,&target,passes[i].textured?&source:NULL,passes[i].filter,
+                   passes[i].blend,1u,passes[i].mask,passes[i].alpha_test,0u,NULL)) draws++;
   /* Restore the cached preparation source's nearest sampling state. */
   backend->gl.BindTexture(GL_TEXTURE_2D,source_texture);
   backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);

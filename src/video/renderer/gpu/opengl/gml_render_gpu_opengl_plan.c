@@ -410,7 +410,7 @@ int gml_gpu_opengl_prepare_presentation(GmlGpuBackend *backend,const GmlGpuConte
   if(prepared){
     unsigned draws=1u;
     if(backend->api==GML_GPU_API_OPENGLES3)
-      draws+=gml_gpu_opengl_prepare_native_surface_draws(backend,source_texture);
+      draws+=gml_gpu_opengl_prepare_fixed_scene_draws(backend,source_texture);
     if(counters) counters->draw_calls+=draws;
     prepared=gml_gpu_opengl_scene_wait(backend);
   }

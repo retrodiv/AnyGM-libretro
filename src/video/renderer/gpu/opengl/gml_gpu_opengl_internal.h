@@ -289,7 +289,7 @@ int gml_gpu_opengl_build_program(GmlGpuBackend *backend,char *error,size_t error
 GlSceneProgram *gml_gpu_opengl_scene_draw_program(GmlGpuBackend *backend,uint32_t filter,int native_flags,
   char *error,size_t error_capacity);
 int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error_capacity);
-unsigned gml_gpu_opengl_prepare_native_surface_draws(GmlGpuBackend *backend,GLuint source_texture);
+unsigned gml_gpu_opengl_prepare_fixed_scene_draws(GmlGpuBackend *backend,GLuint source_texture);
 int gml_gpu_opengl_prepare_automatic_draw(GmlGpuBackend *backend,GLuint source_texture,
                                           char *error,size_t error_capacity);
 GlSceneExactProgram *gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,int font_mode,
