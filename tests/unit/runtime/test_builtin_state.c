@@ -327,6 +327,31 @@ static int many_grids_roundtrip(void){
     fprintf(stderr,"many-grid canonical bytes changed after compaction\n");
     goto done;
   }
+  /* A scalar-grid memo is derived state. Any language-visible mutation must discard it before
+   * the next snapshot rather than replaying the previously cached cells. */
+  {
+    GmlVal set[]={grids[191],vreal(2),vreal(0),vreal(999)};
+    call(&vm,"ds_grid_set",set,4);
+    size_t changed_size=gml_vm_state_size(&vm),changed_written=0;
+    unsigned char *changed=malloc(changed_size?changed_size:1);
+    if(!changed || !gml_vm_state_save(&vm,changed,changed_size,&changed_written) ||
+       changed_written!=changed_size ||
+       (changed_written==written && !memcmp(before,changed,written))){
+      free(changed);
+      fprintf(stderr,"scalar-grid state memo survived a cell mutation\n");
+      goto done;
+    }
+    gml_builtin_state_reset(vm.builtins);
+    if(!gml_vm_state_load(&vm,changed,changed_written,&used) || used!=changed_written){
+      free(changed);
+      fprintf(stderr,"mutated scalar-grid state restore failed\n");
+      goto done;
+    }
+    free(changed);
+    GmlVal get[]={grids[191],vreal(2),vreal(0)};
+    if(!expect_real(call(&vm,"ds_grid_get",get,3),999,"mutated restored grid cell"))
+      goto done;
+  }
   GmlVal replacement=call(&vm,"ds_grid_create",make,2);
   if(replacement.t!=V_REAL || replacement.d<=grids[191].d){
     fprintf(stderr,"restored grid identity cursor did not advance\n");

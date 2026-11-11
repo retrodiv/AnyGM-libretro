@@ -18,7 +18,7 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=32 };
+enum { GML_VM_STATE_SCHEMA=33 };
 enum { STATE_MAX_TILEMAPS=512, STATE_TILEMAP_RECORD_BYTES=56 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 /* IDs are assigned in canonical traversal order, never from addresses. Zero is the null array;
@@ -914,6 +914,102 @@ int gml_vm_state_build_scalar_map_blob(GmlVM *vm,
   sw_scalar_map_entries(&write,entries,count);
   if(!write.ok || write.pos!=measured){ free(data);sw_release(&write);return 0; }
   sw_release(&write);*bytes=data;*size=(uint32_t)measured;return 1;
+}
+static void state_put_u32(unsigned char *destination,uint32_t value){
+  destination[0]=(unsigned char)value;
+  destination[1]=(unsigned char)(value>>8);
+  destination[2]=(unsigned char)(value>>16);
+  destination[3]=(unsigned char)(value>>24);
+}
+int gml_vm_state_build_scalar_grid_blob(GmlVM *vm,const GmlVal *values,
+                                        uint32_t count,unsigned char **bytes,uint32_t *size){
+  if(!bytes || !size || (count && !values)) return 0;
+  *bytes=NULL;*size=0;
+  for(uint32_t i=0;i<count;i++) if(!state_scalar_value_supported(values[i])) return 0;
+  StateW measure={0};measure.ok=1;measure.vm=vm;measure.compact_strings=1;
+  for(uint32_t i=0;i<count && measure.ok;i++) sw_val(&measure,values[i],0);
+  if(!measure.ok || measure.pos>UINT32_MAX){ sw_release(&measure);return 0; }
+  size_t raw_size=measure.pos;
+  unsigned char *raw=raw_size?malloc(raw_size):NULL;
+  sw_release(&measure);
+  if(raw_size && !raw) return 0;
+  StateW write={0};write.data=raw;write.cap=raw_size;write.ok=1;write.vm=vm;
+  write.compact_strings=1;
+  for(uint32_t i=0;i<count && write.ok;i++) sw_val(&write,values[i],0);
+  if(!write.ok || write.pos!=raw_size){ free(raw);sw_release(&write);return 0; }
+  sw_release(&write);
+  uint32_t compressed_size=0;
+  unsigned char *compressed=state_lz_compress(raw,(uint32_t)raw_size,&compressed_size);
+  int use_compressed=compressed && (size_t)compressed_size+9u<raw_size+5u;
+  size_t wire_size=use_compressed?(size_t)compressed_size+9u:raw_size+5u;
+  if(wire_size>UINT32_MAX){ free(compressed);free(raw);return 0; }
+  unsigned char *wire=malloc(wire_size);
+  if(!wire){ free(compressed);free(raw);return 0; }
+  wire[0]=(unsigned char)(use_compressed?2:1);
+  state_put_u32(wire+1,(uint32_t)raw_size);
+  if(use_compressed){
+    state_put_u32(wire+5,compressed_size);
+    memcpy(wire+9,compressed,compressed_size);
+  }else if(raw_size) memcpy(wire+5,raw,raw_size);
+  free(compressed);free(raw);
+  *bytes=wire;*size=(uint32_t)wire_size;return 1;
+}
+
+static GmlVal sr_scalar_value(StateR *reader){
+  uint32_t type=sr_u8(reader);
+  if(type==STATE_REAL_ZERO) return vreal(0);
+  if(type==STATE_REAL_INTEGER) return vreal(sr_i32(reader));
+  if(type==STATE_REAL_I8) return vreal((int8_t)sr_u8(reader));
+  if(type==STATE_REAL_I16){
+    uint16_t low=sr_u8(reader),high=sr_u8(reader);
+    return vreal((int16_t)(low|(high<<8)));
+  }
+  if(type==V_REAL) return vreal(sr_d(reader));
+  if(type==V_OBJECT) return vobject(sr_u32(reader));
+  if(type==V_STR) return vstr(state_runtime_string(reader,sr_str_dup(reader)));
+  if(type==V_UNDEF) return vundef();
+  reader->ok=0;return vreal(0);
+}
+
+int gml_vm_state_read_scalar_grid_blob(GmlVmStateReader *reader,GmlVal *values,
+                                       uint32_t count,unsigned char **bytes,uint32_t *size){
+  if(!reader || !bytes || !size || (count && !values)) return -1;
+  *bytes=NULL;*size=0;
+  size_t start=reader->pos;
+  uint8_t form=sr_u8(reader);
+  if(!reader->ok) return -1;
+  if(!form) return 0;
+  if(form!=1 && form!=2){ reader->ok=0;return -1; }
+  uint32_t raw_size=sr_u32(reader),stored_size=raw_size;
+  if(form==2) stored_size=sr_u32(reader);
+  if(!reader->ok || raw_size>1024u*1024u*1024u ||
+     (form==2 && (!stored_size || stored_size>=raw_size)) ||
+     reader->pos>reader->cap || stored_size>reader->cap-reader->pos){
+    reader->ok=0;return -1;
+  }
+  const unsigned char *stored=reader->data+reader->pos;
+  unsigned char *decoded=NULL;
+  if(form==2){
+    decoded=raw_size?malloc(raw_size):NULL;
+    if((raw_size && !decoded) ||
+       !state_lz_decompress(stored,stored_size,decoded,raw_size)){
+      free(decoded);reader->ok=0;return -1;
+    }
+  }
+  StateR nested={0};
+  nested.data=form==2?decoded:stored;nested.cap=raw_size;nested.ok=1;
+  nested.vm=reader->vm;nested.compact_strings=1;
+  for(uint32_t i=0;i<count && nested.ok;i++) values[i]=sr_scalar_value(&nested);
+  int valid=nested.ok && nested.pos==nested.cap;
+  for(uint32_t i=0;i<nested.string_count;i++)
+    if(nested.strings[i].owned) free((void *)nested.strings[i].text);
+  free(nested.strings);free(decoded);
+  if(!valid){ reader->ok=0;return -1; }
+  reader->pos+=stored_size;
+  if(!gml_vm_state_reader_copy_range(reader,start,reader->pos,bytes,size)){
+    reader->ok=0;return -1;
+  }
+  return 1;
 }
 void gml_vm_state_read_raw(GmlVmStateReader *reader,
                            void *bytes,size_t size){

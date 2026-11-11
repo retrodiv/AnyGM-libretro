@@ -71,6 +71,11 @@ typedef struct {
   uint32_t id;
   GmlVal *cell;
   int w, h;
+  /* Canonical scalar state is immutable until a grid mutator clears this memo. Complex cells
+   * deliberately keep the established per-value path. */
+  unsigned char *state_scalar_blob;
+  uint32_t state_scalar_blob_size;
+  unsigned char state_scalar_blob_checked;
 } GmlDSGrid;
 typedef struct {
   int live, parent, units, state;

@@ -53,6 +53,9 @@ int gml_vm_state_build_scalar_map_blob(struct GmlVM *vm,
                                        const GmlVmStateScalarMapEntry *entries,
                                        uint32_t count, unsigned char **bytes,
                                        uint32_t *size);
+int gml_vm_state_build_scalar_grid_blob(struct GmlVM *vm, const GmlVal *values,
+                                        uint32_t count, unsigned char **bytes,
+                                        uint32_t *size);
 void gml_vm_state_read_raw(GmlVmStateReader *reader,
                            void *bytes, size_t size);
 uint32_t gml_vm_state_read_u32(GmlVmStateReader *reader);
@@ -62,6 +65,11 @@ char *gml_vm_state_read_string(GmlVmStateReader *reader);
 GmlVal gml_vm_state_read_value(GmlVmStateReader *reader);
 char *gml_vm_state_read_isolated_string(GmlVmStateReader *reader);
 GmlVal gml_vm_state_read_isolated_value(GmlVmStateReader *reader);
+/* One means a scalar blob was consumed, zero means the general marker was consumed, and minus one
+ * means malformed input. A successful scalar read retains the exact wire bytes for the next save. */
+int gml_vm_state_read_scalar_grid_blob(GmlVmStateReader *reader, GmlVal *values,
+                                       uint32_t count, unsigned char **bytes,
+                                       uint32_t *size);
 
 int gml_vm_state_reader_ok(const GmlVmStateReader *reader);
 size_t gml_vm_state_reader_position(const GmlVmStateReader *reader);

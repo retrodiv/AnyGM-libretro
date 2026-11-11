@@ -390,6 +390,7 @@ static void builtin_state_ds_reset(GmlBuiltinState *state){
   memset(&state->ds_lists,0,sizeof(state->ds_lists));
   for(int i=0;i<state->ds_grids.used;i++){
     GmlDSGrid *grid=state->ds_grids.slot[i].value;
+    free(grid->state_scalar_blob);
     free(grid->cell);
     free(grid);
   }
@@ -416,7 +417,7 @@ void gml_builtin_state_visit_values(const GmlBuiltinState *state,
     for(int j=0;j<list->len;j++) visitor(userdata,list->item[j]);
   }
   for(int i=0;i<state->ds_grids.live_count;i++){
-    const GmlDSGrid *grid=state->ds_grids.slot[state->ds_grids.order[i].slot].value;
+    GmlDSGrid *grid=state->ds_grids.slot[state->ds_grids.order[i].slot].value;
     long long cells=(long long)grid->w*grid->h;
     for(long long j=0;j<cells;j++) visitor(userdata,grid->cell[j]);
   }
@@ -571,7 +572,7 @@ void gml_builtin_state_profile_ds(const GmlBuiltinState *state,
     }
   }
   for(int i=0;i<state->ds_grids.live_count;i++){
-    const GmlDSGrid *grid=state->ds_grids.slot[state->ds_grids.order[i].slot].value;
+    GmlDSGrid *grid=state->ds_grids.slot[state->ds_grids.order[i].slot].value;
     if(live_counts) live_counts[2]++;
     if(byte_totals){
       byte_totals[2]+=12;
@@ -684,13 +685,24 @@ void gml_builtin_state_write_ini_ds(const GmlBuiltinState *state,
   int grid_live=state->ds_grids.live_count;
   gml_vm_state_write_i32(writer,grid_live);
   for(int i=0;i<grid_live;i++){
-    const GmlDSGrid *grid=state->ds_grids.slot[state->ds_grids.order[i].slot].value;
+    GmlDSGrid *grid=state->ds_grids.slot[state->ds_grids.order[i].slot].value;
     gml_vm_state_write_u32(writer,grid->id);
     gml_vm_state_write_i32(writer,grid->w);
     gml_vm_state_write_i32(writer,grid->h);
-    long long cells=(long long)grid->w*grid->h;
-    for(long long j=0;j<cells;j++)
-      gml_vm_state_write_value(writer,grid->cell[j]);
+    uint32_t cells=(uint32_t)((long long)grid->w*grid->h);
+    if(!grid->state_scalar_blob_checked){
+      if(gml_vm_state_build_scalar_grid_blob(vm,grid->cell,cells,
+                                             &grid->state_scalar_blob,
+                                             &grid->state_scalar_blob_size))
+        grid->state_scalar_blob_checked=2;
+      else grid->state_scalar_blob_checked=1;
+    }
+    if(grid->state_scalar_blob_checked==2){
+      gml_vm_state_write_raw(writer,grid->state_scalar_blob,grid->state_scalar_blob_size);
+      continue;
+    }
+    { unsigned char general=0; gml_vm_state_write_raw(writer,&general,1); }
+    for(uint32_t j=0;j<cells;j++) gml_vm_state_write_value(writer,grid->cell[j]);
   }
   if(save_time){
     uint64_t save_t4=anygm_host_monotonic_time_ns(vm->host);
@@ -902,7 +914,11 @@ int gml_builtin_state_read_ini_ds(GmlBuiltinState *state,
       gml_vm_state_reader_fail(reader,"ds_grid allocation failed",(uint32_t)cells);
       break;
     }
-    for(long long j=0;j<cells && gml_vm_state_reader_ok(reader);j++){
+    int scalar=gml_vm_state_read_scalar_grid_blob(reader,grid->cell,(uint32_t)cells,
+                                                   &grid->state_scalar_blob,
+                                                   &grid->state_scalar_blob_size);
+    if(scalar>0) grid->state_scalar_blob_checked=2;
+    else if(!scalar) for(long long j=0;j<cells && gml_vm_state_reader_ok(reader);j++){
       grid->cell[j]=gml_vm_state_read_value(reader);
       gml_arr_mark_escaped(grid->cell[j]);
     }

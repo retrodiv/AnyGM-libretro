@@ -103,6 +103,13 @@ static void ds_map_state_cache_clear(GmlDSMap *map){
   map->state_scalar_blob_size=0;
   map->state_scalar_blob_checked=0;
 }
+static void ds_grid_state_cache_clear(GmlDSGrid *grid){
+  if(!grid) return;
+  free(grid->state_scalar_blob);
+  grid->state_scalar_blob=NULL;
+  grid->state_scalar_blob_size=0;
+  grid->state_scalar_blob_checked=0;
+}
 /* Return a value stored in a ds structure. Strings are handed back as NON-owned references (d=0) so
  * the VM's OP_CALL result tracker does not adopt and free the structure's copy at scope exit. */
 static GmlVal ds_ret(GmlVal v){ if(v.t==V_STR) v.d=0; return v; }
@@ -210,8 +217,10 @@ static int ds_priority_value_index(GmlDSList *l, GmlVal value){
   return -1;
 }
 static void ds_grid_store(GmlDSGrid *g, int x, int y, GmlVal v){
-  if(g && g->cell && x>=0 && y>=0 && x<g->w && y<g->h)
+  if(g && g->cell && x>=0 && y>=0 && x<g->w && y<g->h){
+    ds_grid_state_cache_clear(g);
     g->cell[(size_t)y*g->w+x]=ds_val_clone(v);
+  }
 }
 /* ---- ds_grid: two-dimensional GmlVal storage. ---- */
 static GmlDSGrid *ds_grid_slot(GmlVM *vm, int id){
@@ -235,6 +244,7 @@ static int ds_grid_make(GmlVM *vm, int w, int h){
 static int ds_grid_resize_cells(GmlDSGrid *g,int w,int h){
   if(!g || w<0 || h<0 || (long)w*h>8000000) return 0;
   if(w==g->w && h==g->h) return 1;
+  ds_grid_state_cache_clear(g);
   GmlVal *cell=NULL;
   if(w>0 && h>0){
     cell=calloc((size_t)w*h,sizeof(*cell));
@@ -1560,7 +1570,7 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"ds_grid_create")) return vreal((double)ds_grid_make(vm,(int)N(a,n,0),(int)N(a,n,1)));
   if(!strcmp(nm,"ds_grid_destroy")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0));
     if(g){ builtin_state_ds_remove(&vm->builtins->ds_grids,g->id);
-      free(g->cell); memset(g,0,sizeof(*g)); } return vreal(0); }
+      ds_grid_state_cache_clear(g); free(g->cell); memset(g,0,sizeof(*g)); } return vreal(0); }
   if(!strcmp(nm,"ds_grid_resize")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0));
     return vreal(ds_grid_resize_cells(g,(int)N(a,n,1),(int)N(a,n,2))); }
   if(!strcmp(nm,"ds_grid_width")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); return vreal(g?g->w:0); }
@@ -1583,6 +1593,7 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(1); }
   if(!strcmp(nm,"ds_grid_add")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); int x=(int)N(a,n,1),y=(int)N(a,n,2);
     if(g && g->cell && x>=0 && y>=0 && x<g->w && y<g->h && n>=4){
+      ds_grid_state_cache_clear(g);
       GmlVal old=g->cell[(size_t)y*g->w+x];
       /* A boxed object is assigned as an identity rather than added to the cell's number. */
       g->cell[(size_t)y*g->w+x]=ds_val_clone(a[3].t==V_OBJECT?a[3]:
@@ -1675,6 +1686,7 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     if(x1>x2){ int t=x1; x1=x2; x2=t; }
     if(y1>y2){ int t=y1; y1=y2; y2=t; }
+    ds_grid_state_cache_clear(g);
     for(int y=y1;y<=y2;y++) for(int x=x1;x<=x2;x++){
       if(x<0||y<0||x>=g->w||y>=g->h) continue;
       if(disk){
@@ -1702,6 +1714,7 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
     /* Sort whole rows by the named key column. Insertion sort preserves the
      * relative order of rows with equal keys, as ds_list_sort does. */
     if(g && g->cell && g->h>1 && column>=0 && column<g->w){
+      ds_grid_state_cache_clear(g);
       GmlVal *row=(GmlVal*)malloc((size_t)g->w*sizeof(*row));
       if(row){
         size_t stride=(size_t)g->w*sizeof(*row);
@@ -1721,7 +1734,7 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     return vreal(0); }
   if(!strcmp(nm,"ds_grid_clear")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); GmlVal v=n>=2?a[1]:vreal(0);
-    if(g && g->cell) for(size_t i=0;i<(size_t)g->w*g->h;i++) g->cell[i]=v;
+    if(g && g->cell){ ds_grid_state_cache_clear(g); for(size_t i=0;i<(size_t)g->w*g->h;i++) g->cell[i]=v; }
     return vreal(0); }
   if(!strcmp(nm,"load_csv")){
     /* Read a CSV file into a ds_grid (GM semantics: each cell a string; numbers stay strings). Rows are

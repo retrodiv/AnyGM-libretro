@@ -20,9 +20,20 @@ failed partial reads leave the canonical image unpublished and invalid as a
 current resource. See R03-P9-INCREMENTAL-CHECKPOINT in
 [the renderer map](RENDERER_BACKENDS.md) for owners and controls.
 
-The current AnyGM save-state schema is `54`. It is the format transported by
+The current AnyGM save-state schema is `55`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `55` introduces VM schema `33`. A DS grid containing only exact scalar
+values (reals, object handles, strings, and undefined values) stores one bounded
+canonical value stream, optionally wrapped in bounded LZ compression. The grid
+retains those validated wire bytes as a derived memo until a language-visible
+mutator changes its dimensions, ordering, or cells. Restore parses scalars with
+an isolated dictionary and retains an exact private copy, so save, load, and save
+again produce identical bytes. Arrays and every unsupported value continue
+through the established identity-preserving general encoding. The public and VM
+schema increments make older layouts reject transactionally; audio schema `5`
+and graphics resource schema `2` are unchanged.
 
 Schema `54` introduces VM schema `32`. Runtime string kind three stores the expanded
 length, compressed length and a bounded LZ block; malformed offsets, lengths and
@@ -601,7 +612,7 @@ same form without an intervening mutation produces identical bytes.
 ## VM payload ownership
 
 `src/core/engine_state.c` owns the root framing and section transaction.
-Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `25`,
+Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `33`,
 field order, value-graph encoding, sizing, and restore scratch.
 
 Builtin resources have a separate storage and lifetime owner, not a separate
