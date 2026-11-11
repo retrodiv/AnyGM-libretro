@@ -94,10 +94,10 @@ static int path_component_casefold(GmlVM *vm,const char *directory,
     entry.struct_size=sizeof entry;
   }
   vm->host->directory_close(vm->host->userdata,handle);
-  /* A host can omit special entries. A failed read/open is likewise not an absence proof. */
-  int special=component[0]=='.' &&
-    (component_size==1 || (component_size==2 && component[1]=='.'));
-  if(absent && !found && !special && status==ANYGM_RESULT_END) *absent=1;
+  /* A host can omit hidden and special entries. A failed read/open is likewise not an
+   * absence proof. Keep traversing an exact dot-prefixed component in either case. */
+  int potentially_filtered=component[0]=='.';
+  if(absent && !found && !potentially_filtered && status==ANYGM_RESULT_END) *absent=1;
   return found;
 }
 /* Installed Windows paths use case-insensitive component lookup. Keep exact-path reads fast, then

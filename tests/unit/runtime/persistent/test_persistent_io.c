@@ -224,7 +224,7 @@ typedef struct FileLookupCounters {
   const char *unavailable_directory;
   void *unavailable_handle;
   int fail_directory_open;
-  int omit_dot_entries;
+  int omit_hidden_entries;
 } FileLookupCounters;
 
 static AnygmResult counted_file_stat(void *userdata,const char *path,AnygmFileInfo *info){
@@ -253,8 +253,7 @@ static AnygmResult counted_directory_read(void *userdata,void *handle,AnygmDirec
   AnygmResult result;
   do {
     result=counts->base.directory_read(counts->base.userdata,handle,entry);
-  } while(result==ANYGM_OK && counts->omit_dot_entries &&
-          (!strcmp(entry->name,".") || !strcmp(entry->name,"..")));
+  } while(result==ANYGM_OK && counts->omit_hidden_entries && entry->name[0]=='.');
   return result;
 }
 
@@ -337,16 +336,20 @@ int expect_missing_path_components_case(void){
   if(!mkdtemp(content_root)) return 0;
   if(!mkdtemp(save_root)){ rmdir(content_root); return 0; }
   char mixed_dir[640],child[768],flat[640],fallback[768],shadow_flat[640];
+  char hidden_dir[640],hidden_child[768];
   snprintf(mixed_dir,sizeof mixed_dir,"%s/MiXeD",content_root);
   snprintf(child,sizeof child,"%s/Child.TXT",mixed_dir);
   snprintf(flat,sizeof flat,"%s/missing@deeper@file.txt",content_root);
   snprintf(fallback,sizeof fallback,"%s/MiXeD/absent/deeper.txt",content_root);
   snprintf(shadow_flat,sizeof shadow_flat,"%s/mixed@child.txt",save_root);
+  snprintf(hidden_dir,sizeof hidden_dir,"%s/.HiDdEn",content_root);
+  snprintf(hidden_child,sizeof hidden_child,"%s/Child.TXT",hidden_dir);
   GmlWin win={0};
   snprintf(win.content_dir,sizeof win.content_dir,"%s",content_root);
   snprintf(win.save_dir,sizeof win.save_dir,"%s",save_root);
   GmlVM vm={0};vm.win=&win;vm.host=&services;
-  int ok=mkdir(mixed_dir,0700)==0 && fixture_write_text(child,"child");
+  int ok=mkdir(mixed_dir,0700)==0 && fixture_write_text(child,"child") &&
+    mkdir(hidden_dir,0700)==0 && fixture_write_text(hidden_child,"hidden-child");
   GmlVal name=vstr("missing/deeper/file.txt");
   GmlVal exists=gml_builtin_call(&vm,"file_exists",&name,1);
   int missing=exists.t==V_REAL && exists.d==0 && counts.directory_opens<=4;
@@ -376,16 +379,22 @@ int expect_missing_path_components_case(void){
   ok=ok && resolved && !strcmp(resolved,child);
   free(resolved);
   /* Some directory services omit special entries. Neither spelling proves absence. */
-  counts.omit_dot_entries=1;
+  counts.omit_hidden_entries=1;
   name=vstr("./mixed/child.txt");
   exists=gml_builtin_call(&vm,"file_exists",&name,1);
   ok=ok && exists.t==V_REAL && exists.d==1;
   name=vstr("MiXeD/../mixed/child.txt");
   exists=gml_builtin_call(&vm,"file_exists",&name,1);
   ok=ok && exists.t==V_REAL && exists.d==1;
+  /* Filtered enumeration can hide an exact directory that is still traversable. */
+  name=vstr(".HiDdEn/child.txt");
+  exists=gml_builtin_call(&vm,"file_exists",&name,1);
+  int hidden=exists.t==V_REAL && exists.d==1;
+  if(!hidden) fprintf(stderr,"filtered hidden directory lost its case-folded child\n");
+  ok=hidden && ok;
   /* A failed enumeration is unknown. The exact first component can still be traversed,
    * allowing the next directory to repair the final filename's case. */
-  counts.omit_dot_entries=0;
+  counts.omit_hidden_entries=0;
   counts.unavailable_directory=content_root;
   name=vstr("MiXeD/child.txt");
   exists=gml_builtin_call(&vm,"file_exists",&name,1);
@@ -394,8 +403,8 @@ int expect_missing_path_components_case(void){
   exists=gml_builtin_call(&vm,"file_exists",&name,1);
   ok=ok && exists.t==V_REAL && exists.d==1;
   gml_vm_free(&vm);
-  unlink(child);unlink(flat);unlink(shadow_flat);
-  rmdir(mixed_dir);rmdir(save_root);rmdir(content_root);
+  unlink(child);unlink(flat);unlink(shadow_flat);unlink(hidden_child);
+  rmdir(mixed_dir);rmdir(hidden_dir);rmdir(save_root);rmdir(content_root);
   return ok;
 }
 
