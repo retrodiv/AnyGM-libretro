@@ -721,6 +721,50 @@ done:
   free(state); free(again); gml_vm_free(&vm); return ok;
 }
 
+static int many_map_owners_preserve_canonical_state(void){
+  GmlWin content={.bytecode=17,.option_flags=UINT64_C(0x20000000)};
+  GmlVM vm;
+  if(gml_vm_init(&vm,&content,NULL)) return 0;
+  int ok=1;
+  unsigned char *state=NULL,*again=NULL;
+  /* Binding order opposes canonical key order and crosses the writer's first
+   * owner-buffer growth boundary. */
+  for(int index=79;index>=0;index--){
+    char key[32];
+    snprintf(key,sizeof(key),"value-%03d",index);
+    GmlVal *binding=gml_varmap_put_owned(&vm.globals,strdup(key));
+    REQUIRE(binding!=NULL);
+    *binding=gml_arr_new(1,vreal(index));
+    REQUIRE(gml_vm_array_prepare_write(&vm,binding,gml_varmap_value_owner(binding))!=NULL);
+  }
+  REQUIRE(vm.next_array_owner==80);
+  size_t capacity=gml_vm_state_size(&vm),written=0,used=0,resaved=0;
+  state=malloc(capacity);
+  again=malloc(capacity);
+  REQUIRE(state && again && gml_vm_state_save(&vm,state,capacity,&written));
+  size_t rejected=0;
+  vm.globals.len--;
+  int accepted=gml_vm_state_save(&vm,again,capacity,&rejected);
+  vm.globals.len++;
+  REQUIRE(!accepted);
+  REQUIRE(gml_vm_state_load(&vm,state,written,&used) && used==written);
+  REQUIRE(vm.next_array_owner==80);
+  for(int index=0;index<80;index++){
+    char key[32];
+    snprintf(key,sizeof(key),"value-%03d",index);
+    GmlVal *binding=gml_varmap_get(&vm.globals,key);
+    REQUIRE(binding && *gml_varmap_value_owner(binding)==(uint64_t)(80-index));
+    REQUIRE(gml_arr_get(*binding,0).d==index);
+  }
+  REQUIRE(gml_vm_state_save(&vm,again,capacity,&resaved));
+  REQUIRE(resaved==written && !memcmp(state,again,written));
+done:
+  free(state);
+  free(again);
+  gml_vm_free(&vm);
+  return ok;
+}
+
 int main(void){
   int ok=1;
   for(int modern=0;modern<=1;modern++) for(int cached=0;cached<=1;cached++)
@@ -738,6 +782,7 @@ int main(void){
   for(int mode=0;mode<3;mode++) ok &= copied_physics_remains_unbound(mode);
   for(int cached=0;cached<2;cached++) for(int collision=0;collision<2;collision++)
     ok &= copied_method_calls_keep_the_expression(cached,collision);
+  ok &= many_map_owners_preserve_canonical_state();
   if(ok) puts("instance copy: storage/dispatch, bounded lifetime, COW, parked ownership and twenty native root controls passed");
   return ok?0:1;
 }

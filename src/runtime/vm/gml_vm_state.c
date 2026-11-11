@@ -42,6 +42,10 @@ typedef struct {
 typedef struct { GmlVarSlot **slots; uint32_t count,key_bytes; } StateKeyShape;
 typedef struct { GmlVarMap *map; uint32_t key_bytes; GmlVarSlot **owner_slots; } StateReadMap;
 typedef struct {
+  uint64_t owner;
+  uint32_t kind,target,index;
+} StateLvalueOwner;
+typedef struct {
   const char *text;
   uint64_t hash;
   uint32_t id,length;
@@ -100,6 +104,9 @@ struct GmlVmStateWriter {
   GmlVal **shape_values;
   size_t shape_values_capacity;
   uint32_t map_count,map_entries,shape_count;
+  StateLvalueOwner *owners;
+  size_t owner_capacity;
+  uint32_t owner_count;
   StateStringEntry *strings;
   size_t string_capacity,string_bytes;
   uint32_t string_count;
@@ -132,6 +139,7 @@ static void sw_release(StateW *s){
   free(s->shape_index.entries);free(s->shape_index.index);
   free(s->strings);free(s->maps.entries);free(s->maps.index);
   free(s->arrays);free(s->array_index);
+  free(s->owners);
 }
 
 static int state_debug_enabled(const GmlVM *vm){
@@ -1101,9 +1109,11 @@ static uint64_t state_map_text_hash(const char *text){
     hash=(hash^*p)*UINT64_C(1099511628211);
   return hash;
 }
-static uint64_t state_map_hash(const GmlVarMap *map,uint32_t *count,uint64_t *shape){
+static uint64_t state_map_hash(const GmlVarMap *map,uint32_t *count,uint64_t *shape,
+                               int *has_array_owners){
   uint64_t hash=0,keys=0;
   *count=0;
+  *has_array_owners=0;
   for(int i=0;i<map->cap;i++) if(map->slots[i].key){
     const GmlVarSlot *slot=&map->slots[i];
     GmlVal value=slot->val;
@@ -1112,7 +1122,10 @@ static uint64_t state_map_hash(const GmlVarMap *map,uint32_t *count,uint64_t *sh
     else if(value.t==V_STR) bits=state_map_text_hash(value.s);
     else if(value.t==V_ARR) bits=(uintptr_t)value.arr;
     hash+=state_map_mix(slot->hash^state_map_mix(bits)^value.t);
-    if(slot->array_owner) hash+=state_map_mix(slot->array_owner);
+    if(slot->array_owner){
+      hash+=state_map_mix(slot->array_owner);
+      *has_array_owners=1;
+    }
     keys+=state_map_mix(slot->hash);
     (*count)++;
   }
@@ -1213,6 +1226,21 @@ static int state_shapes_reserve(StateKeyShape **shapes,size_t *capacity,uint32_t
   }
   return 1;
 }
+static void sw_lvalue_owner(StateW *s,uint64_t owner,uint32_t kind,
+                             uint32_t target,uint32_t index){
+  if(!s->ok || !owner) return;
+  size_t limit=STATE_MAX_MAP_ENTRIES+16u*(1u+GML_WAIT_MAX_FRAMES);
+  if(s->owner_count>=limit){s->ok=0;return;}
+  if(s->owner_count==s->owner_capacity){
+    size_t capacity=s->owner_capacity?s->owner_capacity*2:64;
+    if(capacity>limit) capacity=limit;
+    StateLvalueOwner *owners=realloc(s->owners,capacity*sizeof(*owners));
+    if(!owners){s->ok=0;return;}
+    s->owners=owners;
+    s->owner_capacity=capacity;
+  }
+  s->owners[s->owner_count++]=(StateLvalueOwner){owner,kind,target,index};
+}
 static void sw_varmap(StateW *s,GmlVarMap *m){
   int dbg=0;
   if(s->vm){
@@ -1221,7 +1249,9 @@ static void sw_varmap(StateW *s,GmlVarMap *m){
         anygm_host_development_setting(s->vm->host,"GML_DBG_STATEVAR")!=NULL;
     dbg=s->vm->diagnostics.state_variable_debug;
   }
-  uint32_t n=0;uint64_t shape_hash=0,hash=state_map_hash(m,&n,&shape_hash);
+  int has_array_owners=0;
+  uint32_t n=0;uint64_t shape_hash=0;
+  uint64_t hash=state_map_hash(m,&n,&shape_hash,&has_array_owners);
   if(n!=(uint32_t)m->len) state_debug(s->vm,"varmap len mismatch",s->pos,(uint32_t)m->len);
   if(n>100000 || n>STATE_MAX_MAP_ENTRIES-s->map_entries){s->ok=0;return;}
   s->map_entries+=n;
@@ -1232,7 +1262,7 @@ static void sw_varmap(StateW *s,GmlVarMap *m){
   if(record->map){
     /* Distinct live bindings cannot reuse a positive lvalue identity. Zero-key
      * maps retain the established full-record sharing path. */
-    for(int i=0;i<m->cap;i++) if(m->slots[i].key && m->slots[i].array_owner){s->ok=0;return;}
+    if(has_array_owners){s->ok=0;return;}
     if(record->key_bytes>1024u*1024u*1024u-s->string_bytes){s->ok=0;return;}
     s->string_bytes+=record->key_bytes;
     sw_u32(s,UINT32_C(0x80000000)|record->id);return;
@@ -1276,6 +1306,15 @@ static void sw_varmap(StateW *s,GmlVarMap *m){
     }
     if(value->t==V_REAL) sw_real(s,value->d);
     else sw_val(s,*value,0);
+  }
+  /* The key shape and shared values already identify each binding's canonical
+   * wire index. Retain the positive owners here while those values are hot. */
+  if(has_array_owners && s->ok){
+    if(n!=(uint32_t)m->len){s->ok=0;return;}
+    for(uint32_t i=0;i<n;i++){
+      GmlVal *value=shared?s->shape_values[i]:&keys->slots[i]->val;
+      sw_lvalue_owner(s,*gml_varmap_value_owner(value),0,record->id,i);
+    }
   }
   record->key_bytes=keys->key_bytes;
 }
@@ -2077,10 +2116,6 @@ static void sr_instance_order(StateR *s,GmlVM *vm){
   free(slots);free(seen);
 }
 
-typedef struct {
-  uint64_t owner;
-  uint32_t kind,target,index;
-} StateLvalueOwner;
 static int state_owner_compare(const void *a,const void *b){
   uint64_t x=((const StateLvalueOwner *)a)->owner,y=((const StateLvalueOwner *)b)->owner;
   return (x>y)-(x<y);
@@ -2090,45 +2125,22 @@ static int state_owner_compare(const void *a,const void *b){
 static void sw_array_ownership(StateW *s,GmlVM *vm){
   if(!s->ok) return;
   if(vm->next_array_owner>GML_ARRAY_OWNER_MAX){s->ok=0;return;}
-  uint32_t count=0;
-  for(uint32_t i=0;i<s->map_count;i++){
-    const GmlVarMap *map=s->maps.entries[i].map;
-    for(int k=0;k<map->cap;k++) if(map->slots[k].key && map->slots[k].array_owner) count++;
-  }
-  for(int k=0;k<16;k++) if(vm->script_array_owner[k]) count++;
-  if(vm->wait.active) for(int i=0;i<vm->wait.n_frames;i++)
-    for(int k=0;k<16;k++) if(vm->wait.frames[i].array_owner[k]) count++;
-  if(count>STATE_MAX_MAP_ENTRIES+16u*(1u+GML_WAIT_MAX_FRAMES)){s->ok=0;return;}
-  StateLvalueOwner *owners=count?malloc((size_t)count*sizeof(*owners)):NULL;
-  if(count && !owners){s->ok=0;return;}
-  uint32_t at=0;
-  for(uint32_t i=0;i<s->map_count && s->ok;i++){
-    const GmlVarMap *map=s->maps.entries[i].map;
-    int owned=0;
-    for(int k=0;k<map->cap;k++) if(map->slots[k].key && map->slots[k].array_owner){owned=1;break;}
-    if(!owned) continue;
-    GmlVarSlot **slots=state_shape_slots(vm,(GmlVarMap *)map,(uint32_t)map->len);
-    if(!slots){s->ok=0;break;}
-    for(int k=0;k<map->len;k++) if(slots[k]->array_owner)
-      owners[at++]=(StateLvalueOwner){slots[k]->array_owner,0,s->maps.entries[i].id,(uint32_t)k};
-    free(slots);
-  }
   for(int k=0;k<16;k++) if(vm->script_array_owner[k])
-    owners[at++]=(StateLvalueOwner){vm->script_array_owner[k],1,0,(uint32_t)k};
+    sw_lvalue_owner(s,vm->script_array_owner[k],1,0,(uint32_t)k);
   if(vm->wait.active) for(int i=0;i<vm->wait.n_frames;i++)
     for(int k=0;k<16;k++) if(vm->wait.frames[i].array_owner[k])
-      owners[at++]=(StateLvalueOwner){vm->wait.frames[i].array_owner[k],2,(uint32_t)i,(uint32_t)k};
-  if(!s->ok || at!=count){free(owners);s->ok=0;return;}
-  if(count>1) qsort(owners,count,sizeof(*owners),state_owner_compare);
-  sw_i64(s,(int64_t)vm->next_array_owner); sw_u32(s,count);
+      sw_lvalue_owner(s,vm->wait.frames[i].array_owner[k],2,(uint32_t)i,(uint32_t)k);
+  if(!s->ok) return;
+  if(s->owner_count>1)
+    qsort(s->owners,s->owner_count,sizeof(*s->owners),state_owner_compare);
+  sw_i64(s,(int64_t)vm->next_array_owner); sw_u32(s,s->owner_count);
   uint64_t previous=0;
-  for(uint32_t i=0;i<count && s->ok;i++){
-    StateLvalueOwner row=owners[i];
+  for(uint32_t i=0;i<s->owner_count && s->ok;i++){
+    StateLvalueOwner row=s->owners[i];
     if(row.owner<=previous || row.owner>vm->next_array_owner){s->ok=0;break;}
     previous=row.owner;
     sw_i64(s,(int64_t)row.owner);sw_u32(s,row.kind);sw_u32(s,row.target);sw_u32(s,row.index);
   }
-  free(owners);
   if(!s->ok) return;
   uint32_t arrays=0;
   for(uint32_t i=0;i<s->array_count;i++) if(s->arrays[i]->cow_owner) arrays++;
