@@ -254,6 +254,7 @@ static int integer_presentation_shift_case(void){
 }
 
 static const struct { uint32_t filter; int flags; } prepared_gles_filters[]={
+  {31u,0},
   {GL_SCENE_NATIVE_TEXTURE_SURFACE_NEAREST_FILTER,0},
   {GL_SCENE_NATIVE_TEXTURE_SURFACE_LINEAR_FILTER,0},
   {34u,0},{35u,0},{36u,0},{43u,0},{51u,0},{53u,0},{55u,0},
@@ -339,6 +340,102 @@ static int scene_preparation_case(void){
     REQUIRE(anygm_test_graphics_draw_calls()==2 && (unsigned)anygm_test_graphics_scene_draw_calls()==2u*(1u+fixed_draws) &&
             anygm_test_graphics_bound_framebuffer()==7u,
             "context replacement repeats private preparation and restores the frontend target");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
+static int scene_region_overwrite_case(void){
+  for(unsigned interface=0;interface<3u;interface++)
+  for(unsigned format=GML_RENDER_PIXEL_XRGB8888;format<=GML_RENDER_PIXEL_ARGB8888;format++)
+  for(unsigned optional=0;optional<3u;optional++){
+    unsigned api=interface==2u?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE;
+    unsigned whole_clear=interface!=0u && !optional;
+    GmlGpuContext context=fake_context(api);
+    GmlRenderDeviceServices services={0};
+    GmlRenderDrawOp op={0};
+    GmlRenderDrawBatch batch={&op,1u,NULL,0u};
+    anygm_test_graphics_reset();
+    if(interface==1u){
+      context.version_major=4u;context.version_minor=3u;
+      anygm_test_graphics_version(4u,3u);
+    }
+    if(optional) anygm_test_graphics_withhold(optional==1u?
+      "glInvalidateFramebuffer":"glClearBufferfv");
+    GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"region overwrite context adopted");
+    gml_gpu_device_services(gpu,&services);
+    op.opcode=GML_RENDER_OP_CLEAR;
+    op.target.image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SURFACE,1u,1u,1u};
+    op.target.storage_version=1u;op.target.width=8u;op.target.height=6u;
+    op.target.pixel_format=format;op.target.region=(GmlRenderRect){0,0,8u,6u};
+    op.payload.clear_colour=0x80402010u;
+    REQUIRE(services.submit(services.context,&batch).status==GML_RENDER_EXEC_ACCEPTED &&
+      anygm_test_graphics_clear_calls()==1 &&
+      anygm_test_graphics_full_attachment_clears()==whole_clear,
+      "full region overwrite retains optional whole-attachment clear and its fallback");
+    unsigned attachment=0,framebuffer=0;
+    REQUIRE(anygm_test_graphics_invalidates(&attachment,&framebuffer,NULL)==whole_clear &&
+      (!whole_clear || (attachment==GL_COLOR_ATTACHMENT0 && framebuffer!=7u)),
+      "only a complete owned attachment is discarded");
+    op.target.image.content_version++;
+    op.target.region=(GmlRenderRect){1,1,3u,2u};
+    op.payload.clear_colour=0x00112233u;
+    unsigned draws=(unsigned)anygm_test_graphics_scene_draw_calls();
+    GmlRenderExecutionResult partial=services.submit(services.context,&batch);
+    REQUIRE(partial.status==GML_RENDER_EXEC_ACCEPTED &&
+      (unsigned)anygm_test_graphics_scene_draw_calls()==draws+1u &&
+      anygm_test_graphics_scene_sampler()==31 && !anygm_test_graphics_scene_texture() &&
+      anygm_test_graphics_clear_calls()==1 &&
+      anygm_test_graphics_invalidates(NULL,NULL,NULL)==whole_clear,
+      "partial overwrite is one unblended source-free colour draw without attachment discard");
+    static const unsigned corner[6]={0,1,2,0,2,3};
+    const float x[4]={1,4,4,1},y[4]={1,1,3,3};
+    for(unsigned i=0;i<6u;i++){
+      const float *v=gpu->backend->scene.vertices+i*GL_SCENE_VERTEX_FLOATS;
+      REQUIRE(v[0]==x[corner[i]] && v[1]==y[corner[i]] &&
+        v[4]==17.0f/255.0f && v[5]==34.0f/255.0f && v[6]==51.0f/255.0f &&
+        v[7]==(format==GML_RENDER_PIXEL_XRGB8888?1.0f:0.0f),
+        "partial overwrite retains every placed vertex and all four source bytes, including zero alpha");
+    }
+    GlSceneImage *image=gml_gpu_opengl_scene_image(gpu->backend,op.target.image);
+    REQUIRE(image && image->alpha_bounds_known && image->alpha_tiles_full &&
+      image->alpha_opaque==(format==GML_RENDER_PIXEL_XRGB8888),
+      "the resolved-region owner preserves conservative alpha authority");
+    anygm_test_graphics_fail_scene_draw_at(draws+2u);
+    op.target.image.content_version++;
+    GmlRenderExecutionResult result=services.submit(services.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_RECOVERABLE_ERROR && !result.accepted_prefix &&
+      result.uncertain_target_count==1u && anygm_test_graphics_clear_calls()==1,
+      "a failed emitted overwrite remains uncertain instead of being hidden by another clear");
+    gml_gpu_destroy(gpu,1);
+  }
+  {
+    GmlGpuContext context=fake_context(GML_GPU_API_OPENGLES3);
+    GmlRenderDeviceServices services={0};
+    GmlRenderDrawOp op={0};
+    GmlRenderDrawBatch batch={&op,1u,NULL,0u};
+    anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"region fallback context adopted");
+    gml_gpu_device_services(gpu,&services);
+    op.opcode=GML_RENDER_OP_CLEAR;
+    op.target.image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SURFACE,1u,1u,1u};
+    op.target.storage_version=1u;op.target.width=op.target.height=4u;
+    op.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    op.target.region=(GmlRenderRect){0,0,4u,4u};op.payload.clear_colour=0xFF123456u;
+    REQUIRE(services.submit(services.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,
+      "fallback fixture starts with a complete region");
+    anygm_test_graphics_fail_compile_containing("#define GML_SCENE_CONSTANT_FILTER 31\n");
+    op.target.image.content_version++;
+    op.target.region=(GmlRenderRect){1,0,2u,1u};op.payload.clear_colour=0x7F112233u;
+    REQUIRE(services.submit(services.context,&batch).status==GML_RENDER_EXEC_ACCEPTED &&
+      !anygm_test_graphics_scene_draw_calls() && anygm_test_graphics_clear_calls()==2,
+      "optional colour-program refusal preserves the qualified driver clear without a draw");
+    int x,y,width,height;
+    anygm_test_graphics_scissor(&x,&y,&width,&height);
+    REQUIRE(x==1 && y==3 && width==2 && height==1,
+      "refused optional program retains the original clipped driver coordinates");
     gml_gpu_destroy(gpu,1);
   }
   return 1;
@@ -8181,6 +8278,7 @@ int main(int argc,char **argv){
     {"reset",lifecycle_reset_case},
     {"context_loss",lifecycle_loss_case},
     {"scene_preparation",scene_preparation_case},
+    {"scene_region_overwrite",scene_region_overwrite_case},
     {"unbound_context_access",unbound_context_access_case},
     {"completed_frame_snapshot",completed_frame_snapshot_case},
     {"full_host_clear_discard",full_host_clear_discard_case},

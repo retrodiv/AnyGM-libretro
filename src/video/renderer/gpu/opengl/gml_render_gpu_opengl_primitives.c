@@ -36,17 +36,35 @@ static int fill_region(GmlGpuBackend *backend,GlSceneImage *target,
                        const GmlRenderRect *region,uint32_t colour){
   GLfloat alpha=target->pixel_format==GML_RENDER_PIXEL_XRGB8888
     ?1.0f:(GLfloat)((colour>>24)&255u)/255.0f;
-  GLint bottom=(GLint)target->height-(region->y+(GLint)region->height);
-  backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
-  backend->gl.Viewport(region->x,bottom,(GLsizei)region->width,(GLsizei)region->height);
-  backend->gl.Scissor(region->x,bottom,(GLsizei)region->width,(GLsizei)region->height);
-  backend->gl.ClearColor((GLfloat)((colour>>16)&255u)/255.0f,
-                         (GLfloat)((colour>>8)&255u)/255.0f,
-                         (GLfloat)(colour&255u)/255.0f,alpha);
-  backend->gl.Clear(GL_COLOR_BUFFER_BIT);
-  int ok=backend->gl.GetError()==GL_NO_ERROR;
   int complete=region->x==0 && region->y==0 && region->width==target->width &&
     region->height==target->height;
+  int outcome=0,ok;
+  if(!complete){
+    /* A clipped clear can invoke an unprepared driver shader. Reuse the ordinary unblended
+     * colour kernel and placed rectangle instead of delegating that draw to the driver. */
+    outcome=gml_gpu_opengl_fill_region_quad(backend,target,region,colour);
+  }
+  if(outcome) ok=outcome>0;
+  else{
+    const GLfloat channels[4]={(GLfloat)((colour>>16)&255u)/255.0f,
+      (GLfloat)((colour>>8)&255u)/255.0f,(GLfloat)(colour&255u)/255.0f,alpha};
+    backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
+    backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+    GLint bottom=(GLint)target->height-(region->y+(GLint)region->height);
+    backend->gl.Viewport(region->x,bottom,(GLsizei)region->width,(GLsizei)region->height);
+    backend->gl.Scissor(region->x,bottom,(GLsizei)region->width,(GLsizei)region->height);
+    backend->gl.ClearColor(channels[0],channels[1],channels[2],channels[3]);
+    if(complete && backend->gl.InvalidateFramebuffer && backend->gl.ClearBufferfv){
+      /* Every channel is replaced. Let a tiled device discard its obsolete attachment and
+       * clear the whole storage, while earlier ordered consumers retain their own reads. */
+      const GLenum attachment=GL_COLOR_ATTACHMENT0;
+      backend->gl.InvalidateFramebuffer(GL_FRAMEBUFFER,1,&attachment);
+      backend->gl.Disable(GL_SCISSOR_TEST);
+      backend->gl.ClearBufferfv(GL_COLOR,0,channels);
+      backend->gl.Enable(GL_SCISSOR_TEST);
+    }else backend->gl.Clear(GL_COLOR_BUFFER_BIT);
+    ok=backend->gl.GetError()==GL_NO_ERROR;
+  }
   if(!ok) target->alpha_bounds_known=0;
   else if(complete){
     target->alpha_bounds_known=1;

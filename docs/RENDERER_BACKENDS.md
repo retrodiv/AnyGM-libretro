@@ -176,6 +176,16 @@ owned framebuffer and checks driver errors. Scene work counters report successfu
 attachments, attachment reuse and certified white-unit clears; querying counters
 issues no graphics calls and their totals survive context recreation.
 
+Resolved partial region fills reuse the existing source-free colour program as one
+unblended quad, with the original rectangle and all four write channels. Zero alpha
+still replaces the destination bytes. The resolved-region owner retains its alpha
+metadata; the draw borrows storage through a temporary target record. Unavailable
+geometry or an optional program refusal retains the driver clear, while a failed
+emitted draw remains an uncertain write. Complete owned-image fills can discard
+their obsolete attachment and use a whole-attachment buffer clear when both APIs
+are available. Earlier ordered image consumers retain their reads. Drivers lacking
+those APIs keep the scoped clear. CPU fill semantics and state bytes are unchanged.
+
 The CPU/OpenGL image comparisons in this repository are diagnostic. Routine
 checks skip them; `make check GPU_PIXEL_PARITY=1` runs them and direct
 execution uses `ANYGM_TEST_GPU_PIXEL_PARITY=1`. Real-device paired pixel probes
@@ -1027,7 +1037,7 @@ automatic-composition and fixed font programs, geometry handles and destination-
 engine extent through `gml_gpu_prepare_scene`. CPU scene selection does not call it.
 Preparation requires accessible owning-context dispatch. Once per context, it executes the existing
 terminal and automatic-composition pipelines into a private 1x1 target and waits during preparation.
-GLES also prepares native sprite and numbered-surface filters, alpha-blended rectangles,
+GLES also prepares native sprite and numbered-surface filters, unblended region overwrites, alpha-blended rectangles,
 integer-tinted textures and common surface composition passes with the ordinary instanced stream
 and each pass's blending, alpha test and write mask. The tiny source and target are reused.
 A declined optional program retains normal lazy execution. The real frontend target is restored,

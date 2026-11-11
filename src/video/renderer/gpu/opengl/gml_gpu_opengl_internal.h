@@ -290,6 +290,9 @@ GlSceneProgram *gml_gpu_opengl_scene_draw_program(GmlGpuBackend *backend,uint32_
   char *error,size_t error_capacity);
 int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error_capacity);
 unsigned gml_gpu_opengl_prepare_fixed_scene_draws(GmlGpuBackend *backend,GLuint source_texture);
+/* Zero leaves the driver-clear path available; negative means an emitted draw failed. */
+int gml_gpu_opengl_fill_region_quad(GmlGpuBackend *backend,GlSceneImage *target,
+                                   const GmlRenderRect *region,uint32_t colour);
 int gml_gpu_opengl_prepare_automatic_draw(GmlGpuBackend *backend,GLuint source_texture,
                                           char *error,size_t error_capacity);
 GlSceneExactProgram *gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,int font_mode,

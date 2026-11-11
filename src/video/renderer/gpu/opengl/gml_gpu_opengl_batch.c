@@ -3013,6 +3013,32 @@ restore_stream_state:
   return 1;
 }
 
+/* A clipped overwrite uses the existing source-free colour writer. Keep metadata with the
+ * resolved-region owner; the temporary target borrows only the same device storage. */
+int gml_gpu_opengl_fill_region_quad(GmlGpuBackend *backend,GlSceneImage *target,
+                                   const GmlRenderRect *region,uint32_t colour){
+  static const unsigned corner[6]={0,1,2,0,2,3};
+  if(!backend->scene.vertices ||
+     !gml_gpu_opengl_scene_draw_program(backend,31u,0,NULL,0)) return 0;
+  GlSceneImage draw_target=*target;
+  float x[4]={(float)region->x,(float)((double)region->x+region->width),
+              (float)((double)region->x+region->width),(float)region->x};
+  float y[4]={(float)region->y,(float)region->y,
+              (float)((double)region->y+region->height),
+              (float)((double)region->y+region->height)};
+  for(unsigned i=0;i<6u;i++){
+    float *vertex=backend->scene.vertices+i*GL_SCENE_VERTEX_FLOATS;
+    memset(vertex,0,GL_SCENE_VERTEX_FLOATS*sizeof *vertex);
+    vertex[0]=x[corner[i]];vertex[1]=y[corner[i]];
+    vertex[4]=(float)((colour>>16)&255u)/255.0f;
+    vertex[5]=(float)((colour>>8)&255u)/255.0f;
+    vertex[6]=(float)(colour&255u)/255.0f;
+    vertex[7]=target->pixel_format==GML_RENDER_PIXEL_XRGB8888
+      ?1.0f:(float)(colour>>24)/255.0f;
+  }
+  return flush_quads(backend,&draw_target,NULL,31u,0,1u,15u,-1,0u,NULL)?1:-1;
+}
+
 /* The CPU handoff shades an RGBA8 plane before its ordinary unit surface draw.
  * Reuse that surface sampler, fixed RGB blend and opaque-covered-alpha pass;
  * the private intermediate never crosses the device boundary. */
@@ -3424,6 +3450,7 @@ unsigned gml_gpu_opengl_prepare_fixed_scene_draws(GmlGpuBackend *backend,GLuint 
     int alpha_test;
     int textured;
   } passes[]={
+    {31u,0,15u,-1,0}, /* Unblended source-free region overwrite. */
     {GL_SCENE_NATIVE_TEXTURE_SURFACE_NEAREST_FILTER,3,15u,0,1},
     {GL_SCENE_NATIVE_TEXTURE_SURFACE_LINEAR_FILTER,3,15u,0,1},
     {34u,3,15u,-1,0}, /* Rectangle with destination alpha writes. */
