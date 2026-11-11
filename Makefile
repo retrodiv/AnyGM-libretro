@@ -496,10 +496,14 @@ $(TEST_DIR)/test_builtin_physics: tests/unit/runtime/test_builtin_physics.c $(UN
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(CPPFLAGS))
 
+ifneq (,$(findstring linux,$(ANYGM_TARGET_TRIPLE)))
+STATE_WRITER_TEST_FLAGS := -DANYGM_TEST_STATE_ALLOC_FAILURE=1 -Wl,--wrap=malloc
+endif
+
 $(TEST_DIR)/test_builtin_state: tests/unit/runtime/test_builtin_state.c \
 	$(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(call link_runtime_test,$(CPPFLAGS))
+	$(call link_runtime_test,$(CPPFLAGS) $(STATE_WRITER_TEST_FLAGS))
 
 $(TEST_DIR)/test_builtin_buffer_capacity: tests/unit/runtime/test_builtin_buffer_capacity.c \
 	$(UNIT_RUNTIME_OBJECTS)

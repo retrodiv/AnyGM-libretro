@@ -12,6 +12,68 @@
 #include <math.h>
 #include "gml_value_internal.h"
 
+#ifdef ANYGM_TEST_STATE_ALLOC_FAILURE
+#include <unistd.h>
+
+static int writer_fail_shape_allocation;
+static unsigned writer_rejected_allocations;
+void *__real_malloc(size_t size);
+void *__wrap_malloc(size_t size){
+  if(writer_fail_shape_allocation && size==128*sizeof(GmlVarSlot *)){
+    writer_rejected_allocations++;
+    return NULL;
+  }
+  return __real_malloc(size);
+}
+
+/* A failed key shape must not leave occupied buckets that prevent a bounded rejection. */
+static int writer_allocation_failure_is_bounded(void){
+  enum { objects=129, fields=128 };
+  GmlWin win={0};
+  GmlVM vm={0};
+  char names[fields][16];
+  if(gml_vm_init(&vm,&win,NULL)) return 0;
+  GmlVal roots=gml_arr_new(objects,vreal(0));
+  gml_arr_mark_escaped(roots);
+  GmlVal *root=gml_varmap_put(&vm.globals,"roots");
+  int ok=root && roots.t==V_ARR;
+  if(ok) *root=roots;
+  for(int field=0;field<fields;field++)
+    snprintf(names[field],sizeof names[field],"field_%u",(unsigned)field);
+  for(int index=0;index<objects && ok;index++){
+    GmlInstance *node=gml_struct_new(&vm);
+    if(!node){ ok=0; break; }
+    gml_arr_set(roots,index,vobject(node->id));
+    for(int field=0;field<fields;field++){
+      GmlVal *value=gml_varmap_put(&node->vars,names[field]);
+      if(!value){ ok=0; break; }
+      *value=vreal(field?0:index+1);
+    }
+  }
+  size_t size=ok?gml_vm_state_size(&vm):0,written=0,repeated=0;
+  unsigned char *before=malloc(size?size:1);
+  unsigned char *after=malloc(size?size:1);
+  ok=ok && size && before && after &&
+    gml_vm_state_save(&vm,before,size,&written) && written==size;
+  if(ok){
+    writer_fail_shape_allocation=1;
+    /* The fixture must also fail promptly when the writer loops over incomplete buckets. */
+    alarm(5);
+    int rejected=!gml_vm_state_save(&vm,after,size,&repeated);
+    alarm(0);
+    writer_fail_shape_allocation=0;
+    ok=rejected && writer_rejected_allocations>0;
+    if(ok) ok=gml_vm_state_save(&vm,after,size,&repeated) &&
+      repeated==written && !memcmp(before,after,written);
+  }
+  writer_fail_shape_allocation=0;
+  free(before); free(after);
+  gml_vm_free(&vm);
+  if(!ok) fprintf(stderr,"writer allocation rejection or canonical retry failed\n");
+  return ok;
+}
+#endif
+
 static GmlVal call(GmlVM *vm,const char *name,GmlVal *args,int count){
   return gml_builtin_call(vm,name,args,count);
 }
@@ -523,6 +585,9 @@ static int array_zero_bits_roundtrip(void){
 }
 
 int main(void){
+#ifdef ANYGM_TEST_STATE_ALLOC_FAILURE
+  if(!writer_allocation_failure_is_bounded()) return 1;
+#endif
   if(!array_zero_bits_roundtrip()) return 1;
   if(!repeated_map_heap_roundtrip(0) || !repeated_map_heap_roundtrip(1)) return 1;
   if(!boxed_object_state_roundtrip()) return 1;

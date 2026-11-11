@@ -25,13 +25,19 @@ enum { STATE_MAX_TILEMAPS=512, STATE_TILEMAP_RECORD_BYTES=56 };
  * a definition claims the next ID before its elements, so back references can close cycles. */
 enum { STATE_ARRAY_REF=4, STATE_MAX_ARRAYS=1000000, STATE_MAX_ARRAY_DEPTH=64 };
 _Static_assert((int)V_OBJECT!=(int)STATE_ARRAY_REF,"object and array references have distinct wire tags");
-typedef struct { const GmlArr *array; uint32_t id; } StateArrayEntry;
 /* Map dictionaries live for one traversal only. Addresses are lookup keys, never wire data.
  * Equal maps share a record, not storage: restore copies their independent variable tables. */
 enum { STATE_MAX_MAPS=2000000, STATE_MAX_MAP_ENTRIES=16000000,
        STATE_REAL_ZERO=6, STATE_REAL_INTEGER=7, STATE_REAL_I8=8, STATE_REAL_I16=9,
        STATE_MAX_STRINGS=1000000 };
 typedef struct { const GmlVarMap *map; uint32_t hash,id,count,key_bytes; } StateMapEntry;
+/* Dense records keep traversal IDs stable while the sparse buckets hold only one-based indices.
+ * Rehashing visits only definitions while preserving their original traversal order. */
+typedef struct {
+  StateMapEntry *entries;
+  uint32_t *index;
+  size_t capacity;
+} StateMapTable;
 typedef struct { GmlVarSlot **slots; uint32_t count,key_bytes; } StateKeyShape;
 typedef struct { GmlVarMap *map; uint32_t key_bytes; } StateReadMap;
 typedef struct { const char *text; uint64_t hash; uint32_t id,length; } StateStringEntry;
@@ -78,13 +84,15 @@ struct GmlVmStateWriter {
   GmlVM *vm;
   int compact_strings, array_meta;
   struct GmlVmStateStringMemo *memo;
-  StateArrayEntry *arrays;
-  size_t array_capacity;
+  const GmlArr **arrays;
+  uint32_t *array_index;
+  size_t array_index_capacity;
   uint32_t array_count;
-  StateMapEntry *maps,*shape_index;
-  size_t map_capacity,shape_index_capacity;
+  StateMapTable maps,shape_index;
   StateKeyShape *shapes;
   size_t shape_capacity;
+  GmlVal **shape_values;
+  size_t shape_values_capacity;
   uint32_t map_count,map_entries,shape_count;
   StateStringEntry *strings;
   size_t string_capacity,string_bytes;
@@ -113,8 +121,10 @@ typedef GmlVmStateReader StateR;
 static void sw_release(StateW *s){
   for(size_t i=0;i<s->string_capacity;i++) free((void*)s->strings[i].text);
   for(uint32_t i=0;i<s->shape_count;i++)free(s->shapes[i].slots);
-  free(s->shapes);free(s->shape_index);
-  free(s->strings);free(s->maps);free(s->arrays);
+  free(s->shapes);free(s->shape_values);
+  free(s->shape_index.entries);free(s->shape_index.index);
+  free(s->strings);free(s->maps.entries);free(s->maps.index);
+  free(s->arrays);free(s->array_index);
 }
 
 static int state_debug_enabled(const GmlVM *vm){
@@ -398,28 +408,34 @@ static size_t state_array_slot(const GmlArr *array,size_t capacity){
 }
 /* Returns an existing ID, or zero after registering a new definition. */
 static uint32_t sw_array_identity(StateW *s,const GmlArr *array){
-  if(s->array_capacity){
-    size_t slot=state_array_slot(array,s->array_capacity);
-    while(s->arrays[slot].array){
-      if(s->arrays[slot].array==array) return s->arrays[slot].id;
-      slot=(slot+1)&(s->array_capacity-1);
+  size_t slot=0;
+  if(s->array_index_capacity){
+    slot=state_array_slot(array,s->array_index_capacity);
+    while(s->array_index[slot]){
+      uint32_t id=s->array_index[slot];
+      if(s->arrays[id-1]==array) return id;
+      slot=(slot+1)&(s->array_index_capacity-1);
     }
   }
   if(s->array_count>=STATE_MAX_ARRAYS){ s->ok=0; return 0; }
-  if((size_t)s->array_count*4>=s->array_capacity*3){
-    size_t capacity=s->array_capacity?s->array_capacity*2:64;
-    StateArrayEntry *entries=calloc(capacity,sizeof(*entries));
-    if(!entries){ s->ok=0; return 0; }
-    for(size_t i=0;i<s->array_capacity;i++) if(s->arrays[i].array){
-      size_t slot=state_array_slot(s->arrays[i].array,capacity);
-      while(entries[slot].array) slot=(slot+1)&(capacity-1);
-      entries[slot]=s->arrays[i];
+  if((size_t)s->array_count*4>=s->array_index_capacity*3){
+    size_t capacity=s->array_index_capacity?s->array_index_capacity*2:64;
+    uint32_t *index=calloc(capacity,sizeof(*index));
+    if(!index){ s->ok=0; return 0; }
+    const GmlArr **arrays=realloc(s->arrays,capacity/4*3*sizeof(*arrays));
+    if(!arrays){ free(index); s->ok=0; return 0; }
+    for(uint32_t i=0;i<s->array_count;i++){
+      size_t position=state_array_slot(arrays[i],capacity);
+      while(index[position]) position=(position+1)&(capacity-1);
+      index[position]=i+1;
     }
-    free(s->arrays); s->arrays=entries; s->array_capacity=capacity;
+    free(s->array_index);
+    s->arrays=arrays; s->array_index=index; s->array_index_capacity=capacity;
+    slot=state_array_slot(array,capacity);
+    while(index[slot]) slot=(slot+1)&(capacity-1);
   }
-  size_t slot=state_array_slot(array,s->array_capacity);
-  while(s->arrays[slot].array) slot=(slot+1)&(s->array_capacity-1);
-  s->arrays[slot]=(StateArrayEntry){array,++s->array_count};
+  s->arrays[s->array_count]=array;
+  s->array_index[slot]=++s->array_count;
   return 0;
 }
 /* One real codec serves generic values and numeric map entries without copying a value. */
@@ -724,13 +740,12 @@ static uint64_t state_map_hash(const GmlVarMap *map,uint32_t *count,uint64_t *sh
   *shape=state_map_mix(keys^*count);
   return state_map_mix(hash^*count);
 }
-static int state_maps_equal(const GmlVarMap *left,const GmlVarMap *right,int keys_only){
+static int state_maps_equal(const GmlVarMap *left,const GmlVarMap *right){
   for(int i=0;i<left->cap;i++) if(left->slots[i].key){
     const GmlVarSlot *slot=&left->slots[i];
     GmlVal value=slot->val;
     GmlVal *other=gml_varmap_get_hashed((GmlVarMap*)right,slot->key,slot->hash);
     if(!other) return 0;
-    if(keys_only) continue;
     if(value.t!=other->t) return 0;
     if(value.t==V_REAL || value.t==V_OBJECT){
       if(memcmp(&value.d,&other->d,sizeof value.d)) return 0;
@@ -743,30 +758,49 @@ static int state_maps_equal(const GmlVarMap *left,const GmlVarMap *right,int key
   }
   return 1;
 }
-static StateMapEntry *state_map_entry(StateW *s,StateMapEntry **table,size_t *capacity,
+static int state_shape_matches(StateW *s,const GmlVarMap *map,const StateMapEntry *entry){
+  const StateKeyShape *shape=&s->shapes[entry->id];
+  for(uint32_t i=0;i<shape->count;i++){
+    const GmlVarSlot *key=shape->slots[i];
+    GmlVal *value=gml_varmap_get_hashed((GmlVarMap*)map,key->key,key->hash);
+    if(!value) return 0;
+    s->shape_values[i]=value;
+  }
+  return 1;
+}
+static StateMapEntry *state_map_entry(StateW *s,StateMapTable *table,
                                       uint32_t definitions,const GmlVarMap *map,
                                       uint32_t hash,uint32_t count,int keys_only){
-  if(!*capacity || (definitions>=*capacity/2 && definitions<STATE_MAX_MAPS)){
-    size_t next=*capacity?*capacity*2:64;
-    StateMapEntry *entries=calloc(next,sizeof(*entries));
-    if(!entries){ s->ok=0; return NULL; }
-    for(size_t i=0;i<*capacity;i++) if((*table)[i].map){
-      StateMapEntry entry=(*table)[i];
+  /* A failed definition may have reserved a bucket before its key allocation failed. */
+  if(!s->ok) return NULL;
+  if(!table->capacity || (definitions>=table->capacity/2 && definitions<STATE_MAX_MAPS)){
+    size_t next=table->capacity?table->capacity*2:64;
+    uint32_t *index=calloc(next,sizeof(*index));
+    if(!index){ s->ok=0; return NULL; }
+    StateMapEntry *entries=realloc(table->entries,next/2*sizeof(*entries));
+    if(!entries){ free(index); s->ok=0; return NULL; }
+    for(uint32_t i=0;i<definitions;i++){
+      StateMapEntry entry=entries[i];
       size_t slot=(size_t)entry.hash&(next-1);
-      while(entries[slot].map) slot=(slot+1)&(next-1);
-      entries[slot]=entry;
+      while(index[slot]) slot=(slot+1)&(next-1);
+      index[slot]=i+1;
     }
-    free(*table);*table=entries;*capacity=next;
+    free(table->index);
+    table->entries=entries;table->index=index;table->capacity=next;
   }
-  size_t slot=(size_t)hash&(*capacity-1);
-  while((*table)[slot].map){
-    StateMapEntry *entry=&(*table)[slot];
-    if(entry->hash==hash && entry->count==count && state_maps_equal(map,entry->map,keys_only))
+  size_t slot=(size_t)hash&(table->capacity-1);
+  while(table->index[slot]){
+    StateMapEntry *entry=&table->entries[table->index[slot]-1];
+    if(entry->hash==hash && entry->count==count &&
+       (keys_only?state_shape_matches(s,map,entry):state_maps_equal(map,entry->map)))
       return entry;
-    slot=(slot+1)&(*capacity-1);
+    slot=(slot+1)&(table->capacity-1);
   }
   if(definitions>=STATE_MAX_MAPS){ s->ok=0; return NULL; }
-  return &(*table)[slot];
+  table->index[slot]=definitions+1;
+  StateMapEntry *entry=&table->entries[definitions];
+  *entry=(StateMapEntry){0};
+  return entry;
 }
 static GmlVarSlot **state_shape_slots(GmlVM *vm,GmlVarMap *m,uint32_t count){
   if(!vm || count>(uint32_t)INT_MAX)return NULL;
@@ -809,7 +843,7 @@ static void sw_varmap(StateW *s,GmlVarMap *m){
   if(n>100000 || n>STATE_MAX_MAP_ENTRIES-s->map_entries){s->ok=0;return;}
   s->map_entries+=n;
   if(!n){sw_u32(s,0);return;}
-  StateMapEntry *record=state_map_entry(s,&s->maps,&s->map_capacity,s->map_count,
+  StateMapEntry *record=state_map_entry(s,&s->maps,s->map_count,
                                         m,(uint32_t)hash,n,0);
   if(!record)return;
   if(record->map){
@@ -818,7 +852,12 @@ static void sw_varmap(StateW *s,GmlVarMap *m){
     sw_u32(s,UINT32_C(0x80000000)|record->id);return;
   }
   *record=(StateMapEntry){m,(uint32_t)hash,s->map_count++,n,0};
-  StateMapEntry *shape=state_map_entry(s,&s->shape_index,&s->shape_index_capacity,
+  if(n>s->shape_values_capacity){
+    GmlVal **values=realloc(s->shape_values,(size_t)n*sizeof(*values));
+    if(!values){ s->ok=0; return; }
+    s->shape_values=values;s->shape_values_capacity=n;
+  }
+  StateMapEntry *shape=state_map_entry(s,&s->shape_index,
                                        s->shape_count,m,(uint32_t)shape_hash,n,1);
   if(!shape)return;
   int shared=shape->map!=NULL;
@@ -837,7 +876,8 @@ static void sw_varmap(StateW *s,GmlVarMap *m){
   }else sw_u32(s,n);
   for(uint32_t i=0;i<n;i++){
     const GmlVarSlot *slot=keys->slots[i];
-    GmlVal *value=shared?gml_varmap_get_hashed(m,slot->key,slot->hash):&keys->slots[i]->val;
+    /* A shared shape already resolved these values in wire order while matching its keys. */
+    GmlVal *value=shared?s->shape_values[i]:&keys->slots[i]->val;
     if(!value){s->ok=0;return;}
     if(dbg)anygm_host_logf(s->vm?s->vm->host:NULL,ANYGM_LOG_DEBUG,"[svar] %s t=%d\n",slot->key,value->t);
     if(!shared){
