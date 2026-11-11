@@ -164,7 +164,9 @@ typedef struct { int id, used, layer, type;         /* layerelementtype_* */
   /* Room-authored elements use the name. Type 9 elements are created unnamed,
    * so their existing serialized metadata slot holds the pause flag instead. */
   union { char name[64]; unsigned char sequence_paused; };
-  double image_index, image_speed, image_angle; } GmlRtElem;
+  /* Type 7 stores the immutable room-record offset plus one in this unused slot. */
+  union { double image_index, authored_tile_record; };
+  double image_speed, image_angle; } GmlRtElem;
 static inline int gml_rt_elem_move_order(const GmlRtElem *element){
   return element->type==7?element->tile_move_order:element->move_order;
 }
@@ -518,6 +520,7 @@ void gml_tilemap_effective(GmlVM *vm, const GmlTileMap *tm,
 GmlRtLayer *gml_tilemap_parent(GmlVM *vm,const GmlTileMap *tm,int *move_order);
 int gml_tilemap_move(GmlVM *vm,const GmlTileMap *tm,int layer_id,int move_order);
 void gml_vm_suppress_moved_background(GmlVM *vm,const GmlRtLayer *source);
+int gml_vm_bind_asset_tiles(GmlVM *vm,const GmlRtLayer *layer);
 int gml_room_layer_data_off(GmlVM *vm);
 /* Number of unset-variable and non-array index reads so far this run. */
 unsigned long gml_vm_unset_reads(const GmlVM *vm);

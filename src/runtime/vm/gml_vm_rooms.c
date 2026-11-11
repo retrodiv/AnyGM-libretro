@@ -1173,6 +1173,70 @@ int gml_vm_room_background_moved(GmlVM *vm,int order,const GmlRtLayer *layer){
   double source=room_state_restore_number(vm,vm->room_index,"background_moved",order);
   return source>0 && (!layer || layer->id==source);
 }
+GmlVal gml_vm_asset_tile_bindings(GmlVM *vm,int order){
+  GmlVal *slot=room_state_slot(vm,vm->room_index,"asset_tiles",order,0);
+  return slot?*slot:vundef();
+}
+
+int gml_vm_bind_asset_tiles(GmlVM *vm,const GmlRtLayer *layer){
+  if(!vm || !vm->win || !vm->win->data || !layer || layer->order<0) return 0;
+  GmlVal existing=gml_vm_asset_tile_bindings(vm,layer->order);
+  if(existing.t==V_ARR) return gml_arr_get(existing,0).d==layer->id;
+  uint32_t layer_count=0;
+  uint32_t list=gml_vm_rooms_layer_list(vm,vm->room_index,&layer_count);
+  const uint8_t *data=vm->win->data;
+  size_t size=vm->win->size;
+  if(!list || (uint32_t)layer->order>=layer_count || layer_count>=512) return 0;
+  uint32_t offset=gml_vm_read_u32_le(data,list+4+(uint32_t)layer->order*4);
+  if(!offset || offset>size || size-offset<36 ||
+     gml_vm_read_u32_le(data,offset+8)!=3) return 0;
+  uint32_t type_data=gml_room_layer_type_off(vm,offset);
+  if(type_data>size || size-type_data<4) return 0;
+  uint32_t tiles=gml_vm_read_u32_le(data,type_data);
+  if(!tiles || tiles>size || size-tiles<4) return 0;
+  uint32_t count=gml_vm_read_u32_le(data,tiles);
+  if(!count || count>100000 || count>(size-tiles-4)/4) return 0;
+  int next_id=vm->rt_next_id?vm->rt_next_id:1000001;
+  if(next_id<0 || (uint32_t)(INT_MAX-next_id)<count) return 0;
+  GmlVal *slot=room_state_slot(vm,vm->room_index,"asset_tiles",layer->order,1);
+  if(!slot) return 0;
+  GmlVal bindings=gml_arr_new((int)count+1,vreal(0));
+  if(gml_val_array_length(bindings)!=(int)count+1){
+    gml_values_release_owned(&bindings,1); return 0;
+  }
+  gml_arr_set(bindings,0,vreal(layer->id));
+  int previous_count=vm->n_rte,previous_id=vm->rt_next_id;
+  for(uint32_t index=0;index<count;index++){
+    uint32_t record=gml_vm_read_u32_le(data,tiles+4+index*4);
+    if(!record || record>size || size-record<48) continue;
+    GmlRtElem *element=gml_rt_elem_new(vm);
+    if(!element){
+      for(uint32_t earlier=0;earlier<index;earlier++){
+        int allocated=(int)gml_arr_get(bindings,(int)earlier+1).d-1;
+        if(allocated>=0 && allocated<vm->n_rte) vm->rte[allocated].used=0;
+      }
+      vm->n_rte=previous_count; vm->rt_next_id=previous_id;
+      gml_values_release_owned(&bindings,1);
+      return 0;
+    }
+    element->type=7; element->layer=layer->id;
+    element->x=(int32_t)gml_vm_read_u32_le(data,record);
+    element->y=(int32_t)gml_vm_read_u32_le(data,record+4);
+    element->sprite=(int32_t)gml_vm_read_u32_le(data,record+8);
+    element->sx=(int32_t)gml_vm_read_u32_le(data,record+12);
+    element->sy=(int32_t)gml_vm_read_u32_le(data,record+16);
+    element->w=(int32_t)gml_vm_read_u32_le(data,record+20);
+    element->h=(int32_t)gml_vm_read_u32_le(data,record+24);
+    element->xs=gml_vm_read_f32_le(data,record+36);
+    element->ys=gml_vm_read_f32_le(data,record+40);
+    uint32_t colour=gml_vm_read_u32_le(data,record+44);
+    element->blend=colour&0xffffffu; element->alpha=(colour>>24)/255.0;
+    element->authored_tile_record=(double)record+1;
+    gml_arr_set(bindings,(int)index+1,vreal((double)(element-vm->rte)+1));
+  }
+  *slot=bindings;
+  return 1;
+}
 
 int gml_vm_room_camera_get(GmlVM *vm,int room_index,int view_index){
   if(!vm || !vm->win || room_index<0 || room_index>=gml_room_count(vm->win) ||
@@ -1948,6 +2012,10 @@ void gml_vm_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_runti
   if(!lay){
     if(!rebuild_runtime_layers) room_bind_instance_layers(vm,room_index,0);
     return;
+  }
+  if(rebuild_runtime_layers && lcnt<512) for(uint32_t order=0;order<lcnt;order++){
+    GmlVal *slot=room_state_slot(vm,room_index,"asset_tiles",(int)order,0);
+    if(slot && slot->t==V_ARR){ gml_values_release_owned(slot,1); *slot=vundef(); }
   }
   if(rebuild_runtime_layers && lcnt<512) for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=gml_vm_read_u32_le(rd,lay+4+i*4);
     if(!lp || lp+40>vm->win->size) continue;

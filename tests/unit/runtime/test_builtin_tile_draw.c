@@ -587,6 +587,96 @@ static int modern_dynamic_tile_resource(void){
   }
   return ok;
 }
+static int asset_tile_pixels(TileFixture *f,int x,int y,unsigned red){
+  gml_render_set_pending_fill(&f->render,0xff000000u);
+  gml_vm_draw(&f->vm); gml_render_flush_rotated_batch(&f->render);
+  gml_render_flush_pending_fill(&f->render);
+  uint32_t colour=0xff000000u|(red<<16);
+  for(int yy=0;yy<16;yy++) for(int xx=0;xx<16;xx++){
+    uint32_t want=xx>=x && xx<x+2 && yy>=y && yy<y+2?colour:0xff000000u;
+    if(f->pixels[yy*16+xx]!=want){
+      fprintf(stderr,"asset tile (%d,%d): %08x != %08x\n",xx,yy,f->pixels[yy*16+xx],want);
+      return 0;
+    }
+  }
+  return 1;
+}
+static int authored_asset_tile_handles(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    TileFixture f; setup(&f);
+    uint8_t data[640]={0};
+    char *strings[]={"room","empty","assets"}; uint32_t offsets[]={560,576,592};
+    for(int i=0;i<3;i++) memcpy(data+offsets[i],strings[i],strlen(strings[i])+1);
+    GmlWin win={.data=data,.size=sizeof data,.bytecode=17,.n_chunks=1,
+                .strs=strings,.str_charoff=offsets,.n_strs=3};
+    win.chunks[0]=(GmlChunk){"ROOM",16,544};
+    word(data+16,2); word(data+20,32); word(data+24,136);
+    for(int room=0;room<2;room++){
+      int at=32+104*room;
+      word(data+at,offsets[room]); word(data+at+8,16); word(data+at+12,16);
+      word(data+at+16,60);
+    }
+    word(data+52,1); word(data+120,240);
+    word(data+240,1); word(data+244,256);
+    word(data+256,592); word(data+264,3); word(data+268,17);
+    word(data+272,0x40000000u); word(data+276,0x40400000u); word(data+288,1);
+    word(data+292,320); word(data+320,3); word(data+328,352); word(data+332,620);
+    word(data+352,1); word(data+356,2); word(data+364,2);
+    word(data+372,2); word(data+376,2);
+    word(data+388,0x3f800000u); word(data+392,0x3f800000u); word(data+396,0x80ffffffu);
+    int frame=0; GmlSprite sprite={.w=6,.h=2,.n_frames=1,.frame=&frame};
+    for(int y=0;y<2;y++) for(int x=2;x<4;x++){
+      int at=(y*6+x)*4; f.rgba[at]=255; f.rgba[at+1]=f.rgba[at+2]=0;
+    }
+    f.vm.win=&win; f.render.win=&win; f.render.spr=&sprite; f.render.n_spr=1;
+    f.vm.tilemaps=NULL; f.vm.n_tilemaps=0; f.vm.rtl=NULL; f.vm.n_rtl=0;
+    f.vm.room_index=-1; f.vm.room_state_count=2;
+    f.vm.room_stored=calloc(2,sizeof *f.vm.room_stored);
+    f.vm.particles=gml_particle_state_create(&f.vm); gml_vm_software3d_reset(&f.vm);
+    if(!f.vm.room_stored || !f.vm.particles){ cleanup(&f); return 0; }
+    gml_room_enter(&f.vm,0);
+    ok &= asset_tile_pixels(&f,3,5,128);
+    GmlVal source=vreal(f.vm.rtl[0].id);
+    int enumerate=gml_builtin_fast_id(&f.vm,"layer_get_all_elements");
+    GmlVal elements=cached?gml_builtin_call_fast_id(&f.vm,enumerate,"layer_get_all_elements",&source,1):
+                           gml_builtin_call(&f.vm,"layer_get_all_elements",&source,1);
+    ok &= gml_val_array_length(elements)==1;
+    GmlVal tile=gml_arr_get(elements,0); gml_values_release_owned(&elements,1);
+    ok &= tile.t==V_REAL && gml_builtin_call(&f.vm,"layer_get_element_type",&tile,1).d==7;
+    ok &= gml_builtin_call(&f.vm,"layer_tile_get_x",&tile,1).d==1;
+    ok &= gml_builtin_call(&f.vm,"layer_tile_get_alpha",&tile,1).d==128.0/255.0;
+    elements=gml_builtin_call(&f.vm,"layer_get_all_elements",&source,1);
+    ok &= gml_val_array_length(elements)==1 && gml_arr_get(elements,0).d==tile.d && f.vm.n_rte==1;
+    gml_values_release_owned(&elements,1);
+    ok &= asset_tile_pixels(&f,3,5,128);
+    GmlRtLayer *destination=gml_rt_layer_new(&f.vm);
+    if(!destination){ free(f.vm.rtl); cleanup(&f); return 0; }
+    destination->x=8; destination->y=5; strcpy(destination->name,"destination");
+    GmlVal move[]={tile,cached?vreal(destination->id):vstr("destination")};
+    ok &= call(&f,"layer_element_move",move,2,cached) && asset_tile_pixels(&f,9,7,128);
+    size_t size=gml_vm_state_size(&f.vm),written=0,used=0;
+    void *state=malloc(size);
+    int saved=state && gml_vm_state_save(&f.vm,state,size,&written);
+    call(&f,"layer_tile_destroy",&tile,1,cached);
+    ok &= asset_tile_pixels(&f,9,7,0);
+    ok &= saved && gml_vm_state_load(&f.vm,state,written,&used) && used==written;
+    free(state);
+    ok &= asset_tile_pixels(&f,9,7,128);
+    gml_room_enter(&f.vm,1); gml_room_enter(&f.vm,0);
+    ok &= asset_tile_pixels(&f,9,7,128);
+    call(&f,"layer_tile_destroy",&tile,1,cached);
+    GmlVal create[]={source,vreal(6),vreal(8),vreal(0),vreal(2),vreal(0),vreal(2),vreal(2)};
+    GmlVal replacement=gml_builtin_call(&f.vm,"layer_tile_create",create,8);
+    ok &= replacement.d!=tile.d && f.vm.n_rte==1 && asset_tile_pixels(&f,8,11,255);
+    *gml_varmap_put(&f.vm.globals,"room_persistent")=vreal(0);
+    gml_room_enter(&f.vm,1); gml_room_enter(&f.vm,0);
+    ok &= f.vm.n_rte==0 && asset_tile_pixels(&f,3,5,128);
+    free(f.vm.rtl); cleanup(&f);
+  }
+  if(ok) puts("asset tile handles: enumeration, single drawing, movement, restore, persistence and slot reuse passed");
+  return ok;
+}
 static int rectangular_tile_extent(void){
   int ok=1;
   for(int scaled=0;scaled<2;scaled++) for(int flags=0;flags<8;flags++){
@@ -622,7 +712,8 @@ int main(int argc,char **argv){
     {"legacy_dynamic_tile_scale",legacy_dynamic_tile_scale},
     {"legacy_tile_queries",legacy_tile_queries},
     {"legacy_tile_appearance",legacy_tile_appearance},
-    {"modern_dynamic_tile_resource",modern_dynamic_tile_resource}};
+    {"modern_dynamic_tile_resource",modern_dynamic_tile_resource},
+    {"authored_asset_tile_handles",authored_asset_tile_handles}};
   const AnygmTestGroup group={"tile_draw",cases,sizeof cases/sizeof cases[0]};
   const char *filter=NULL;
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2]; else if(argc!=1) return EXIT_FAILURE;

@@ -66,6 +66,7 @@ static void append_layer_element(GmlVal result,LayerElementId *moved,int *count,
 static GmlVal layer_elements(GmlVM *vm,GmlRtLayer *layer){
   GmlVal result=gml_arr_new(0,vreal(0));
   if(!layer || !result.arr) return result;
+  gml_vm_bind_asset_tiles(vm,layer);
   LayerElementId *moved=NULL,*instance_elements=NULL;
   int moved_count=0;
   if(gml_global_num(vm,"__gml_layer_move_order")>=GML_LAYER_MOVED_ORDER_BASE)

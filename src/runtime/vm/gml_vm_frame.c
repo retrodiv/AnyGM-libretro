@@ -1169,6 +1169,16 @@ static int *vm_draw_order_scratch(GmlVM *vm, int need){
 struct LayBg { int sprite,subimg; int th,tv,stretch,order,move_order,native; double x,y,xs,ys; uint32_t blend; double alpha; double depth; };
 struct LayTile { int sprite; int sx,sy,w,h,order,move_order; double x,y,xs,ys; uint32_t blend; double alpha; double depth; };
 struct LaySprite { int sprite,subimg,order,move_order; double x,y,xs,ys,angle; uint32_t blend; double alpha; double depth; };
+static void layer_tile_from_element(struct LayTile *tile,const GmlRtElem *element,
+                                    double x,double y,double depth,int order){
+  tile->sprite=element->sprite; tile->sx=element->sx; tile->sy=element->sy;
+  tile->w=element->w; tile->h=element->h;
+  tile->x=x+element->x; tile->y=y+element->y;
+  tile->xs=element->xs; tile->ys=element->ys;
+  tile->blend=element->blend; tile->alpha=element->alpha;
+  tile->depth=depth; tile->order=order;
+  tile->move_order=gml_rt_elem_move_order(element);
+}
 struct LayEffect { GmlLayerFilter effect; int order; double depth; };
 struct LayAttachedFilter { GmlLayerFilter effect; int order; };
 struct ClassicBg { int def,th,tv,stretch,repeat; double x,y,xs,ys; uint32_t blend; double alpha,depth; };
@@ -1590,8 +1600,23 @@ void gml_vm_draw(GmlVM *vm){
           uint32_t tl=(tb3+4<=vm->win->size)?gml_vm_read_u32_le(d,tb3):0;
           uint32_t tcnt=(tl && tl+4<vm->win->size)?gml_vm_read_u32_le(d,tl):0;
           if(tcnt==0 || tcnt>100000) continue;
+          GmlVal bindings=gml_vm_asset_tile_bindings(vm,(int)i);
           for(uint32_t k2=0;k2<tcnt;k2++){ uint32_t tp=gml_vm_read_u32_le(d,tl+4+k2*4);
             if(!tp || tp+48>vm->win->size) continue;
+            if(bindings.t==V_ARR){
+              double slot=gml_arr_get(bindings,(int)k2+1).d-1;
+              if(!rl || gml_arr_get(bindings,0).d!=rl->id ||
+                 !(slot>=0 && slot<vm->n_rte)) continue;
+              const GmlRtElem *element=&vm->rte[(int)slot];
+              if(!element->used || element->type!=7 || !element->visible ||
+                 element->layer!=rl->id || element->authored_tile_record!=(double)tp+1 ||
+                 element->tile_move_order>=GML_LAYER_MOVED_ORDER_BASE) continue;
+              if(!dl_grow((void**)&scratch->layer_tile,
+                          &scratch->layer_tile_capacity,nlt+1,sizeof(*ltl))) continue;
+              ltl=scratch->layer_tile;
+              layer_tile_from_element(&ltl[nlt++],element,ltx,lty,ldep,lorder);
+              continue;
+            }
             if(!dl_grow((void**)&scratch->layer_tile,
                         &scratch->layer_tile_capacity,nlt+1,sizeof(*ltl))) continue;
             ltl=scratch->layer_tile;
@@ -1667,6 +1692,7 @@ void gml_vm_draw(GmlVM *vm){
     double ly = l->touched ? l->y : l->y+l->vs*fin2;
     double ldepth=l->depth;
     if(e->type==7){
+      if(e->authored_tile_record>0 && e->tile_move_order<GML_LAYER_MOVED_ORDER_BASE) continue;
       /* Legacy tile_layer_* operations address every tile at an authored depth, including
        * tiles created at runtime.  Static ROOM tiles already pass through gml_vm_frame_apply_tile_mutation above;
        * apply the same visibility/depth/shift transform to layer-backed dynamic tiles. */
@@ -1677,11 +1703,7 @@ void gml_vm_draw(GmlVM *vm){
       if(!dl_grow((void**)&scratch->layer_tile,
                   &scratch->layer_tile_capacity,nlt+1,sizeof(*ltl))) continue;
       ltl=scratch->layer_tile;
-      ltl[nlt].sprite=e->sprite; ltl[nlt].sx=e->sx; ltl[nlt].sy=e->sy; ltl[nlt].w=e->w; ltl[nlt].h=e->h;
-      ltl[nlt].x=lx+e->x; ltl[nlt].y=ly+e->y; ltl[nlt].xs=e->xs; ltl[nlt].ys=e->ys;
-      ltl[nlt].blend=e->blend; ltl[nlt].alpha=e->alpha; ltl[nlt].depth=ldepth; ltl[nlt].order=l->order;
-      ltl[nlt].move_order=gml_rt_elem_move_order(e);
-      nlt++;
+      layer_tile_from_element(&ltl[nlt++],e,lx,ly,ldepth,l->order);
     } else if(e->type==1){
       if(!dl_grow((void**)&scratch->layer_background,
                   &scratch->layer_background_capacity,nlb+1,sizeof(*lbg))) continue;
