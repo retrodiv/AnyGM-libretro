@@ -7,6 +7,7 @@
 #include "gml_builtin.h"
 #include "gml_vm_internal.h"
 #include "gml_software3d.h"
+#include "gml_thread.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -50,6 +51,42 @@ static int row_band_requested_count_case(void){
         "resized row handovers write each row exactly once");
   }
   gml_render_free(&render);
+  return 0;
+}
+
+static const char *row_count_setting(void *userdata,const char *name){
+  const char *const *threads=userdata;
+  return !strcmp(name,"GML_ROW_THREADS")?*threads:NULL;
+}
+
+static int row_band_automatic_count_case(void){
+  const char *threads=NULL;
+  AnygmHostServices host={0};
+  GmlWin content={0};
+  GmlRender render={0};
+  host.struct_size=sizeof host;
+  host.userdata=&threads;
+  host.development_setting=row_count_setting;
+  content.host=&host;
+  render.win=&content;
+  int expected=gml_ncpu();
+  if(expected>GML_ROW_THREADS_AUTO) expected=GML_ROW_THREADS_AUTO;
+  if(expected<1) expected=1;
+  if(expected>2 && expected<=4) expected=2;
+  REQUIRE(gml_render_row_thread_count(&render,127)==1,
+    "short automatic row handover uses the caller");
+  REQUIRE(gml_render_row_thread_count(&render,128)==expected,
+    "automatic row handover follows host capacity");
+  static const struct { const char *value; int expected; } controls[]={
+    {"1",1},{"2",2},{"4",4},{"-3",1},{"0",1},{"invalid",1},
+    {"",1},{"999",GML_ROW_THREADS_MAX}
+  };
+  for(unsigned i=0;i<sizeof controls/sizeof controls[0];i++){
+    threads=controls[i].value;
+    REQUIRE(gml_render_row_thread_count(&render,127)==controls[i].expected &&
+      gml_render_row_thread_count(&render,128)==controls[i].expected,
+      "explicit row count retains its clamped override at every height");
+  }
   return 0;
 }
 
@@ -2407,6 +2444,7 @@ int main(void){
   REQUIRE(dispatch_surface_coverage_case()==0,"resolved CPU surface dispatch coverage");
   REQUIRE(mapped_multiply_exact_case()==0,"mapped surface multiply exact fast/general control");
   REQUIRE(row_band_requested_count_case()==0,"row-band requested count control");
+  REQUIRE(row_band_automatic_count_case()==0,"row-band automatic count control");
   puts("renderer surfaces: ok");
   return 0;
 }

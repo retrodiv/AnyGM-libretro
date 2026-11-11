@@ -191,6 +191,9 @@ int gml_render_row_bands_profitable(GmlRender *r,unsigned long long visible_pixe
 int gml_render_row_thread_count(GmlRender *r,int H){
   int nt=1;
   if(H>=128){ nt=gml_ncpu(); if(nt>GML_ROW_THREADS_AUTO)nt=GML_ROW_THREADS_AUTO; if(nt<1)nt=1; }
+  /* Small hosts pay more for two extra handovers than these memory-bound
+   * compositor passes recover. Keep one caller and one worker on them. */
+  if(nt>2 && nt<=4) nt=2;
   const char *pinned=render_setting(r,"GML_ROW_THREADS");
   if(pinned){ nt=atoi(pinned); if(nt<1) nt=1; if(nt>GML_ROW_THREADS_MAX) nt=GML_ROW_THREADS_MAX; }
   return nt;
