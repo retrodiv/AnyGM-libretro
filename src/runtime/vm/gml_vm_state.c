@@ -300,7 +300,12 @@ static void sw_encoded_string(StateW *s,const char *p,uint32_t encoding,
   size_t slot=(size_t)hash&(s->string_capacity-1);
   while(s->strings[slot].text){
     StateStringEntry *entry=&s->strings[slot];
-    if(entry->hash==hash && entry->length==encoding && !memcmp(entry->text,p,encoding)){
+    /* Owned builtin strings remain immutable for the traversal, and their memo supplies that
+     * exact owner pointer on every occurrence. Pointer identity therefore proves equality before
+     * a multi-megabyte value is compared with itself. Distinct owners still take the bytewise
+     * path, preserving the existing content-based deduplication and canonical wire bytes. */
+    if(entry->hash==hash && entry->length==encoding &&
+       (entry->text==p || !memcmp(entry->text,p,encoding))){
       sw_u8(s,2);sw_varuint(s,entry->id);return;
     }
     slot=(slot+1)&(s->string_capacity-1);
