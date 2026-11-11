@@ -225,16 +225,17 @@ typedef enum GmlRenderBlendFactor {
   GML_RENDER_BLEND_ONE_MINUS_DESTINATION_COLOUR=10
 } GmlRenderBlendFactor;
 
-/* Software selectors for destination-dependent fixed-function factor pairs. */
+/* Software selectors for colour-dependent fixed-function factor pairs. */
 enum {
   GML_RENDER_BLEND_DEST_SOURCE_COLOUR=9,
   GML_RENDER_BLEND_DEST_DEST_COLOUR=10,
-  GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR=11
+  GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR=11,
+  GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA=12
 };
 
 static inline int gml_render_blend_uses_destination_colour(int mode){
   return mode>=GML_RENDER_BLEND_DEST_SOURCE_COLOUR &&
-         mode<=GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR;
+         mode<=GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA;
 }
 
 typedef enum GmlRenderBlendEquation {

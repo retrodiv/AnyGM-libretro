@@ -62,7 +62,7 @@ static inline uint32_t blend_multiply_pixel(const GmlRender *r,uint32_t dst,int 
   return blend_multiply_channels(dst,sr,sg,sb,r && r->target_sp==0);
 }
 
-/* Destination-dependent pairs apply factors to RGBA, even when source coverage is zero.
+/* Colour-factor pairs apply factors to RGBA, even when source coverage is zero.
  * Alpha testing is a separate fragment-admission decision made by the sampling kernel. */
 static inline uint32_t blend_destination_colour_pixel(const GmlRender *r,uint32_t destination,
                                                         int sr,int sg,int sb,unsigned sa){
@@ -70,9 +70,11 @@ static inline uint32_t blend_destination_colour_pixel(const GmlRender *r,uint32_
   unsigned dest[4]={(destination>>16)&255u,(destination>>8)&255u,
                     destination&255u,destination>>24};
   unsigned out[4];
+  int source_colour_alpha=r->blendmode==GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA;
   for(int channel=0;channel<4;channel++){
     unsigned sf=r->blendmode==GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR?dest[3]:dest[channel];
     unsigned df=r->blendmode==GML_RENDER_BLEND_DEST_SOURCE_COLOUR?source[channel]:dest[channel];
+    if(source_colour_alpha){sf=source[channel];df=source[3];}
     int equation=channel==3?r->blend_equation_alpha:r->blend_equation;
     int value;
     if(equation==2) value=source[channel]>dest[channel]?source[channel]:dest[channel];

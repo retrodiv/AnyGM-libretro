@@ -5,6 +5,7 @@
 #include "gml_vm_internal.h"
 #include "gml_particle.h"
 #include "gml_render_internal.h"
+#include "gml_render_state.h"
 #include "gml_software3d_internal.h"
 #include "anygm_test_runner.h"
 #include "memory_vfs.h"
@@ -904,6 +905,119 @@ static int inverse_destination_colour_case(void){
   return ok;
 }
 
+static int source_colour_source_alpha_case(void){
+  static const unsigned alphas[]={0u,1u,64u,128u,255u};
+  static const unsigned colours[]={0xFFFFFFu,0x654D2Du};
+  static const char *setters[]={"draw_set_blend_mode_ext","gpu_set_blendmode_ext"};
+  int ok=1;
+  for(int cached=0;cached<2;cached++) for(unsigned setter=0;setter<2u;setter++){
+    GmlWin win={.bytecode=15};
+    GmlRender render;
+    GmlVM vm={.win=&win};
+    uint32_t screen[16]={0};
+    if(gml_render_init(&render,&win)) return 0;
+    vm.render=&render;
+    gml_render_begin(&render,screen,4,4,0,0);
+    int target=gml_surface_create(&render,4,4);
+    int source=gml_surface_create(&render,1,1);
+    render.atlas=calloc(1,sizeof *render.atlas); render.n_atlas=1;
+    render.tpag=calloc(1,sizeof *render.tpag); render.n_tpag=1;
+    render.spr=calloc(1,sizeof *render.spr);
+    render.n_spr=render.spr_cap=render.base_n_spr=1;
+    uint8_t *rgba=malloc(4);
+    if(target<0 || source<0 || !rgba || !render.atlas || !render.tpag || !render.spr) return 0;
+    render.atlas[0].px=malloc(4);
+    render.atlas[0].w=render.atlas[0].h=1;
+    render.spr[0].frame=malloc(sizeof(int));
+    if(!render.atlas[0].px || !render.spr[0].frame) return 0;
+    render.spr[0].frame[0]=0;
+    render.spr[0].w=render.spr[0].h=render.spr[0].n_frames=1;
+    render.tpag[0]=(GmlTpag){.sw=1,.sh=1,.tw=1,.th=1,.bw=1,.bh=1,.atlas=0};
+    memset(rgba,255,4);
+    int sprite=gml_sprite_append_from_rgba(&render,rgba,1,1,0,0,NULL);
+    if(sprite<0) return 0;
+    for(unsigned colour=0;colour<2u;colour++) for(unsigned alpha=0;alpha<5u;alpha++){
+      unsigned channels[]={colours[colour]&255u,(colours[colour]>>8)&255u,
+                           (colours[colour]>>16)&255u,alphas[alpha]};
+      unsigned destination[]={32u,64u,96u,255u};
+      unsigned expected[4];
+      for(unsigned channel=0;channel<4u;channel++){
+        unsigned sum=channels[channel]*channels[channel]+
+                     destination[channel]*channels[3];
+        expected[channel]=(sum+127u)/255u;
+        if(expected[channel]>255u) expected[channel]=255u;
+      }
+      uint32_t wanted=(expected[3]<<24)|(expected[0]<<16)|
+                       (expected[1]<<8)|expected[2];
+      gml_render_sprite_cache_free(&render.spr[sprite]);
+      gml_render_sprite_cache_free(&render.spr[0]);
+      for(unsigned channel=0;channel<4u;channel++) rgba[channel]=(uint8_t)channels[channel];
+      memcpy(render.atlas[0].px,rgba,4);
+      if(!gml_surface_write_rgba8(&render,source,rgba,4)) return 0;
+      for(int path=0;path<7;path++){
+        if(!gml_surface_set_target(&render,target)) return 0;
+        for(int pixel=0;pixel<16;pixel++) render.fb[pixel]=0xFF204060u;
+        render.interp=0;
+        query(&vm,setters[setter],(GmlVal[]){vreal(3),vreal(5)},2,cached,&ok);
+        if(path==0){
+          query(&vm,"draw_set_color",(GmlVal[]){vreal(colours[colour])},1,cached,&ok);
+          query(&vm,"draw_set_alpha",(GmlVal[]){vreal(channels[3]/255.0)},1,cached,&ok);
+          query(&vm,"draw_rectangle",(GmlVal[]){vreal(0),vreal(0),vreal(3),vreal(3),vreal(0)},5,0,&ok);
+        }else if(path==1){
+          gml_draw_sprite_ext(&render,sprite,0,0,0,4,4,0,0xFFFFFFu,1);
+        }else if(path==2){
+          gml_draw_sprite_ext(&render,sprite,0,4,0,-4,4,0,0xFFFFFFu,1);
+        }else if(path==3){
+          gml_draw_surface_stretched(&render,source,0,0,4,4,0xFFFFFFu,1);
+        }else if(path==4){
+          gml_draw_surface_ext(&render,source,0,0,4,4,0,0xFFFFFFu,1);
+        }else{
+          gml_draw_sprite_ext(&render,0,0,path==6?4:0,0,path==6?-4:4,4,0,0xFFFFFFu,1);
+        }
+        gml_render_prepare_draw(&render);
+        if(render.fb[5]!=wanted){
+          fprintf(stderr,"source-colour/source-alpha: cached=%d setter=%s path=%d alpha=%u colour=%06x actual=%08x expected=%08x\n",
+                  cached,setters[setter],path,channels[3],colours[colour],render.fb[5],wanted);
+          ok=0;
+        }
+        gml_surface_reset_target(&render);
+      }
+    }
+    vm.render=NULL;vm.win=NULL;
+    gml_vm_free(&vm);gml_render_free(&render);
+  }
+  GmlWin win={.bytecode=15};
+  GmlRender render;
+  GmlVM vm={.win=&win};
+  if(gml_render_init(&render,&win)) return 0;
+  vm.render=&render;
+  query(&vm,setters[0],(GmlVal[]){vreal(3),vreal(5)},2,0,&ok);
+  query(&vm,"gpu_push_state",NULL,0,0,&ok);
+  size_t size=gml_render_state_size(&render,-1),written=0,used=0,repeated=0;
+  unsigned char *before=malloc(size?size:1),*after=malloc(size?size:1);
+  if(!size || !before || !after ||
+     !gml_render_state_save(&render,-1,before,size,&written) || written!=size){
+    ok=0;
+  }else{
+    query(&vm,"gpu_pop_state",NULL,0,0,&ok);
+    query(&vm,setters[0],(GmlVal[]){vreal(5),vreal(6)},2,0,&ok);
+    int restored=gml_render_state_load(&render,before,size,&used);
+    ok &= restored && used==size && render.gpu_state_sp==1 &&
+      gml_render_state_save(&render,-1,after,size,&repeated) && repeated==size &&
+      !memcmp(before,after,size);
+    if(restored){
+      query(&vm,"gpu_pop_state",NULL,0,0,&ok);
+      ok &= render.blendmode==GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA &&
+            render.gpu_state_sp==0;
+    }
+  }
+  free(before);free(after);
+  vm.render=NULL;vm.win=NULL;
+  gml_vm_free(&vm);gml_render_free(&render);
+  if(!ok) fprintf(stderr,"source-colour/source-alpha arithmetic or stacked state contract failed\n");
+  return ok;
+}
+
 static int color_query_roundtrip_case(void){
   const char *setters[]={"draw_set_color","draw_set_colour"};
   const char *getters[]={"draw_get_color","draw_get_colour"};
@@ -1142,6 +1256,7 @@ int main(int argc,char **argv){
     {"background_source_region",background_part_case},{"background_name_alias",background_names_case},
     {"authored_font_styles",font_styles_case},{"runtime_font_styles",runtime_font_styles_case},
     {"inverse_destination_colour",inverse_destination_colour_case},
+    {"source_colour_source_alpha",source_colour_source_alpha_case},
     {"color_query_roundtrip",color_query_roundtrip_case},
     {"camera_capacity",camera_capacity_case}};
   const AnygmTestGroup group={"draw_queries",cases,sizeof cases/sizeof cases[0]};

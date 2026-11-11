@@ -1483,6 +1483,16 @@ set of qualified scene operations or change CPU raster bodies.
 
 ## Current operation support and repair-level rules
 
+The source-colour/source-alpha factor pair uses the shared CPU colour-factor
+executor. Its selector remains outside the qualified scene blend interval.
+The fallback renderer synchronizes the target before ordinary counted CPU
+execution. Device qualification must preserve straight RGB at zero source
+alpha, the independent target alpha, channel masks and draw order.
+
+| Blend variant | CPU execution | GPU debt |
+|---|---|---|
+| `bm_src_colour, bm_src_alpha` | Saturated source-square plus destination-times-source-alpha, independently for RGBA | Counted CPU fallback for sprites, surfaces and primitives; native scene admission remains unqualified |
+
 R03-SPR-REPLACEMENT-FUNCTION extends ordinary/ext nearest ONE/ZERO sprites
 across Classic/Studio,SCREEN/application/explicit zero/numbered targets and
 world/mapped GUI. Signed whole scales1..64,tint,source/draw alpha including

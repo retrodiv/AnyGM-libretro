@@ -106,6 +106,7 @@ void builtin_set_blendmode_ext(GmlVM *vm,GmlRender *R,int src,int dst){
   else if(src==9 && dst==3) state.blend_mode=GML_RENDER_BLEND_DEST_SOURCE_COLOUR;
   else if(src==9 && dst==9) state.blend_mode=GML_RENDER_BLEND_DEST_DEST_COLOUR;
   else if(src==7 && dst==9) state.blend_mode=GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR;
+  else if(src==3 && dst==5) state.blend_mode=GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA;
   else state.blend_mode=0;                             /* includes normal (5,6) */
   gml_render_draw_state_update(R,&state,GML_RENDER_DRAW_STATE_BLEND_MODE);
   if(builtin_setting(vm,"GML_DBG_BM"))

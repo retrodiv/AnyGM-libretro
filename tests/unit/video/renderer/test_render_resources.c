@@ -9325,6 +9325,62 @@ static int resident_application_sprite_cpu_fallback(void){
   return 1;
 }
 
+static int resident_source_colour_alpha_cpu_fallback(void){
+  for(int path=0;path<4;path++){
+    GmlRender *render=calloc(1,sizeof *render);
+    GmlWin content={.bytecode=15};
+    FakeDevice fake={0};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics metrics={0};
+    GmlRenderDispatchMetrics dispatch={0};
+    CHECK(render && !gml_render_init(render,&content));
+    CHECK(gml_render_application_surface_ensure_owned(render,4,4));
+    uint8_t *rgba=malloc(4);
+    CHECK(rgba);
+    rgba[0]=rgba[1]=rgba[2]=255u;rgba[3]=1u;
+    int sprite=gml_sprite_append_from_rgba(render,rgba,1,1,0,0,NULL);
+    int surface=gml_surface_create(render,1,1);
+    CHECK(sprite>=0 && surface>0 && gml_surface_write_rgba8(render,surface,rgba,4));
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_owned_application(render,0,0,0));
+    gml_render_set_pending_fill(render,0xFF204060u);
+    gml_render_flush_pending_fill(render);
+    gml_render_dispatch_diagnostics_enable(render,1);
+    render->blendmode=GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA;
+    render->alphablend=1;
+    render->color_write_mask=15u;
+    if(path==0){
+      render->alpha=1.0/255.0;
+      gml_render_primitive_rectangle(render,0,0,3,3,0xFFFFFFu,0);
+    }else if(path==1){
+      gml_draw_sprite_ext(render,sprite,0,0,0,4,4,0,0xFFFFFFu,1);
+    }else if(path==2){
+      gml_draw_surface_stretched(render,surface,0,0,4,4,0xFFFFFFu,1);
+    }else{
+      gml_draw_surface_ext(render,surface,0,0,4,4,0,0xFFFFFFu,1);
+    }
+    gml_render_prepare_draw(render);
+    gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
+    CHECK(!render->resident_application_pass && fake.submits==1 && !fake.readbacks &&
+          metrics.cpu_replays==1u && render->app_surface_owned[5]==0x01FFFFFFu);
+    CHECK(gml_render_dispatch_metrics(render,&dispatch));
+    unsigned family=path==0?GML_RENDER_SCENE_PRIMITIVE:
+      path==1?GML_RENDER_SCENE_SPRITE:GML_RENDER_SCENE_SURFACE;
+    uint64_t cpu_draws=0;
+    /* The seed clear is replayed separately from the ordinary drawing call. */
+    for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+      if(reason!=GML_RENDER_DISPATCH_REPLAY) cpu_draws+=dispatch.cpu[family][reason];
+    if(cpu_draws!=1u || dispatch.gpu[family] || dispatch.unclassified || dispatch.failed)
+      fprintf(stderr,"colour-factor fallback census: path=%d cpu=%llu gpu=%llu replay=%llu unclassified=%llu failed=%llu\n",
+              path,(unsigned long long)cpu_draws,(unsigned long long)dispatch.gpu[family],
+              (unsigned long long)dispatch.cpu[family][GML_RENDER_DISPATCH_REPLAY],
+              (unsigned long long)dispatch.unclassified,(unsigned long long)dispatch.failed);
+    CHECK(cpu_draws==1u && !dispatch.gpu[family] && !dispatch.unclassified && !dispatch.failed);
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int resident_clipped_filtered_background_part_noop(void){
   enum { WIDTH=12,HEIGHT=10,ATLAS=8 };
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
@@ -20800,6 +20856,7 @@ int main(void){
   passed+=resident_outline_coverage_public_order();
   passed+=resident_atlas_uv_refusal_preserves_queued_prefix();
   passed+=resident_application_sprite_cpu_fallback();
+  passed+=resident_source_colour_alpha_cpu_fallback();
   passed+=resident_empty_sprite_preserves_queued_draws();
   passed+=resident_black_additive_sprite_noop();
   passed+=resident_collapsed_additive_sprite_scope();
@@ -21002,6 +21059,6 @@ int main(void){
   passed+=resident_lazy_native_atlas();
   passed+=resident_unit_texel_magnification();
   passed+=opaque_rectangle_clear_complement();
-  printf("render resource cases: passed=%d failed=%d\n",passed,329-passed);
-  return passed==329?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,330-passed);
+  return passed==330?EXIT_SUCCESS:EXIT_FAILURE;
 }
