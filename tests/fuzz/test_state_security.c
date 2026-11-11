@@ -59,6 +59,28 @@ static size_t neutral_vm_body_end(const AnygmEngine *engine,const uint8_t *bytes
   return end-20;
 }
 
+static int neutral_vm_body_end_controls(const AnygmEngine *engine,
+                                        const uint8_t *bytes,size_t size){
+  if(neutral_vm_body_end(engine,bytes,size)==SIZE_MAX)
+    return fail("current neutral VM trailer was not located");
+  uint8_t *candidate=malloc(size);
+  if(!candidate) return fail("neutral trailer control allocation");
+  const uint32_t roots[]={53,54,55,57},vms[]={31,32,34};
+  size_t vm_start=STATE_HEADER_SIZE+(size_t)read_u64(bytes+64)+
+                  (size_t)read_u64(bytes+72);
+  int ok=1;
+  for(unsigned i=0;i<sizeof roots/sizeof roots[0] && ok;i++){
+    memcpy(candidate,bytes,size);write_u32(candidate+4,roots[i]);
+    ok=neutral_vm_body_end(engine,candidate,size)==SIZE_MAX;
+  }
+  for(unsigned i=0;i<sizeof vms/sizeof vms[0] && ok;i++){
+    memcpy(candidate,bytes,size);write_u32(candidate+vm_start+4,vms[i]);
+    ok=neutral_vm_body_end(engine,candidate,size)==SIZE_MAX;
+  }
+  free(candidate);
+  return ok?1:fail("neutral trailer accepted an unsupported layout");
+}
+
 static uint64_t state_checksum(const uint8_t *data,size_t size){
   uint64_t hash=UINT64_C(1469598103934665603);
   while(size>=8){
@@ -1282,6 +1304,7 @@ static int instance_order_state_cases(const AnygmHostServices *services,const An
   for(int i=0;i<engine->vm.inst_count;i++)if(engine->vm.inst[i].obj==0 &&
       (engine->vm.inst[i].active || engine->vm.inst[i].deactivated))members++;
   ok=save_state(engine,&baseline,&size);
+  if(ok)ok=neutral_vm_body_end_controls(engine,baseline,size);
   size_t vm_start=ok?STATE_HEADER_SIZE+(size_t)read_u64(baseline+64)+(size_t)read_u64(baseline+72):0;
   size_t vm_end=ok?neutral_vm_body_end(engine,baseline,size):SIZE_MAX;
   size_t trailer=(3u+(size_t)members)*4u;

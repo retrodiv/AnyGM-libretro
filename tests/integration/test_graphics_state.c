@@ -3806,11 +3806,11 @@ static int presentation_filter_variant(
              cpu.pixels && plain.engine->screen && selected.engine->screen &&
              plain.engine->output_width==selected.engine->output_width &&
              plain.engine->output_height==selected.engine->output_height &&
+             resolve_host_frame(selected.engine,&selected_host,
+                                &selected_host_width,&selected_host_height) &&
              !compare_scene_pixels(plain.engine->screen,selected.engine->screen,
                      (size_t)plain.engine->output_width*plain.engine->output_height*
                      sizeof(uint32_t)) &&
-             resolve_host_frame(selected.engine,&selected_host,
-                                &selected_host_width,&selected_host_height) &&
              selected_host && cpu.width==gpu.width && cpu.height==gpu.height &&
              cpu.width==selected_host_width && cpu.height==selected_host_height &&
              cpu.pitch==(size_t)cpu.width*sizeof(uint32_t) &&

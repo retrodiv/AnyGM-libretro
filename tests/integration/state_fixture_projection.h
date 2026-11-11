@@ -367,8 +367,8 @@ static int fixture_projection_controls(AnygmEngine *engine,const uint8_t *baseli
     free(bytes);engine->vm.script_args[0]=original;gml_values_release_owned(&array,1);
   }
   engine->vm.script_args[0]=original;
-  const uint32_t unknown_roots[]={50,51,52,54};
-  for(unsigned i=0;i<2 && ok;i++){
+  const uint32_t unknown_roots[]={50,51,52,53,54,55,57};
+  for(unsigned i=0;i<sizeof unknown_roots/sizeof unknown_roots[0] && ok;i++){
     uint8_t *bytes=NULL;size_t count=0;
     ok=save_state(engine,&bytes,&count);
     if(ok){
