@@ -3410,7 +3410,14 @@ unsigned gml_gpu_opengl_prepare_fixed_scene_draws(GmlGpuBackend *backend,GLuint 
     vertex[4]=vertex[5]=vertex[6]=vertex[7]=vertex[8]=1.0f;
     vertex[14]=vertex[15]=vertex[16]=vertex[17]=1.0f;
   }
-  static const struct {
+  const GmlRenderDrawStateSnapshot destination_colour_add={
+    .rgb_source_factor=GML_RENDER_BLEND_DESTINATION_COLOUR,
+    .rgb_destination_factor=GML_RENDER_BLEND_DESTINATION_COLOUR,
+    .alpha_source_factor=GML_RENDER_BLEND_DESTINATION_COLOUR,
+    .alpha_destination_factor=GML_RENDER_BLEND_DESTINATION_COLOUR,
+    .rgb_equation=GML_RENDER_BLEND_ADD,.alpha_equation=GML_RENDER_BLEND_ADD
+  };
+  const struct {
     uint32_t filter;
     int blend;
     uint32_t mask;
@@ -3422,8 +3429,16 @@ unsigned gml_gpu_opengl_prepare_fixed_scene_draws(GmlGpuBackend *backend,GLuint 
     {34u,3,15u,-1,0}, /* Rectangle with destination alpha writes. */
     {35u,3,7u,-1,0},  /* Rectangle colour. */
     {36u,0,8u,-1,0},  /* Rectangle covered alpha. */
+    {43u,0,15u,0,1},  /* Unblended integer-tinted texture. */
+    {51u,qualified_blend(&destination_colour_add),15u,0,1},
     {53u,1,7u,0,1},   /* Identity surface colour. */
-    {55u,0,8u,0,1}    /* Identity surface covered alpha. */
+    {55u,0,8u,0,1},   /* Identity surface covered alpha. */
+    {26u,0,8u,0,1},   /* Clamped tinted texture covered alpha. */
+    {38u,3,15u,0,1},  /* White-tinted texture with rounded modulation. */
+    {40u,1,7u,0,1},   /* Integer-tinted texture colour. */
+    {41u,0,8u,0,1},   /* Integer-tinted texture covered alpha. */
+    {79u,3,15u,0,1},  /* Plain native sprite. */
+    {84u,3,15u,0,1}   /* Flat integer-tinted texture. */
   };
   unsigned draws=0;
   for(unsigned i=0;i<sizeof passes/sizeof passes[0];i++)

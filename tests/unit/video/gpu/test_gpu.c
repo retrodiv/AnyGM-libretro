@@ -253,8 +253,14 @@ static int integer_presentation_shift_case(void){
   return 1;
 }
 
-static const uint32_t prepared_gles_filters[]={GL_SCENE_NATIVE_TEXTURE_SURFACE_NEAREST_FILTER,
-  GL_SCENE_NATIVE_TEXTURE_SURFACE_LINEAR_FILTER,34u,35u,36u,53u,55u};
+static const struct { uint32_t filter; int flags; } prepared_gles_filters[]={
+  {GL_SCENE_NATIVE_TEXTURE_SURFACE_NEAREST_FILTER,0},
+  {GL_SCENE_NATIVE_TEXTURE_SURFACE_LINEAR_FILTER,0},
+  {34u,0},{35u,0},{36u,0},{43u,0},{51u,0},{53u,0},{55u,0},
+  {26u,GL_SCENE_NATIVE_PLAIN},
+  {38u,GL_SCENE_NATIVE_PLAIN|GL_SCENE_NATIVE_WHITE_TINT},
+  {40u,0},{41u,0},{79u,GL_SCENE_NATIVE_PLAIN},{84u,0}
+};
 enum { PREPARED_GLES_FIXED_DRAWS=sizeof prepared_gles_filters/sizeof prepared_gles_filters[0],
        PREPARED_GLES_SCENE_DRAWS=1+PREPARED_GLES_FIXED_DRAWS };
 
@@ -281,7 +287,8 @@ static int scene_preparation_case(void){
     REQUIRE(anygm_test_graphics_compile_calls()==compiles+preparation_compiles,
             "composition, fixed font and prepared scene programs compile once");
     for(unsigned i=0;i<fixed_draws;i++)
-      REQUIRE(gml_gpu_opengl_scene_draw_program(gpu->backend,prepared_gles_filters[i],0,NULL,0) &&
+      REQUIRE(gml_gpu_opengl_scene_draw_program(gpu->backend,prepared_gles_filters[i].filter,
+                prepared_gles_filters[i].flags,NULL,0) &&
               anygm_test_graphics_compile_calls()==compiles+preparation_compiles,
               "ordinary scene draws reuse the exact prepared programs");
     texture=anygm_test_graphics_first_texture_with_format(GL_RGBA8);

@@ -13,7 +13,7 @@
 
 /* All fake GL object types share a name sequence. Scene programs can consume
  * names before the first content texture is allocated. */
-enum { FAKE_MAX_TEXTURES=64,FAKE_MAX_CALLS=4096,FAKE_MAX_PIXELS=1u<<16,
+enum { FAKE_MAX_TEXTURES=128,FAKE_MAX_CALLS=4096,FAKE_MAX_PIXELS=1u<<16,
        FAKE_TEXTURE_UNITS=4 };
 
 typedef struct FakeTexture {
