@@ -33,6 +33,66 @@ static int tilemap_pixel_cell(GmlVM *vm,GmlTileMap *tm,double x,double y,int *cx
      column>=tm->cols || row>=tm->rows) return 0;
   *cx=(int)column; *cy=(int)row; return 1;
 }
+static int layer_instance_present(const GmlVM *vm,const GmlInstance *instance){
+  return (instance->active || instance->deactivated) && !instance->marked &&
+         instance->room_owner==vm->room_index;
+}
+static GmlInstance *layer_element_instance(GmlVM *vm,const GmlRtElem *element){
+  if(!element || element->type!=GML_LAYER_ELEMENT_INSTANCE ||
+     element->instance_slot<0 || element->instance_slot>=vm->inst_count) return NULL;
+  GmlInstance *instance=&vm->inst[element->instance_slot];
+  return layer_instance_present(vm,instance) && instance->id==(uint32_t)element->instance_id
+    ?instance:NULL;
+}
+static GmlRtLayer *instance_element_layer(GmlVM *vm,const GmlRtElem *element){
+  GmlInstance *instance=layer_element_instance(vm,element);
+  return instance && instance->draw_layer_order>=0
+    ?gml_rt_layer_find_by_order(vm,instance->draw_layer_order):NULL;
+}
+static GmlVal layer_elements(GmlVM *vm,GmlRtLayer *layer){
+  GmlVal result=gml_arr_new(0,vreal(0));
+  if(!layer || !result.arr) return result;
+  int *instance_elements=NULL;
+  for(int slot=0;slot<vm->inst_count;slot++){
+    const GmlInstance *instance=&vm->inst[slot];
+    if(layer_instance_present(vm,instance) && instance->draw_layer_order==layer->order){
+      instance_elements=calloc((size_t)vm->inst_count,sizeof *instance_elements);
+      break;
+    }
+  }
+  for(int i=0;i<vm->n_rte;i++){
+    GmlRtElem *element=&vm->rte[i];
+    if(!element->used) continue;
+    if(element->type==GML_LAYER_ELEMENT_INSTANCE){
+      GmlInstance *instance=layer_element_instance(vm,element);
+      if(!instance) element->used=0;
+      else if(instance_elements && instance->draw_layer_order==layer->order)
+        instance_elements[element->instance_slot]=element->id;
+    }else if(element->layer==layer->id){
+      gml_arr_set(result,gml_val_array_length(result),vreal(element->id));
+    }
+  }
+  if(instance_elements) for(int slot=0;slot<vm->inst_count;slot++){
+    GmlInstance *instance=&vm->inst[slot];
+    if(!layer_instance_present(vm,instance) || instance->draw_layer_order!=layer->order) continue;
+    int id=instance_elements[slot];
+    if(!id){
+      /* Keep instance element IDs in the same namespace as the other elements.
+       * Mint them on enumeration and retain them in the serialized element table. */
+      GmlRtElem *element=gml_rt_elem_new(vm);
+      if(!element) break;
+      element->type=GML_LAYER_ELEMENT_INSTANCE;
+      element->layer=layer->id;
+      element->instance_id=(int)instance->id;
+      element->instance_slot=slot;
+      element->visible=0;
+      id=element->id;
+    }
+    gml_arr_set(result,gml_val_array_length(result),vreal(id));
+  }
+  free(instance_elements);
+  return result;
+}
 int builtin_layer_exact(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out){
   if(!vm || !nm || !out) return 0;
   if(!strcmp(nm,"layer_create")){
@@ -48,8 +108,15 @@ int builtin_layer_exact(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out
   }
   if(!strcmp(nm,"layer_destroy")){
     GmlRtLayer *l=gml_rt_layer_find(vm,(int)N(a,n,0));
-    if(l){ for(int i=0;i<vm->n_rte;i++) if(vm->rte[i].used && vm->rte[i].layer==l->id) vm->rte[i].used=0;
-      l->used=0; }
+    if(l){
+      for(int i=0;i<vm->n_rte;i++){
+        GmlRtElem *element=&vm->rte[i];
+        if(!element->used) continue;
+        if(element->type==GML_LAYER_ELEMENT_INSTANCE
+             ?instance_element_layer(vm,element)==l:element->layer==l->id) element->used=0;
+      }
+      l->used=0;
+    }
     *out=vreal(0); return 1;
   }
   if(!strcmp(nm,"layer_get_all")){
@@ -74,17 +141,26 @@ int builtin_layer_exact(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out
     *out=value; return 1;
   }
   if(!strcmp(nm,"layer_get_all_elements")){
-    int lid=(int)N(a,n,0), cnt=0;
-    for(int i=0;i<vm->n_rte;i++) if(vm->rte[i].used && vm->rte[i].layer==lid) cnt++;
-    GmlVal v=arr_newv(cnt); if(v.t!=V_ARR){ *out=v; return 1; }
-    GmlArr *A=(GmlArr*)v.arr; int k=0;
-    for(int i=0;i<vm->n_rte;i++) if(vm->rte[i].used && vm->rte[i].layer==lid) A->data[k++]=vreal(vm->rte[i].id);
-    *out=v; return 1;
+    double handle=N(a,n,0);
+    GmlRtLayer *layer=n>0 && (a[0].t==V_STR || (handle>=0 && handle<=INT_MAX))
+      ?rt_layer_resolve(vm,a,n):NULL;
+    *out=layer_elements(vm,layer); return 1;
   }
-  if(!strcmp(nm,"layer_get_element_type")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0));
-    *out=vreal(e?e->type:-1); return 1; }
-  if(!strcmp(nm,"layer_get_element_layer")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0));
-    *out=vreal(e?e->layer:-1); return 1; }
+  if(!strcmp(nm,"layer_get_element_type") || !strcmp(nm,"layer_get_element_layer") ||
+     !strcmp(nm,"layer_instance_get_instance")){
+    double handle=N(a,n,0);
+    GmlRtElem *element=n>0 && handle>=0 && handle<=INT_MAX
+      ?gml_rt_elem_find_any(vm,(int)handle):NULL;
+    GmlRtLayer *owner=instance_element_layer(vm,element);
+    if(!strcmp(nm,"layer_instance_get_instance")){
+      *out=vreal(owner?(double)(uint32_t)element->instance_id:-4); return 1;
+    }
+    if(element && element->type==GML_LAYER_ELEMENT_INSTANCE && !owner) element=NULL;
+    if(!strcmp(nm,"layer_get_element_type")){
+      *out=vreal(element?element->type:-1); return 1;
+    }
+    *out=vreal(owner?owner->id:element?element->layer:-1); return 1;
+  }
   if(!strcmp(nm,"layer_get_depth")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n); *out=vreal(l?l->depth:0); return 1; }
   if(!strcmp(nm,"layer_depth")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n);
     double depth=layer_depth_argument(N(a,n,1));

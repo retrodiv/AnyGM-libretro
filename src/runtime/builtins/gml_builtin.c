@@ -329,9 +329,15 @@ void rt_layer_touch(GmlVM *vm, GmlRtLayer *l){
    long fin=vm->frame - vm->room_enter_frame; if(fin<0) fin=0;
   l->x += l->hs*fin; l->y += l->vs*fin; l->touched=1;
 }
-GmlRtElem *gml_rt_elem_find(GmlVM *vm, int id){
+GmlRtElem *gml_rt_elem_find_any(GmlVM *vm, int id){
   for(int i=0;i<vm->n_rte;i++) if(vm->rte[i].used && vm->rte[i].id==id) return &vm->rte[i];
   return NULL;
+}
+GmlRtElem *gml_rt_elem_find(GmlVM *vm, int id){
+  /* Asset and legacy tile adapters can write fields that hold instance
+   * identity in instance elements. Only generic layer queries expose those. */
+  GmlRtElem *element=gml_rt_elem_find_any(vm,id);
+  return element && element->type!=GML_LAYER_ELEMENT_INSTANCE?element:NULL;
 }
 GmlRtLayer *gml_rt_layer_new(GmlVM *vm){
   int slot=-1;

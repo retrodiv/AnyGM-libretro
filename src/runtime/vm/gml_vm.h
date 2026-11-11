@@ -151,8 +151,12 @@ typedef struct { int id, used, visible, touched, order, script_begin, script_end
  * drawing and pixel lookup add the current parent offset. Immutable cell bytes
  * remain content-owned until a cell mutation creates an owned copy. */
 typedef struct { int id, used, visible, order; double x, y, depth; int tileset, tw, th, cols, rows; const unsigned char *tiles, *base_tiles; unsigned char *owned_tiles, *decoded_tiles; char name[32]; } GmlTileMap;
-typedef struct { int id, used, layer, type;         /* type: 7=tile, 3=sprite, 1=background (layerelementtype_*) */
-  int sprite; double x, y; int sx, sy, w, h;        /* sx/sy/w/h = source region (tiles) */
+enum { GML_LAYER_ELEMENT_INSTANCE=2 };
+typedef struct { int id, used, layer, type;         /* layerelementtype_* */
+  union { int sprite, instance_id; };
+  double x, y;
+  union { int sx, instance_slot; };
+  int sy, w, h;                                    /* sx/sy/w/h = source region (tiles) */
   double xs, ys, alpha; int visible; uint32_t blend;
   int htiled, vtiled, stretch;                      /* background-element extras */
   /* Room-authored elements use the name. Type 9 elements are created unnamed,

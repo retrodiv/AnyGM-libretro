@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "gml_builtin.h"
+#include "gml_vm_internal.h"
 #include "gml_particle.h"
 #include "gml_render_internal.h"
 #include "anygm_test_runner.h"
@@ -520,6 +521,80 @@ static int forced_layer_depth_case(void){
   if(ok) puts("forced layer depth: default, signed value, toggle and restore passed");
   return ok;
 }
+static int layer_instance_elements_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlWin win={.bytecode=17};
+    GmlVM vm={.win=&win,.inst_cap=8,.n_objects=1,.next_id=100000};
+    vm.inst=calloc((size_t)vm.inst_cap,sizeof *vm.inst);
+    vm.objects=calloc(1,sizeof *vm.objects);
+    vm.particles=gml_particle_state_create(&vm);
+    gml_vm_software3d_reset(&vm);
+    if(!vm.inst || !vm.objects || !vm.particles){ gml_vm_free(&vm); return 0; }
+    vm.objects[0]=(GmlObject){.name="entity",.sprite_index=-1,.mask_index=-1,.parent=-1,.visible=1};
+    GmlVal layer_args[]={vreal(20),vstr("source")};
+    GmlVal source=query(&vm,"layer_create",layer_args,2,cached,&ok);
+    layer_args[1]=vstr("destination");
+    GmlVal destination=query(&vm,"layer_create",layer_args,2,cached,&ok);
+    GmlRtElem *visual=gml_rt_elem_new(&vm);
+    if(!visual){ gml_vm_free(&vm); return 0; }
+    visual->type=3; visual->layer=(int)source.d;
+    GmlVal visual_id=vreal(visual->id);
+    GmlVal spawn[]={vreal(3),vreal(5),source,vreal(0)};
+    GmlVal instance=query(&vm,"instance_create_layer",spawn,4,cached,&ok);
+    GmlVal source_name=vstr("source");
+    GmlVal elements=query(&vm,"layer_get_all_elements",&source_name,1,cached,&ok);
+    GmlVal element=gml_arr_get(elements,1);
+    const char *get_instance="layer_instance_get_instance";
+    ok &= gml_val_array_length(elements)==2 && real_is(gml_arr_get(elements,0),visual_id.d);
+    ok &= element.t==V_REAL && element.d>0 && element.d!=instance.d;
+    ok &= real_is(query(&vm,"layer_get_element_type",&element,1,cached,&ok),2);
+    ok &= real_is(query(&vm,"layer_get_element_layer",&element,1,cached,&ok),source.d);
+    ok &= real_is(query(&vm,get_instance,&element,1,cached,&ok),instance.d);
+    ok &= real_is(query(&vm,get_instance,&visual_id,1,cached,&ok),-4);
+    ok &= real_is(query(&vm,get_instance,&instance,1,cached,&ok),-4);
+    gml_values_release_owned(&elements,1);
+    GmlVal region[]={element,vreal(20),vreal(30),vreal(4),vreal(4)};
+    query(&vm,"layer_tile_region",region,5,cached,&ok);
+    ok &= real_is(query(&vm,get_instance,&element,1,cached,&ok),instance.d);
+
+    GmlVal assignment[]={destination,instance};
+    query(&vm,"layer_add_instance",assignment,2,cached,&ok);
+    query(&vm,"layer_destroy",&source,1,cached,&ok);
+    elements=query(&vm,"layer_get_all_elements",&destination,1,cached,&ok);
+    ok &= gml_val_array_length(elements)==1 && real_is(gml_arr_get(elements,0),element.d);
+    ok &= real_is(query(&vm,"layer_get_element_layer",&element,1,cached,&ok),destination.d);
+    gml_values_release_owned(&elements,1);
+    query(&vm,"instance_deactivate_layer",&destination,1,cached,&ok);
+    ok &= real_is(query(&vm,get_instance,&element,1,cached,&ok),instance.d);
+    query(&vm,"instance_activate_layer",&destination,1,cached,&ok);
+
+    size_t size=gml_vm_state_size(&vm),written=0,used=0;
+    void *state=malloc(size);
+    int saved=state && gml_vm_state_save(&vm,state,size,&written);
+    query(&vm,"layer_destroy",&destination,1,cached,&ok);
+    ok &= real_is(query(&vm,get_instance,&element,1,cached,&ok),-4);
+    ok &= saved && gml_vm_state_load(&vm,state,written,&used) && used==written;
+    free(state);
+    ok &= real_is(query(&vm,get_instance,&element,1,cached,&ok),instance.d);
+    GmlInstance *live=gml_vm_instance_by_id(&vm,instance.d);
+    if(!live){ gml_vm_free(&vm); return 0; }
+    gml_instance_destroy(&vm,live);
+    gml_vm_instances_reap(&vm);
+    spawn[2]=destination;
+    GmlVal replacement=query(&vm,"instance_create_layer",spawn,4,cached,&ok);
+    ok &= vm.inst_count==1 && replacement.d!=instance.d;
+    ok &= real_is(query(&vm,get_instance,&element,1,cached,&ok),-4);
+    elements=query(&vm,"layer_get_all_elements",&destination,1,cached,&ok);
+    GmlVal new_element=gml_arr_get(elements,0);
+    ok &= gml_val_array_length(elements)==1 && new_element.d!=element.d;
+    ok &= real_is(query(&vm,get_instance,&new_element,1,cached,&ok),replacement.d);
+    gml_values_release_owned(&elements,1);
+    gml_vm_free(&vm);
+  }
+  if(ok) puts("layer instance elements: discovery, identity, movement, restore and expiry passed");
+  return ok;
+}
 static int alpha_case(void){
   GmlRender render={0}; GmlVM vm={.render=&render}; int ok=1;
   for(int enabled=1;enabled>=0;enabled--){
@@ -906,6 +981,7 @@ int main(int argc,char **argv){
     {"explicit_default_speed",explicit_default_speed_case},{"circle_precision",circle_case},
     {"application_surface_lifetime",application_surface_lifetime_case},{"shader_asset_names",shader_case},
     {"all_live_layers_at_depth",layers_case},{"forced_layer_depth",forced_layer_depth_case},
+    {"layer_instance_elements",layer_instance_elements_case},
     {"retired_alpha_controls",alpha_case},
     {"integer_layer_depth",layer_integer_depth_case},{"alpha_reference_bounds",alpha_reference_bounds_case},
     {"background_source_region",background_part_case},{"background_name_alias",background_names_case},

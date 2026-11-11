@@ -442,6 +442,7 @@ GmlVal builtin_ini_open_file(GmlVM *vm, GmlVal *args, int count);
 GmlVal builtin_file_text_open_read(GmlVM *vm, GmlVal *args, int count);
 GmlVal builtin_file_text_read_string(GmlVM *vm, GmlVal *args, int count);
 GmlVal builtin_file_text_readln(GmlVM *vm, GmlVal *args, int count);
+GmlRtElem *gml_rt_elem_find_any(GmlVM *vm,int id);
 int builtin_layer_exact(GmlVM *vm, const char *name, GmlVal *args,
                         int count, GmlVal *result);
 GmlVal builtin_skeleton(GmlVM *vm, const char *name,
