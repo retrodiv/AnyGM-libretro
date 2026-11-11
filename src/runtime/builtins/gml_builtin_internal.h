@@ -167,6 +167,7 @@ struct GmlBuiltinState {
   int file_find_index;
   double gamepad_deadzone[GML_GP_MAX_DEV];
   unsigned char gamepad_deadzone_set[GML_GP_MAX_DEV];
+  double gamepad_button_threshold[GML_GP_MAX_DEV];
   char string_ring[8][64];
   unsigned string_ring_index;
   GmlFallbackAudioEvent fallback_audio_event[512];

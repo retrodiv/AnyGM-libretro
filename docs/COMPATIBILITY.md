@@ -178,3 +178,14 @@ fallback in the OpenGL fallback renderer. Device execution of those tuples remai
 State push/pop and the current save-state format retain the active tuple and equations.
 Invalid, nonintegral or nonfinite factors and short arrays leave the selected mode unchanged;
 this invalid-input policy is not a measured native-runner exception contract.
+
+## Gamepad button threshold configuration
+
+`gamepad_get_button_threshold` reads the selected logical device's configuration,
+initially `0.5`. The matching setter retains independent values in `0..1`; Reset
+restores defaults and current save states retain all sixteen slots. Out-of-range
+finite thresholds clamp; missing/nonfinite setter arguments leave state unchanged.
+Invalid getter slots return the default. These invalid-input policies are not a
+measured native-runner exception contract. The normalized frontend currently supplies
+digital button values, so this configuration adds no analogue button transport and
+does not change the existing digital held/pressed/released or raw-value paths.

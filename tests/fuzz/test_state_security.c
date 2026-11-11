@@ -1358,6 +1358,40 @@ static int emitter_state_cases(AnygmEngine *engine){
   return ok;
 }
 
+static int gamepad_threshold_state_cases(AnygmEngine *engine){
+  uint8_t pattern[16*8];
+  for(int device=0;device<16;device++){
+    double value=(device+1)/32.0;write_double(pattern+device*8,value);
+    gml_builtin_call(&engine->vm,"gamepad_set_button_threshold",(GmlVal[]){vreal(device),vreal(value)},2);
+  }
+  uint8_t *baseline=NULL,*candidate=NULL;size_t size=0;
+  int ok=save_state(engine,&baseline,&size);
+  candidate=ok?malloc(size):NULL;ok=ok && candidate;
+  size_t start=ok?112+(size_t)read_u64(baseline+64)+(size_t)read_u64(baseline+72):0;
+  size_t length=ok?(size_t)read_u64(baseline+80):0,at=0;int matches=0;
+  for(size_t i=start;ok && i+sizeof pattern<=start+length;i++)
+    if(!memcmp(baseline+i,pattern,sizeof pattern)){at=i;matches++;}
+  ok=ok && matches==1;
+  gml_builtin_call(&engine->vm,"gamepad_set_button_threshold",(GmlVal[]){vreal(0),vreal(1)},2);
+  if(ok)ok=anygm_state_load(engine,baseline,size)==ANYGM_OK && engine_matches(engine,baseline,size);
+  for(int device=0;device<16 && ok;device++){
+    GmlVal value=gml_builtin_call(&engine->vm,"gamepad_get_button_threshold",(GmlVal[]){vreal(device)},1);
+    ok=value.t==V_REAL && value.d==(device+1)/32.0;
+  }
+  const double invalid[]={NAN,INFINITY,-0.25,1.25};
+  const unsigned slots[]={0,7,15};
+  for(unsigned i=0;i<sizeof slots/sizeof slots[0] && ok;i++)
+  for(unsigned j=0;j<sizeof invalid/sizeof invalid[0] && ok;j++){
+    memcpy(candidate,baseline,size);write_double(candidate+at+slots[i]*8u,invalid[j]);refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,size,baseline,size,"invalid gamepad threshold rollback");
+  }
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,4,49,"previous threshold-free root schema");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,start+4,28,"previous threshold-free VM schema");
+  free(candidate);free(baseline);
+  if(ok)puts("gamepad threshold state: sixteen slots, finite domain, exact continuation and transactional rollback passed");
+  return ok?1:fail("gamepad threshold state failed");
+}
+
 static int blend_state_cases(AnygmEngine *engine){
   GmlVM *vm=&engine->vm;
   GmlVal stacked[]={vreal(2),vreal(1),vreal(1),vreal(2)};
@@ -1534,7 +1568,15 @@ int main(void){
   StateCursor timeline_cursor={baseline,state_size,timeline_table,1};
   if(engine->vm.n_timelines || cursor_u32(&timeline_cursor)!=0)
     ok=fail("path mutation fixture requires an empty timeline table");
-  size_t path_table=timeline_table-12-path_record_size;
+  /* Threshold configuration now separates paths from timelines. Verify the
+   * fixture's neutral cells before retaining every existing path mutation. */
+  const size_t threshold_bytes=16u*8u;
+  if(timeline_table<vm_start+threshold_bytes+12+path_record_size)
+    ok=fail("path mutation fixture has no threshold extent");
+  for(unsigned i=0;i<16u && ok;i++)
+    if(read_u64(baseline+timeline_table-threshold_bytes+i*8u)!=UINT64_C(0x3fe0000000000000))
+      ok=fail("path mutation fixture requires default thresholds");
+  size_t path_table=ok?timeline_table-threshold_bytes-12-path_record_size:0;
   StateCursor path_cursor={baseline,state_size,path_table,1};
   if(cursor_u32(&path_cursor)!=1 || cursor_u32(&path_cursor)!=0 ||
      cursor_u32(&path_cursor)!=1 || cursor_u32(&path_cursor)!=0)
@@ -1750,6 +1792,7 @@ int main(void){
   if(ok) ok=content_override_state_cases(&services,&fixture);
   if(ok) ok=emitter_state_cases(engine);
   if(ok) ok=blend_state_cases(engine);
+  if(ok) ok=gamepad_threshold_state_cases(engine);
 
   free(candidate);
   free(baseline);

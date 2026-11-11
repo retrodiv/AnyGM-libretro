@@ -1015,6 +1015,50 @@ static double two_pads_axis(void *userdata,int device,int axis){
   return 0.0;
 }
 
+static int gamepad_threshold_contract(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlWin win={.bytecode=17};GmlVM vm={.win=&win},other={.win=&win};
+    int get=gml_builtin_fast_id(&vm,"gamepad_get_button_threshold");
+    int set=gml_builtin_fast_id(&vm,"gamepad_set_button_threshold");
+    ok=ok && get>=0 && set>=0;
+    for(int device=0;device<16 && ok;device++){
+      GmlVal args[]={vreal(device),vreal((device+1)/32.0)};
+      GmlVal initial=cached?gml_builtin_call_fast_id(&vm,get,"gamepad_get_button_threshold",args,1):
+        gml_builtin_call(&vm,"gamepad_get_button_threshold",args,1);
+      ok=expect_real("threshold default",initial,0.5) && ok;
+      if(cached)gml_builtin_call_fast_id(&vm,set,"gamepad_set_button_threshold",args,2);
+      else gml_builtin_call(&vm,"gamepad_set_button_threshold",args,2);
+      GmlVal changed=cached?gml_builtin_call_fast_id(&vm,get,"gamepad_get_button_threshold",args,1):
+        gml_builtin_call(&vm,"gamepad_get_button_threshold",args,1);
+      ok=expect_real("device threshold",changed,args[1].d) &&
+        expect_real("VM threshold isolation",gml_builtin_call(&other,"gamepad_get_button_threshold",args,1),0.5) && ok;
+    }
+    const double values[]={-1,2,NAN,INFINITY,-INFINITY};
+    const double expected[]={0,1,1,1,1};
+    for(unsigned i=0;i<sizeof values/sizeof values[0] && ok;i++){
+      GmlVal args[]={vreal(0),vreal(values[i])};
+      gml_builtin_call(&vm,"gamepad_set_button_threshold",args,2);
+      ok=expect_real("threshold finite bounds",gml_builtin_call(&vm,"gamepad_get_button_threshold",args,1),expected[i]);
+    }
+    const double invalid[]={-1,16,NAN,INFINITY};
+    for(unsigned i=0;i<sizeof invalid/sizeof invalid[0] && ok;i++){
+      GmlVal args[]={vreal(invalid[i]),vreal(0.25)};
+      gml_builtin_call(&vm,"gamepad_set_button_threshold",args,2);
+      ok=expect_real("invalid device threshold",gml_builtin_call(&vm,"gamepad_get_button_threshold",args,1),0.5);
+    }
+    gml_builtin_call(&vm,"gamepad_set_button_threshold",NULL,0);
+    gml_builtin_state_reset(vm.builtins);
+    for(int device=0;device<16 && ok;device++){
+      GmlVal arg=vreal(device);
+      ok=expect_real("threshold reset",gml_builtin_call(&vm,"gamepad_get_button_threshold",&arg,1),0.5);
+    }
+    gml_vm_free(&vm);gml_vm_free(&other);
+  }
+  if(ok)puts("gamepad thresholds: named/cached device defaults, mutation, bounds, isolation and reset passed");
+  return ok;
+}
+
 static int a_second_pad_is_its_own_device(GmlVM *vm){
   int (*saved_button)(void*,int,int,int)=vm->input.gamepad;
   int (*saved_connected)(void*,int)=vm->input.gamepad_connected;
@@ -1355,6 +1399,7 @@ int main(int argc,char **argv){
          portable_service_contracts(&vm) &&
          portable_joystick_contract(&vm) &&
          external_joydll_binding_reaches_the_pad(&vm) &&
+         gamepad_threshold_contract() &&
          a_second_pad_is_its_own_device(&vm) &&
          gamepad_axis_orientation_contract(&vm) &&
          digital_pad_reaches_axis_readers(&vm) &&

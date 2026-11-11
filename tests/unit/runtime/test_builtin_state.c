@@ -129,6 +129,8 @@ static int populate_resources(GmlVM *vm,GmlVal *map,GmlVal *list,
   *buffer=call(vm,"buffer_create",&buffer_size,1);
   GmlVal buffer_write[3]={*buffer,vreal(1),vreal(123)};
   (void)call(vm,"buffer_write",buffer_write,3);
+  call(vm,"gamepad_set_button_threshold",(GmlVal[]){vreal(0),vreal(0.125)},2);
+  call(vm,"gamepad_set_button_threshold",(GmlVal[]){vreal(15),vreal(0.875)},2);
   return 1;
 }
 
@@ -136,6 +138,10 @@ static int verify_restored_resources(GmlVM *vm,GmlVal map,GmlVal list,
                                      GmlVal grid,GmlVal emitter,GmlVal timer,
                                      GmlVal buffer){
   int ok=1;
+  ok=expect_real(call(vm,"gamepad_get_button_threshold",(GmlVal[]){vreal(0)},1),0.125,
+                 "restored first threshold") &&
+     expect_real(call(vm,"gamepad_get_button_threshold",(GmlVal[]){vreal(15)},1),0.875,
+                 "restored last threshold");
   GmlVal ini_read[3]={vstr("state"),vstr("name"),vstr("missing")};
   GmlVal ini_value=call(vm,"ini_read_string",ini_read,3);
   ok=ok && ini_value.t==V_STR && ini_value.s &&
@@ -566,6 +572,8 @@ int main(void){
   gml_builtin_state_reset(vm.builtins);
   GmlVal zero_type=vreal(0);
   int reset_ok=gml_builtin_ini_entry_count(&vm)==0 &&
+    expect_real(call(&vm,"gamepad_get_button_threshold",(GmlVal[]){vreal(0)},1),0.5,
+                "reset button threshold") &&
     expect_real(call(&vm,"ds_exists",(GmlVal[]){map,zero_type},2),0,
                 "reset ds_map") &&
     expect_real(call(&vm,"audio_emitter_exists",&emitter,1),0,

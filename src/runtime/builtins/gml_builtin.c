@@ -1411,7 +1411,19 @@ int builtin_input_kbgp(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out)
     int device=n>0 && isfinite(index) && index>=0 && index<GML_GP_MAX_DEV?(int)index:-1;
     *out=vreal(gp_deadzone_get(vm,device)); return 1;
   }
-  if(!strcmp(nm,"gamepad_set_button_threshold")){ *out=vreal(0); return 1; }
+  if(!strcmp(nm,"gamepad_get_button_threshold") || !strcmp(nm,"gamepad_set_button_threshold")){
+    GmlBuiltinState *state=builtin_state_ensure(vm);
+    double slot=N(a,n,0);
+    int device=n>0 && isfinite(slot) && slot>=0 && slot<GML_GP_MAX_DEV?(int)slot:-1;
+    int setter=!strcmp(nm,"gamepad_set_button_threshold");
+    if(setter && state && device>=0 && n>=2){
+      double threshold=N(a,n,1);
+      if(isfinite(threshold))state->gamepad_button_threshold[device]=
+        threshold<0?0:threshold>1?1:threshold;
+    }
+    *out=vreal(setter?0:state && device>=0?state->gamepad_button_threshold[device]:0.5);
+    return 1;
+  }
   if(!strcmp(nm,"gamepad_set_vibration")){
     gml_input_gamepad_set_vibration(vm,(int)N(a,n,0), N(a,n,1), N(a,n,2));
     *out=vreal(0); return 1;

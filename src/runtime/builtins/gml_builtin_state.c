@@ -144,6 +144,7 @@ static void builtin_state_resource_defaults(GmlBuiltinState *state){
   state->time_source_game_state=1;
   state->listener_forward_z=-1;
   state->listener_up_y=1;
+  for(int i=0;i<GML_GP_MAX_DEV;i++)state->gamepad_button_threshold[i]=0.5;
 }
 
 GmlBuiltinState *gml_builtin_state_create(GmlVM *vm){
@@ -516,6 +517,7 @@ void gml_builtin_state_reset(GmlBuiltinState *state){
   file_find_reset(state);
   memset(state->gamepad_deadzone,0,sizeof(state->gamepad_deadzone));
   memset(state->gamepad_deadzone_set,0,sizeof(state->gamepad_deadzone_set));
+  for(int i=0;i<GML_GP_MAX_DEV;i++)state->gamepad_button_threshold[i]=0.5;
   state->string_ring_index=0;
   memset(state->fallback_audio_event,0,sizeof(state->fallback_audio_event));
   memset(state->fallback_audio_global_parameter,0,
@@ -837,6 +839,24 @@ int gml_builtin_state_read_ini_ds(GmlBuiltinState *state,
 
 /* Preserve live motion-planning grids across state restoration. A grid may have been
  * constructed at runtime and need not be reconstructed after loading a state. */
+void gml_builtin_state_write_gamepad_thresholds(const GmlBuiltinState *state,
+                                               GmlVmStateWriter *writer){
+  for(int i=0;i<GML_GP_MAX_DEV;i++)
+    gml_vm_state_write_real(writer,state->gamepad_button_threshold[i]);
+}
+
+int gml_builtin_state_read_gamepad_thresholds(GmlBuiltinState *state,
+                                              GmlVmStateReader *reader){
+  double thresholds[GML_GP_MAX_DEV];
+  for(int i=0;i<GML_GP_MAX_DEV;i++){
+    thresholds[i]=gml_vm_state_read_real(reader);
+    if(!isfinite(thresholds[i]) || thresholds[i]<0 || thresholds[i]>1)return 0;
+  }
+  if(!gml_vm_state_reader_ok(reader))return 0;
+  memcpy(state->gamepad_button_threshold,thresholds,sizeof thresholds);
+  return 1;
+}
+
 void gml_builtin_state_write_mp_grids(const GmlBuiltinState *state,
                                       GmlVmStateWriter *writer){
   int live=0;

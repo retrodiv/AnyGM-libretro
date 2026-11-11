@@ -660,6 +660,54 @@ done:
   retro_unload_game();retro_deinit();anygm_synthetic_content_destroy(&fixture);return ok;
 }
 
+static int gamepad_thresholds_equal(GmlVM *vm,int defaults){
+  for(int device=0;device<16;device++){
+    GmlVal value=gml_builtin_call(vm,"gamepad_get_button_threshold",(GmlVal[]){vreal(device)},1);
+    if(value.t!=V_REAL || value.d!=(defaults?0.5:device/16.0))return 0;
+  }
+  return 1;
+}
+
+static int run_gamepad_threshold_case(int response){
+  AnygmSyntheticContent fixture={0};Ring ring={0};uint8_t *cold=NULL,*saved=NULL;
+  size_t saved_size=0;int ok=1;
+  negotiation=response;monitor_changed=option_update=0;
+  REQUIRE(anygm_synthetic_tilemap_content_create(&fixture),"create gamepad threshold fixture");
+  retro_set_environment(environment);retro_set_video_refresh(video);retro_init();
+  struct retro_game_info info={fixture.path,NULL,0,NULL};
+  REQUIRE(retro_load_game(&info),"load gamepad threshold fixture");
+  ring.initial=ring.capacity=retro_serialize_size();
+  REQUIRE(ring.capacity>0 && g_libretro.startup_ring_compact,"threshold cold compact policy");
+  ring.bytes=malloc(ring.capacity);cold=malloc(ring.capacity);
+  REQUIRE(ring.bytes && cold && push(&ring),"threshold ring before first frame");
+  memcpy(cold,ring.bytes,ring.initial);retro_run();REQUIRE(push(&ring),"threshold first frame");
+  GmlVM *vm=&g_libretro.engine->vm;
+  for(int device=0;device<16;device++)
+    gml_builtin_call(vm,"gamepad_set_button_threshold",(GmlVal[]){vreal(device),vreal(device/16.0)},2);
+  REQUIRE(gamepad_thresholds_equal(vm,0) && push(&ring),"all thresholds fit cold ring");
+  saved_size=ring.capacity;saved=malloc(saved_size);REQUIRE(saved,"retain threshold snapshot");
+  memcpy(saved,ring.bytes,saved_size);
+  for(int device=0;device<16;device++)
+    gml_builtin_call(vm,"gamepad_set_button_threshold",(GmlVal[]){vreal(device),vreal(0.5)},2);
+  REQUIRE(gamepad_thresholds_equal(vm,1) && push(&ring),"changed threshold push");
+  REQUIRE(retro_unserialize(saved,saved_size) && gamepad_thresholds_equal(&g_libretro.engine->vm,0),
+          "rewind restores all device thresholds");
+  monitor_changed=option_update=1;retro_run();REQUIRE(push(&ring),"threshold ring after geometry");
+  retro_reset();REQUIRE(gamepad_thresholds_equal(&g_libretro.engine->vm,1) && push(&ring),"Reset defaults thresholds");
+  REQUIRE(retro_unserialize(saved,saved_size)==(response>0),"threshold Reset fixed/variable policy");
+  retro_run();REQUIRE(push(&ring),"threshold first reset frame");
+  REQUIRE(retro_unserialize(saved,saved_size) && gamepad_thresholds_equal(&g_libretro.engine->vm,0) && push(&ring),
+          "threshold restore after Reset");
+  REQUIRE(retro_unserialize(cold,ring.initial) && gamepad_thresholds_equal(&g_libretro.engine->vm,1) && push(&ring),
+          "cold restore removes threshold edits");
+  REQUIRE(ring.accepted==9 && ring.rejected==0,"every threshold frontend push accepted");
+  printf("gamepad threshold frontend: negotiation=%d cold=%zu final=%zu accepted=%u rejected=%u\n",
+         response,ring.initial,ring.capacity,ring.accepted,ring.rejected);
+done:
+  free(cold);free(saved);free(ring.bytes);
+  retro_unload_game();retro_deinit();anygm_synthetic_content_destroy(&fixture);return ok;
+}
+
 int main(void){
   for(int response=-1;response<=1;response++) if(!run_case(response)) return 1;
   for(int response=-1;response<=1;response++) if(!run_ds_case(response)) return 1;
@@ -668,5 +716,6 @@ int main(void){
   for(int response=-1;response<=1;response++) if(!run_music_case(response)) return 1;
   for(int response=-1;response<=1;response++) if(!run_emitter_case(response)) return 1;
   for(int response=-1;response<=1;response++) if(!run_blend_case(response)) return 1;
+  for(int response=-1;response<=1;response++) if(!run_gamepad_threshold_case(response)) return 1;
   return 0;
 }

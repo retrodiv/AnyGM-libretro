@@ -36,6 +36,10 @@ void gml_builtin_state_write_ini_ds(const GmlBuiltinState *state,
                                     GmlVmStateWriter *writer);
 int gml_builtin_state_read_ini_ds(GmlBuiltinState *state,
                                   GmlVmStateReader *reader);
+void gml_builtin_state_write_gamepad_thresholds(const GmlBuiltinState *state,
+                                               GmlVmStateWriter *writer);
+int gml_builtin_state_read_gamepad_thresholds(GmlBuiltinState *state,
+                                              GmlVmStateReader *reader);
 void gml_builtin_state_write_mp_grids(const GmlBuiltinState *state,
                                       GmlVmStateWriter *writer);
 int gml_builtin_state_read_mp_grids(GmlBuiltinState *state,

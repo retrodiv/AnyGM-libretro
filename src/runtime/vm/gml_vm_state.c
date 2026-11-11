@@ -18,7 +18,7 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=28 };
+enum { GML_VM_STATE_SCHEMA=29 };
 enum { STATE_MAX_TILEMAPS=512, STATE_TILEMAP_RECORD_BYTES=56 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 /* IDs are assigned in canonical traversal order, never from addresses. Zero is the null array;
@@ -1871,6 +1871,7 @@ static void sw_vm(StateW *s, GmlVM *vm){
       }
     }
   }
+  gml_builtin_state_write_gamepad_thresholds(builtin_state,s);
   sw_timelines(s,vm);
   sw_object_properties(s,vm);
   sw_instance_order(s,vm);
@@ -2236,6 +2237,9 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
       }
       if(restored_dynamic!=total-authored) s.ok=0;
     }
+  }
+  if(s.ok && !gml_builtin_state_read_gamepad_thresholds(builtin_state,&s)){
+    state_debug(vm,"bad gamepad button thresholds",s.pos,0);s.ok=0;
   }
   int timeline_count=0;
   GmlTimeline *timelines=s.ok?sr_timelines(&s,vm,&timeline_count):NULL;
