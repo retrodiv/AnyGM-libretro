@@ -259,10 +259,34 @@ done:
   free(saved);free(again);close_session(&session);close_session(&second);return ok;
 }
 
+static int action_purity_case(void){
+  MouseSession session={0};int ok=0;uint8_t *before=NULL,*after=NULL;
+  size_t size=0,after_size=0;
+  REQUIRE(open_session(&session));
+  REQUIRE(advance(&session,3,0) && advance(&session,2,0));
+  REQUIRE(observe(&session,2,0,1,"mouse action has held right and released left"));
+  before=save(&session,&size,1);REQUIRE(before);
+  GmlVM *vm=&session.engine->vm;int id=gml_builtin_fast_id(vm,"action_if_mouse");
+  REQUIRE(id>=0);
+  for(int repeat=0;repeat<16;repeat++) for(int button=1;button<=3;button++){
+    GmlVal arg=vreal(button);
+    int expected=button==1 || button==2;
+    GmlVal named=gml_builtin_call(vm,"action_if_mouse",&arg,1);
+    GmlVal cached=gml_builtin_call_fast_id(vm,id,"action_if_mouse",&arg,1);
+    REQUIRE(named.t==V_REAL && named.d==expected && cached.t==V_REAL && cached.d==expected);
+  }
+  REQUIRE(observe(&session,2,0,1,"action queries do not consume held or release observations"));
+  after=save(&session,&after_size,1);
+  REQUIRE(after && after_size==size && !memcmp(before,after,size));
+  ok=1;
+done:
+  free(before);free(after);close_session(&session);return ok;
+}
+
 int main(int argc,char **argv){
   static const AnygmTestCase cases[]={
     {"temporal",temporal_case}, {"isolation",isolation_case},
-    {"restoration",restoration_case}, {"cold_restoration",cold_restoration_case}, {"selectors",selectors_case}
+    {"restoration",restoration_case}, {"cold_restoration",cold_restoration_case}, {"selectors",selectors_case}, {"action_purity",action_purity_case}
   };
   AnygmTestGroup group={"mouse",cases,sizeof cases/sizeof cases[0]};
   AnygmTestResult result={0};

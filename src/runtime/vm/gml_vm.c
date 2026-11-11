@@ -227,16 +227,20 @@ void gml_keyboard_track(GmlVM *vm){
  * button number. Keep both public selectors in the existing globals/state owner. */
 void gml_mouse_track(GmlVM *vm){
   if(!vm) return;
-  int held=0,pressed=0,current=0,next=0,last=0;
-  gml_input_mouse(vm,NULL,NULL,NULL,NULL,NULL,NULL,&held,&pressed,NULL,NULL);
+  int held=0,pressed=0,released=0,current=0,next=0,last=0;
+  gml_input_mouse(vm,NULL,NULL,NULL,NULL,NULL,NULL,&held,&pressed,&released,NULL);
   double previous=gml_global_num(vm,"mouse_button");
   for(int button=1;button<=5;button++){
     if(previous==button) current=button;
     if(pressed & (1<<(button-1))) last=button;
   }
   next=current;
+  /* Classic clears its current selector on any release, even when another button remains
+   * held. Its legacy mouse action also uses this scalar for the no-button selector. */
+  int classic=vm->win && anygm_policy_uses_classic_runtime(vm->win);
+  if(classic && (released || (current && !(held & (1<<(current-1)))))) next=0;
   if(last) next=last;
-  else if(current && !(held & (1<<(current-1)))){
+  else if(!classic && current && !(held & (1<<(current-1)))){
     next=0;
     for(int button=1;button<=5;button++)
       if(held & (1<<(button-1))) next=button;

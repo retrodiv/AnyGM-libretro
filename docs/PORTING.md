@@ -397,10 +397,19 @@ A new adapter is ready when it can:
 
 The input frame carries left, right, middle and two side buttons in that order.
 `mouse_button` reports the most recently pressed button still selected and is
-read-only. Releasing that button selects the highest remaining held button.
+read-only. Studio selects the highest remaining held button when that button is
+released. Classic clears the selector on any release and keeps it clear until
+a new press, even when another button remains held.
 `mouse_lastbutton` retains the last press across release and accepts assignments.
 Clearing the current button resets its selector without erasing the last press.
 The snapshot interface cannot preserve event order inside a poll: simultaneous
 new presses choose the highest button number deterministically. This is a portable
 policy, not a measurement of native event ordering. Both selectors use the existing
 VM globals/state owner in CPU and OpenGL sessions; no drawing fallback is added.
+
+`action_if_mouse` retains the legacy selector domain: one through three test
+left, right and middle across held and release observations. Other finite
+integer selectors test whether `mouse_button` is zero; they are not the
+modern `mb_any` or side-button query meanings. This does not consume an edge
+or alter input. Missing, nonfinite and out-of-range numeric arguments return
+false defensively; native coercion for those arguments is unmeasured.

@@ -68,6 +68,14 @@ GmlVal gml_builtin_try_actions_legacy(GmlVM *vm, const char *nm, GmlVal *a, int 
   /* action_if(expr): D&D single-expression conditional. expr was evaluated on the stack by the
    * bytecode before this call → arg0 is the truth value. Returns the value (0 or 1). */
   if(!strcmp(nm,"action_if")) return vreal(N(a,n,0));
+  if(!strcmp(nm,"action_if_mouse")){
+    double button=N(a,n,0);
+    if(n<1 || !isfinite(button) || button<INT_MIN || button>INT_MAX) return vreal(0);
+    int selector=(int)button;
+    if(selector>=1 && selector<=3)
+      return vreal(mouse_btn_check(vm,selector,0) || mouse_btn_check(vm,selector,2));
+    return vreal(gml_global_num(vm,"mouse_button")==0);
+  }
   /* action_if_variable(var, value, op): the bytecode evaluates the variable before this call, so arg0 is its current value. Use the shared language comparison rather than converting both operands to numbers. */
   if(!strcmp(nm,"action_if_variable")){
     static const int selector[]={CMP_EQ,CMP_LT,CMP_GT,CMP_LTE,CMP_GTE,CMP_NEQ};

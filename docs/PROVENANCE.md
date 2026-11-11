@@ -113,8 +113,8 @@ release evidence. The following SHA-256 directives pin only the two
 first-party files in this repository; `make provenance-check` verifies
 their current bytes.
 
-<!-- PROVENANCE-CHECK: src/runtime/builtins/gml_builtin_registry.h = 747b608a4051858aa993ddbe92d7520688353b570db5c5b3161e533c820f30ca -->
-<!-- PROVENANCE-CHECK: src/generated/gml_builtin_registry_index.h = 997c8ab10505c7aca9e2d482e153820ebeefae752e275af743aab764cacf2751 -->
+<!-- PROVENANCE-CHECK: src/runtime/builtins/gml_builtin_registry.h = c74141b1a69d82ba7975b9b62448bdba81f4621cc82f88ac4af7c8418786cc2c -->
+<!-- PROVENANCE-CHECK: src/generated/gml_builtin_registry_index.h = 13166fd166a08a754806b31a8268f960ec89872c937ad1b522a815940c8103ea -->
 
 ## Audio setup packets
 
@@ -340,3 +340,16 @@ an ordinary core build. A source release should be checked against its external
 verification record, and every binary distribution must carry the applicable
 third-party notices and license texts described in
 `THIRD_PARTY_NOTICES.md`.
+
+## Legacy mouse action
+
+The independently authored action adapter and Classic current-selector release
+policy were checked through private original-runner scalar observations using
+a first-party GM8 project. Held, pressed, released and current-selector values
+were recorded beside each action result in the same frame under isolated
+physical-button injection. The distinction between a release-inclusive action
+and an ordinary held check is observable even with a second button still held.
+This establishes the exercised GM8 integer-selector contract, not native Studio
+behavior, invalid argument coercion or within-poll event ordering. Other Classic
+carriers apply that shared policy; Studio retains its selected current-button
+policy. No proprietary implementation is bundled or needed at build time.

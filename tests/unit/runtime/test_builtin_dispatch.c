@@ -499,6 +499,49 @@ static int action_variable_string_comparisons(GmlVM *vm){
   return ok;
 }
 
+static int action_mouse_contract(void){
+  GmlWin win={0};GmlVM vm={0};AnygmHostServices host={0};LogFixture log={0};
+  MouseFixture input={0};int ok=setup_fixture(&win,&vm,&host,&log,"gml_Script_abs");
+  if(!ok) goto done;
+  vm.input.userdata=&input;vm.input.mouse=mouse_fixture_read;
+  int id=gml_builtin_fast_id(&vm,"action_if_mouse");
+  ok=id>=0;
+  const int selectors[]={0,1,2,3,-1,4,5};
+  vm.action_relative=1;
+  for(int current=0;current<=5 && ok;current++){
+    *gml_varmap_put(&vm.globals,"mouse_button")=vreal(current);
+    for(input.held=0;input.held<32 && ok;input.held++)
+      for(input.released=0;input.released<32 && ok;input.released++)
+        for(unsigned k=0;k<sizeof selectors/sizeof selectors[0] && ok;k++){
+          int button=selectors[k];GmlVal arg=vreal(button);
+          int expected=button>=1 && button<=3?
+            ((input.held|input.released)&(1<<(button-1)))!=0:current==0;
+          for(int cached=0;cached<2 && ok;cached++){
+            GmlVal out=cached?gml_builtin_call_fast_id(&vm,id,"action_if_mouse",&arg,1):
+                              gml_builtin_call(&vm,"action_if_mouse",&arg,1);
+            ok=expect_real("legacy mouse same-frame selector",out,expected) && vm.action_relative==1;
+          }
+        }
+  }
+  vm.input.mouse=NULL;
+  *gml_varmap_put(&vm.globals,"mouse_button")=vreal(0);
+  for(unsigned k=0;k<sizeof selectors/sizeof selectors[0] && ok;k++){
+    GmlVal arg=vreal(selectors[k]);
+    ok=expect_real("legacy mouse without a host callback",gml_builtin_call(&vm,"action_if_mouse",&arg,1),
+                   selectors[k]>=1 && selectors[k]<=3?0:1);
+  }
+  const double invalid[]={NAN,INFINITY,-INFINITY,1e100,-1e100};
+  for(unsigned k=0;k<sizeof invalid/sizeof invalid[0] && ok;k++){
+    GmlVal arg=vreal(invalid[k]);
+    ok=expect_real("legacy mouse rejects unsafe numeric conversion",
+                   gml_builtin_call_fast_id(&vm,id,"action_if_mouse",&arg,1),0);
+  }
+  ok=ok && expect_real("legacy mouse missing argument",gml_builtin_call(&vm,"action_if_mouse",NULL,0),0);
+  if(ok) puts("legacy mouse: named/cached held-release/selector matrix and unbound guards passed");
+done:
+  gml_vm_free(&vm);gml_win_free(&win);return ok;
+}
+
 static int mouse_none_semantics(GmlVM *vm){
   MouseFixture fixture={0};
   GmlVal none=vreal(0);
@@ -1528,6 +1571,7 @@ int main(int argc,char **argv){
          action_variable_string_comparisons(&vm) &&
          room_dimension_mutation(&vm) &&
          mouse_none_semantics(&vm) &&
+         action_mouse_contract() &&
          ds_fast_interface(&vm) &&
          classic_dynamic_global_declaration(&vm) &&
          external_audio_definition_dispatch(&vm) &&
