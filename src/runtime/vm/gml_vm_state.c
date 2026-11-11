@@ -41,7 +41,12 @@ typedef struct {
 } StateMapTable;
 typedef struct { GmlVarSlot **slots; uint32_t count,key_bytes; } StateKeyShape;
 typedef struct { GmlVarMap *map; uint32_t key_bytes; GmlVarSlot **owner_slots; } StateReadMap;
-typedef struct { const char *text; uint64_t hash; uint32_t id,length; } StateStringEntry;
+typedef struct {
+  const char *text;
+  uint64_t hash;
+  uint32_t id,length;
+  unsigned char borrowed;
+} StateStringEntry;
 typedef struct { const uint8_t *text; uint32_t length; } StateStringRef;
 static uint64_t state_map_mix(uint64_t value);
 static uint64_t state_map_text_hash(const char *text);
@@ -120,7 +125,8 @@ struct GmlVmStateReader {
 typedef GmlVmStateWriter StateW;
 typedef GmlVmStateReader StateR;
 static void sw_release(StateW *s){
-  for(size_t i=0;i<s->string_capacity;i++) free((void*)s->strings[i].text);
+  for(size_t i=0;i<s->string_capacity;i++)
+    if(!s->strings[i].borrowed) free((void*)s->strings[i].text);
   for(uint32_t i=0;i<s->shape_count;i++)free(s->shapes[i].slots);
   free(s->shapes);free(s->shape_values);
   free(s->shape_index.entries);free(s->shape_index.index);
@@ -257,7 +263,9 @@ static uint32_t state_string_encoding(StateW *s, const char *p){
   size_t n=strlen(p); if(n>UINT32_MAX) n=UINT32_MAX;
   return (uint32_t)n;
 }
-static void sw_encoded_string(StateW *s,const char *p,uint32_t encoding){
+static void sw_encoded_string(StateW *s,const char *p,uint32_t encoding,
+                              uint64_t *cached_hash,
+                              unsigned char *cached_hash_valid){
   if(!p) p="";
   if(s->compact_strings && (encoding&0x80000000u)){
     sw_u8(s,1); sw_varuint(s,encoding&0x7fffffffu); return;
@@ -280,7 +288,15 @@ static void sw_encoded_string(StateW *s,const char *p,uint32_t encoding){
     }
     free(s->strings);s->strings=entries;s->string_capacity=capacity;
   }
-  uint64_t hash=state_map_mix(state_map_text_hash(p));
+  uint64_t hash=0;
+  if(cached_hash && cached_hash_valid && *cached_hash_valid) hash=*cached_hash;
+  else {
+    hash=state_map_mix(state_map_text_hash(p));
+    if(cached_hash && cached_hash_valid){
+      *cached_hash=hash;
+      *cached_hash_valid=1;
+    }
+  }
   size_t slot=(size_t)hash&(s->string_capacity-1);
   while(s->strings[slot].text){
     StateStringEntry *entry=&s->strings[slot];
@@ -290,16 +306,22 @@ static void sw_encoded_string(StateW *s,const char *p,uint32_t encoding){
     slot=(slot+1)&(s->string_capacity-1);
   }
   if(s->string_count>=STATE_MAX_STRINGS){ s->ok=0; return; }
-  /* Own definitions so a caller's transient formatting buffer may be reused before the
-   * traversal ends. Pointer lifetime is not part of the string writer contract. */
-  char *owned=malloc((size_t)encoding+1);
-  if(!owned){ s->ok=0; return; }
-  memcpy(owned,p,encoding);owned[encoding]=0;
-  s->strings[slot]=(StateStringEntry){owned,hash,s->string_count++,encoding};
+  /* Ordinary callers may reuse a transient formatting buffer before traversal ends. Builtin
+   * resource owners instead pass an immutable string memo: its pointer stays valid for the whole
+   * traversal, so retaining it avoids copying multi-megabyte data merely to deduplicate it. */
+  const char *retained=p;
+  unsigned borrowed=cached_hash && cached_hash_valid;
+  if(!borrowed){
+    char *owned=malloc((size_t)encoding+1);
+    if(!owned){ s->ok=0; return; }
+    memcpy(owned,p,encoding);owned[encoding]=0;
+    retained=owned;
+  }
+  s->strings[slot]=(StateStringEntry){retained,hash,s->string_count++,encoding,borrowed};
   sw_u8(s,0);sw_varuint(s,encoding);sw_raw(s,p,encoding);
 }
 static void sw_str(StateW *s,const char *p){
-  sw_encoded_string(s,p,state_string_encoding(s,p));
+  sw_encoded_string(s,p,state_string_encoding(s,p),NULL,NULL);
 }
 static char *sr_str_dup(StateR *s){
   unsigned tag=sr_u8(s);
@@ -638,19 +660,22 @@ void gml_vm_state_write_value(GmlVmStateWriter *writer,GmlVal value){
   sw_val(writer,value,0);
 }
 void gml_vm_state_write_owned_string(GmlVmStateWriter *writer,const char *value,
-                                     uint64_t *encoding){
-  uint32_t resolved=*encoding?(uint32_t)(*encoding-1u):state_string_encoding(writer,value);
+                                     uint64_t *encoding,uint64_t *hash,
+                                     unsigned char *hash_valid){
+  uint32_t resolved=*encoding?(uint32_t)(*encoding-1u):
+                    state_string_encoding(writer,value);
   GmlWin *win=writer->vm?writer->vm->win:NULL;
   /* A failed lazy table allocation is not a permanent proof that text is absent. */
   if(!*encoding && (!win || win->n_strs<=0 || win->str_hix))
     *encoding=(uint64_t)resolved+1u;
-  sw_encoded_string(writer,value,resolved);
+  sw_encoded_string(writer,value,resolved,hash,hash_valid);
 }
 void gml_vm_state_write_owned_value(GmlVmStateWriter *writer,GmlVal value,
-                                    uint64_t *encoding){
+                                    uint64_t *encoding,uint64_t *hash,
+                                    unsigned char *hash_valid){
   if(value.t==V_STR){
     sw_u8(writer,V_STR);
-    gml_vm_state_write_owned_string(writer,value.s,encoding);
+    gml_vm_state_write_owned_string(writer,value.s,encoding,hash,hash_valid);
   } else sw_val(writer,value,0);
 }
 void gml_vm_state_read_raw(GmlVmStateReader *reader,
@@ -895,7 +920,7 @@ static void sw_varmap(StateW *s,GmlVarMap *m){
         if(text>1024u*1024u*1024u-keys->key_bytes){s->ok=0;return;}
         keys->key_bytes+=text;
       }
-      sw_encoded_string(s,slot->key,text);
+      sw_encoded_string(s,slot->key,text,NULL,NULL);
     }
     if(value->t==V_REAL) sw_real(s,value->d);
     else sw_val(s,*value,0);

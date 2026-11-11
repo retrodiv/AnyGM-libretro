@@ -30,9 +30,11 @@ typedef struct {
   char *key;
   GmlVal key_val, val;
   unsigned char child_kind;
-  /* Derived string encodings belong to this entry's immutable copies. Zero is cold;
+  /* Derived string encodings and hashes belong to this entry's immutable copies. Zero is cold;
    * replacing a value or reusing an entry invalidates its corresponding answer. */
   uint64_t state_string_encoding[3];
+  uint64_t state_string_hash[3];
+  unsigned char state_string_hash_valid[3];
 } GmlDSMapEntry;
 typedef struct {
   int live, destroying;

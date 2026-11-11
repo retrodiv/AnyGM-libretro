@@ -298,6 +298,58 @@ done:
   return ok;
 }
 
+/* Warming the derived length/hash memo must not change canonical bytes, and replacing the owned
+ * value must invalidate every derived answer before the next snapshot. Large values exercise the
+ * path whose per-frame hashing and temporary copy would otherwise dominate rewind. */
+static int ds_owned_string_memo_roundtrip(void){
+  enum { text_size=256*1024 };
+  GmlWin win={0};
+  GmlVM source={0},restored={0};
+  char *first=malloc(text_size+1u),*second=malloc(text_size+1u);
+  unsigned char *cold=NULL,*warm=NULL,*changed=NULL,*repeated=NULL;
+  int ok=first && second && !gml_vm_init(&source,&win,NULL) &&
+         !gml_vm_init(&restored,&win,NULL);
+  if(ok){
+    for(int i=0;i<text_size;i++){
+      first[i]=(char)('a'+i%23);
+      second[i]=(char)('A'+i%19);
+    }
+    first[text_size]=second[text_size]=0;
+  }
+  GmlVal map=ok?call(&source,"ds_map_create",NULL,0):vundef();
+  GmlVal key=vstr("large"),add[3]={map,key,vstr(first)};
+  if(ok) call(&source,"ds_map_add",add,3);
+  size_t cold_size=ok?gml_vm_state_size(&source):0,cold_written=0,warm_written=0;
+  cold=malloc(cold_size?cold_size:1);warm=malloc(cold_size?cold_size:1);
+  ok=ok && cold_size && cold && warm &&
+    gml_vm_state_save(&source,cold,cold_size,&cold_written) && cold_written==cold_size &&
+    gml_vm_state_save(&source,warm,cold_size,&warm_written) && warm_written==cold_written &&
+    !memcmp(cold,warm,cold_written);
+  if(ok){
+    GmlVal replace[3]={map,key,vstr(second)};
+    call(&source,"ds_map_replace",replace,3);
+  }
+  size_t changed_size=ok?gml_vm_state_size(&source):0,changed_written=0,used=0,
+         repeated_written=0;
+  changed=malloc(changed_size?changed_size:1);repeated=malloc(changed_size?changed_size:1);
+  ok=ok && changed_size && changed && repeated &&
+    gml_vm_state_save(&source,changed,changed_size,&changed_written) &&
+    changed_written==changed_size &&
+    gml_vm_state_load(&restored,changed,changed_written,&used) && used==changed_written &&
+    gml_vm_state_save(&restored,repeated,changed_size,&repeated_written) &&
+    repeated_written==changed_written && !memcmp(changed,repeated,changed_written);
+  if(ok){
+    GmlVal find[2]={map,key};
+    GmlVal value=call(&restored,"ds_map_find_value",find,2);
+    ok=value.t==V_STR && value.s && !strcmp(value.s,second);
+    if(value.t==V_STR && value.d!=0) free((void*)value.s);
+  }
+  if(!ok) fputs("owned DS string state memo changed bytes or survived replacement\n",stderr);
+  free(cold);free(warm);free(changed);free(repeated);free(first);free(second);
+  gml_vm_free(&source);gml_vm_free(&restored);
+  return ok;
+}
+
 static int boxed_object_state_roundtrip(void){
   GmlWin win={0};
   GmlVM source={0},restored={0};
@@ -589,6 +641,7 @@ int main(void){
   if(!writer_allocation_failure_is_bounded()) return 1;
 #endif
   if(!array_zero_bits_roundtrip()) return 1;
+  if(!ds_owned_string_memo_roundtrip()) return 1;
   if(!repeated_map_heap_roundtrip(0) || !repeated_map_heap_roundtrip(1)) return 1;
   if(!boxed_object_state_roundtrip()) return 1;
   if(!dense_struct_heap_roundtrip()) return 1;

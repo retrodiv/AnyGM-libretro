@@ -26,12 +26,13 @@ void gml_vm_state_write_i32(GmlVmStateWriter *writer, int value);
 void gml_vm_state_write_real(GmlVmStateWriter *writer, double value);
 void gml_vm_state_write_string(GmlVmStateWriter *writer, const char *value);
 void gml_vm_state_write_value(GmlVmStateWriter *writer, GmlVal value);
-/* A zero-initialized memo is owned by one immutable string in this VM's content lifetime.
- * The owner must clear it when replacing that string. These derived answers are not state. */
+/* A zero-initialized memo is owned by one immutable string in this VM's content lifetime. */
 void gml_vm_state_write_owned_string(GmlVmStateWriter *writer, const char *value,
-                                     uint64_t *encoding);
+                                     uint64_t *encoding, uint64_t *hash,
+                                     unsigned char *hash_valid);
 void gml_vm_state_write_owned_value(GmlVmStateWriter *writer, GmlVal value,
-                                    uint64_t *encoding);
+                                    uint64_t *encoding, uint64_t *hash,
+                                    unsigned char *hash_valid);
 
 void gml_vm_state_read_raw(GmlVmStateReader *reader,
                            void *bytes, size_t size);

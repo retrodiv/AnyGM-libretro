@@ -615,9 +615,15 @@ void gml_builtin_state_write_ini_ds(const GmlBuiltinState *state,
     gml_vm_state_write_i32(writer,map->len);
     for(int j=0;j<map->len;j++){
       GmlDSMapEntry *entry=&map->entry[j];
-      gml_vm_state_write_owned_string(writer,entry->key,&entry->state_string_encoding[0]);
-      gml_vm_state_write_owned_value(writer,entry->key_val,&entry->state_string_encoding[1]);
-      gml_vm_state_write_owned_value(writer,entry->val,&entry->state_string_encoding[2]);
+      gml_vm_state_write_owned_string(writer,entry->key,
+        &entry->state_string_encoding[0],&entry->state_string_hash[0],
+        &entry->state_string_hash_valid[0]);
+      gml_vm_state_write_owned_value(writer,entry->key_val,
+        &entry->state_string_encoding[1],&entry->state_string_hash[1],
+        &entry->state_string_hash_valid[1]);
+      gml_vm_state_write_owned_value(writer,entry->val,
+        &entry->state_string_encoding[2],&entry->state_string_hash[2],
+        &entry->state_string_hash_valid[2]);
       gml_vm_state_write_i32(writer,map->entry[j].child_kind);
     }
   }
