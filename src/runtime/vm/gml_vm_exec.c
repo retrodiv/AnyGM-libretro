@@ -490,7 +490,7 @@ static const char *const g_special_var_names[]={
   "time_source_global","time_source_game","time_source_units_seconds","time_source_units_frames",
   "time_source_expire_nearest","time_source_expire_after","time_source_state_initial",
   "time_source_state_active","time_source_state_paused","time_source_state_stopped",
-  "room_height","room_caption","instance_count","health","lives","score","async_load","id","object_index",
+  "room_height","room_caption","instance_count","instance_id","health","lives","score","async_load","id","object_index",
   "cursor_sprite",
   "image_number","sprite_width","sprite_height","sprite_xoffset","sprite_yoffset","image_single",
   "x","y","xprevious","yprevious","xstart","ystart","sprite_index","mask_index","image_index",
@@ -642,6 +642,8 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   }
   if(!strcmp(name,"undefined")) return vundef();   /* GMS2.3 builtin literal used by optional-arg prologues */
   if(!strcmp(name,"game_id")) return vreal(vm->win?vm->win->gameid:0);
+  if(!strcmp(name,"instance_id") &&
+     (inst==IT_GLOBAL || !inst_is_struct_ref(var_target(vm,inst)))) return vreal(IT_NOONE);
   if(!strcmp(name,"infinity")) return vreal(INFINITY); /* unbounded numeric literal */
   if(!strcmp(name,"room")) return vreal(vm->room_index);   /* GM built-in: current room index */
   if(!strcmp(name,"room_first") || !strcmp(name,"room_last")){
@@ -857,7 +859,7 @@ static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal
       return;
     }
   }
-  if(!strcmp(name,"game_id")) return;
+  if(!strcmp(name,"game_id") || !strcmp(name,"instance_id")) return;
   if(!strcmp(name,"room")){
     int target=(int)asnum(v);
     gml_vm_warm_audio_for_room(vm,target);
@@ -926,6 +928,10 @@ static int array_uses_instance_alarm(GmlVM *vm,int scope){
   /* Struct fields do not borrow the instance timer bank. In particular, an
    * unqualified read inside with must address the same array as receiver.alarm. */
   return !inst_is_struct_ref(resolve_inst(vm,scope));
+}
+static int array_uses_instance_ids(GmlVM *vm,int scope){
+  return scope!=IT_LOCAL && scope!=IT_STATIC &&
+         (scope==IT_GLOBAL || !inst_is_struct_ref(resolve_inst(vm,scope)));
 }
 /* scope map for array access (global/local/self/other/instance/object) */
 static GmlVarMap *scope_map(GmlVM *vm, GmlVarMap *locals, int inst_t){
@@ -1093,6 +1099,7 @@ static GmlVal array_write_child(GmlVM *vm,GmlVal root,int index,uint64_t owner,i
   return result;
 }
 static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm, uint32_t nh, int idx, GmlVal v){
+  if(!strcmp(nm,"instance_id") && array_uses_instance_ids(vm,inst_t)) return;
   v=gml_arr_publish(v);
   GML_VM_DIAGNOSTIC_VARIABLE_SCOPE(vm,inst_t,nm,idx,v);
   { const char *debug_name=vm_arrayset_filter(vm);
@@ -1240,6 +1247,8 @@ static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm
 static GmlVal array_get_h(
     GmlVM *vm,GmlVarMap *locals,int inst_t,
     const char *nm,uint32_t nh,int idx){
+  if(!strcmp(nm,"instance_id") && array_uses_instance_ids(vm,inst_t))
+    return gml_builtin_instance_id_at(vm,idx);
   GmlVal dimension;
   {
     const char *alias=classic_room_global_array_alias(vm,nm);
@@ -1307,6 +1316,8 @@ static GmlVal array_get_h(
 }
 static GmlVal array_get_inst_field_h(GmlVM *vm, GmlInstance *s, const char *nm, uint32_t nh, int idx){
   if(!s) return vreal(0);
+  if(!strcmp(nm,"instance_id") && !inst_is_struct_ref(s))
+    return gml_builtin_instance_id_at(vm,idx);
   if(s->obj>=0 && !strcmp(nm,"alarm"))
     return vreal((idx>=0 && idx<GML_ALARMS)? s->alarm[idx] : -1);
   GmlVal out;
@@ -1324,6 +1335,7 @@ static GmlVal array_get_inst_field_h(GmlVM *vm, GmlInstance *s, const char *nm, 
 }
 static void array_set_inst_field_h(GmlVM *vm,GmlInstance *s,const char *nm,uint32_t nh,int idx,GmlVal v){
   if(!s) return;
+  if(!strcmp(nm,"instance_id") && !inst_is_struct_ref(s)) return;
   v=gml_arr_publish(v);
   GML_VM_DIAGNOSTIC_VARIABLE_INSTANCE(vm,s,nm,idx,v);
   { const char *debug_name=vm_arrayset_filter(vm);

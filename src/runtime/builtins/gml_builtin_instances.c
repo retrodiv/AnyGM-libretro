@@ -536,7 +536,18 @@ GmlVal gml_builtin_try_instances_destroy(GmlVM *vm, const char *nm, GmlVal *a, i
   return gml_builtin_try_actions_legacy(vm,nm,a,n);
 }
 
+GmlVal gml_builtin_instance_id_at(GmlVM *vm,int index){
+  if(!vm || index<0 || index>=vm->inst_count) return vreal(IT_NOONE);
+  GmlVal arguments[]={vreal(IT_ALL),vreal(index)};
+  return gml_builtin_try_instances_queries(vm,"instance_find",arguments,2);
+}
+
 GmlVal gml_builtin_try_instances_queries(GmlVM *vm, const char *nm, GmlVal *a, int n){
+  if(!strcmp(nm,"instance_id_get")){
+    double index=N(a,n,0);
+    if(n<1 || !isfinite(index) || index<0 || index>INT_MAX) return vreal(IT_NOONE);
+    return gml_builtin_instance_id_at(vm,(int)index);
+  }
   if(!strcmp(nm,"instance_number")) return vreal(gml_instance_number(vm,(int)N(a,n,0)));
   if(!strcmp(nm,"instance_exists")||!strcmp(nm,"existe"))
     return vreal(gml_instance_number(vm,(int)N(a,n,0))>0);

@@ -5,6 +5,7 @@
 #include "gml_builtin_registry.h"
 #include "gml_vm.h"
 #include "gml_vm_internal.h"
+#include "gml_value_internal.h"
 #include "gml_render_internal.h"
 
 #include <math.h>
@@ -1361,6 +1362,60 @@ static int rounded_contextual_precedence(GmlVM *vm){
   return ok;
 }
 
+static int instance_id_view_contract(void){
+  GmlWin content={0};
+  GmlVM vm;
+  if(gml_vm_init(&vm,&content,NULL)) return 0;
+  vm.inst_count=5;
+  for(int i=0;i<5;i++){
+    vm.inst[i].id=100017u+(uint32_t)i*3u;
+    vm.inst[i].active=1;
+  }
+  vm.inst[0].active=0;
+  vm.inst[0].deactivated=1;
+  vm.inst[2].marked=1;
+  vm.cur_self=&vm.inst[1];
+  int ok=1;
+  int fast=gml_builtin_fast_id(&vm,"instance_id_get");
+  ok=fast==BID_INSTANCE_ID_GET && ok;
+  for(int cached=0;cached<2;cached++){
+    const double indices[]={0,1,2,3,-1,0.75,INFINITY,-INFINITY,NAN,1e100};
+    const double expected[]={100020,100026,100029,-4,-4,100020,-4,-4,-4,-4};
+    for(unsigned i=0;i<sizeof(indices)/sizeof(indices[0]);i++){
+      GmlVal argument=vreal(indices[i]);
+      GmlVal value=cached?gml_builtin_call_fast_id(&vm,fast,"instance_id_get",&argument,1)
+                         :gml_builtin_call(&vm,"instance_id_get",&argument,1);
+      ok=expect_real("virtual instance enumeration",value,expected[i]) && ok;
+    }
+    GmlVal missing=cached?gml_builtin_call_fast_id(&vm,fast,"instance_id_get",NULL,0)
+                         :gml_builtin_call(&vm,"instance_id_get",NULL,0);
+    ok=expect_real("missing instance index",missing,-4) && ok;
+  }
+  ok=expect_real("bare instance view",gml_vm_identifier_get(&vm,"instance_id"),-4) && ok;
+  int globals_before=vm.globals.len;
+  gml_vm_assign_current_scope(&vm,"instance_id",vreal(12));
+  ok=expect_real("read-only instance view",gml_vm_variable_get_h(&vm,IT_GLOBAL,"instance_id",gml_value_name_hash("instance_id")),-4) &&
+     vm.globals.len==globals_before && !gml_varmap_get(&vm.cur_self->vars,"instance_id") && ok;
+  vm.inst[0].active=1;
+  vm.inst[0].deactivated=0;
+  ok=expect_real("reactivated view",gml_builtin_instance_id_at(&vm,0),100017) && ok;
+  vm.inst[0].marked=1;
+  ok=expect_real("destroyed view",gml_builtin_instance_id_at(&vm,0),100020) && ok;
+  vm.inst_count=0;
+  ok=expect_real("empty instance view",gml_builtin_instance_id_at(&vm,0),-4) && ok;
+  vm.inst_count=5;
+  GmlInstance *record=gml_struct_new(&vm);
+  if(record){
+    vm.cur_self=record;
+    gml_vm_assign_current_scope(&vm,"instance_id",vreal(81));
+    ok=expect_real("struct field retains its name",gml_vm_identifier_get(&vm,"instance_id"),81) && ok;
+    vm.cur_self=&vm.inst[1];
+  } else ok=0;
+  gml_vm_free(&vm);
+  if(ok) puts("instance IDs: named/cached active view, bounds and read-only scalar passed");
+  return ok;
+}
+
 int main(int argc,char **argv){
   int guid_only=argc==3 && !strcmp(argv[1],"--case") &&
                 !strcmp(argv[2],"input.gamepad_guid");
@@ -1380,6 +1435,7 @@ int main(int argc,char **argv){
   }
   int ok=guid_only ? gamepad_guid_capability_contract(&vm) :
          canonical_registry_resolution(&vm) &&
+         instance_id_view_contract() &&
          gamepad_guid_capability_contract(&vm) &&
          payload_script_precedes_exact_builtin(&vm) &&
          script_resolution_order(&vm,&log_fixture) &&
