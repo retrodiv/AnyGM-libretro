@@ -2783,6 +2783,56 @@ static int state_input_history_roundtrip_for_ports(unsigned ports){
   return ok;
 }
 
+static int engine_hat_matches(AnygmEngine *engine,int device,int count,int direction){
+  GmlVal args[]={vreal(device),vreal(0)};
+  GmlVal hats=gml_builtin_call(&engine->vm,"gamepad_hat_count",args,1);
+  GmlVal value=gml_builtin_call(&engine->vm,"gamepad_hat_value",args,2);
+  return hats.t==V_REAL && hats.d==count && value.t==V_REAL && value.d==direction;
+}
+
+static int gamepad_hat_frame_queries(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_content_create(&fixture)) return 0;
+  AnygmHostServices services={0};services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL;
+  AnygmContentSource source={0};source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;source.path=fixture.path;
+  source.cache_directory=source.save_directory=fixture.directory;
+  int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+         anygm_load(engine,&source,NULL)==ANYGM_OK;
+  AnygmConfigDelta delta={0};delta.struct_size=sizeof delta;
+  delta.values.struct_size=sizeof delta.values;
+  delta.fields=ANYGM_CONFIG_GAMEPAD_CONNECTED;delta.values.gamepad_connected=1;
+  ok=ok && anygm_set_config(engine,&delta)==ANYGM_OK;
+  AnygmInputFrame input={0};input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;input.connected_gamepads=4;
+  static const unsigned buttons[]={ANYGM_PAD_UP,ANYGM_PAD_RIGHT,ANYGM_PAD_DOWN,ANYGM_PAD_LEFT};
+  static const int directions[]={1,2,4,8};
+  for(unsigned i=0;i<4;i++) input.gamepad_buttons[i][buttons[i]]=1;
+  AnygmFrameOutput output={0};output.struct_size=sizeof output;
+  ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  uint8_t *before=NULL,*after=NULL;size_t before_size=0,after_size=0;
+  ok=ok && save_state(engine,&before,&before_size);
+  for(int i=0;i<4 && ok;i++) ok=engine_hat_matches(engine,i,1,directions[i]);
+  ok=ok && save_state(engine,&after,&after_size) && before_size==after_size &&
+     !memcmp(before,after,before_size);
+  memset(input.gamepad_buttons,0,sizeof input.gamepad_buttons);
+  output.struct_size=sizeof output;
+  ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  for(int i=0;i<4 && ok;i++) ok=engine_hat_matches(engine,i,1,0);
+  ok=ok && anygm_state_load(engine,before,before_size)==ANYGM_OK;
+  for(int i=0;i<4 && ok;i++) ok=engine_hat_matches(engine,i,1,directions[i]);
+  delta.values.gamepad_connected=0;
+  ok=ok && anygm_set_config(engine,&delta)==ANYGM_OK;
+  for(int i=0;i<4 && ok;i++) ok=engine_hat_matches(engine,i,0,0);
+  free(before);free(after);anygm_destroy(engine);anygm_synthetic_content_destroy(&fixture);
+  if(ok) puts("gamepad hats: four frame snapshots, pure reads, restored directions and ownership passed");
+  else fputs("gamepad hat queries lost frame input or mutated state\n",stderr);
+  return ok;
+}
+
 static int state_input_history_roundtrip(void){
   return state_input_history_roundtrip_for_ports(1u) &&
          state_input_history_roundtrip_for_ports(0u);
@@ -4176,6 +4226,8 @@ int main(int argc,char **argv){
       return input_binding_ownership_policy()?0:1;
     if(!strcmp(argv[2],"input_history_roundtrip"))
       return state_input_history_roundtrip()?0:1;
+    if(!strcmp(argv[2],"gamepad_hats"))
+      return gamepad_hat_frame_queries()?0:1;
     if(!strcmp(argv[2],"raw_gamepad_button_layout"))
       return raw_gamepad_button_layout_policy()?0:1;
     if(!strcmp(argv[2],"input_zero_native_count"))
@@ -4278,6 +4330,7 @@ int main(int argc,char **argv){
   if(!game_change_policy()) return 1;
   if(!room_start_deactivation_policy()) return 1;
   if(!state_input_history_roundtrip()) return 1;
+  if(!gamepad_hat_frame_queries()) return 1;
   if(!input_binding_ownership_policy()) return 1;
   if(!zero_count_native_pad_silence_policy()) return 1;
   if(!declared_keyboard_binding_policy()) return 1;

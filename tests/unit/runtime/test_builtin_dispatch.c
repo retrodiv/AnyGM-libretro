@@ -1215,6 +1215,84 @@ static int portable_joystick_contract(GmlVM *vm){
   return ok;
 }
 
+typedef struct {
+  int count,invalid_polls;
+  unsigned connected,directions[16];
+} HatFixture;
+
+static int hat_fixture_count(void *userdata){ return ((HatFixture *)userdata)->count; }
+static int hat_fixture_connected(void *userdata,int device){
+  HatFixture *f=userdata;
+  if(device<0 || device>=f->count || device>=16){f->invalid_polls++;return 0;}
+  return (f->connected&(1u<<device))!=0;
+}
+static int hat_fixture_button(void *userdata,int device,int button,int edge){
+  HatFixture *f=userdata;
+  if(device<0 || device>=f->count || device>=16 || edge ||
+     button<32781 || button>32784){f->invalid_polls++;return 0;}
+  static const unsigned bits[]={1,4,8,2};
+  return (int)(f->directions[device]&bits[button-32781]);
+}
+static GmlVal hat_query(GmlVM *vm,const char *name,GmlVal *args,int count,int route,int *ok){
+  if(route==0) return gml_builtin_call(vm,name,args,count);
+  if(route==1) return call_fast(vm,name,args,count,ok);
+  return gml_builtin_call_fast_id(vm,BID_INPUT_KBGP,name,args,count);
+}
+static int gamepad_hat_contract(GmlVM *vm){
+  void *saved_userdata=vm->input.userdata;
+  int (*saved_count)(void *)=vm->input.gamepad_device_count;
+  int (*saved_connected)(void *,int)=vm->input.gamepad_connected;
+  int (*saved_button)(void *,int,int,int)=vm->input.gamepad;
+  HatFixture f={.count=4,.connected=15};
+  vm->input.userdata=&f;vm->input.gamepad_device_count=hat_fixture_count;
+  vm->input.gamepad_connected=hat_fixture_connected;vm->input.gamepad=hat_fixture_button;
+  int ok=gml_builtin_fast_id(vm,"gamepad_hat_count")==BID_GAMEPAD_HAT_COUNT &&
+         gml_builtin_fast_id(vm,"gamepad_hat_value")==BID_GAMEPAD_HAT_VALUE;
+  /* Hand-authored direction truth table, including cancellation of opposing pairs. */
+  static const int expected[]={0,1,2,3,4,0,6,2,8,9,0,1,12,8,4,0};
+  for(int route=0;route<3;route++){
+    for(int device=0;device<4;device++) for(unsigned directions=0;directions<16;directions++){
+      for(int other=0;other<4;other++) f.directions[other]=(directions+(unsigned)other*3u)&15u;
+      f.directions[device]=directions;
+      GmlVal args[]={vreal(device),vreal(0)};
+      ok=expect_real("one hat per connected pad",hat_query(vm,"gamepad_hat_count",args,1,route,&ok),1)&&ok;
+      ok=expect_real("hat directions use the selected pad",hat_query(vm,"gamepad_hat_value",args,2,route,&ok),expected[directions])&&ok;
+    }
+    GmlVal args[]={vreal(2),vreal(0)};
+    f.connected=11;
+    ok=expect_real("disconnected pad has no hats",hat_query(vm,"gamepad_hat_count",args,1,route,&ok),0)&&ok;
+    ok=expect_real("disconnected pad has no directions",hat_query(vm,"gamepad_hat_value",args,2,route,&ok),0)&&ok;
+    f.connected=15;
+    static const double invalid[]={-1,-0.25,4,1e100,NAN,INFINITY,-INFINITY};
+    for(unsigned i=0;i<sizeof invalid/sizeof invalid[0];i++){
+      args[0]=vreal(invalid[i]);args[1]=vreal(0);
+      ok=expect_real("invalid hat device count",hat_query(vm,"gamepad_hat_count",args,1,route,&ok),0)&&ok;
+      ok=expect_real("invalid hat device value",hat_query(vm,"gamepad_hat_value",args,2,route,&ok),0)&&ok;
+      args[0]=vreal(0);args[1]=vreal(invalid[i]);
+      ok=expect_real("invalid hat index",hat_query(vm,"gamepad_hat_value",args,2,route,&ok),0)&&ok;
+    }
+    args[0]=vreal(0);args[1]=vreal(1);
+    ok=expect_real("second hat is unavailable",hat_query(vm,"gamepad_hat_value",args,2,route,&ok),0)&&ok;
+    ok=expect_real("missing hat count argument",hat_query(vm,"gamepad_hat_count",NULL,0,route,&ok),0)&&ok;
+    ok=expect_real("missing hat index",hat_query(vm,"gamepad_hat_value",args,1,route,&ok),0)&&ok;
+    f.count=16;f.connected=1u<<15;f.directions[15]=9;
+    args[0]=vreal(15.75);args[1]=vreal(0.75);
+    ok=expect_real("host slot capacity is not hardcoded",hat_query(vm,"gamepad_hat_count",args,1,route,&ok),1)&&ok;
+    ok=expect_real("finite fractional indices truncate",hat_query(vm,"gamepad_hat_value",args,2,route,&ok),9)&&ok;
+    f.count=4;f.connected=15;
+  }
+  vm->input.gamepad_device_count=NULL;
+  GmlVal args[]={vreal(0),vreal(0)};
+  ok=expect_real("missing capability callback is bounded",hat_query(vm,"gamepad_hat_count",args,1,0,&ok),0)&&ok;
+  vm->input.gamepad_device_count=hat_fixture_count;vm->input.gamepad_connected=NULL;
+  ok=expect_real("missing connection callback is neutral",hat_query(vm,"gamepad_hat_value",args,2,0,&ok),0)&&ok;
+  ok=ok && f.invalid_polls==0;
+  vm->input.userdata=saved_userdata;vm->input.gamepad_device_count=saved_count;
+  vm->input.gamepad_connected=saved_connected;vm->input.gamepad=saved_button;
+  if(ok) puts("gamepad hats: named/exact/prefix routes, all directions, isolated slots and bounds passed");
+  return ok;
+}
+
 static int gamepad_guid_device_count(void *userdata){
   return *(int *)userdata;
 }
@@ -1437,6 +1515,7 @@ int main(int argc,char **argv){
          canonical_registry_resolution(&vm) &&
          instance_id_view_contract() &&
          gamepad_guid_capability_contract(&vm) &&
+         gamepad_hat_contract(&vm) &&
          payload_script_precedes_exact_builtin(&vm) &&
          script_resolution_order(&vm,&log_fixture) &&
          show_error_contract(&vm,&log_fixture) &&

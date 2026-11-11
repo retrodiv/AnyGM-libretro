@@ -231,6 +231,16 @@ anygm_unload(engine);
 anygm_destroy(engine);
 ```
 
+### Direction hats
+
+Each connected normalized pad exposes one virtual hat through `gamepad_hat_count`
+and `gamepad_hat_value`. Hat zero reads the existing directional buttons as a
+bitmask: up `1`, right `2`, down `4`, left `8`. Opposing directions cancel on
+each axis. It does not infer a hat from analog-stick axes or change button reads.
+Missing or disconnected slots and unavailable hat indices return zero. Slot
+bounds follow the host's existing device-count callback. This portable logical
+layout does not describe physical DirectInput devices or their Windows slot layout.
+
 ### Keyboard text
 
 `keys` describes held physical keys. Text is a separate ordered stream of host-delivered Unicode

@@ -1397,6 +1397,27 @@ int builtin_input_kbgp(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out)
               "none" : "device index out of range");
     return 1;
   }
+  if(!strcmp(nm,"gamepad_hat_count") || !strcmp(nm,"gamepad_hat_value")){
+    int value=!strcmp(nm,"gamepad_hat_value");
+    double slot=N(a,n,0);
+    int available=n>=(value?2:1) && isfinite(slot) && slot>=0 &&
+      slot<gml_input_gamepad_device_count(vm) &&
+      gml_input_gamepad_connected(vm,(int)slot);
+    int result=available && !value;
+    if(available && value){
+      double hat=N(a,n,1);
+      if(isfinite(hat) && hat>=0 && hat<1){
+        int device=(int)slot;
+        /* Each logical pad has one direction hat; opposing inputs cancel per axis. */
+        int horizontal=(gml_input_gamepad(vm,device,32784,0)!=0)-
+                       (gml_input_gamepad(vm,device,32783,0)!=0);
+        int vertical=(gml_input_gamepad(vm,device,32782,0)!=0)-
+                     (gml_input_gamepad(vm,device,32781,0)!=0);
+        result=(vertical<0?1:vertical>0?4:0) | (horizontal>0?2:horizontal<0?8:0);
+      }
+    }
+    *out=vreal(result); return 1;
+  }
   if(!strcmp(nm,"gamepad_button_count")){          *out=vreal(16); return 1; }
   if(!strcmp(nm,"gamepad_axis_count")){            *out=vreal(4); return 1; }
   /* The GameMaker manual gives this XInput-compatible device description as
