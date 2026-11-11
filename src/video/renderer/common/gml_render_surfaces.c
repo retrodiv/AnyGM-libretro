@@ -4684,6 +4684,7 @@ int gml_surface_set_target(GmlRender *r, int id){
     } else px=surface_pixels(r,id,&w,&h);
     if(!px || r->target_sp>=GML_SURFACE_STACK) return 0;
   }
+  if(gml_render_rotated_clear_pending(r)) gml_render_flush_rotated_batch(r);
   { if(si>=0) r->surface[si].dirty=1; }   /* about to be drawn into */
   r->target_stack[r->target_sp++]=(typeof(r->target_stack[0])){
     r->fb,r->fbw,r->fbh,r->cam_x,r->cam_y,r->projection_cam_x,r->projection_cam_y,

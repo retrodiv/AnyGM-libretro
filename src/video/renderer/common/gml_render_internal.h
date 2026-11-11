@@ -781,6 +781,7 @@ void gml_run_row_bands_n(GmlRender *r,int height,int thread_count,
                          GmlRowBandFn function,void *context);
 void gml_run_row_bands(GmlRender *r,int height,GmlRowBandFn function,void *context);
 void gml_render_flush_rotated_batch(GmlRender *r);
+int gml_render_rotated_clear_pending(const GmlRender *r);
 int gml_render_tpag_part_view(const GmlTpag *t,
                               double sx,double sy,double sw,double sh,
                               GmlTpag *view,int *source_x,int *source_y,

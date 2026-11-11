@@ -4984,6 +4984,48 @@ static int rotated_nearest_packet(GmlTpag *tpag,int64_t lx_fp,int64_t ly_fp,
   return run;
 }
 
+typedef struct {
+  int left,right,source_x,source_y,horizontal,step;
+} GmlCardinalRow;
+
+static inline int exact_rotated_row(const GmlExactRotatedBand *band,int y,
+                                    int *left,int *right,int64_t *local_x_fp,int64_t *local_y_fp){
+  int x0=band->x0,x1=band->x1;
+  if(band->use_quad_span &&
+     !rotated_quad_row_span(band->qx,band->qy,y+0.5,band->x0,band->x1,&x0,&x1))
+    return 0;
+  double ry=y+0.5-band->ay,rx=x0+0.5-band->ax;
+  double local_x=(rx*band->cosine-ry*band->sine)*band->inv_xscale+band->local_x_offset;
+  double local_y=(rx*band->sine+ry*band->cosine)*band->inv_yscale+band->local_y_offset;
+  *left=x0;
+  *right=x1;
+  *local_x_fp=(int64_t)floor(local_x*(double)RFP_ONE);
+  *local_y_fp=(int64_t)floor(local_y*(double)RFP_ONE);
+  return 1;
+}
+
+static inline int exact_cardinal_row(const GmlExactRotatedBand *band,int x0,int x1,
+                                    int64_t lx_fp,int64_t ly_fp,GmlCardinalRow *out){
+  GmlTpag *tpag=band->tpag;
+  int source_x=floor_fixed20(lx_fp),source_y=floor_fixed20(ly_fp);
+  int horizontal=band->delta_x!=0;
+  int fixed=horizontal?source_y:source_x;
+  int fixed_extent=horizontal?tpag->sh:tpag->sw;
+  if(fixed<0 || fixed>=fixed_extent) return 0;
+  int coordinate=horizontal?source_x:source_y;
+  int extent=horizontal?tpag->sw:tpag->sh;
+  int step=(horizontal?band->delta_x:band->delta_y)>0?1:-1;
+  int64_t first=step>0?-(int64_t)coordinate:(int64_t)coordinate-extent+1;
+  int64_t last=step>0?(int64_t)extent-coordinate:(int64_t)coordinate+1;
+  if(first<0) first=0;
+  if(last>x1-x0) last=x1-x0;
+  if(last<=first) return 0;
+  int sx=source_x+(horizontal?step*(int)first:0);
+  int sy=source_y+(horizontal?0:step*(int)first);
+  *out=(GmlCardinalRow){x0+(int)first,x0+(int)last,sx,sy,horizontal,step};
+  return 1;
+}
+
 static void GML_HOT_RENDER exact_rotated_band_rows(
     void *context, int row_start, int row_end, int slot){
   GmlExactRotatedBand *band=(GmlExactRotatedBand*)context;
@@ -4991,39 +5033,20 @@ static void GML_HOT_RENDER exact_rotated_band_rows(
   (void)slot;
   for(int row_index=row_start;row_index<row_end;row_index++){
     int py=band->y0+row_index;
-    int rx0=band->x0, rx1=band->x1;
-    if(band->use_quad_span &&
-       !rotated_quad_row_span(band->qx,band->qy,py+0.5,band->x0,band->x1,&rx0,&rx1))
-      continue;
+    int rx0,rx1;
+    int64_t lx_fp,ly_fp;
+    if(!exact_rotated_row(band,py,&rx0,&rx1,&lx_fp,&ly_fp)) continue;
     uint32_t *row=&band->framebuffer[(size_t)py*band->framebuffer_width];
-    double ry=py+0.5-band->ay, rx=rx0+0.5-band->ax;
-    double local_x=(rx*band->cosine-ry*band->sine)*band->inv_xscale+
-                   band->local_x_offset;
-    double local_y=(rx*band->sine+ry*band->cosine)*band->inv_yscale+
-                   band->local_y_offset;
-    int64_t lx_fp=(int64_t)floor(local_x*(double)RFP_ONE);
-    int64_t ly_fp=(int64_t)floor(local_y*(double)RFP_ONE);
     if(band->copy_cardinal || band->copy_binary_cardinal){
       /* Keep this row's existing fixed20 origin and quad span. An exact unit
        * cardinal step selects a bounded contiguous or strided source interval. */
-      int source_x=floor_fixed20(lx_fp),source_y=floor_fixed20(ly_fp);
-      int horizontal=band->delta_x!=0;
-      int fixed=horizontal?source_y:source_x;
-      int fixed_extent=horizontal?tpag->sh:tpag->sw;
-      if(fixed<0 || fixed>=fixed_extent) continue;
-      int coordinate=horizontal?source_x:source_y;
-      int extent=horizontal?tpag->sw:tpag->sh;
-      int step=(horizontal?band->delta_x:band->delta_y)>0?1:-1;
-      int64_t first=step>0?-(int64_t)coordinate:(int64_t)coordinate-extent+1;
-      int64_t last=step>0?(int64_t)extent-coordinate:(int64_t)coordinate+1;
-      if(first<0) first=0;
-      if(last>rx1-rx0) last=rx1-rx0;
-      if(last>first){
-        int sx=source_x+(horizontal?step*(int)first:0);
-        int sy=source_y+(horizontal?0:step*(int)first);
+      GmlCardinalRow span;
+      if(exact_cardinal_row(band,rx0,rx1,lx_fp,ly_fp,&span)){
+        int sx=span.source_x,sy=span.source_y;
+        int horizontal=span.horizontal,step=span.step;
         const uint32_t *source=band->argb+(size_t)sy*tpag->sw+sx;
-        uint32_t *destination=row+rx0+(int)first;
-        int run=(int)(last-first);
+        uint32_t *destination=row+span.left;
+        int run=span.right-span.left;
         if(!band->copy_cardinal){
           /* The immutable crop contains only zero or full coverage. Its zero
            * texels preserve every destination byte, including hidden RGB. */
@@ -5138,6 +5161,8 @@ typedef struct {
   int kind;
   unsigned dispatch_family,dispatch_reason;
   atomic_int dispatch_written;
+  uint32_t clear_color;
+  int clear_height;
   union {
     GmlSolidMaskRotatedBand solid;
     GmlCachedRotatedBand cached;
@@ -5191,11 +5216,90 @@ static void GML_HOT_RENDER rotated_batch_rows(
     rotated_batch_rows_range(batch,start,end,slot);
   }
 }
+/* Only the first exact opaque software packet can own a clear. */
+int gml_render_rotated_clear_pending(const GmlRender *r){
+  return r && r->rotated_batch_count>0 &&
+    ((const GmlRotatedBatchItem*)r->rotated_batch)[0].clear_color!=0u;
+}
+
+typedef struct { int left,right,top,bottom; } GmlCardinalRect;
+
+static int cardinal_row_span(const GmlExactRotatedBand *band,int y,GmlCardinalRow *span){
+  int left,right;
+  int64_t lx,ly;
+  return exact_rotated_row(band,y,&left,&right,&lx,&ly) &&
+         exact_cardinal_row(band,left,right,lx,ly,span);
+}
+
+static int opaque_cardinal_rect(const GmlExactRotatedBand *band,GmlCardinalRect *rect){
+  int horizontal=band->delta_x!=0;
+  if(band->use_quad_span ||
+     (horizontal?(fabs(band->cosine)!=1.0 || band->sine!=0.0):
+                  (band->cosine!=0.0 || fabs(band->sine)!=1.0)) ||
+     !isfinite(band->ax) || !isfinite(band->ay) ||
+     !isfinite(band->inv_xscale) || !isfinite(band->inv_yscale) ||
+     fabs(band->ax)>1e7 || fabs(band->ay)>1e7 ||
+     fabs(band->inv_xscale)>128.0 || fabs(band->inv_yscale)>128.0 ||
+     fabs(band->local_x_offset)>1e7 || fabs(band->local_y_offset)>1e7) return 0;
+  /* An exact cardinal transform holds the along-row source origin constant.
+   * The orthogonal source coordinate is monotonic. Two valid rows with equal
+   * spans therefore certify the rectangle between them. Probe only near the
+   * clipped edges. A conservative miss keeps the ordinary clear. */
+  GmlCardinalRow first,last;
+  int y0=band->y0,y1=band->y1-1;
+  int first_limit=y0+2,last_limit=y1-2;
+  while(y0<=y1 && y0<=first_limit && !cardinal_row_span(band,y0,&first)) y0++;
+  if(y0>first_limit || y0>y1) return 0;
+  while(y1>=y0 && y1>=last_limit && !cardinal_row_span(band,y1,&last)) y1--;
+  if(y1<last_limit || y1<y0 || first.left!=last.left || first.right!=last.right) return 0;
+  *rect=(GmlCardinalRect){first.left,first.right,y0,y1+1};
+  return 1;
+}
+
+static int opaque_prefix_covers(const GmlRotatedBatchItem *items,int count){
+  enum { MAX_PREFIX=16 };
+  const GmlExactRotatedBand *first=&items[0].draw.exact;
+  int width=first->framebuffer_width,height=items[0].clear_height;
+  GmlCardinalRect rectangles[MAX_PREFIX];
+  int used=0;
+  for(int i=0;i<count && i<MAX_PREFIX && items[i].kind==3 &&
+      items[i].draw.exact.copy_cardinal && items[i].draw.exact.framebuffer==first->framebuffer &&
+      items[i].draw.exact.framebuffer_width==width;i++){
+    GmlCardinalRect rect;
+    if(!opaque_cardinal_rect(&items[i].draw.exact,&rect)) continue;
+    int j=used++;
+    while(j>0 && rectangles[j-1].left>rect.left){rectangles[j]=rectangles[j-1];j--;}
+    rectangles[j]=rect;
+  }
+  int y=0;
+  while(y<height){
+    int next=height,covered=0;
+    for(int i=0;i<used;i++){
+      GmlCardinalRect rect=rectangles[i];
+      if(rect.top>y){if(rect.top<next) next=rect.top;continue;}
+      if(rect.bottom<=y) continue;
+      if(rect.bottom<next) next=rect.bottom;
+      if(rect.left<=covered && rect.right>covered) covered=rect.right;
+    }
+    if(covered!=width) return 0;
+    y=next;
+  }
+  return 1;
+}
+
 void gml_render_flush_rotated_batch(GmlRender *r){
   if(r && r->rotated_scene_batch && !gml_render_rotated_scene_flush(r)) return;
   if(!r || r->rotated_batch_count<=0) return;
   GmlRotatedBatchItem *item=(GmlRotatedBatchItem*)r->rotated_batch;
   int count=r->rotated_batch_count;
+  if(item[0].clear_color){
+    r->pending_fill=0;
+    if(!opaque_prefix_covers(item,count)){
+      GmlExactRotatedBand *first=&item[0].draw.exact;
+      gml_render_cpu_backend_fill_xrgb(first->framebuffer,
+        first->framebuffer_width*item[0].clear_height,item[0].clear_color);
+    }
+  }
   int max_y=0;
   unsigned long long bounds_area=0;
   for(int i=0;i<count;i++){
@@ -5763,6 +5867,24 @@ int gml_render_rotated_filtered_rows(GmlRender *r,GmlSprite *sprite,GmlTpag *pag
   return 1;
 }
 
+static int can_defer_rotated_clear(const GmlRender *r){
+  return r->pending_fill && (r->pending_fill_color>>24)==255u &&
+    r->fb && r->fb==r->base_fb && r->fb!=r->app_surface_owned &&
+    r->fbw==r->base_fbw && r->fbh==r->base_fbh &&
+    r->fbw>0 && r->fbw<=4096 && r->fbh>0 && r->fbh<=4096 &&
+    r->target_id==-1 && !r->target_sp && !r->scene_device_enabled &&
+    !r->resident_scene_pass && !r->resident_application_pass && !r->pre_draw_clear_target &&
+    !r->pending_underlay && !r->pending_presentation && r->color_write_mask==15u &&
+    !r->rotated_scene_batch && !r->dispatch_metrics.enabled &&
+    !gml_render_cpu_draws_disabled(r) && !gml_render_base_resource_lookup(r,r->fb,NULL,NULL);
+}
+
+static void prepare_rotated_draw(GmlRender *r,int batchable){
+  if(batchable) r->rotated_batch_building++;
+  gml_render_maybe_prepare_draw(r);
+  if(batchable) r->rotated_batch_building--;
+}
+
 static void GML_HOT_RENDER blit_rotated_impl(GmlRender *r, GmlSprite *spr, GmlTpag *t, double x, double y,
                          double xs, double ys, double rot, uint32_t blend, double alpha){
   if(t->atlas<0 || t->atlas>=r->n_atlas) return;
@@ -5787,18 +5909,21 @@ static void GML_HOT_RENDER blit_rotated_impl(GmlRender *r, GmlSprite *spr, GmlTp
   int abx0=geometry.abx0,aby0=geometry.aby0,abx1=geometry.abx1,aby1=geometry.aby1;
   int x0=geometry.x0,x1=geometry.x1,y0=geometry.y0,y1=geometry.y1;
   memcpy(qx,geometry.qx,sizeof qx); memcpy(qy,geometry.qy,sizeof qy);
-  /* Axis-aligned blits materialize a deferred clear before touching the framebuffer. Rotated
-   * sprites must do the same: otherwise they are rendered first and then erased when the next
-   * axis-aligned draw flushes that pending clear. */
-  if(batchable_rotation) r->rotated_batch_building++;
-  gml_render_maybe_prepare_draw(r);
-  if(batchable_rotation) r->rotated_batch_building--;
+  unsigned long long vispix=(unsigned long long)(x1-x0)*(unsigned long long)(y1-y0);
+  /* Consider lending the clear only to an exact opaque software packet. A
+   * filtered, translucent or synchronous draw keeps ordinary preparation. */
+  int defer_clear=r->pending_fill && !r->rotated_batch_count && batchable_rotation &&
+    !r->interp && !mapped_shader &&
+    !batchable_constant_alpha && alpha==1.0 && !t->alpha_partial &&
+    (blend&0xFFFFFFu)==0xFFFFFFu && !shader_alpha_test_requires_filter(r) &&
+    (gml_blend_family(r)==GML_BLEND_STUDIO2 || vispix<262144ull) &&
+    can_defer_rotated_clear(r);
+  if(!defer_clear) prepare_rotated_draw(r,batchable_rotation);
   if(destination_colour_blend_active(r)) r->fb_opaque_known=0;
   if((alpha<1.0 || r->blendmode==2 || r->blendmode==8 || destination_colour_blend_active(r) ||
       t->alpha_partial || r->interp ||
       mapped_shader) && r->alphablend)
     gml_sprite_target_may_change_alpha(r);
-  unsigned long long vispix=(unsigned long long)(x1-x0)*(unsigned long long)(y1-y0);
   /* The global texture filter reaches rotated draws. Recognized-shader masks and
    * mapped textures keep their structural kernels; a plain filtered rotated sprite samples the
    * same four-tap path the axis-aligned filtered blit uses. */
@@ -6073,14 +6198,23 @@ static void GML_HOT_RENDER blit_rotated_impl(GmlRender *r, GmlSprite *spr, GmlTp
         band.copy_binary_cardinal=!band.copy_cardinal && t->alpha_scanned &&
           !t->alpha_partial && a16_lut[0]==0u;
       }
+      if(defer_clear && !band.copy_cardinal){
+        prepare_rotated_draw(r,batchable_rotation);
+        defer_clear=0;
+      }
       GmlRotatedBatchItem *item=rotated_batch_append(r,3);
       if(item){
         item->draw.exact=band;
+        if(defer_clear){
+          item->clear_color=r->pending_fill_color;
+          item->clear_height=r->fbh;
+        }
         return;
       }
     }
   }
 cached_rotated_fallback:
+  if(defer_clear) prepare_rotated_draw(r,batchable_rotation);
   gml_render_flush_rotated_batch(r);
   if(fast8_blend && (draw_cache || argb_cache)){
     for(int py=y0; py<y1; py++){

@@ -67,6 +67,7 @@ int render_record_deferred_underlay(GmlRender *r,const uint32_t *src,int sw,int 
   int px0,py0,px1,py1;
   if(!presentation_deferral_candidate(r,src,sw,sh,x0,y0,W,H,source_all_opaque,
                                       &px0,&py0,&px1,&py1)) return 0;
+  if(gml_render_rotated_clear_pending(r)) gml_render_flush_rotated_batch(r);
   {
     int absolute_x0=x0+px0,absolute_y0=y0+py0;
     int covers=rect_covers_target(r,absolute_x0,absolute_y0,x0+px1,y0+py1);
@@ -117,6 +118,7 @@ int render_record_deferred_underlay(GmlRender *r,const uint32_t *src,int sw,int 
 void render_present_first_generation(GmlRender *r,int surf,const uint32_t *src,int sw,int sh,
                                      int x0,int y0,int x1,int y1,
                                      double dx,double dy,double dw,double dh){
+  if(gml_render_rotated_clear_pending(r)) gml_render_flush_rotated_batch(r);
   int covers=rect_covers_target(r,x0,y0,x1,y1);
   int deferrable=r->presentation_deferral_enabled && !r->pending_underlay;
   int captured_fill=deferrable && r->pending_fill;
@@ -165,6 +167,7 @@ int render_present_content_shader(GmlRender *r,int surf,const uint32_t *src,int 
                                   int x0,int y0,int x1,int y1,
                                   double dx,double dy,double dw,double dh,int shader,
                                   const GmlRenderShaderGeometry *geometry){
+  if(gml_render_rotated_clear_pending(r)) gml_render_flush_rotated_batch(r);
   int covers=rect_covers_target(r,x0,y0,x1,y1);
   int deferrable=r->presentation_deferral_enabled && !r->pending_underlay;
   int captured_fill=deferrable && r->pending_fill;

@@ -696,6 +696,70 @@ static int pre_draw_clear_handoff_case(void){
   return 1;
 }
 
+static int rotated_opaque_clear_case(void){
+  enum { SOURCE_WIDTH=2, HEIGHT=4, MAX_WIDTH=5 };
+  const uint32_t initial=0x7f123456u,clear=0xff001122u,opaque=0xff315579u;
+  uint8_t rgba[SOURCE_WIDTH*HEIGHT*4];
+  uint32_t target[MAX_WIDTH*HEIGHT];
+  GmlWin content={0};
+  content.bytecode=17;
+  for(size_t i=0;i<sizeof rgba;i+=4){
+    rgba[i]=0x31;
+    rgba[i+1]=0x55;
+    rgba[i+2]=0x79;
+    rgba[i+3]=0xff;
+  }
+  for(int route=0;route<5;route++){
+    GmlRender render;
+    GmlAtlas atlas={.w=SOURCE_WIDTH,.h=HEIGHT,.px=rgba,.decode_attempted=1};
+    GmlTpag page={.atlas=0,.sw=SOURCE_WIDTH,.sh=HEIGHT,.bw=SOURCE_WIDTH,.bh=HEIGHT};
+    GmlSprite sprite={.w=SOURCE_WIDTH,.h=HEIGHT};
+    int width=route==0?4:MAX_WIDTH;
+    for(int i=0;i<width*HEIGHT;i++) target[i]=initial;
+    render_reset(&render,&content,target,width,HEIGHT,target,width,HEIGHT,1);
+    render.atlas=&atlas;
+    render.n_atlas=1;
+    render.tpag=&page;
+    render.n_tpag=1;
+    gml_render_set_pending_fill(&render,clear);
+    blit_rotated(&render,&sprite,&page,0,0,1,1,0,0xffffffu,1.0);
+    REQUIRE(gml_render_rotated_clear_pending(&render) && render.pending_fill &&
+            target[0]==initial && target[width-1]==initial,
+            "the first queued opaque packet retains its clear until replay");
+    if(route<2){
+      blit_rotated(&render,&sprite,&page,width-SOURCE_WIDTH,0,1,1,0,0xffffffu,1.0);
+      gml_render_flush_rotated_batch(&render);
+    }else if(route==2){
+      REQUIRE(surface_pixels_observe(&render,0,NULL,NULL)==target,
+              "an aliased application read observes the pending prefix");
+    }else if(route==3){
+      render.next_surface_id=1;
+      int child=gml_surface_create(&render,1,1);
+      REQUIRE(child>0 && gml_surface_set_target(&render,child),
+              "changing to a numbered target completes the base prefix");
+      gml_surface_reset_target(&render);
+    }else{
+      gml_render_maybe_prepare_opaque_rect(&render,0,0,1,1);
+      target[0]=initial;
+    }
+    REQUIRE(!gml_render_rotated_clear_pending(&render),"the clear is consumed once");
+    for(int y=0;y<HEIGHT;y++)
+      for(int x=0;x<width;x++){
+        int drawn=x<SOURCE_WIDTH || (route<2 && x>=width-SOURCE_WIDTH);
+        uint32_t expected=route==4 && !x && !y?initial:drawn?opaque:clear;
+        REQUIRE(target[y*width+x]==expected,
+                "coverage and fallback preserve every target byte");
+      }
+    gml_render_texture_page_cache_clear(&render,&page);
+    render.atlas=NULL;
+    render.n_atlas=0;
+    render.tpag=NULL;
+    render.n_tpag=0;
+    gml_render_free(&render);
+  }
+  return 1;
+}
+
 static int dispatch_deferred_presentation_case(void){
   enum { W=24,H=20 };
   uint32_t source[4*3],off[W*H],on[W*H];
@@ -1797,6 +1861,7 @@ int main(int argc,char **argv){
     {"deferred_underlay",deferred_underlay_case},
     {"dispatch_deferred_fill",dispatch_deferred_fill_case},
     {"pre_draw_clear_handoff",pre_draw_clear_handoff_case},
+    {"rotated_opaque_clear",rotated_opaque_clear_case},
     {"dispatch_deferred_presentation",dispatch_deferred_presentation_case},
   };
   static const AnygmTestCase plan_cases[]={

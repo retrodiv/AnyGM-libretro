@@ -411,6 +411,7 @@ void gml_render_application_surface_bind(GmlRender *r,uint32_t *pixels,
                                          int width,int height,int opaque){
   if(!r) return;
   int changed=r->app_surface!=pixels || r->app_w!=width || r->app_h!=height;
+  if(changed && gml_render_rotated_clear_pending(r)) gml_render_flush_rotated_batch(r);
   if(changed && !gml_render_application_scene_flush(r)) return;
   r->app_surface=pixels;
   r->app_w=width;
@@ -1702,6 +1703,7 @@ static int render_fill_opaque_complement(GmlRender *r,int x0,int y0,int x1,int y
 
 void gml_render_prepare_opaque_rect(GmlRender *r, int x0, int y0, int x1, int y1){
   if(!r) return;
+  if(gml_render_rotated_clear_pending(r)) gml_render_flush_rotated_batch(r);
   if(r->pending_underlay){
     if(pending_underlay_covered(r,x0,y0,x1,y1)) gml_render_cancel_pending_underlay(r);
     else gml_render_flush_pending_underlay(r);
@@ -1717,7 +1719,9 @@ void gml_render_prepare_opaque_rect(GmlRender *r, int x0, int y0, int x1, int y1
 static inline void render_maybe_prepare_draw_local(GmlRender *r){
   if(r){
     if(!r->rotated_batch_building) gml_render_flush_rotated_batch(r);
-    if(r->pending_underlay || r->pending_fill) gml_render_prepare_draw(r);
+    if(r->pending_underlay ||
+       (r->pending_fill && !(r->rotated_batch_building && gml_render_rotated_clear_pending(r))))
+      gml_render_prepare_draw(r);
     if(r->pending_presentation) gml_render_cpu_present_image(r);
     r->fb_all_transparent=0;
   }
