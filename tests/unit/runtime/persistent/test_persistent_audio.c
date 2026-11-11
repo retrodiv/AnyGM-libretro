@@ -1964,3 +1964,157 @@ int expect_audio_system_availability(void){
   if(!ok) fprintf(stderr,"native audio context availability fixture failed\n");
   return ok;
 }
+
+/* A linear authored waveform makes sample advance observable independently of the setter. */
+static int emitter_ramp_matches(GmlAudio *audio,double start,double step,int frames,int pan){
+  int16_t output[128];
+  if(frames<1 || frames>64) return 0;
+  gml_audio_mix(audio,output,frames);
+  for(int i=0;i<frames;i++){
+    int16_t sample=(int16_t)lrint(4.0*(start+step*i));
+    if(output[2*i]!=(pan==1?0:sample) || output[2*i+1]!=(pan==-1?0:sample)){
+      fprintf(stderr,"emitter PCM frame=%d got=%d,%d expected=%d pan=%d\n",
+              i,output[2*i],output[2*i+1],sample,pan);
+      return 0;
+    }
+  }
+  return 1;
+}
+int expect_emitter_pitch_and_velocity(void){
+  int ok=1;
+  for(int cached=0;cached<2 && ok;cached++){
+    GmlWin win={0}; win.bytecode=17; GmlVM vm={0};
+    if(gml_vm_init(&vm,&win,NULL)) return 0;
+    GmlAudio *audio=gml_audio_create(&win); vm.audio=audio;
+    if(!audio){ gml_vm_free(&vm); return 0; }
+    int16_t pcm[4096]; for(int i=0;i<4096;i++) pcm[i]=(int16_t)(4*i);
+    int sound=gml_audio_add_pcm16(audio,pcm,4096,1,44100,(const uint8_t*)pcm,sizeof pcm);
+    const char *pitch_name="audio_emitter_pitch",*velocity_name="audio_emitter_velocity";
+    int pitch_id=gml_builtin_fast_id(&vm,pitch_name),velocity_id=gml_builtin_fast_id(&vm,velocity_name);
+#define EMITTER_CALL(id,name,args,count) (cached?gml_builtin_call_fast_id(&vm,id,name,args,count):gml_builtin_call(&vm,name,args,count))
+    GmlVal emitter=gml_builtin_call(&vm,"audio_emitter_create",NULL,0);
+    GmlVal pitch[]={emitter,vreal(2)};
+    GmlVal position[]={emitter,vreal(0),vreal(0),vreal(10)};
+    GmlVal velocity[]={emitter,vreal(0),vreal(0),vreal(0)};
+    gml_builtin_call(&vm,"audio_emitter_position",position,4);
+    EMITTER_CALL(pitch_id,pitch_name,pitch,2);
+    gml_audio_sound_pitch(audio,sound,0.5);
+    GmlVal play[]={emitter,vreal(sound),vreal(1),vreal(0)};
+    GmlVal voice=gml_builtin_call(&vm,"audio_play_sound_on",play,4);
+    ok=pitch_id>0 && velocity_id>0 && voice.d>=1000000 &&
+       emitter_ramp_matches(audio,0,1,16,0) && gml_audio_sound_get_pitch(audio,(int)voice.d)==1;
+    pitch[1]=vreal(4); EMITTER_CALL(pitch_id,pitch_name,pitch,2);
+    ok=ok && emitter_ramp_matches(audio,16,2,16,0);
+    gml_audio_sound_pitch(audio,(int)voice.d,0.25);
+    ok=ok && emitter_ramp_matches(audio,48,0.5,16,0) &&
+       gml_audio_sound_get_pitch(audio,(int)voice.d)==0.25 && gml_audio_sound_get_pitch(audio,sound)==0.5;
+    gml_audio_sound_pitch(audio,sound,0.25);
+    ok=ok && emitter_ramp_matches(audio,56,0.25,16,0) &&
+       gml_audio_sound_get_pitch(audio,(int)voice.d)==0.25;
+    gml_audio_stop_all(audio); gml_audio_sound_pitch(audio,sound,1);
+    pitch[1]=vreal(2); EMITTER_CALL(pitch_id,pitch_name,pitch,2);
+    voice=gml_builtin_call(&vm,"audio_play_sound_on",play,4);
+    int effect=gml_audio_play(audio,sound,1); int16_t mixed[128];
+    gml_audio_mix(audio,mixed,16);
+    for(int i=0;i<16;i++) ok=ok && mixed[2*i]==12*i && mixed[2*i+1]==12*i;
+    pitch[1]=vreal(0.5); EMITTER_CALL(pitch_id,pitch_name,pitch,2); gml_audio_mix(audio,mixed,16);
+    for(int i=0;i<16;i++) ok=ok && mixed[2*i]==192+6*i && mixed[2*i+1]==192+6*i;
+    ok=ok && gml_audio_sound_get_pitch(audio,effect)==1 && gml_audio_sound_get_pitch(audio,(int)voice.d)==1;
+    gml_audio_stop_all(audio); pitch[1]=vreal(1); EMITTER_CALL(pitch_id,pitch_name,pitch,2);
+    for(int axis=0;axis<3 && ok;axis++){
+      for(int j=1;j<=3;j++){ position[j]=vreal(j==axis+1?10:0); velocity[j]=vreal(j==axis+1?-171.65:0); }
+      gml_builtin_call(&vm,"audio_emitter_position",position,4);
+      EMITTER_CALL(velocity_id,velocity_name,velocity,4);
+      voice=gml_builtin_call(&vm,"audio_play_sound_on",play,4);
+      ok=ok && emitter_ramp_matches(audio,0,2,16,axis==0?1:0);
+      velocity[axis+1]=vreal(171.65); EMITTER_CALL(velocity_id,velocity_name,velocity,4);
+      ok=ok && emitter_ramp_matches(audio,32,2.0/3.0,12,axis==0?1:0);
+      velocity[axis+1]=vreal(0); velocity[(axis+1)%3+1]=vreal(-171.65);
+      EMITTER_CALL(velocity_id,velocity_name,velocity,4);
+      ok=ok && emitter_ramp_matches(audio,40,1,16,axis==0?1:0);
+      gml_audio_stop_all(audio);
+    }
+    position[1]=position[2]=vreal(0); position[3]=vreal(10);
+    velocity[1]=velocity[2]=vreal(0); velocity[3]=vreal(-171.65);
+    gml_builtin_call(&vm,"audio_emitter_position",position,4); EMITTER_CALL(velocity_id,velocity_name,velocity,4);
+    voice=gml_builtin_call(&vm,"audio_play_sound_on",play,4);
+    ok=ok && emitter_ramp_matches(audio,0,2,16,0);
+    GmlVal listener[]={vreal(0),vreal(0),vreal(20)};
+    gml_builtin_call(&vm,"audio_listener_position",listener,3);
+    ok=ok && emitter_ramp_matches(audio,32,2.0/3.0,12,0);
+    listener[2]=vreal(10); gml_builtin_call(&vm,"audio_listener_position",listener,3);
+    ok=ok && emitter_ramp_matches(audio,40,1,16,0);
+    listener[2]=vreal(0); gml_builtin_call(&vm,"audio_listener_position",listener,3);
+    size_t vm_size=gml_vm_state_size(&vm),audio_size=gml_audio_state_size(audio),written=0,used=0;
+    uint8_t *vm_state=malloc(vm_size),*audio_state=malloc(audio_size),*vm_again=malloc(vm_size),*audio_again=malloc(audio_size);
+    int saved=vm_state && audio_state && vm_again && audio_again &&
+      gml_vm_state_save(&vm,vm_state,vm_size,&written) && written==vm_size &&
+      gml_audio_state_save(audio,audio_state,audio_size,&written) && written==audio_size;
+    ok=ok && saved;
+    if(saved){
+      gml_audio_mix(audio,mixed,32);
+      pitch[1]=vreal(3); EMITTER_CALL(pitch_id,pitch_name,pitch,2);
+      velocity[3]=vreal(0); EMITTER_CALL(velocity_id,velocity_name,velocity,4);
+      ok=ok && gml_vm_state_load(&vm,vm_state,vm_size,&used) && used==vm_size &&
+        gml_audio_state_load(audio,audio_state,audio_size,&used) && used==audio_size &&
+        gml_vm_state_save(&vm,vm_again,vm_size,&written) && written==vm_size && !memcmp(vm_state,vm_again,vm_size) &&
+        gml_audio_state_save(audio,audio_again,audio_size,&written) && written==audio_size && !memcmp(audio_state,audio_again,audio_size);
+      int16_t replay[64]; gml_audio_mix(audio,replay,32); ok=ok && !memcmp(mixed,replay,sizeof replay);
+      ok=ok && gml_audio_state_load(audio,audio_state,audio_size,NULL);
+      memcpy(audio_again,audio_state,audio_size);
+      /* Header28 + five integers20 + six reals48 + emitter4: first spatial pitch. */
+      for(int j=0;j<8;j++) audio_again[100+j]=(uint8_t)(UINT64_C(0x7ff8000000000000)>>(8*j));
+      ok=ok && !gml_audio_state_load(audio,audio_again,audio_size,NULL) &&
+        gml_audio_state_save(audio,audio_again,audio_size,&written) && !memcmp(audio_state,audio_again,audio_size);
+    }
+    free(vm_state); free(audio_state); free(vm_again); free(audio_again);
+    /* A freed identifier cannot retain voices or the previous emitter's pitch/velocity. */
+    gml_builtin_call(&vm,"audio_emitter_free",&emitter,1);
+    ok=ok && !gml_audio_is_playing(audio,(int)voice.d);
+    emitter=gml_builtin_call(&vm,"audio_emitter_create",NULL,0); play[0]=emitter; pitch[0]=emitter; velocity[0]=emitter;
+    gml_builtin_call(&vm,"audio_play_sound_on",play,4);
+    ok=ok && emitter_ramp_matches(audio,0,1,16,0);
+    gml_audio_stop_all(audio); pitch[1]=vreal(-1); EMITTER_CALL(pitch_id,pitch_name,pitch,2);
+    gml_builtin_call(&vm,"audio_play_sound_on",play,4); ok=ok && emitter_ramp_matches(audio,0,1.0/256.0,64,0);
+    gml_audio_stop_all(audio); pitch[1]=vreal(1e300); EMITTER_CALL(pitch_id,pitch_name,pitch,2);
+    gml_builtin_call(&vm,"audio_play_sound_on",play,4); ok=ok && emitter_ramp_matches(audio,0,256,4,0);
+    /* Invalid new arguments leave the existing phase multiplier unchanged. */
+    gml_audio_stop_all(audio); pitch[1]=vreal(2); EMITTER_CALL(pitch_id,pitch_name,pitch,2);
+    pitch[1]=vreal(NAN); EMITTER_CALL(pitch_id,pitch_name,pitch,2);
+    velocity[1]=vreal(INFINITY); EMITTER_CALL(velocity_id,velocity_name,velocity,4);
+    pitch[0]=vreal(3000000.5); pitch[1]=vreal(4); EMITTER_CALL(pitch_id,pitch_name,pitch,2);
+    gml_builtin_call(&vm,"audio_play_sound_on",play,4); ok=ok && emitter_ramp_matches(audio,0,2,16,0);
+    gml_audio_stop_all(audio);
+    unsigned char queued_pcm[sizeof pcm];
+    for(int i=0;i<4096;i++) fixture_write_u16(queued_pcm,(size_t)i*2,(uint16_t)pcm[i]);
+    int queue=gml_audio_queue_create(audio,4,44100,0);
+    ok=ok && queue>=0 && gml_audio_queue_submit(audio,queue,0,queued_pcm,sizeof queued_pcm);
+    play[1]=vreal(queue); gml_builtin_call(&vm,"audio_play_sound_on",play,4);
+    ok=ok && emitter_ramp_matches(audio,0,2,32,0);
+    gml_audio_stop_all(audio); gml_audio_queue_free(audio,queue);
+    for(int format=0;format<4 && ok;format++){
+      const uint8_t *encoded=(format&1)?audio_stream_fixture:audio_stream_mono_fixture;
+      size_t encoded_size=(format&1)?sizeof audio_stream_fixture:sizeof audio_stream_mono_fixture;
+      GmlAudio *control=gml_audio_create(&win);
+      int source=(format&2)?gml_audio_add_encoded(audio,encoded,(int)encoded_size):gml_audio_add_ogg(audio,encoded,(int)encoded_size);
+      int comparison=(format&2)?gml_audio_add_encoded(control,encoded,(int)encoded_size):gml_audio_add_ogg(control,encoded,(int)encoded_size);
+      pitch[0]=emitter; pitch[1]=vreal(2); EMITTER_CALL(pitch_id,pitch_name,pitch,2);
+      play[1]=vreal(source); gml_builtin_call(&vm,"audio_play_sound_on",play,4);
+      int control_voice=gml_audio_play(control,comparison,1);
+      gml_audio_sound_pitch(control,control_voice,2);
+      ok=ok && source>=0 && comparison>=0 && stream_pair_matches(audio,control,512);
+      pitch[1]=vreal(10000); EMITTER_CALL(pitch_id,pitch_name,pitch,2);
+      gml_audio_sound_pitch(control,control_voice,(format&2)?4:256);
+      ok=ok && stream_pair_matches(audio,control,512);
+      gml_audio_pause_all(audio,1); gml_audio_pause_all(control,1);
+      ok=ok && stream_pair_matches(audio,control,64);
+      gml_audio_pause_all(audio,0); gml_audio_pause_all(control,0);
+      ok=ok && stream_pair_matches(audio,control,512);
+      gml_audio_stop_all(audio); gml_audio_free(control);
+    }
+    gml_vm_free(&vm); gml_audio_free(audio);
+#undef EMITTER_CALL
+  }
+  if(!ok) fprintf(stderr,"emitter pitch/velocity/PCM/state fixture failed\n");
+  return ok;
+}

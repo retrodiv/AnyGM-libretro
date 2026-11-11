@@ -145,6 +145,8 @@ struct GmlBuiltinState {
   int time_source_game_state;
   unsigned char emitter_live[GML_MAX_EMITTERS];
   double emitter_gain[GML_MAX_EMITTERS];
+  double emitter_pitch[GML_MAX_EMITTERS];
+  double emitter_vx[GML_MAX_EMITTERS], emitter_vy[GML_MAX_EMITTERS], emitter_vz[GML_MAX_EMITTERS];
   double emitter_x[GML_MAX_EMITTERS];
   double emitter_y[GML_MAX_EMITTERS];
   double emitter_z[GML_MAX_EMITTERS];

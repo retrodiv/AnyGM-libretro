@@ -34,6 +34,7 @@
 #include "anygm_host.h"
 #include "anygm_vfs.h"
 #include <limits.h>
+#include <float.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -72,7 +73,7 @@ typedef struct {
 } GmlSound; /* own is decoded/copied PCM; encoded_own backs a dynamic compressed blob */
 typedef struct {
   int snd, loop, active, paused, id, emitter;
-  double pos, gain, pitch, loop_start, spatial_gain, pan;
+  double pos, gain, pitch, loop_start, spatial_gain, pan, spatial_pitch;
 } GmlVoice;
 
 #define GML_MAX_VOICES 32
@@ -1163,7 +1164,7 @@ int gml_audio_play_on(GmlAudio *a, int snd, int loop, int emitter){
   double loop_start=s->loop_start_seconds*(double)rate*ch;
   if(loop_start<0.0 || loop_start>=(double)s->nval) loop_start=0.0;
   a->voice[slot]=(GmlVoice){.snd=snd,.loop=loop,.active=1,.paused=0,.id=id,.emitter=emitter,
-    .pos=0.0,.gain=gain,.pitch=pitch,.loop_start=loop_start,.spatial_gain=1.0,.pan=0.0};
+    .pos=0.0,.gain=gain,.pitch=emitter>=0?1.0:pitch,.loop_start=loop_start,.spatial_gain=1.0,.pan=0.0,.spatial_pitch=1.0};
   return id;
 }
 int gml_audio_play(GmlAudio *a, int snd, int loop){ return gml_audio_play_on(a,snd,loop,-1); }
@@ -1333,7 +1334,8 @@ void gml_audio_sound_pitch(GmlAudio *a, int target, double pitch){
   if(!a) return;
   if(pitch<=0) pitch=1.0;
   if(target>=0 && target<a->n_snd) a->snd[target].pitch=pitch;
-  for(int i=0;i<GML_MAX_VOICES;i++) if(voice_matches(a,&a->voice[i],target)) a->voice[i].pitch=pitch;
+  for(int i=0;i<GML_MAX_VOICES;i++) if(voice_matches(a,&a->voice[i],target))
+    if(target>=1000000 || a->voice[i].emitter<0) a->voice[i].pitch=pitch;
 }
 double gml_audio_sound_get_pitch(GmlAudio *a, int target){
   if(!a) return 1.0;
@@ -1457,13 +1459,22 @@ void gml_audio_sound_loop_start(GmlAudio *a, int target, double seconds){
     a->voice[i].loop_start=(pos>=0.0 && pos<(double)s->nval)?pos:0.0;
   }
 }
-void gml_audio_emitter_mix(GmlAudio *a, int emitter, double gain, double pan){
+void gml_audio_emitter_stop(GmlAudio *a, int emitter){
+  if(!a) return;
+  for(int i=0;i<GML_MAX_VOICES;i++)
+    if(a->voice[i].active && a->voice[i].emitter==emitter)
+      gml_audio_stop(a,a->voice[i].id);
+}
+void gml_audio_emitter_mix(GmlAudio *a, int emitter, double gain, double pan, double pitch){
   if(!a) return;
   if(!isfinite(gain) || gain<0.0) gain=0.0;
   if(!isfinite(pan)) pan=0.0;
   if(pan<-1.0) pan=-1.0; else if(pan>1.0) pan=1.0;
+  if(!isfinite(pitch)) pitch=pitch>0.0?DBL_MAX:DBL_MIN;
+  if(pitch<=0.0) pitch=DBL_MIN;
   for(int i=0;i<GML_MAX_VOICES;i++) if(a->voice[i].active && a->voice[i].emitter==emitter){
     a->voice[i].spatial_gain=gain; a->voice[i].pan=pan;
+    a->voice[i].spatial_pitch=pitch;
   }
 }
 void gml_audio_voice_spatial(GmlAudio *a, int target, double gain, double pan){
@@ -1584,6 +1595,12 @@ static void audio_mix_audo(GmlAudio *a, int16_t *out, int frames){
     double group_step=group_remaining>0?(group_target-group_start)/(double)group_remaining:0.0;
     double pan=vo->pan, left_pan=pan>0.0?1.0-pan:1.0, right_pan=pan<0.0?1.0+pan:1.0;
     double rate_scale=(double)(s->sample_rate>0?s->sample_rate:44100)/44100.0;
+    double pitch=vo->pitch;
+    if(vo->emitter>=0){
+      pitch=s->pitch*vo->pitch*vo->spatial_pitch;
+      double maximum=(s->ogg || s->mp3)?4.0:256.0;
+      pitch=fmin(fmax(pitch,1.0/256.0),maximum);
+    }
     for(int f=0;f<frames;f++){
       if(s->queue_format && !audio_queue_advance(a,s,vo)) break;
       if(vo->pos>=s->nval){
@@ -1605,7 +1622,7 @@ static void audio_mix_audo(GmlAudio *a, int16_t *out, int frames){
           l+=center+bass+queue_lerp(s,i0+4,i0+10,frac)*0.7071067811865476;
           r+=center+bass+queue_lerp(s,i0+5,i0+11,frac)*0.7071067811865476;
         }
-        vo->pos+=ch*vo->pitch*rate_scale;
+        vo->pos+=ch*pitch*rate_scale;
       } else if(s->stream_policy>0 && !s->pcm){
         double fp=vo->pos/ch;
         uint32_t source_frame=(uint32_t)floor(fp);
@@ -1617,7 +1634,7 @@ static void audio_mix_audo(GmlAudio *a, int16_t *out, int frames){
         }
         l=first[0]+((double)second[0]-first[0])*fraction;
         r=first[1]+((double)second[1]-first[1])*fraction;
-        vo->pos+=ch*vo->pitch*rate_scale;
+        vo->pos+=ch*pitch*rate_scale;
       } else if(ch>=2){
         double fp=vo->pos*0.5;
         uint32_t fr=(uint32_t)floor(fp);
@@ -1625,12 +1642,12 @@ static void audio_mix_audo(GmlAudio *a, int16_t *out, int frames){
         uint32_t i0=fr*2, i1=i0+2;
         l=pcm_lerp(s->pcm,s->nval,i0,i1,frac);
         r=pcm_lerp(s->pcm,s->nval,i0+1,i1+1,frac);
-        vo->pos+=2.0*vo->pitch*rate_scale;
+        vo->pos+=2.0*pitch*rate_scale;
       } else {
         uint32_t i0=(uint32_t)floor(vo->pos);
         double frac=vo->pos-(double)i0;
         l=r=pcm_lerp(s->pcm,s->nval,i0,i0+1,frac);
-        vo->pos+=vo->pitch*rate_scale;
+        vo->pos+=pitch*rate_scale;
       }
       double group_level=group_remaining>f?group_start+group_step*(double)f:group_target;
       if(vo->id==a->music_voice)
@@ -1677,7 +1694,7 @@ void gml_audio_mix(GmlAudio *a, int16_t *out, int frames){
   if(a && a->fmod) gml_fmod_mix(a->fmod,out,frames,44100);
 }
 
-enum { GML_AUDIO_STATE_SCHEMA=4 };
+enum { GML_AUDIO_STATE_SCHEMA=5 };
 #define GML_AUDIO_STATE_MAGIC UINT32_C(0x53554141)
 typedef struct { uint8_t *data; size_t cap, pos; int ok; } AudW;
 typedef struct { const uint8_t *data; size_t cap, pos; int ok; } AudR;
@@ -1724,7 +1741,7 @@ static void audio_state_write(AudW *s, GmlAudio *a){
     GmlVoice v=(a&&a->voice[i].active)?a->voice[i]:(GmlVoice){0};
     aw_i32(s,v.snd); aw_i32(s,v.loop); aw_i32(s,v.active); aw_i32(s,v.paused); aw_i32(s,v.id);
     aw_d(s,v.pos); aw_d(s,v.gain); aw_d(s,v.pitch);
-    aw_d(s,v.loop_start); aw_d(s,v.spatial_gain); aw_d(s,v.pan); aw_i32(s,v.emitter);
+    aw_d(s,v.loop_start); aw_d(s,v.spatial_gain); aw_d(s,v.pan); aw_i32(s,v.emitter); aw_d(s,v.spatial_pitch);
   }
   aw_i32(s,a?a->n_snd:0);
   if(a) for(int i=0;i<a->n_snd;i++){
@@ -1861,6 +1878,9 @@ int gml_audio_state_load(GmlAudio *a, const void *data, size_t len, size_t *used
     tmp[i].pos=ar_d(&s); tmp[i].gain=ar_d(&s); tmp[i].pitch=ar_d(&s);
     tmp[i].loop_start=ar_d(&s); tmp[i].spatial_gain=ar_d(&s);
     tmp[i].pan=ar_d(&s); tmp[i].emitter=ar_i32(&s);
+    tmp[i].spatial_pitch=ar_d(&s);
+    if(!s.ok || !isfinite(tmp[i].spatial_pitch) || tmp[i].spatial_pitch<0.0 ||
+       (tmp[i].active && tmp[i].spatial_pitch==0.0)) return 0;
     if(!tmp[i].active){ memset(&tmp[i],0,sizeof(tmp[i])); continue; }
     if(tmp[i].id<1000000){
       tmp[i].id=next_voice_id++;

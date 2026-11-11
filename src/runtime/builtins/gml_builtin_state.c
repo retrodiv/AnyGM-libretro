@@ -492,6 +492,10 @@ void gml_builtin_state_reset(GmlBuiltinState *state){
   state->time_source_game_state=1;
   memset(state->emitter_live,0,sizeof(state->emitter_live));
   memset(state->emitter_gain,0,sizeof(state->emitter_gain));
+  memset(state->emitter_pitch,0,sizeof(state->emitter_pitch));
+  memset(state->emitter_vx,0,sizeof(state->emitter_vx));
+  memset(state->emitter_vy,0,sizeof(state->emitter_vy));
+  memset(state->emitter_vz,0,sizeof(state->emitter_vz));
   memset(state->emitter_x,0,sizeof(state->emitter_x));
   memset(state->emitter_y,0,sizeof(state->emitter_y));
   memset(state->emitter_z,0,sizeof(state->emitter_z));
@@ -1103,6 +1107,10 @@ void gml_builtin_state_write_audio(const GmlBuiltinState *state,
                          sizeof(state->emitter_live));
   for(int i=0;i<GML_MAX_EMITTERS;i++){
     gml_vm_state_write_real(writer,state->emitter_gain[i]);
+    gml_vm_state_write_real(writer,state->emitter_pitch[i]);
+    gml_vm_state_write_real(writer,state->emitter_vx[i]);
+    gml_vm_state_write_real(writer,state->emitter_vy[i]);
+    gml_vm_state_write_real(writer,state->emitter_vz[i]);
     gml_vm_state_write_real(writer,state->emitter_x[i]);
     gml_vm_state_write_real(writer,state->emitter_y[i]);
     gml_vm_state_write_real(writer,state->emitter_z[i]);
@@ -1156,6 +1164,10 @@ int gml_builtin_state_read_audio(GmlBuiltinState *state,
   gml_vm_state_read_raw(reader,state->emitter_live,sizeof(state->emitter_live));
   for(int i=0;i<GML_MAX_EMITTERS;i++){
     state->emitter_gain[i]=gml_vm_state_read_real(reader);
+    state->emitter_pitch[i]=gml_vm_state_read_real(reader);
+    state->emitter_vx[i]=gml_vm_state_read_real(reader);
+    state->emitter_vy[i]=gml_vm_state_read_real(reader);
+    state->emitter_vz[i]=gml_vm_state_read_real(reader);
     state->emitter_x[i]=gml_vm_state_read_real(reader);
     state->emitter_y[i]=gml_vm_state_read_real(reader);
     state->emitter_z[i]=gml_vm_state_read_real(reader);
@@ -1163,6 +1175,10 @@ int gml_builtin_state_read_audio(GmlBuiltinState *state,
     state->emitter_max[i]=gml_vm_state_read_real(reader);
     state->emitter_factor[i]=gml_vm_state_read_real(reader);
     if(!isfinite(state->emitter_gain[i]) || state->emitter_gain[i]<0 ||
+       !isfinite(state->emitter_pitch[i]) || state->emitter_pitch[i]<0 ||
+       (state->emitter_live[i] && state->emitter_pitch[i]==0) ||
+       !isfinite(state->emitter_vx[i]) || !isfinite(state->emitter_vy[i]) ||
+       !isfinite(state->emitter_vz[i]) ||
        !isfinite(state->emitter_x[i]) || !isfinite(state->emitter_y[i]) ||
        !isfinite(state->emitter_z[i]) || !isfinite(state->emitter_ref[i]) ||
        !isfinite(state->emitter_max[i]) ||

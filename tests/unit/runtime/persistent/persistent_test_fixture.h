@@ -95,6 +95,7 @@ int expect_dynamic_audio_extension_state(void);
 int expect_builtin_sound_fade(void);
 int expect_legacy_music_controls(void);
 int expect_audio_system_availability(void);
+int expect_emitter_pitch_and_velocity(void);
 int expect_saudio_portable_playback(void);
 int expect_faudio_gms_portable_playback(void);
 int expect_wwise_portable_bank_state(void);

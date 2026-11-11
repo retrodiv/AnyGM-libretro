@@ -20,9 +20,14 @@ failed partial reads leave the canonical image unpublished and invalid as a
 current resource. See R03-P9-INCREMENTAL-CHECKPOINT in
 [the renderer map](RENDERER_BACKENDS.md) for owners and controls.
 
-The current AnyGM save-state schema is `47`. It is the format transported by
+The current AnyGM save-state schema is `48`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `48` introduces VM schema `28` and audio schema `5`. Emitter records retain a
+positive pitch multiplier and three velocity components; active voices retain their derived
+spatial pitch independently of ordinary voice pitch. Readers validate these new values before
+publication and older layouts reject transactionally. Graphics resource schema remains `2`.
 
 Schema `47` introduces audio schema `4`, appending the legacy music voice identity, current
 and target bus gain, and remaining fade sample count after the existing queue/event data.

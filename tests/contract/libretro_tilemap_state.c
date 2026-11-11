@@ -9,6 +9,7 @@
 #include "synthetic_content.h"
 
 #include <stdio.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -543,11 +544,76 @@ done:
   return ok;
 }
 
+static int run_emitter_case(int response){
+  AnygmSyntheticContent fixture={0}; Ring ring={0};
+  uint8_t *cold=NULL,*saved=NULL; size_t saved_size=0;
+  int ok=1;
+  negotiation=response; monitor_changed=option_update=0;
+  REQUIRE(anygm_synthetic_tilemap_content_create(&fixture),"create emitter capacity fixture");
+  retro_set_environment(environment); retro_set_video_refresh(video); retro_init();
+  struct retro_game_info info={fixture.path,NULL,0,NULL};
+  REQUIRE(retro_load_game(&info),"load emitter capacity fixture");
+  ring.initial=ring.capacity=retro_serialize_size();
+  REQUIRE(ring.capacity>0 && g_libretro.startup_ring_compact,"emitter cold compact policy");
+  ring.bytes=malloc(ring.capacity); cold=malloc(ring.capacity);
+  REQUIRE(ring.bytes && cold && push(&ring),"emitter ring before first frame");
+  memcpy(cold,ring.bytes,ring.initial); retro_run(); REQUIRE(push(&ring),"emitter first frame");
+  GmlVM *vm=&g_libretro.engine->vm;
+  GmlVal create[]={vreal(65536),vreal(0),vreal(1)};
+  GmlVal source=gml_builtin_call(vm,"buffer_create",create,3);
+  GmlVal queue_args[]={vreal(4),vreal(44100),vreal(0)};
+  GmlVal queue=gml_builtin_call(vm,"audio_create_play_queue",queue_args,3);
+  GmlVal submit[]={queue,source,vreal(0),vreal(65536)};
+  gml_builtin_call(vm,"audio_queue_sound",submit,4);
+  GmlVal emitter=gml_builtin_call(vm,"audio_emitter_create",NULL,0);
+  GmlVal position[]={emitter,vreal(0),vreal(0),vreal(10)};
+  GmlVal pitch[]={emitter,vreal(2)};
+  GmlVal velocity[]={emitter,vreal(0),vreal(0),vreal(-171.65)};
+  gml_builtin_call(vm,"audio_emitter_position",position,4);
+  gml_builtin_call(vm,"audio_emitter_pitch",pitch,2);
+  gml_builtin_call(vm,"audio_emitter_velocity",velocity,4);
+  GmlVal play[]={emitter,queue,vreal(0),vreal(0)};
+  GmlVal voice=gml_builtin_call(vm,"audio_play_sound_on",play,4);
+  REQUIRE(voice.d>=1000000 && push(&ring),"largest emitter and PCM transition fits cold ring");
+  saved_size=ring.capacity; saved=malloc(saved_size);
+  REQUIRE(saved,"retain emitter snapshot"); memcpy(saved,ring.bytes,saved_size);
+  gml_builtin_call(vm,"audio_emitter_free",&emitter,1);
+  REQUIRE(!gml_audio_is_playing(g_libretro.engine->audio,(int)voice.d) && push(&ring),"freed emitter push");
+  REQUIRE(retro_unserialize(saved,saved_size) && gml_audio_is_playing(g_libretro.engine->audio,(int)voice.d),
+          "rewind restores emitter voice");
+  monitor_changed=option_update=1; retro_run(); REQUIRE(push(&ring),"emitter ring after geometry");
+  retro_reset(); vm=&g_libretro.engine->vm;
+  REQUIRE(gml_builtin_call(vm,"audio_emitter_exists",&emitter,1).d==0 && push(&ring),"Reset clears emitters");
+  REQUIRE(retro_unserialize(saved,saved_size)==(response>0),"emitter Reset fixed/variable policy");
+  retro_run(); REQUIRE(push(&ring),"emitter ring after first reset frame");
+  REQUIRE(retro_unserialize(saved,saved_size),"emitter resources restore after Reset");
+  vm=&g_libretro.engine->vm;
+  /* New playback after restore must derive pitch from the restored emitter metadata. */
+  gml_audio_stop(g_libretro.engine->audio,(int)voice.d);
+  gml_builtin_call(vm,"audio_queue_sound",submit,4);
+  voice=gml_builtin_call(vm,"audio_play_sound_on",play,4);
+  int16_t output[32]; gml_audio_mix(g_libretro.engine->audio,output,16);
+  double progress=gml_audio_sound_get_track_position(g_libretro.engine->audio,(int)voice.d);
+  REQUIRE(voice.d>=1000000 && fabs(progress-64.0/44100.0)<1e-12 && push(&ring),
+          "restored pitch and velocity affect new queue playback");
+  REQUIRE(retro_unserialize(cold,ring.initial) &&
+          gml_builtin_call(&g_libretro.engine->vm,"audio_emitter_exists",&emitter,1).d==0 && push(&ring),
+          "cold state removes later emitters");
+  REQUIRE(ring.accepted==9 && ring.rejected==0,"every emitter frontend push accepted");
+  printf("emitter frontend: negotiation=%d cold=%zu final=%zu accepted=%u rejected=%u\n",
+         response,ring.initial,ring.capacity,ring.accepted,ring.rejected);
+done:
+  free(cold); free(saved); free(ring.bytes);
+  retro_unload_game(); retro_deinit(); anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 int main(void){
   for(int response=-1;response<=1;response++) if(!run_case(response)) return 1;
   for(int response=-1;response<=1;response++) if(!run_ds_case(response)) return 1;
   for(int response=-1;response<=1;response++) if(!run_vertex_case(response)) return 1;
   for(int response=-1;response<=1;response++) if(!run_timeline_case(response)) return 1;
   for(int response=-1;response<=1;response++) if(!run_music_case(response)) return 1;
+  for(int response=-1;response<=1;response++) if(!run_emitter_case(response)) return 1;
   return 0;
 }

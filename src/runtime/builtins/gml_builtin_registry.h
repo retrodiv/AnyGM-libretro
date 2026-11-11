@@ -1978,7 +1978,9 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1880, AUDIO_STOP_MUSIC, "audio_stop_music", AUDIO, AUDIO, ALWAYS) \
   ENTRY(1881, AUDIO_MUSIC_IS_PLAYING, "audio_music_is_playing", AUDIO, AUDIO, ALWAYS) \
   ENTRY(1882, AUDIO_MUSIC_GAIN, "audio_music_gain", AUDIO, AUDIO, ALWAYS) \
-  ENTRY(1883, AUDIO_SYSTEM_IS_AVAILABLE, "audio_system_is_available", AUDIO, AUDIO, ALWAYS)
+  ENTRY(1883, AUDIO_SYSTEM_IS_AVAILABLE, "audio_system_is_available", AUDIO, AUDIO, ALWAYS) \
+  ENTRY(1884, AUDIO_EMITTER_PITCH, "audio_emitter_pitch", AUDIO, AUDIO, ALWAYS) \
+  ENTRY(1885, AUDIO_EMITTER_VELOCITY, "audio_emitter_velocity", AUDIO, AUDIO, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -1993,7 +1995,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1884
+  GML_BUILTIN_ID_LIMIT = 1886
 } GmlBuiltinId;
 
 #endif

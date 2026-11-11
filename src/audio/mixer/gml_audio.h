@@ -95,7 +95,8 @@ int gml_audio_sound_format(GmlAudio *a,int sound,int *channels,
 void gml_audio_sound_set_track_position(GmlAudio *a, int target, double seconds);
 double gml_audio_sound_get_track_position(GmlAudio *a, int target);
 void gml_audio_sound_loop_start(GmlAudio *a, int target, double seconds);
-void gml_audio_emitter_mix(GmlAudio *a, int emitter, double gain, double pan);
+void gml_audio_emitter_mix(GmlAudio *a, int emitter, double gain, double pan, double pitch);
+void gml_audio_emitter_stop(GmlAudio *a, int emitter);
 void gml_audio_voice_spatial(GmlAudio *a, int target, double gain, double pan);
 
 /* mix `frames` stereo (interleaved L,R) int16 samples at 44100 Hz into out. */

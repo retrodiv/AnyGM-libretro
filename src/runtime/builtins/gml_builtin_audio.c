@@ -15,6 +15,7 @@
 
 #include <ctype.h>
 #include <limits.h>
+#include <float.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -311,7 +312,16 @@ static void audio_refresh_emitter(GmlVM *vm, GmlAudio *au, int e){
   double rl=sqrt(rx*rx+ry*ry+rz*rz), pan=0.0;
   if(dist>0.0 && rl>0.0) pan=(dx*rx+dy*ry+dz*rz)/(dist*rl);
   if(pan<-1.0) pan=-1.0; else if(pan>1.0) pan=1.0;
-  gml_audio_emitter_mix(au,e,vm->builtins->emitter_gain[e]*audio_emitter_attenuation(vm,e,dist),pan);
+  double doppler=1.0;
+  if(dist>0.0 && isfinite(dist)){
+    double radial=vm->builtins->emitter_vx[e]*(dx/dist)+
+      vm->builtins->emitter_vy[e]*(dy/dist)+vm->builtins->emitter_vz[e]*(dz/dist);
+    /* Raw velocity units use the selected conventional propagation scale.
+     * Explicit position changes alter the projection; velocity never integrates position. */
+    doppler=343.3/fmax(343.3+radial,DBL_MIN);
+  }
+  double pitch=vm->builtins->emitter_pitch[e]*doppler;
+  gml_audio_emitter_mix(au,e,vm->builtins->emitter_gain[e]*audio_emitter_attenuation(vm,e,dist),pan,pitch);
 }
 static void audio_refresh_emitters(GmlVM *vm, GmlAudio *au){
   if(!vm || !au) return;
@@ -2323,20 +2333,37 @@ GmlVal gml_builtin_try_audio(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"caster_resume")){ int h=(int)N(a,n,0); if(h<0) gml_audio_pause_all(AU,0); else gml_audio_pause_sound(AU,h,0); return vreal(0); }
     if(!strcmp(nm,"caster_is_playing")) return vreal(gml_audio_is_playing(AU,(int)N(a,n,0)));
     if(!strncmp(nm,"caster_",7)) return vreal(0);   /* set_panning / get_length / etc.: graceful no-op */
-    /* Audio emitters are modeled as gain cells with create, gain, query, free, and existence
-     * operations. Retaining the gain value supports runtime ducking envelopes. */
+    /* Emitter pose and pitch feed the shared voice mixer without changing ordinary gains. */
     if(!strcmp(nm,"audio_emitter_create")){
       for(int i=0;i<GML_MAX_EMITTERS;i++) if(!vm->builtins->emitter_live[i]){ vm->builtins->emitter_live[i]=1; vm->builtins->emitter_gain[i]=1.0;
+        vm->builtins->emitter_pitch[i]=1.0;
+        vm->builtins->emitter_vx[i]=vm->builtins->emitter_vy[i]=vm->builtins->emitter_vz[i]=0.0;
         vm->builtins->emitter_x[i]=vm->builtins->emitter_y[i]=vm->builtins->emitter_z[i]=0.0;
         vm->builtins->emitter_ref[i]=100.0; vm->builtins->emitter_max[i]=100000.0; vm->builtins->emitter_factor[i]=1.0;
         return vreal(3000000+i); }
       return vreal(-1); }
+    if(!strcmp(nm,"audio_emitter_pitch") || !strcmp(nm,"audio_emitter_velocity")){
+      int velocity=!strcmp(nm,"audio_emitter_velocity");
+      double handle=N(a,n,0);
+      if(n<(velocity?4:2) || !audio_queue_integer(handle) ||
+         handle<3000000 || handle>=3000000+GML_MAX_EMITTERS) return vreal(0);
+      int e=(int)handle-3000000;
+      if(!vm->builtins->emitter_live[e]) return vreal(0);
+      double x=N(a,n,1),y=velocity?N(a,n,2):0,z=velocity?N(a,n,3):0;
+      if(!isfinite(x) || !isfinite(y) || !isfinite(z)) return vreal(0);
+      if(velocity){
+        vm->builtins->emitter_vx[e]=x; vm->builtins->emitter_vy[e]=y;
+        vm->builtins->emitter_vz[e]=z;
+      } else vm->builtins->emitter_pitch[e]=x>0.0?x:DBL_MIN;
+      audio_refresh_emitter(vm,AU,e);
+      return vreal(0);
+    }
     if(!strcmp(nm,"audio_emitter_gain")){ int e=(int)N(a,n,0)-3000000;
       if(e>=0&&e<GML_MAX_EMITTERS&&vm->builtins->emitter_live[e]){ double g=N(a,n,1); vm->builtins->emitter_gain[e]=g<0?0:g; audio_refresh_emitter(vm,AU,e); } return vreal(0); }
     if(!strcmp(nm,"audio_emitter_get_gain")){ int e=(int)N(a,n,0)-3000000;
       return vreal((e>=0&&e<GML_MAX_EMITTERS&&vm->builtins->emitter_live[e])?vm->builtins->emitter_gain[e]:1.0); }
     if(!strcmp(nm,"audio_emitter_free")){ int e=(int)N(a,n,0)-3000000;
-      if(e>=0&&e<GML_MAX_EMITTERS) vm->builtins->emitter_live[e]=0;
+      if(e>=0&&e<GML_MAX_EMITTERS){ gml_audio_emitter_stop(AU,e); vm->builtins->emitter_live[e]=0; }
       return vreal(0); }
     if(!strcmp(nm,"audio_emitter_exists")){ int e=(int)N(a,n,0)-3000000;
       return vreal(e>=0&&e<GML_MAX_EMITTERS&&vm->builtins->emitter_live[e]); }

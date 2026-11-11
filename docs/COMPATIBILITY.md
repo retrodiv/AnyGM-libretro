@@ -152,3 +152,18 @@ historical editor API exposure. Music volume retains a pre-play value, and its l
 fade continues across silence and replacement while global audio pause freezes it. These lifetime
 choices are selected compatibility behavior, not a claim of measured native-runner equivalence.
 Music voice identity and fade progress participate in the current transactional audio state.
+
+## Emitter pitch and velocity
+
+Emitter voices retain independent asset, voice and emitter pitch multipliers, with a default voice
+multiplier of one. Emitter pitch applies to active and future voices, and changing the asset
+multiplier retains each emitter voice's own multiplier.
+Velocity changes the source's radial Doppler factor; position changes remain explicit, and the
+single listener's velocity defaults to zero. Raw velocity units use a propagation scale of 343.3
+and Doppler factor 1. These scales and the positive saturation policy are selected compatibility
+behavior, not a native-runner measurement. Coincident source/listener positions retain a unit
+Doppler factor. The resulting emitter-source pitch is bounded to 1/256..256 for PCM and
+1/256..4 for compressed sources. Ordinary voices retain their established pitch behavior.
+Freeing an emitter stops its attached voices through the existing stop path, so reusing its
+identifier does not retune old sounds. Emitter and derived voice state participate in the current
+transactional format; this does not add the separate Audio Playback Ended callback API.

@@ -1329,6 +1329,35 @@ static int timeline_state_cases(const AnygmHostServices *services,const AnygmCon
   free(candidate); free(baseline); anygm_destroy(engine); return ok;
 }
 
+static int emitter_state_cases(AnygmEngine *engine){
+  GmlVal emitter=gml_builtin_call(&engine->vm,"audio_emitter_create",NULL,0);
+  GmlVal pitch[]={emitter,vreal(13.125)};
+  GmlVal velocity[]={emitter,vreal(27.375),vreal(-4.625),vreal(9.875)};
+  gml_builtin_call(&engine->vm,"audio_emitter_pitch",pitch,2);
+  gml_builtin_call(&engine->vm,"audio_emitter_velocity",velocity,4);
+  uint8_t *baseline=NULL,*candidate=NULL; size_t size=0;
+  int ok=emitter.d>=3000000 && save_state(engine,&baseline,&size);
+  candidate=ok?malloc(size):NULL;
+  uint8_t pattern[32]; const double values[]={13.125,27.375,-4.625,9.875};
+  for(int i=0;i<4;i++){ uint64_t bits; memcpy(&bits,&values[i],8); write_u64(pattern+8*i,bits); }
+  size_t found=0; int matches=0;
+  for(size_t i=0;ok && i+sizeof pattern<=size;i++)
+    if(!memcmp(baseline+i,pattern,sizeof pattern)){ found=i; matches++; }
+  ok=ok && candidate && matches==1;
+  for(int field=0;field<4 && ok;field++){
+    memcpy(candidate,baseline,size);
+    write_u64(candidate+found+8*field,UINT64_C(0x7ff8000000000000)); refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,size,baseline,size,"nonfinite emitter pitch/velocity");
+  }
+  if(ok){
+    memcpy(candidate,baseline,size); write_u64(candidate+found,0); refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,size,baseline,size,"nonpositive live emitter pitch");
+  }
+  free(candidate); free(baseline);
+  if(!ok) fail("emitter state validation/rollback failed");
+  return ok;
+}
+
 int main(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_list_override_content_create(&fixture))
@@ -1608,6 +1637,18 @@ int main(void){
   if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
                                audio_start+4,3,"previous music-free audio schema");
   if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               audio_start+4,4,"previous spatial-pitch-free audio schema");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               vm_start+4,27,"previous emitter-pitch-free VM schema");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               4,47,"previous emitter-pitch-free public schema");
+  if(ok){
+    memcpy(candidate,baseline,state_size);
+    write_u64(candidate+audio_start+100,UINT64_C(0x7ff8000000000000)); refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,state_size,baseline,state_size,"nonfinite voice spatial pitch");
+  }
+
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
                                4,46,"previous music-free public schema");
   if(ok){
     memcpy(candidate,baseline,state_size);
@@ -1668,6 +1709,7 @@ int main(void){
   if(ok) ok=timeline_state_cases(&services,&source);
 
   if(ok) ok=content_override_state_cases(&services,&fixture);
+  if(ok) ok=emitter_state_cases(engine);
 
   free(candidate);
   free(baseline);

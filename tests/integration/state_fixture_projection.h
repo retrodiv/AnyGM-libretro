@@ -142,9 +142,9 @@ static void fixture_map(FixtureProjection *p){
  * against the live fixture. Direct state controls cover mutation/restoration of these fields. */
 static int project_fixture_playback(AnygmEngine *engine,uint8_t **data,size_t *written){
   uint8_t *bytes=*data;
-  if(*written<112 || (uint32_t)read_u64(bytes+4)!=47 || engine->render.n_spr<0)return 0;
-  /* Current audio adds only these default music fields to this fixture. Verify
-   * them before removing the trailer in scratch; active music is unsupported. */
+  if(*written<112 || (uint32_t)read_u64(bytes+4)!=48 || engine->render.n_spr<0)return 0;
+  /* Only neutral audio is projected: the new inactive-voice pitch cells and default
+   * music trailer are checked before removing them from scratch, never from runtime. */
   size_t audio=112;
   for(unsigned offset=64;offset<=80;offset+=8){
     uint64_t part=read_u64(bytes+offset);
@@ -158,8 +158,19 @@ static int project_fixture_playback(AnygmEngine *engine,uint8_t **data,size_t *w
   write_u64(music+12,UINT64_C(0x3ff0000000000000));
   if(audio_size!=*written-audio || audio_size<32 ||
      (uint32_t)read_u64(bytes+audio)!=UINT32_C(0x53554141) ||
-     (uint32_t)read_u64(bytes+audio+4)!=4 ||
+     (uint32_t)read_u64(bytes+audio+4)!=5 ||
      memcmp(bytes+*written-sizeof music,music,sizeof music))return 0;
+  if(audio_size<28u+32u*80u+sizeof music)return 0;
+  for(unsigned i=0;i<32u;i++){
+    size_t voice=audio+28u+(size_t)i*80u;
+    if((uint32_t)read_u64(bytes+voice+8u)!=0 || read_u64(bytes+voice+72u)!=0)return 0;
+  }
+  size_t source=audio+28u,target=source;
+  for(unsigned i=0;i<32u;i++){
+    memmove(bytes+target,bytes+source,72u);source+=80u;target+=72u;
+  }
+  memmove(bytes+target,bytes+source,*written-source);
+  *written-=32u*8u;audio_size-=32u*8u;
   *written-=sizeof music;
   write_u32(bytes+audio+4,3);write_u64(bytes+88,audio_size-sizeof music);
   write_u64(bytes+16,*written);write_u64(bytes+96,*written-112);
@@ -208,7 +219,7 @@ static int project_fixture_vm(AnygmEngine *engine,uint8_t **data,size_t *written
   if((uint32_t)read_u64(p->input+timeline_at)!=0 ||
      (uint32_t)read_u64(p->input+timeline_at+4)!=(uint32_t)engine->vm.n_objects){free(p);return 0;}
   fixture_copy(p,132);
-  if((uint32_t)read_u64(p->output+4)!=27)p->ok=0;
+  if((uint32_t)read_u64(p->output+4)!=28)p->ok=0;
   write_u32(p->output+4,19);
   for(unsigned i=0;i<16;i++)(void)fixture_value(p,0);
   fixture_copy(p,76+26*4+616*8+10*4); /* RNG and unchanged software-3D scalars */
@@ -243,7 +254,19 @@ static int project_fixture_vm(AnygmEngine *engine,uint8_t **data,size_t *written
   fixture_copy(p,40);fixture_empty(p);fixture_empty(p); /* physics scalars, empty fixtures/joints */
   fixture_copy(p,4);uint32_t particles=fixture_copy_word(p);fixture_copy(p,particles);
   fixture_copy(p,sizeof engine->vm.key_map);
-  fixture_copy(p,32+32*7*8+9*8+4); /* unchanged emitter/listener scalars */
+  /* New emitter pitch/velocity cells may be omitted only for the verified inactive fixture. */
+  const uint8_t neutral_emitter[32]={0};
+  if(p->pos>p->size || sizeof neutral_emitter>p->size-p->pos ||
+     memcmp(p->input+p->pos,neutral_emitter,sizeof neutral_emitter))p->ok=0;
+  fixture_copy(p,32);
+  for(unsigned i=0;i<32u && p->ok;i++){
+    fixture_copy(p,8); /* gain */
+    if(p->pos>p->size || sizeof neutral_emitter>p->size-p->pos ||
+       memcmp(p->input+p->pos,neutral_emitter,sizeof neutral_emitter))p->ok=0;
+    if(p->ok)p->pos+=sizeof neutral_emitter;
+    fixture_copy(p,6*8); /* unchanged position and falloff */
+  }
+  fixture_copy(p,9*8+4); /* listener and falloff model */
   fixture_empty(p);fixture_empty(p);fixture_string(p);fixture_empty(p); /* external audio */
   fixture_empty(p); /* no live script statics */
   fixture_copy(p,8);fixture_empty(p); /* no scheduled language callbacks */
@@ -309,6 +332,22 @@ static int fixture_projection_controls(AnygmEngine *engine,const uint8_t *baseli
     free(bytes);engine->vm.script_args[0]=original;gml_values_release_owned(&array,1);
   }
   engine->vm.script_args[0]=original;
+  /* A non-default new audio cell must fail closed instead of disappearing into an old pin. */
+  if(ok){
+    uint8_t *bytes=NULL;size_t count=0;
+    ok=save_state(engine,&bytes,&count);
+    size_t audio=112;
+    if(ok)for(unsigned offset=64;offset<=80;offset+=8){
+      uint64_t part=read_u64(bytes+offset);
+      if(audio>count || part>count-audio){ok=0;break;}audio+=(size_t)part;
+    }
+    if(ok && audio+108u<=count){
+      write_u64(bytes+audio+100u,UINT64_C(0x3ff0000000000000));
+      write_u64(bytes+56,state_checksum(bytes+112,count-112));
+      ok=!project_fixture_vm(engine,&bytes,&count);
+    }else ok=0;
+    free(bytes);
+  }
   uint8_t *after=NULL;size_t after_size=0;
   ok=ok && save_state(engine,&after,&after_size) && after_size==size &&
     !memcmp(after,baseline,size);
