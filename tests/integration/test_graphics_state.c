@@ -3299,6 +3299,49 @@ static int resident_multiview_step_target_case(void){
            anygm_synthetic_multiview_nested_target_content_create,1);
 }
 
+static int assigned_surface_preserves_snapshot_pixels_case(void){
+  const uint32_t modes[]={ANYGM_SCENE_RENDERER_CPU,ANYGM_SCENE_RENDERER_OPENGL};
+  for(size_t mode=0;mode<sizeof modes/sizeof modes[0];mode++){
+    Session session={0};
+    AnygmInputFrame input={0};
+    AnygmFrameOutput output={0};
+    uint32_t expected[64];
+    size_t size=0;
+    uint8_t *state=NULL;
+    int width=0,height=0;
+    anygm_test_graphics_reset();
+    REQUIRE(session_open_fixture_with_scene(
+              &session,modes[mode],
+              anygm_synthetic_multiview_assigned_surface_content_create),
+            "assigned-surface snapshot fixture loads");
+    if(mode)
+      REQUIRE(graphics_adopt(session.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+              "assigned-surface snapshot context adopted");
+    input.struct_size=sizeof input;
+    input.pointer_x=input.pointer_y=-1;
+    output.struct_size=sizeof output;
+    REQUIRE(anygm_run_frame(session.engine,&input,&output)==ANYGM_OK,
+            "assigned-surface snapshot fixture draws");
+    int surface=(int)gml_global_num(&session.engine->vm,"fixture_surface");
+    const uint32_t *pixels=gml_surface_pixels_read(
+      &session.engine->render,surface,&width,&height);
+    REQUIRE(surface>0 && pixels && width==8 && height==8 &&
+            gml_global_arr(&session.engine->vm,"view_surface_id",0)==surface &&
+            pixels[0]==0xFF0000FFu,
+            "snapshot contains a populated assigned surface");
+    memcpy(expected,pixels,sizeof expected);
+    state=serialize(session.engine,&size);
+    REQUIRE(state && size && anygm_state_load(session.engine,state,size)==ANYGM_OK,
+            "assigned-surface snapshot reloads");
+    pixels=gml_surface_pixels_read(&session.engine->render,surface,&width,&height);
+    int exact=pixels && width==8 && height==8 && !memcmp(expected,pixels,sizeof expected);
+    free(state);
+    session_close(&session);
+    REQUIRE(exact,"assigned surface retains every pixel before any restored simulation");
+  }
+  return 1;
+}
+
 static int resident_multiview_assigned_surface_restore_case(void){
   Session plain={0},selected={0};
   AnygmInputFrame input={0};
@@ -3371,6 +3414,22 @@ static int resident_multiview_assigned_surface_restore_case(void){
       GmlGpuCounters counts={0};
       gml_gpu_counters(selected.engine->gpu,&counts);
       matching=counts.scene_families[GML_RENDER_SCENE_SPRITE]>=2u;
+      /* Keep reconstruction observable independently of snapshot omission:
+       * this fixture deliberately saves a transparent first assigned view. */
+      if(matching){
+        GmlRender *renders[]={&plain.engine->render,&selected.engine->render};
+        const int surfaces[]={outer_id,selected_outer};
+        for(size_t index=0;matching && index<2;index++){
+          matching=gml_surface_set_target(renders[index],surfaces[index]);
+          if(matching){
+            gml_render_clear(renders[index],0u,0.0);
+            gml_surface_reset_target(renders[index]);
+            const uint32_t *cleared=gml_surface_pixels_read(
+              renders[index],surfaces[index],NULL,NULL);
+            matching=cleared && cleared[0]==0u && cleared[63]==0u;
+          }
+        }
+      }
       saved=matching?serialize(plain.engine,&saved_size):NULL;
       selected_saved=matching?serialize(selected.engine,&selected_size):NULL;
       matching=matching && saved && selected_saved && saved_size>0 &&
@@ -6160,6 +6219,8 @@ int main(void){
     {"multiview clear, seed and copies stay resident",resident_multiview_composition_case},
     {"two-view retained CPU seed stays current",resident_multiview_cpu_seed_case},
     {"two-view Step target survives Draw Begin and GUI",resident_multiview_step_target_case},
+    {"assigned surface preserves pixels before restored simulation",
+     assigned_surface_preserves_snapshot_pixels_case},
     {"assigned views repopulate a derived surface before restored GUI",
      resident_multiview_assigned_surface_restore_case},
     {"native assigned view accepts scene work and preserves restored output",

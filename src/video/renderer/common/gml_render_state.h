@@ -21,6 +21,8 @@ int gml_render_font_checkpoint_create(const GmlRender *render,GmlRenderFontCheck
 int gml_render_font_checkpoint_restore(GmlRender *render,GmlRenderFontCheckpoint *checkpoint);
 void gml_render_font_checkpoint_free(GmlRenderFontCheckpoint *checkpoint);
 
+/* A nonzero omission requires caller-proven disposable storage. Engine snapshots
+ * pass zero; content-visible view targets must retain their actual pixels. */
 size_t gml_render_state_size(GmlRender *render,int derived_view_surface);
 /* Metadata-only upper bound for the existing payload; no pixel observer or compression. */
 size_t gml_render_state_capacity(GmlRender *render,int derived_view_surface);

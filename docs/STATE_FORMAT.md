@@ -566,6 +566,10 @@ canonical bytes and semantics remain unchanged.
   Restoring a state applies the current CRT setting when presenting it, without changing the
   frontend's serialization capacity policy or adding another frame to the state.
 - Diagnostics, host handles, and disposable caches are excluded.
+- Game-visible surfaces retain their complete pixels, including surfaces assigned to views.
+  Assignment alone does not prove that the next simulated frame overwrites every pixel: a view
+  may retain transparent regions, stop drawing after a room transition, or be read before Draw.
+  The existing surface RLE encoding preserves these pixels without changing the wire layout.
 - Graphics-target resources and host execution policies are excluded under every schema. Textures,
   programs, framebuffer identifiers, entry-point tables, upload buffers, residency records,
   render plans and timing queries are derived caches, while content-GLSL and hybrid-presentation

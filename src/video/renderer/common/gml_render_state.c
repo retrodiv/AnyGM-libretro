@@ -277,11 +277,10 @@ static void render_state_write(GmlRender *render,int view_surface,CoreW *s,
   cw_i32(s,render->alphablend);
   cw_i32(s,render->circle_precision);
   cw_i32(s,render->next_surface_id);
-  /* The surface assigned to view 0 (view_surface_id) is derived data:
-   * anygm_run_frame mirrors the freshly rendered frame into it every frame, after the room pass and
-   * before any Draw GUI reads it. Serializing this derived surface needlessly increases every
-   * state and rewind delta. Skip its pixels: on load it starts transparent and is repopulated
-   * mid-pipeline in the first anygm_run_frame, before the compositor can sample it. */
+  /* Only an explicitly proven disposable surface may omit its pixels. A
+   * content-visible view assignment is not such a proof: draws can retain
+   * transparent regions and Step can read them before another view render.
+   * The engine passes zero to preserve every content-visible surface. */
   for(int i=0;i<GML_MAX_SURFACES;i++){
     GmlSurface *sf=&render->surface[i];
     cw_i32(s,sf->live); cw_i32(s,sf->w); cw_i32(s,sf->h);

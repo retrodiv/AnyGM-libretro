@@ -528,18 +528,20 @@ static void state_write(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity
   if(save_time) save_t1=anygm_host_monotonic_time_ns(&engine->host);
   size_t coren=s->pos-core_start;
   size_t render_start=s->pos;
-  int derived_view_surface=(int)gml_global_arr(&engine->vm,"view_surface_id",0);
+  /* Assigning a view does not make a game-owned surface disposable. A later
+   * view draw may retain transparent pixels or the room may stop drawing it.
+   * Preserve its current bytes before any restored Step or pixel read. */
   if(s->data){
     size_t written=0;
     size_t available=s->pos<=s->cap?s->cap-s->pos:0;
     uint8_t *destination=s->data+(s->pos<=s->cap?s->pos:s->cap);
-    if(!gml_render_state_save(&engine->render,derived_view_surface,destination,available,&written))
+    if(!gml_render_state_save(&engine->render,0,destination,available,&written))
       s->ok=0;
     s->pos+=written;
   } else {
     size_t measured=state_size_is_metadata_only(engine)
-      ?gml_render_state_capacity(&engine->render,derived_view_surface)
-      :gml_render_state_size(&engine->render,derived_view_surface);
+      ?gml_render_state_capacity(&engine->render,0)
+      :gml_render_state_size(&engine->render,0);
     if(!measured) s->ok=0;
     cw_raw(s,NULL,measured);
   }
