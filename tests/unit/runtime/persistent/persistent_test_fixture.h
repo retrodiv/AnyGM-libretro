@@ -103,6 +103,9 @@ int expect_file_sandbox(GmlVM *vm,const char *save_dir);
 int expect_file_sandbox_case(void);
 int expect_file_lookup_probes_case(void);
 int expect_missing_path_components_case(void);
+#if defined(__linux__)
+int expect_stdio_directory_errors_case(void);
+#endif
 int expect_portable_extension_io(void);
 int expect_native_timeline_import(const char *path);
 int expect_timeline_case(void);

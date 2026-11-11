@@ -138,12 +138,14 @@ static AnygmResult stdio_directory_read(void *userdata,void *handle,AnygmDirecto
   int is_directory=0;
 #ifdef _WIN32
   if(directory->first_pending) directory->first_pending=0;
-  else if(_findnext(directory->find_handle,&directory->find_data)!=0) return ANYGM_RESULT_END;
+  else if(_findnext(directory->find_handle,&directory->find_data)!=0)
+    return errno==ENOENT?ANYGM_RESULT_END:ANYGM_ERROR_IO;
   name=directory->find_data.name;
   is_directory=(directory->find_data.attrib&_A_SUBDIR)!=0;
 #else
+  errno=0;
   struct dirent *item=readdir(directory->handle);
-  if(!item) return ANYGM_RESULT_END;
+  if(!item) return errno?ANYGM_ERROR_IO:ANYGM_RESULT_END;
   name=item->d_name;
   is_directory=item->d_type==DT_DIR;
 #endif

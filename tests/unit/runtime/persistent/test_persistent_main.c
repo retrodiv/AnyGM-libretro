@@ -132,6 +132,9 @@ int main(int argc,char **argv){
     {"save_overlay_sandbox",expect_file_sandbox_case},
     {"file_lookup_probes",expect_file_lookup_probes_case},
     {"missing_path_components",expect_missing_path_components_case},
+#if defined(__linux__)
+    {"stdio_directory_errors",expect_stdio_directory_errors_case},
+#endif
     {"portable_extensions",expect_portable_extension_io},
   };
   static const AnygmTestCase timeline_cases[]={

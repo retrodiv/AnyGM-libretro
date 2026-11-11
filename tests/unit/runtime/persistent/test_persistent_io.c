@@ -14,6 +14,11 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <dirent.h>
+#include <errno.h>
+#include <limits.h>
+#endif
 
 
 int expect_file_sandbox(GmlVM *vm,const char *save_dir){
@@ -393,6 +398,59 @@ int expect_missing_path_components_case(void){
   rmdir(mixed_dir);rmdir(save_root);rmdir(content_root);
   return ok;
 }
+
+#if defined(__linux__)
+int expect_stdio_directory_errors_case(void){
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  char root[]="/tmp/gml-directory-error-XXXXXX";
+  if(!mkdtemp(root)) return 0;
+  void *handle=services.directory_open(services.userdata,root);
+  if(!handle){ rmdir(root); return 0; }
+  /* Invalidate only the newly opened synthetic directory's descriptor, without
+   * depending on the provider's private handle layout. No stream read preceded this. */
+  DIR *descriptors=opendir("/proc/self/fd");
+  int descriptor=-1,matches=0;
+  struct dirent *item;
+  while(descriptors && (item=readdir(descriptors))){
+    char *end=NULL;
+    long number=strtol(item->d_name,&end,10);
+    if(!end || *end || number<0 || number>INT_MAX) continue;
+    char link[128],target[640];
+    snprintf(link,sizeof link,"/proc/self/fd/%ld",number);
+    ssize_t size=readlink(link,target,sizeof target-1);
+    if(size<0) continue;
+    target[size]=0;
+    if(!strcmp(target,root)){ descriptor=(int)number;matches++; }
+  }
+  if(descriptors) closedir(descriptors);
+  int ok=matches==1 && descriptor>=0 && close(descriptor)==0;
+  if(ok){
+    AnygmDirectoryEntry entry={.struct_size=sizeof entry};
+    AnygmResult result=services.directory_read(services.userdata,handle,&entry);
+    if(result!=ANYGM_ERROR_IO){
+      fprintf(stderr,"stdio directory read error: got=%d expected=%d\n",result,ANYGM_ERROR_IO);
+      ok=0;
+    }
+  }
+  services.directory_close(services.userdata,handle);
+  handle=services.directory_open(services.userdata,root);
+  if(handle){
+    AnygmDirectoryEntry entry={.struct_size=sizeof entry};
+    AnygmResult result;
+    do {
+      errno=EIO; /* A stale caller errno must not turn actual EOF into an error. */
+      result=services.directory_read(services.userdata,handle,&entry);
+    } while(result==ANYGM_OK);
+    ok=(result==ANYGM_RESULT_END) && ok;
+    services.directory_close(services.userdata,handle);
+  } else ok=0;
+  rmdir(root);
+  return ok;
+}
+#endif
 
 int expect_portable_extension_io(void){
   AnygmHostServices services={0};
