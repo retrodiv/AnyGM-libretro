@@ -211,6 +211,81 @@ int expect_file_sandbox_case(void){
   return ok;
 }
 
+typedef struct FileLookupCounters {
+  AnygmHostServices base;
+  unsigned stats;
+  unsigned directory_opens;
+} FileLookupCounters;
+
+static AnygmResult counted_file_stat(void *userdata,const char *path,AnygmFileInfo *info){
+  FileLookupCounters *counts=userdata;
+  counts->stats++;
+  return counts->base.file_stat(counts->base.userdata,path,info);
+}
+
+static void *counted_directory_open(void *userdata,const char *path){
+  FileLookupCounters *counts=userdata;
+  counts->directory_opens++;
+  return counts->base.directory_open(counts->base.userdata,path);
+}
+
+int expect_file_lookup_probes_case(void){
+  FileLookupCounters counts={0};
+  counts.base.struct_size=sizeof counts.base;
+  counts.base.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&counts.base);
+  AnygmHostServices services=counts.base;
+  services.userdata=&counts;
+  services.file_stat=counted_file_stat;
+  services.directory_open=counted_directory_open;
+  char content_root[]="/tmp/gml-lookup-content-XXXXXX";
+  char save_root[]="/tmp/gml-lookup-save-XXXXXX";
+  if(!mkdtemp(content_root)) return 0;
+  if(!mkdtemp(save_root)){ rmdir(content_root); return 0; }
+  char save_file[640],content_file[640],later_file[640];
+  snprintf(save_file,sizeof save_file,"%s/probe.txt",save_root);
+  snprintf(content_file,sizeof content_file,"%s/MiXeD.TXT",content_root);
+  snprintf(later_file,sizeof later_file,"%s/later.txt",save_root);
+  GmlWin win={0};
+  snprintf(win.content_dir,sizeof win.content_dir,"%s",content_root);
+  snprintf(win.save_dir,sizeof win.save_dir,"%s",save_root);
+  GmlVM vm={0};
+  vm.win=&win;vm.host=&services;
+  int ok=fixture_write_text(save_file,"save") && fixture_write_text(content_file,"content");
+  GmlVal name=vstr("probe.txt");
+  GmlVal exists=gml_builtin_call(&vm,"file_exists",&name,1);
+  int exact=exists.t==V_REAL && exists.d==1 && counts.stats==1 && !counts.directory_opens;
+  if(!exact) fprintf(stderr,"exact lookup probes: stats=%u directory_opens=%u\n",
+                    counts.stats,counts.directory_opens);
+  ok=ok && exact;
+  counts.stats=counts.directory_opens=0;
+  name=vstr("later.txt");
+  exists=gml_builtin_call(&vm,"file_exists",&name,1);
+  int missing=exists.t==V_REAL && exists.d==0 && counts.stats<=2 && counts.directory_opens<=2;
+  if(!missing) fprintf(stderr,"missing lookup probes: stats=%u directory_opens=%u\n",
+                      counts.stats,counts.directory_opens);
+  ok=ok && missing;
+  /* A later operation must observe a file created after a failed lookup. */
+  ok=fixture_write_text(later_file,"new") && ok;
+  counts.stats=counts.directory_opens=0;
+  exists=gml_builtin_call(&vm,"file_exists",&name,1);
+  ok=ok && exists.t==V_REAL && exists.d==1 && counts.stats==1 && !counts.directory_opens;
+  counts.stats=counts.directory_opens=0;
+  name=vstr("mixed.txt");
+  exists=gml_builtin_call(&vm,"file_exists",&name,1);
+  ok=ok && exists.t==V_REAL && exists.d==1;
+  name=vstr(save_root);
+  GmlVal directory=gml_builtin_call(&vm,"directory_exists",&name,1);
+  ok=ok && directory.t==V_REAL && directory.d==1;
+  name=vstr(save_file);
+  directory=gml_builtin_call(&vm,"directory_exists",&name,1);
+  ok=ok && directory.t==V_REAL && directory.d==0;
+  gml_vm_free(&vm);
+  unlink(save_file);unlink(content_file);unlink(later_file);
+  rmdir(save_root);rmdir(content_root);
+  return ok;
+}
+
 int expect_portable_extension_io(void){
   AnygmHostServices services={0};
   services.struct_size=sizeof services;

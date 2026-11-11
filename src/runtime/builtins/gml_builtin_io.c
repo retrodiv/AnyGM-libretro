@@ -39,6 +39,13 @@ static int path_readable(GmlVM *vm,const char *p){
 static int path_absolute(const char *p){
   return p && (p[0]=='/' || (p[0] && p[1]==':'));
 }
+static int path_stat(GmlVM *vm,const char *p,AnygmFileInfo *info){
+  memset(info,0,sizeof *info);
+  info->struct_size=sizeof *info;
+  if(vm && p && anygm_vfs_stat(vm->host,p,info)) return 1;
+  info->flags=0;
+  return 0;
+}
 static int path_present(GmlVM *vm,const char *p);
 static char *path_under(const char *dir,const char *p){
   if(!dir || !dir[0]) return strdup(p?p:"");
@@ -90,9 +97,13 @@ static int path_component_casefold(GmlVM *vm,const char *directory,
 /* Installed Windows paths use case-insensitive component lookup. Keep exact-path reads fast, then
  * recover each component through the host VFS when a portable host stores the same bundle on a
  * case-sensitive filesystem. */
-static char *path_under_read(GmlVM *vm,const char *directory,const char *relative){
+static char *path_under_read(GmlVM *vm,const char *directory,const char *relative,
+                             AnygmFileInfo *info){
   char *exact=path_under(directory,relative);
-  if(path_present(vm,exact) || !vm || !vm->host ||
+  AnygmFileInfo observed;
+  int found=path_stat(vm,exact,&observed);
+  if(info) *info=observed;
+  if(!exact || found || !vm || !vm->host ||
      !vm->host->directory_open || !vm->host->directory_read ||
      !vm->host->directory_close) return exact;
   size_t capacity=strlen(exact)+1;
@@ -133,6 +144,7 @@ static char *path_under_read(GmlVM *vm,const char *directory,const char *relativ
     resolved[used]=0;
     cursor=end;
   }
+  if(info && strcmp(exact,resolved)) path_stat(vm,resolved,info);
   free(exact);
   return resolved;
 }
@@ -150,7 +162,7 @@ static char *flattened_included_name(const char *p){
 }
 static int path_present(GmlVM *vm,const char *p){
   AnygmFileInfo info;
-  return vm && p && anygm_vfs_stat(vm->host,p,&info);
+  return path_stat(vm,p,&info);
 }
 /* working_directory exposes the installed bundle while the file API overlays the writable save
  * area. An absolute path formed from working_directory therefore retains the overlay on reads and
@@ -166,37 +178,49 @@ static const char *path_relative_to_root(const char *path,const char *root){
   while(*relative=='/' || *relative=='\\') relative++;
   return relative;
 }
-char *resolve_read_path(GmlVM *vm, const char *p){
+static char *resolve_read_path_with_info(GmlVM *vm,const char *p,AnygmFileInfo *info){
+  if(info){ memset(info,0,sizeof *info); info->struct_size=sizeof *info; }
   if(!p || !*p) return strdup("");
   if(path_absolute(p)){
     if(vm && vm->win){
+      AnygmFileInfo observed;
       const char *relative=path_relative_to_root(p,vm->win->content_dir);
       if(relative){
         if(vm->win->save_dir[0]){
-          char *save=path_under_read(vm,vm->win->save_dir,relative);
-          if(path_present(vm,save)) return save;
+          char *save=path_under_read(vm,vm->win->save_dir,relative,&observed);
+          if(observed.flags&ANYGM_FILE_INFO_EXISTS){
+            if(info) *info=observed;
+            return save;
+          }
           free(save);
         }
-        return path_under_read(vm,vm->win->content_dir,relative);
+        return path_under_read(vm,vm->win->content_dir,relative,info);
       }
       relative=path_relative_to_root(p,vm->win->save_dir);
       if(relative){
-        char *save=path_under_read(vm,vm->win->save_dir,relative);
-        if(path_present(vm,save)) return save;
+        char *save=path_under_read(vm,vm->win->save_dir,relative,&observed);
+        if(observed.flags&ANYGM_FILE_INFO_EXISTS){
+          if(info) *info=observed;
+          return save;
+        }
         free(save);
         if(vm->win->content_dir[0]){
-          char *content=path_under_read(vm,vm->win->content_dir,relative);
-          if(path_present(vm,content)) return content;
+          char *content=path_under_read(vm,vm->win->content_dir,relative,&observed);
+          if(observed.flags&ANYGM_FILE_INFO_EXISTS){
+            if(info) *info=observed;
+            return content;
+          }
           free(content);
         }
         return path_under(vm->win->save_dir,relative);
       }
     }
+    if(info) path_stat(vm,p,info);
     return strdup(p);
   }
   /* Relative reads check the writable root, the loaded payload's root,
-   * then the source content root. Do not use the host working directory
-   * when the configured roots are available. */
+   * then the source content root. Reuse only observations from this lookup;
+   * the next file operation starts with fresh host queries. */
   if(vm && vm->win){
     const char *roots[3]; int root_count=0;
     if(vm->win->save_dir[0]) roots[root_count++]=vm->win->save_dir;
@@ -204,26 +228,40 @@ char *resolve_read_path(GmlVM *vm, const char *p){
        (!vm->win->content_dir[0] || strcmp(vm->win->payload_dir,vm->win->content_dir)))
       roots[root_count++]=vm->win->payload_dir;
     if(vm->win->content_dir[0]) roots[root_count++]=vm->win->content_dir;
+    char *fallback=NULL;
     for(int i=0;i<root_count;i++){
-      char *candidate=path_under_read(vm,roots[i],p);
-      if(path_present(vm,candidate)) return candidate;
-      free(candidate);
+      AnygmFileInfo observed;
+      char *candidate=path_under_read(vm,roots[i],p,&observed);
+      if(observed.flags&ANYGM_FILE_INFO_EXISTS){
+        if(info) *info=observed;
+        return candidate;
+      }
+      if(vm->win->content_dir[0] && i+1==root_count) fallback=candidate;
+      else free(candidate);
     }
     /* Only once no root holds the name as written, so nothing that resolves today moves. */
-    { char *flat=flattened_included_name(p);
-      if(flat){
-        for(int i=0;i<root_count;i++){
-          char *candidate=path_under_read(vm,roots[i],flat);
-          if(path_present(vm,candidate)){ free(flat); return candidate; }
-          free(candidate);
+    char *flat=flattened_included_name(p);
+    if(flat){
+      for(int i=0;i<root_count;i++){
+        AnygmFileInfo observed;
+        char *candidate=path_under_read(vm,roots[i],flat,&observed);
+        if(observed.flags&ANYGM_FILE_INFO_EXISTS){
+          if(info) *info=observed;
+          free(flat);free(fallback);
+          return candidate;
         }
-        free(flat);
-      } }
-    if(vm->win->content_dir[0]) return path_under_read(vm,vm->win->content_dir,p);
+        free(candidate);
+      }
+      free(flat);
+    }
+    if(vm->win->content_dir[0]) return fallback;
     if(vm->win->save_dir[0]) return path_under(vm->win->save_dir,p);
   }
-  if(path_readable(vm,p)) return strdup(p);
+  if(info) path_stat(vm,p,info);
   return strdup(p);
+}
+char *resolve_read_path(GmlVM *vm,const char *p){
+  return resolve_read_path_with_info(vm,p,NULL);
 }
 char *resolve_write_path(GmlVM *vm, const char *p){
   if(!p || !*p) return strdup("");
@@ -1472,9 +1510,10 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     return vreal(raw[0]&&color_key_file(vm,raw,color));
   }
-  if(!strcmp(nm,"file_exists")||!strcmp(nm,"FS_file_exists")){ char *path=resolve_read_path(vm,S(vm,a,n,0));
-    AnygmFileInfo info; int ok=path && anygm_vfs_stat(vm->host,path,&info) &&
-      (info.flags&ANYGM_FILE_INFO_REGULAR)!=0;
+  if(!strcmp(nm,"file_exists")||!strcmp(nm,"FS_file_exists")){
+    AnygmFileInfo info;
+    char *path=resolve_read_path_with_info(vm,S(vm,a,n,0),&info);
+    int ok=path && (info.flags&ANYGM_FILE_INFO_REGULAR)!=0;
     /* The portable runtime reports covered virtual DLL interfaces as available even when the
      * package omits native bytes. Uncovered libraries keep the filesystem result. */
     if(!ok){
@@ -1487,9 +1526,10 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
                       "[io] file_exists raw=%s resolved=%s result=%d\n",
                       S(vm,a,n,0),path?path:"",ok);
     free(path); return vreal(ok); }
-  if(!strcmp(nm,"directory_exists")){ char *path=resolve_read_path(vm,S(vm,a,n,0));
-    AnygmFileInfo info; int ok=path && anygm_vfs_stat(vm->host,path,&info) &&
-      (info.flags&ANYGM_FILE_INFO_DIRECTORY)!=0;
+  if(!strcmp(nm,"directory_exists")){
+    AnygmFileInfo info;
+    char *path=resolve_read_path_with_info(vm,S(vm,a,n,0),&info);
+    int ok=path && (info.flags&ANYGM_FILE_INFO_DIRECTORY)!=0;
     free(path); return vreal(ok); }
   if(!strcmp(nm,"directory_create")){ char *path=resolve_write_path(vm,S(vm,a,n,0)); int ok=0;
     if(path && path[0]) ok=anygm_vfs_mkdirs(vm->host,path);

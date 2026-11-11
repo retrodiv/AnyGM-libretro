@@ -130,6 +130,7 @@ int main(int argc,char **argv){
   };
   static const AnygmTestCase io_cases[]={
     {"save_overlay_sandbox",expect_file_sandbox_case},
+    {"file_lookup_probes",expect_file_lookup_probes_case},
     {"portable_extensions",expect_portable_extension_io},
   };
   static const AnygmTestCase timeline_cases[]={
