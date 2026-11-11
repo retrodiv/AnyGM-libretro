@@ -91,8 +91,9 @@ The host receives the final padded or fitted raster aspect. Physical resolution,
 refresh rate and TV output are host responsibilities. Optional display-frequency host callbacks
 can query and request a native mode, or submit a request to a frontend that owns CRT switching.
 The libretro option is named
-**Adjust for 4:3 CRT TV**, defaults to Off, follows **Render at game resolution**, and is visible
-only while that parent option is On.
+**Adjust for 4:3 CRT TV**, defaults to Off and precedes **Render at game resolution**. Enabling CRT
+forces game-resolution rendering and hides that selector. Disabling CRT restores its stored
+selection. Monitor dimensions and aspect forcing follow the effective rendering choice.
 
 ## Optional host graphics target
 

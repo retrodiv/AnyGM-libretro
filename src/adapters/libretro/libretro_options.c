@@ -30,6 +30,15 @@ static struct retro_core_option_v2_definition g_definitions[]={
    NULL,"video",
    {{"None",NULL},{"Light",NULL},{"Medium",NULL},{"High",NULL},{"Maximum",NULL},{NULL,NULL}},
    "High"},
+  {"anygm_adjust_crt_tv","Adjust for 4:3 CRT TV",NULL,
+   "Enables Render at game resolution and hides its selector. Fits images wider than 364 pixels "
+   "or taller than 244 pixels into 640x480 using sharp bilinear filtering. Preserves the image's aspect ratio "
+   "with centered black bars. Smaller images outside 4:3 +/-10% receive native-pixel black "
+   "padding to 4:3, then the size limits are checked again. All checks follow Aspect Ratio "
+   "force. The frontend controls the TV video mode.",
+   NULL,"video",
+   {{"Off",NULL},{"On",NULL},{NULL,NULL}},
+   "Off"},
   {"anygm_render_game_resolution","Render at game resolution",NULL,
    "Delivers the game's own raster and lets this program scale it. Monitor width and height use "
    "Game Base on this path. Off renders at the effective presentation window: the monitor "
@@ -37,15 +46,6 @@ static struct retro_core_option_v2_definition g_definitions[]={
    NULL,"video",
    {{"On",NULL},{"Off",NULL},{NULL,NULL}},
    "On"},
-  {"anygm_adjust_crt_tv","Adjust for 4:3 CRT TV",NULL,
-   "With Render at game resolution on, fits images wider than 364 pixels or taller than 244 "
-   "pixels into 640x480 using sharp bilinear filtering. Preserves the image's aspect ratio "
-   "with centered black bars. Smaller images outside 4:3 +/-10% receive native-pixel black "
-   "padding to 4:3, then the size limits are checked again. All checks follow Aspect Ratio "
-   "force. The frontend controls the TV video mode.",
-   NULL,"video",
-   {{"Off",NULL},{"On",NULL},{NULL,NULL}},
-   "Off"},
   {"anygm_width_resolution","Monitor width",NULL,
    "With Render at game resolution off, reports this virtual monitor width to the game and "
    "supplies the effective presentation-window and framebuffer width. Game Base follows the "
@@ -218,12 +218,14 @@ static char **g_flat_storage;
 static size_t g_flat_count;
 static int g_published_ranges=-1;
 static int g_published_logical_raster=-1;
+static int g_published_crt=-1;
 
 static int update_option_visibility(void);
 
 static void invalidate_published_visibility(void){
   g_published_ranges=-1;
   g_published_logical_raster=-1;
+  g_published_crt=-1;
 }
 
 static void free_flat_variables(void){
@@ -534,8 +536,10 @@ static int update_option_visibility(void){
     "anygm_width_resolution","anygm_height_resolution",NULL
   };
   int ranges=g_page_choice_count>1?1:0;
-  int logical_raster=option_on("anygm_render_game_resolution",1)?1:0;
-  if(ranges==g_published_ranges && logical_raster==g_published_logical_raster)
+  int crt=option_on("anygm_adjust_crt_tv",0)?1:0;
+  int logical_raster=crt || option_on("anygm_render_game_resolution",1);
+  if(ranges==g_published_ranges && logical_raster==g_published_logical_raster &&
+     crt==g_published_crt)
     return 0;
   struct retro_core_option_display display;
   display.key="anygm_start_room_page";
@@ -550,7 +554,12 @@ static int update_option_visibility(void){
   display.visible=logical_raster?true:false;
   g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
   display.key="anygm_adjust_crt_tv";
+  display.visible=true;
   g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
+  display.key="anygm_render_game_resolution";
+  display.visible=crt?false:true;
+  g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
+  g_published_crt=crt;
   g_published_ranges=ranges;
   g_published_logical_raster=logical_raster;
   return 1;
@@ -606,7 +615,8 @@ void libretro_options_apply(bool all_fields){
   if(!g_libretro.engine) return;
   AnygmConfig *config=&g_libretro.config;
   config->struct_size=sizeof *config;
-  uint32_t present_logical_raster=option_on("anygm_render_game_resolution",1);
+  uint32_t crt=option_on("anygm_adjust_crt_tv",0);
+  uint32_t present_logical_raster=crt || option_on("anygm_render_game_resolution",1);
   /* A logical-raster frame has no monitor-sized drawing space. The frontend retains the hidden
    * selections, so reading them again when this path is turned off restores them without a
    * compatibility setting or a second source of truth. */
@@ -682,7 +692,7 @@ void libretro_options_apply(bool all_fields){
      larger than the view. Rasterizing at the view is the default; the window-matching path stays
      available for content and host-monitor layouts that depend on it. */
   config->present_logical_raster=present_logical_raster;
-  config->adjust_crt_tv=present_logical_raster && option_on("anygm_adjust_crt_tv",0);
+  config->adjust_crt_tv=crt;
   config->clear_local_data=option_on("anygm_clear_local_data",0);
 
   /* Choosing another stretch of rooms changes which rooms the chooser holds, not any setting the
