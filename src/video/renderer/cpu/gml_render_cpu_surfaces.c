@@ -876,6 +876,22 @@ static void white_surface_band_rows(void *context,int row_start,int row_end,int 
               (((sg*sa8+dg*inverse+127u)/255u)<<8)|
               ((sb*sa8+db*inverse+127u)/255u);
           }
+        } else if(r->alphablend &&
+                  gml_render_target_is_first_generation_application_surface(r)){
+          /* Application-target surface draws use the same rounded source-over rule as sprites,
+           * including coverage consumed by subsequent draws and surface readback. */
+          uint32_t inverse=255u-sa8;
+          for(int k=0;k<run;k++){
+            uint32_t source=sp[xx+k],destination=dp[xx+k];
+            uint32_t result=((sa8*sa8+(destination>>24)*inverse+127u)/255u)<<24;
+            for(unsigned shift=0;shift<24u;shift+=8u){
+              uint32_t source_channel=(source>>shift)&255u;
+              uint32_t destination_channel=(destination>>shift)&255u;
+              uint32_t channel=(source_channel*sa8+destination_channel*inverse+127u)/255u;
+              result|=channel<<shift;
+            }
+            dp[xx+k]=result;
+          }
         } else {
           uint32_t af=(uint32_t)((sa8*256u)/255u);
           if(af) blend_fast8_src_run(dp+xx,sp+xx,run,af,blend_fast8_rounds(r));

@@ -1073,6 +1073,53 @@ static int mirrored_source_over_target_policy_case(void){
   return ok;
 }
 
+static int surface_source_over_application_policy_case(void){
+  const unsigned alphas[]={0u,1u,64u,128u,254u,255u};
+  const unsigned destination_alphas[]={64u,255u};
+  const uint32_t colours[]={0xFFFFFFu,0x5B93CBu};
+  int ok=1;
+  for(unsigned colour=0;colour<2u;colour++) for(unsigned alpha=0;alpha<6u;alpha++)
+    for(unsigned destination_alpha=0;destination_alpha<2u;destination_alpha++)
+    for(int clipped=0;clipped<2;clipped++){
+      GmlWin win={.bytecode=15};GmlRender render;uint32_t pixels[16];
+      if(gml_render_init(&render,&win))return 0;
+      GmlVM vm={.win=&win,.render=&render};
+      render.app_surface=pixels;render.app_w=render.app_h=4;
+      gml_render_begin(&render,pixels,4,4,0,0);
+      int surface=gml_surface_create(&render,4,4);
+      ok &= surface>0 && gml_surface_set_target(&render,surface);
+      unsigned source_alpha=alphas[alpha],inverse=255u-source_alpha;
+      uint32_t rgb=colours[colour];
+      uint32_t gm_colour=((rgb&255u)<<16)|(rgb&0xFF00u)|(rgb>>16);
+      GmlVal clear[]={vreal(gm_colour),vreal(source_alpha/255.0)};
+      gml_builtin_call(&vm,"draw_clear_alpha",clear,2);
+      gml_surface_reset_target(&render);
+      uint32_t destination=(destination_alphas[destination_alpha]<<24)|0x213243u;
+      for(unsigned pixel=0;pixel<16u;pixel++)pixels[pixel]=destination;
+      uint32_t expected=((source_alpha*source_alpha+
+        destination_alphas[destination_alpha]*inverse+127u)/255u)<<24;
+      for(unsigned shift=0;shift<24u;shift+=8u){
+        unsigned source_channel=(rgb>>shift)&255u;
+        unsigned destination_channel=(destination>>shift)&255u;
+        expected|=((source_channel*source_alpha+destination_channel*inverse+127u)/255u)<<shift;
+      }
+      gml_draw_surface_ext(&render,surface,-clipped,0,1,1,0,0xFFFFFFu,1);
+      gml_render_prepare_draw(&render);
+      for(unsigned pixel=0;pixel<16u;pixel++){
+        uint32_t wanted=pixel%4u<4u-(unsigned)clipped?expected:destination;
+        if(pixels[pixel]!=wanted){
+          fprintf(stderr,"application surface source-over: alpha=%u destination_alpha=%u "
+            "clipped=%d pixel=%u actual=%08x expected=%08x\n",source_alpha,
+            destination_alphas[destination_alpha],clipped,pixel,pixels[pixel],wanted);
+          ok=0;
+        }
+      }
+      render.app_surface=NULL;vm.render=NULL;vm.win=NULL;
+      gml_vm_free(&vm);gml_render_free(&render);
+    }
+  return ok;
+}
+
 static int color_query_roundtrip_case(void){
   const char *setters[]={"draw_set_color","draw_set_colour"};
   const char *getters[]={"draw_get_color","draw_get_colour"};
@@ -1410,6 +1457,7 @@ int main(int argc,char **argv){
     {"extended_blend_queries",extended_blend_queries_case},
     {"extended_blend_factor_matrix",extended_blend_factor_matrix_case},
     {"mirrored_source_over_target_policy",mirrored_source_over_target_policy_case},
+    {"surface_source_over_application_policy",surface_source_over_application_policy_case},
     {"color_query_roundtrip",color_query_roundtrip_case},
     {"camera_capacity",camera_capacity_case}};
   const AnygmTestGroup group={"draw_queries",cases,sizeof cases/sizeof cases[0]};
