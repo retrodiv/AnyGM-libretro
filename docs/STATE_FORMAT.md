@@ -20,9 +20,50 @@ failed partial reads leave the canonical image unpublished and invalid as a
 current resource. See R03-P9-INCREMENTAL-CHECKPOINT in
 [the renderer map](RENDERER_BACKENDS.md) for owners and controls.
 
-The current AnyGM save-state schema is `50`. It is the format transported by
+The current AnyGM save-state schema is `53`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `53` uses VM schema `31`. The array ownership trailer also records argument
+register identities for the current call and each parked frame. Writable array
+views on parked operand stacks retain their lvalue identity by frame and stack
+index; ordinary reads, stores and calls publish plain array references. View rows
+are ordered, unique, bounded to live array-valued stack slots and use positive
+identities no greater than the saved counter. Invalid kinds, targets, slots and
+identities reject transactionally. Other embedded schemas are unchanged.
+
+Copied method wrappers retain their function and rebound receiver in the existing
+struct dictionary and variable map; method dispatch caches remain disposable.
+An instance copied without physics stores `__phy_body = -1` in its ordinary map.
+This suppresses automatic object-template body creation across restoration. An
+explicit fixture binding replaces it with normal initialized body state. Neither
+rule adds a state record or dictionary implementation.
+
+Schema `52` uses VM schema `30`. A trailer retains the monotonic array-lvalue
+identity counter, map-entry identities and array owners through existing snapshot
+dictionary IDs. Positive lvalue identities are unique and ordered, bounded by the
+counter and the exact-integer domain; array rows use increasing nonzero IDs.
+Unknown targets, duplicate identities, invalid ordinals and out-of-range counters
+reject. Ownership is preserved across map growth, value sharing and restore;
+host addresses and collector metadata are never written. Compatibility schema `4`,
+audio schema `5` and graphics resource schema `2` are unchanged. Older layouts
+reject transactionally, without legacy readers.
+
+Schema `51` uses compatibility schema `4`, whose fingerprint includes the resolved
+array-copy policy. A state from another array-copy policy or an older compatibility
+schema rejects transactionally. VM schema `29`, audio schema `5` and graphics resource
+schema `2` are unchanged.
+
+Arrays involved in instance copying, and arrays decoded from a snapshot, have a
+per-VM allocation owner. The existing collector marks their live roots, including
+parked calls and builtin containers, and reclaims unreferenced nodes between frames.
+Allocation lists, collection epochs and allocation-pressure counters are transient;
+they are rebuilt on restore and never add addresses or ownership records to state bytes.
+Shared and cyclic array identities retain the existing VM encoding.
+Persistent owned text in copied graphs joins the same collector's marked roots.
+An array pop borrows retained text, so discarding its result cannot invalidate
+another copy. Unreferenced text is reclaimed between frames; its allocation and
+mark tables are derived metadata, with no additional wire fields.
 
 Schema `50` introduces VM schema `29`. The existing builtin state retains sixteen
 device button thresholds, initially `0.5`, as finite values in `0..1` immediately

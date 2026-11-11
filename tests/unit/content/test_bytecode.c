@@ -438,6 +438,7 @@ int main(int argc, char **argv){
   ok &= compile_fixture(&project,
     "result=fixture_nested; label=fixture_string+string(fixture_base);\n",1);
   project.constants=NULL; project.n_constants=project.cap_constants=0;
+  ok &= compile_fixture(&project,"argument[@0]=1;\n",0);
   ok &= compile_fixture(&project,"result=;\n",0);
   if(ok) puts("gmlc bytecode fixtures: ok");
   return ok?0:1;

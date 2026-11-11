@@ -11,7 +11,7 @@
 #include <stdint.h>
 #include "gml_win.h"
 
-enum { ANYGM_COMPATIBILITY_SCHEMA=3 };
+enum { ANYGM_COMPATIBILITY_SCHEMA=4 };
 
 typedef enum AnygmDiagnosticFamily {
   ANYGM_FAMILY_CLASSIC=1,
@@ -45,6 +45,12 @@ typedef enum AnygmCollisionTransactionPolicy {
   ANYGM_COLLISION_PREVIOUS_COORDINATES=2
 } AnygmCollisionTransactionPolicy;
 
+typedef enum AnygmArrayCopyPolicy {
+  ANYGM_ARRAY_COPY_CLASSIC_VALUE=1,
+  ANYGM_ARRAY_COPY_ON_WRITE=2,
+  ANYGM_ARRAY_COPY_REFERENCE=3
+} AnygmArrayCopyPolicy;
+
 typedef enum AnygmBlendPolicy {
   ANYGM_BLEND_CLASSIC=1,
   ANYGM_BLEND_STUDIO_FIRST=2,
@@ -68,6 +74,8 @@ typedef struct AnygmContentFacts {
   uint32_t classic_revision;
   uint32_t bytecode_revision;
   uint64_t option_flags;
+  GmlSourceArrayCopy source_array_copy;
+  uint32_t has_array_owner_operations;
   uint32_t has_room_layers;
   uint32_t has_exclusive_bbox_marker;
   uint32_t classic_scaling;
@@ -85,6 +93,7 @@ typedef struct AnygmCompatibilityProfile {
   AnygmInstanceIterationPolicy instance_iteration;
   AnygmCollisionTransactionPolicy solid_collision_transaction;
   AnygmBlendPolicy blend;
+  AnygmArrayCopyPolicy array_copy;
   uint32_t uses_classic_runtime;
   uint32_t has_modern_function_values;
   uint32_t has_modern_struct_semantics;
@@ -130,6 +139,20 @@ static inline const AnygmCompatibilityProfile *anygm_profile(const GmlWin *conte
 static inline int anygm_policy_uses_classic_runtime(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);
   return p?(int)p->uses_classic_runtime:(content&&content->classic_version>0);
+}
+/* The project option can enable COW in later packages. Earlier modern
+ * compilers also identify it through setowner, which the loader decodes once. */
+static inline AnygmArrayCopyPolicy anygm_policy_array_copy(const GmlWin *content){
+  const AnygmCompatibilityProfile *p=anygm_profile(content);
+  if(p) return p->array_copy;
+  if(content && content->classic_version>0) return ANYGM_ARRAY_COPY_CLASSIC_VALUE;
+  if(content && content->source_array_copy!=GML_SOURCE_ARRAY_COPY_UNSPECIFIED)
+    return content->source_array_copy==GML_SOURCE_ARRAY_COPY_ON_WRITE?
+      ANYGM_ARRAY_COPY_ON_WRITE:ANYGM_ARRAY_COPY_REFERENCE;
+  if(content && (content->bytecode<17 || content->has_array_owner_operations ||
+                  (content->option_flags&UINT64_C(0x20000000))))
+    return ANYGM_ARRAY_COPY_ON_WRITE;
+  return ANYGM_ARRAY_COPY_REFERENCE;
 }
 static inline int anygm_policy_has_legacy_music_controls(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);

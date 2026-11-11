@@ -198,7 +198,7 @@ endif
 
 TEST_DIR := $(BUILD_DIR)/tests
 RUNTIME_TESTS := test_vm_conv_bool test_vm_unset_reads test_keyboard_text test_rng test_code_coverage test_persistent_room test_d3_state test_ds_grid test_builtin_sequence_copy test_builtin_sequence_codecs test_builtin_map_access test_builtin_contact_action test_builtin_delayed_calls test_builtin_resource_queries test_builtin_animation_queries test_builtin_buffer_hash test_builtin_draw_queries test_builtin_tile_draw test_builtin_tilemap_position test_builtin_paths test_builtin_collision_lists \
-	test_builtin_dispatch test_builtin_physics test_builtin_state test_builtin_ds_capacity test_builtin_buffer_capacity test_vm_hotpath test_builtin_args test_vm_gc test_builtin_string_format test_builtin_string_search test_builtin_value_math test_builtin_extrema test_builtin_filename_parts test_builtin_map_arrays test_builtin_struct_exists test_builtin_clipboard test_builtin_instance_names test_builtin_grid_roundtrip test_builtin_gpu_zstate test_builtin_tilemap_tileset test_stacktop_scope test_value_compare
+	test_builtin_dispatch test_builtin_physics test_builtin_state test_builtin_ds_capacity test_builtin_buffer_capacity test_vm_hotpath test_builtin_args test_vm_gc test_builtin_string_format test_builtin_string_search test_builtin_value_math test_builtin_extrema test_builtin_filename_parts test_builtin_map_arrays test_builtin_struct_exists test_builtin_clipboard test_builtin_instance_names test_builtin_grid_roundtrip test_builtin_gpu_zstate test_builtin_tilemap_tileset test_stacktop_scope test_value_compare test_instance_copy
 VIDEO_RENDERER_TESTS := test_renderer_effects test_renderer_postprocess test_renderer_surfaces \
 	test_renderer_tiles test_renderer_primitives test_renderer_assets test_renderer_fonts \
 	test_renderer_texture_shells test_render_plan test_render_resources
@@ -206,7 +206,7 @@ RUNTIME_TESTS += test_builtin_buffer_codecs
 ifneq ($(HARDWARE_RENDER),0)
 VIDEO_RENDERER_TESTS += test_gpu
 endif
-CONTENT_TESTS := test_bytecode test_package test_classic test_sprite_masks test_content_transform test_content_config test_content_delta test_content_patch
+CONTENT_TESTS := test_bytecode test_array_copy_policy test_package test_classic test_sprite_masks test_content_transform test_content_config test_content_delta test_content_patch
 MEDIA_TESTS := test_hash test_image_codec test_font_raster
 AUDIO_TESTS := test_mp3_detect
 COMPATIBILITY_TESTS := test_compatibility
@@ -479,6 +479,10 @@ $(TEST_DIR)/test_builtin_filename_parts: tests/unit/runtime/test_builtin_filenam
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(CPPFLAGS))
 
+$(TEST_DIR)/test_instance_copy: tests/unit/runtime/test_instance_copy.c $(UNIT_RUNTIME_OBJECTS)
+	mkdir -p $(dir $@)
+	$(call link_runtime_test,$(CPPFLAGS))
+
 $(TEST_DIR)/test_value_compare: tests/unit/runtime/test_value_compare.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(CPPFLAGS))
@@ -659,6 +663,10 @@ $(TEST_DIR)/test_renderer_fonts: tests/unit/video/renderer/test_renderer_fonts.c
 	mkdir -p $(dir $@)
 	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $(filter-out %.h,$^) -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS)
 
+$(TEST_DIR)/test_array_copy_policy: tests/unit/content/test_array_copy_policy.c $(UNIT_RUNTIME_OBJECTS)
+	mkdir -p $(dir $@)
+	$(call link_runtime_test,$(CPPFLAGS))
+
 $(TEST_DIR)/test_compatibility: tests/unit/compatibility/test_compatibility.c \
 	src/compatibility/anygm_compatibility.c
 	mkdir -p $(dir $@)
@@ -670,6 +678,7 @@ check: CXXFLAGS += -Werror
 check: warnings-check architecture-check api-check contract-check integration-check security-check $(CHECK_TARGETS)
 	$(TEST_DIR)/test_keyboard_text
 	$(TEST_DIR)/test_bytecode
+	$(TEST_DIR)/test_array_copy_policy
 	$(TEST_DIR)/test_package
 	$(TEST_DIR)/test_classic
 	$(TEST_DIR)/test_sprite_masks
@@ -729,6 +738,7 @@ check: warnings-check architecture-check api-check contract-check integration-ch
 	$(TEST_DIR)/test_builtin_collision_lists
 	$(TEST_DIR)/test_builtin_struct_exists \
 	$(TEST_DIR)/test_value_compare \
+	$(TEST_DIR)/test_instance_copy \
 	$(TEST_DIR)/test_stacktop_scope
 else
 FOCUSED_TEST_TARGET := $(TEST_DIR)/test_$(TEST)

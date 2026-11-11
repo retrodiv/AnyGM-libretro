@@ -16,6 +16,54 @@ formats differ in two controlled places:
 Everything after those seams is shared unless a reviewed policy expresses a
 real semantic difference.
 
+## Array-copy selection
+
+The resolved profile distinguishes Classic independent value arrays, Studio
+copy-on-write arrays and later reference arrays. For modern bytecode, the OPTN
+copy-on-write bit or a decoded `setowner` operation selects copy-on-write;
+without either, reference semantics apply. The decoder walks merged CODE spans
+once, including embedded functions, and never treats an opcode-shaped integer
+operand as an operation. Earlier Studio bytecode retains copy-on-write policy.
+The policy is part of the compatibility fingerprint transported by save states.
+
+Source projects read the boolean `option_copy_on_write_enabled` from their main
+options resource (`Options` or a `GMMainOptions` resource). If it is not declared,
+the reader also checks `options/main/options_main.yy`. A missing file or setting
+retains the existing transport-derived default; it does not infer an editor release
+from a project format version. Declared missing files, malformed documents,
+nonboolean values and duplicate settings fail loading.
+
+An explicit setting is preserved in the first-party normalized `ACPY` chunk: an
+eight-byte little-endian body with version 1 and mode 1 (copy on write) or 2
+(reference). This selects only array copying, independently of the compiler's
+bytecode 15 transport. Absent settings emit no chunk. Other sizes, versions or
+modes, duplicate chunks, Classic provenance, or reference mode combined with
+native COW flags/owner operations are rejected. The resolved policy already enters
+the state compatibility fingerprint; this input fact adds no state bytes.
+
+## Instance-copy ownership
+
+`instance_copy` copies direct methods bound to the source into new method wrappers
+bound to the new identity, preserving aliases between those direct fields. It retains
+ordinary struct/array references and methods bound elsewhere. This selects the
+publisher's [verified method correction](https://github.com/YoYoGames/GameMaker-Bugs/issues/10494),
+rather than reproducing that issue's earlier release bug. Nested methods inside a
+shared array or struct are not rebound by mutating that shared object.
+Source member calls retain their accessor receiver beneath the callable, with
+arguments below both values. Otherwise unresolved named calls check the current
+instance's callable fields on every invocation, without caching a method receiver.
+
+The [beta instance-copy contract](https://manual.gamemaker.io/beta/en/GameMaker_Language/GML_Reference/Asset_Management/Instances/instance_copy.htm)
+specifies a nonphysical copy without source physics values. The shared physics owner
+suppresses automatic object-template materialization for that copy; an explicit
+fixture binding can initialize a new body later. Other instance values and unrecognized
+user keys retain ordinary copying. This is a selected documented policy, not a
+measurement across all native runner releases; the monthly manual omits the physics note.
+
+Layer membership uses the copied layer order and the existing layer owner. Element
+enumeration allocates a distinct element identity for the new instance; it never
+copies a source element's runtime handle or cached instance pointer.
+
 ## Normalized gamepad identity
 
 The normalized gamepad interface exposes logical slots, digital buttons and stick

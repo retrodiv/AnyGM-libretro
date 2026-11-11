@@ -40,6 +40,25 @@ static void write_u64(uint8_t *data,uint64_t value){
   for(unsigned i=0;i<8;i++) data[i]=(uint8_t)(value>>(i*8));
 }
 
+/* Locate older table controls only after proving this fixture has no semantic
+ * array-owner records. Never skip a populated or unknown trailer. */
+static size_t neutral_vm_body_end(const AnygmEngine *engine,const uint8_t *bytes,size_t size){
+  if(engine->vm.next_array_owner) return SIZE_MAX;
+  if(size<STATE_HEADER_SIZE || (uint32_t)read_u64(bytes+4)!=53) return SIZE_MAX;
+  size_t start=STATE_HEADER_SIZE;
+  for(unsigned offset=64;offset<=72;offset+=8){
+    uint64_t part=read_u64(bytes+offset);
+    if(part>size-start) return SIZE_MAX;
+    start+=(size_t)part;
+  }
+  uint64_t length=read_u64(bytes+80);
+  if(length<28 || length>size-start || (uint32_t)read_u64(bytes+start+4)!=31)
+    return SIZE_MAX;
+  size_t end=start+(size_t)length;
+  if(memcmp(bytes+end-20,(const uint8_t[20]){0},20)) return SIZE_MAX;
+  return end-20;
+}
+
 static uint64_t state_checksum(const uint8_t *data,size_t size){
   uint64_t hash=UINT64_C(1469598103934665603);
   while(size>=8){
@@ -1247,9 +1266,9 @@ static int instance_order_state_cases(const AnygmHostServices *services,const An
       (engine->vm.inst[i].active || engine->vm.inst[i].deactivated))members++;
   ok=save_state(engine,&baseline,&size);
   size_t vm_start=ok?STATE_HEADER_SIZE+(size_t)read_u64(baseline+64)+(size_t)read_u64(baseline+72):0;
-  size_t vm_end=ok?vm_start+(size_t)read_u64(baseline+80):0;
+  size_t vm_end=ok?neutral_vm_body_end(engine,baseline,size):SIZE_MAX;
   size_t trailer=(3u+(size_t)members)*4u;
-  if(!ok || trailer>vm_end-vm_start){free(baseline);anygm_destroy(engine);return 0;}
+  if(!ok || vm_end==SIZE_MAX || trailer>vm_end-vm_start){free(baseline);anygm_destroy(engine);return 0;}
   size_t at=vm_end-trailer;
   ok=read_u64(baseline+at)==1 && (uint32_t)read_u64(baseline+at+8)==members &&
     anygm_state_load(engine,baseline,size)==ANYGM_OK && engine_matches(engine,baseline,size);
@@ -1288,11 +1307,12 @@ static int timeline_state_cases(const AnygmHostServices *services,const AnygmCon
   const size_t order_bytes=4;
   size_t vm_start=STATE_HEADER_SIZE+(size_t)read_u64(baseline+64)+(size_t)read_u64(baseline+72);
   size_t vm_end=vm_start+(size_t)read_u64(baseline+80);
+  size_t body_end=neutral_vm_body_end(engine,baseline,size);
   size_t name_size=strlen(engine->vm.timelines[0].name);
   size_t bytes=35+name_size;
-  ok=name_size<128 && vm_end>=order_bytes+32+bytes &&
-     !memcmp(baseline+vm_end-4,(const uint8_t[4]){0},4);
-  size_t at=ok?vm_end-order_bytes-32-bytes:0;
+  ok=body_end!=SIZE_MAX && name_size<128 && body_end>=order_bytes+32+bytes &&
+     !memcmp(baseline+body_end-4,(const uint8_t[4]){0},4);
+  size_t at=ok?body_end-order_bytes-32-bytes:0;
   StateCursor cursor={baseline,size,at,ok};
   ok=ok && cursor_u32(&cursor)==1 && baseline[at+4]==1 &&
     baseline[at+9]==0 && baseline[at+10]==name_size &&
@@ -1532,8 +1552,10 @@ int main(void){
   /* Object properties follow the timeline and path tables. Assert the synthetic table's exact
    * extent before moving the existing path mutations to their current offsets. */
   const size_t object_bytes=4+28;
-  size_t object_table=audio_start-4-object_bytes;
-  if(audio_start<4+object_bytes || memcmp(baseline+audio_start-4,(const uint8_t[4]){0},4))
+  size_t body_end=neutral_vm_body_end(engine,baseline,state_size);
+  size_t object_table=body_end!=SIZE_MAX && body_end>=4+object_bytes
+    ?body_end-4-object_bytes:0;
+  if(body_end==SIZE_MAX || body_end<4+object_bytes || memcmp(baseline+body_end-4,(const uint8_t[4]){0},4))
     ok=fail("object mutation fixture requires an empty order trailer");
   StateCursor object_cursor={baseline,state_size,object_table,1};
   if(engine->vm.n_objects!=1 || cursor_u32(&object_cursor)!=1)

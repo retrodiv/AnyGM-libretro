@@ -134,6 +134,7 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
      !PACKAGE_STEP("general info",write_gen8(&pkg,p)) ||
      !PACKAGE_STEP("classic marker",write_classic_marker(&pkg,p)) ||
      !PACKAGE_STEP("options",write_optn(&pkg)) ||
+     !PACKAGE_STEP("array-copy setting",write_array_copy_setting(&pkg,p)) ||
      !PACKAGE_STEP("language",fixed_zero_chunk(&pkg,"LANG",12)) ||
      !PACKAGE_STEP("extensions",write_extn(&pkg,p)) ||
      !PACKAGE_STEP("sounds",write_sond(&pkg,p)) ||

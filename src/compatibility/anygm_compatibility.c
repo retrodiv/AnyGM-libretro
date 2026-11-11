@@ -154,6 +154,7 @@ static uint64_t compatibility_fingerprint(const AnygmCompatibilityProfile *profi
   ENCODE_FIELD(uses_limited_random_seed_expansion);
   ENCODE_FIELD(legacy_view_slots);
   ENCODE_FIELD(early_background_compositing);
+  ENCODE_FIELD(array_copy);
 #undef ENCODE_FIELD
   uint64_t epsilon=0;
   memcpy(&epsilon,&profile->default_comparison_epsilon,sizeof epsilon);
@@ -173,6 +174,8 @@ int anygm_content_facts_detect(const GmlWin *content,AnygmContentFacts *facts,
   facts->classic_revision=content->classic_version>0?(uint32_t)content->classic_version:0;
   facts->bytecode_revision=content->bytecode;
   facts->option_flags=content->option_flags;
+  facts->source_array_copy=content->source_array_copy;
+  facts->has_array_owner_operations=content->has_array_owner_operations?1u:0u;
   facts->has_room_layers=content->has_room_layers?1u:0u;
   facts->has_exclusive_bbox_marker=content->has_exclusive_bbox_marker?1u:0u;
   facts->classic_scaling=content->classic_scaling>0?(uint32_t)content->classic_scaling:0;
@@ -201,6 +204,14 @@ int anygm_compatibility_resolve(const AnygmContentFacts *facts,
     return 0;
   }
   memset(profile,0,sizeof *profile);
+  if(facts->source_array_copy<GML_SOURCE_ARRAY_COPY_UNSPECIFIED ||
+     facts->source_array_copy>GML_SOURCE_ARRAY_COPY_REFERENCE ||
+     (facts->source_array_copy && facts->classic_revision) ||
+     (facts->source_array_copy==GML_SOURCE_ARRAY_COPY_REFERENCE &&
+      (facts->has_array_owner_operations || (facts->option_flags&UINT64_C(0x20000000))))){
+    compatibility_error(error,error_size,"invalid or conflicting source array-copy setting");
+    return 0;
+  }
   profile->schema_version=ANYGM_COMPATIBILITY_SCHEMA;
   int classic=facts->classic_revision!=0;
   int modern=facts->bytecode_revision>=17;
@@ -213,6 +224,13 @@ int anygm_compatibility_resolve(const AnygmContentFacts *facts,
   profile->diagnostic_family=classic?ANYGM_FAMILY_CLASSIC:
     (modern?ANYGM_FAMILY_STUDIO_SECOND:ANYGM_FAMILY_STUDIO_FIRST);
   profile->uses_classic_runtime=classic;
+  profile->array_copy=classic?ANYGM_ARRAY_COPY_CLASSIC_VALUE:
+    (!modern || facts->has_array_owner_operations ||
+     (facts->option_flags&UINT64_C(0x20000000)))?ANYGM_ARRAY_COPY_ON_WRITE:
+     ANYGM_ARRAY_COPY_REFERENCE;
+  if(facts->source_array_copy!=GML_SOURCE_ARRAY_COPY_UNSPECIFIED)
+    profile->array_copy=facts->source_array_copy==GML_SOURCE_ARRAY_COPY_ON_WRITE?
+      ANYGM_ARRAY_COPY_ON_WRITE:ANYGM_ARRAY_COPY_REFERENCE;
   profile->has_modern_function_values=modern;
   profile->has_modern_struct_semantics=modern;
   /* Recognized later-format marker chunks select language-visible one-past far edges for

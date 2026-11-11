@@ -710,6 +710,18 @@ int write_agrp(Pkg *p){
   return 1;
 }
 
+int write_array_copy_setting(Pkg *p,const GmlcProject *project){
+  if(project->source_array_copy==GML_SOURCE_ARRAY_COPY_UNSPECIFIED) return 1;
+  if(project->classic_version ||
+     (project->source_array_copy!=GML_SOURCE_ARRAY_COPY_ON_WRITE &&
+      project->source_array_copy!=GML_SOURCE_ARRAY_COPY_REFERENCE)) return 0;
+  size_t s=chunk_begin(p,"ACPY");
+  wu32(&p->b,1);
+  wu32(&p->b,(uint32_t)project->source_array_copy);
+  chunk_end(p,s);
+  return 1;
+}
+
 int write_optn(Pkg *p){
   int sleep_sid=intern(p,"@@SleepMargin");
   int sleep_value_sid=intern(p,"10");

@@ -12,7 +12,9 @@
 /* Wire tag four belongs to the array-identity codec. */
 typedef enum { V_REAL=0, V_STR=1, V_ARR=2, V_UNDEF=3, V_OBJECT=5 } GmlValType;
 /* The tag selects one pointer payload. String ownership remains in d; numeric
- * and object values retain the complete double independently of pointer storage. */
+ * and object values retain the complete double independently of pointer storage.
+ * An array on a writable operand-stack path carries its lvalue identity in d;
+ * ordinary reads and publication clear it before the reference escapes. */
 typedef struct { GmlValType t; double d; union { const char *s; void *arr; }; } GmlVal;
 /* Object values retain their category while carrying the VM's stable handle in d.
  * Numeric selectors can consume that handle; container operations must retain the category.
@@ -20,7 +22,8 @@ typedef struct { GmlValType t; double d; union { const char *s; void *arr; }; } 
 static inline int gml_val_is_number_or_object(GmlVal v){
   return v.t==V_REAL || v.t==V_OBJECT;
 }
-typedef struct {
+typedef struct GmlArrayHeap GmlArrayHeap;
+typedef struct GmlArr {
   GmlVal *data; int len, cap;
   int is_2d, height2d, row_cap;
   int nested_2d;
@@ -28,6 +31,9 @@ typedef struct {
   int escaped;   /* referenced beyond its creating scope (stored to a global/instance var,
                     a ds structure, or returned) — locals cleanup must not free it */
   unsigned gc_epoch; /* the collection pass that last scanned this array; see gml_struct_gc */
+  GmlArrayHeap *heap; /* transient allocation owner; never part of a saved value */
+  struct GmlArr *heap_previous, *heap_next;
+  uint64_t cow_owner; /* stable lvalue identity, never a host address */
 } GmlArr;
 static inline GmlVal vreal(double d){ GmlVal v; v.t=V_REAL; v.d=d; v.s=0; v.arr=0; return v; }
 static inline GmlVal vobject(uint32_t id){
@@ -45,6 +51,7 @@ typedef struct {
   uint32_t hash;
   unsigned char key_owned; /* heap key released with the map; STRG/literal keys stay borrowed */
   GmlVal val; /* keep key ownership in the alignment gap before the value */
+  uint64_t array_owner;
 } GmlVarSlot;
 typedef struct { GmlVarSlot *slots; int cap, len; } GmlVarMap;
 /* The largest index gml_arr_index_ensure will grow an array to, and the largest capacity that
@@ -78,6 +85,10 @@ void         gml_arr_insert(GmlVal arr, int index, GmlVal *values, int count);
 GmlVal *gml_varmap_get(GmlVarMap *m, const char *key);   /* NULL if absent */
 GmlVal *gml_varmap_put(GmlVarMap *m, const char *key);   /* get-or-create slot */
 GmlVal *gml_varmap_put_owned(GmlVarMap *m, char *key);   /* takes ownership of a heap key */
+/* The value must be an entry returned by a variable map, not an array cell or
+ * standalone temporary. Rehashing preserves this binding's stable identity. */
+uint64_t *gml_varmap_value_owner(GmlVal *value);
+GmlVal gml_arr_publish(GmlVal value);
 
 void gml_arr_mark_escaped(GmlVal v);   /* array stored beyond its scope: locals cleanup must not free it */
 /* Release array storage with one alias-deduplication pass. Strings retain their
@@ -87,4 +98,7 @@ void gml_values_release(GmlVal *values, size_t count);
  * its arrays or owned strings may survive this call; borrowed strings are kept.
  * Intended for unpublished decoded values and caller-owned temporary graphs. */
 void gml_values_release_owned(GmlVal *values, size_t count);
+/* Adopt a published graph and its persistent owned text into one opaque owner.
+ * Copies and source graphs share that owner; collection decides when nodes die. */
+int gml_array_heap_adopt(GmlArrayHeap **heap, GmlVal value);
 #endif

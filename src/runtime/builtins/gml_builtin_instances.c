@@ -336,6 +336,10 @@ GmlVal gml_builtin_try_instances(GmlVM *vm, const char *nm, GmlVal *a, int n){
   GmlRender *R=(GmlRender*)vm->render;
   (void)R;
   /* ---- instances ---- */
+  if(!strcmp(nm,"instance_copy")){
+    if(n!=1) return vreal(-4);
+    return vreal((double)gml_instance_copy(vm,N(a,n,0)>=0.5));
+  }
   if(!strcmp(nm,"instance_create")){ GmlInstance*in=gml_instance_create(vm,N(a,n,0),N(a,n,1),(int)N(a,n,2));
     return vreal(in?(double)in->id:-4); }
   /* GMS2 creation: instance_create_depth(x,y,depth,obj) / instance_create_layer(x,y,layer,obj). The

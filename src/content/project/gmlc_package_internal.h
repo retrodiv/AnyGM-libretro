@@ -137,6 +137,7 @@ int write_font(Pkg *pkg, const GmlcProject *p);
 int write_gen8(Pkg *pkg, const GmlcProject *p);
 int write_objt(Pkg *pkg, const GmlcProject *p);
 int write_optn(Pkg *p);
+int write_array_copy_setting(Pkg *p,const GmlcProject *project);
 int write_room_chunk(Pkg *pkg, const GmlcProject *p);
 int write_scpt(Pkg *pkg, const GmlcProject *p);
 int write_shdr(Pkg *pkg, const GmlcProject *p);

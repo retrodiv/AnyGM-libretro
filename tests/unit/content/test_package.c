@@ -5,6 +5,7 @@
 #include "gmlc_package.h"
 #include "gmlc_project.h"
 #include "gml_win.h"
+#include "anygm_vfs.h"
 #include "gml_image_codec.h"
 #include "stdio_vfs.h"
 
@@ -12,6 +13,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <direct.h>
+#define package_rmdir _rmdir
+#else
+#include <unistd.h>
+#define package_rmdir rmdir
+#endif
 
 static uint64_t package_digest(const uint8_t *data,size_t size){
   uint64_t hash=UINT64_C(14695981039346656037);
@@ -462,6 +470,96 @@ static int expect_authored_game_identity(const char *directory){
   return ok;
 }
 
+static int expect_source_array_copy_setting(const char *directory){
+  char yyp[256],options[256],options_directory[256],package[256],error[256]={0};
+  snprintf(yyp,sizeof yyp,"%s/array-policy.yyp",directory);
+  snprintf(options,sizeof options,"%s/options/main/options_main.yy",directory);
+  snprintf(options_directory,sizeof options_directory,"%s/options/main",directory);
+  snprintf(package,sizeof package,"%s/array-policy.win",directory);
+  AnygmHostServices host={.struct_size=sizeof host,.abi_version=ANYGM_HOST_SERVICES_VERSION};
+  anygm_stdio_vfs_services_init(&host);
+  const char *documents[]={
+    "{\"option_copy_on_write_enabled\":true,}",
+    "{\"option_copy_on_write_enabled\":false}",
+    "{}",
+    "{\"option_copy_on_write_enabled\":0}",
+    "{\"option_copy_on_write_enabled\":\"false\"}",
+    "{\"option_copy_on_write_enabled\":null}",
+    "{\"option_copy_on_write_enabled\":true,\"option_copy_on_write_enabled\":false}",
+    "[]", "{"
+  };
+  int ok=anygm_vfs_mkdirs(&host,options_directory);
+  for(int declared=0;ok && declared<3;declared++){
+    const char *project_text=declared==0?"{\"resources\":[]}":declared==1?
+      "{\"resources\":[],\"Options\":[{\"name\":\"Main\",\"path\":\"options/main/options_main.yy\"}]}":
+      "{\"resources\":[{\"Value\":{\"resourceType\":\"GMMainOptions\",\"resourcePath\":\"options\\\\main\\\\options_main.yy\"}}]}";
+    for(size_t i=0;ok && i<sizeof documents/sizeof documents[0];i++){
+      GmlcProject project={0}; GmlWin win={0}; uint8_t *bytes=NULL; size_t size=0;
+      ok=write_text(yyp,project_text) && write_text(options,documents[i]);
+      int loaded=ok && gmlc_project_load_yyp(&project,&host,yyp,error,sizeof error);
+      if(i>=3) ok=ok && !loaded;
+      else{
+        GmlSourceArrayCopy wanted=i==0?GML_SOURCE_ARRAY_COPY_ON_WRITE:i==1?
+          GML_SOURCE_ARRAY_COPY_REFERENCE:GML_SOURCE_ARRAY_COPY_UNSPECIFIED;
+        ok=loaded && project.source_array_copy==wanted &&
+          gmlc_package_write_structural(&project,package,error,sizeof error) &&
+          read_bytes(package,&bytes,&size) && gml_win_from_mem(&win,bytes,size,0)==0 &&
+          win.bytecode==15 && win.source_array_copy==wanted &&
+          (gml_chunk(&win,"ACPY")!=NULL)==(wanted!=GML_SOURCE_ARRAY_COPY_UNSPECIFIED);
+        const GmlChunk *chunk=ok?gml_chunk(&win,"ACPY"):NULL;
+        size_t offset=chunk?chunk->off:0;
+        gml_win_free(&win);
+        if(ok && offset){
+          /* Unknown versions, absent/unknown values and conflicting native flags fail closed. */
+          const uint32_t bad[][2]={{2,1},{1,0},{1,3}};
+          for(size_t bad_index=0;ok && bad_index<sizeof bad/sizeof bad[0];bad_index++){
+            for(unsigned n=0;n<2;n++) for(unsigned b=0;b<4;b++)
+              bytes[offset+n*4+b]=(uint8_t)(bad[bad_index][n]>>(b*8));
+            ok=gml_win_from_mem(&win,bytes,size,0)!=0;
+            gml_win_free(&win);
+          }
+          for(unsigned b=0;b<4;b++){
+            bytes[offset+b]=(uint8_t)(1u>>(b*8));
+            bytes[offset+4+b]=(uint8_t)((uint32_t)wanted>>(b*8));
+          }
+          if(ok && wanted==GML_SOURCE_ARRAY_COPY_REFERENCE){
+            ok=gml_win_from_mem(&win,bytes,size,0)==0;
+            const GmlChunk *optn=ok?gml_chunk(&win,"OPTN"):NULL;
+            size_t flag=optn?optn->off+11u:0;
+            gml_win_free(&win);
+            if(!flag) ok=0;
+            else{
+              bytes[flag]|=0x20;
+              ok=ok && gml_win_from_mem(&win,bytes,size,0)!=0;
+              gml_win_free(&win);
+            }
+          }
+        }
+      }
+      if(!ok) fprintf(stderr,"source array-copy setting route %d document %zu: %s\n",declared,i,error);
+      gml_win_free(&win); free(bytes); gmlc_project_free(&project);
+    }
+  }
+  remove(options);
+  if(ok){
+    GmlcProject project={0};
+    ok=write_text(yyp,"{\"resources\":[]}") &&
+      gmlc_project_load_yyp(&project,&host,yyp,error,sizeof error) &&
+      project.source_array_copy==GML_SOURCE_ARRAY_COPY_UNSPECIFIED;
+    gmlc_project_free(&project);
+    host.file_stat=NULL;
+    ok=ok && write_text(options,documents[1]) &&
+      gmlc_project_load_yyp(&project,&host,yyp,error,sizeof error) &&
+      project.source_array_copy==GML_SOURCE_ARRAY_COPY_REFERENCE;
+    gmlc_project_free(&project);
+  }
+  remove(package); remove(options); remove(yyp);
+  package_rmdir(options_directory);
+  snprintf(options_directory,sizeof options_directory,"%s/options",directory);
+  package_rmdir(options_directory);
+  return ok;
+}
+
 int main(int argc,char **argv){
   AnygmSyntheticContent first={0}, second={0};
   uint8_t *first_bytes=NULL, *second_bytes=NULL;
@@ -501,6 +599,7 @@ int main(int argc,char **argv){
   if(ok && !expect_optn_scale_is_read(first.directory)) ok=0;
   if(ok && !expect_font_style_normalization(first.directory)) ok=0;
   if(ok && !expect_authored_game_identity(first.directory)) ok=0;
+  if(ok && !expect_source_array_copy_setting(first.directory)) ok=0;
 
   free(first_bytes);
   free(second_bytes);

@@ -7,6 +7,148 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef struct GmlOwnedText {
+  char *text;
+  unsigned gc_epoch;
+  struct GmlOwnedText *next;
+} GmlOwnedText;
+struct GmlArrayHeap {
+  GmlArr *first, *last;
+  size_t count, new_nodes, new_bytes;
+  GmlOwnedText **texts;
+  size_t text_capacity,text_count;
+};
+
+static void array_heap_note_bytes(GmlArrayHeap *heap,size_t bytes){
+  if(heap) heap->new_bytes=bytes>SIZE_MAX-heap->new_bytes?SIZE_MAX:heap->new_bytes+bytes;
+}
+static size_t array_heap_text_slot(const char *text,size_t capacity){
+  uintptr_t value=(uintptr_t)text;
+  value^=value>>4; value^=value>>11;
+  return value&(capacity-1);
+}
+static int array_heap_adopt_text(GmlArrayHeap *heap,char *text){
+  if(!text) return 1;
+  if(heap->text_capacity){
+    size_t slot=array_heap_text_slot(text,heap->text_capacity);
+    for(GmlOwnedText *node=heap->texts[slot];node;node=node->next)
+      if(node->text==text) return 1;
+  }
+  if(heap->text_count*4>=heap->text_capacity*3){
+    size_t capacity=heap->text_capacity?heap->text_capacity*2:64;
+    GmlOwnedText **table=calloc(capacity,sizeof(*table));
+    if(!table) return 0;
+    for(size_t i=0;i<heap->text_capacity;i++) for(GmlOwnedText *node=heap->texts[i],*next;node;node=next){
+      next=node->next;
+      size_t slot=array_heap_text_slot(node->text,capacity);
+      node->next=table[slot];table[slot]=node;
+    }
+    free(heap->texts);heap->texts=table;heap->text_capacity=capacity;
+  }
+  GmlOwnedText *node=calloc(1,sizeof(*node));
+  if(!node) return 0;
+  size_t slot=array_heap_text_slot(text,heap->text_capacity);
+  node->text=text;node->next=heap->texts[slot];heap->texts[slot]=node;
+  heap->text_count++;heap->new_nodes++;
+  array_heap_note_bytes(heap,sizeof(*node)+strlen(text)+1);
+  return 1;
+}
+void gml_array_heap_mark_text(GmlArrayHeap *heap,const char *text,unsigned epoch){
+  if(!heap || !text || !heap->text_capacity) return;
+  size_t slot=array_heap_text_slot(text,heap->text_capacity);
+  for(GmlOwnedText *node=heap->texts[slot];node;node=node->next)
+    if(node->text==text){node->gc_epoch=epoch;return;}
+}
+static int array_heap_append(GmlArrayHeap *heap,GmlArr *array){
+  if(array->heap) return array->heap==heap;
+  array->heap=heap;
+  array->heap_previous=heap->last;
+  if(heap->last) heap->last->heap_next=array;
+  else heap->first=array;
+  heap->last=array;
+  heap->count++; heap->new_nodes++;
+  array->escaped=1;
+  array_heap_note_bytes(heap,sizeof(*array)+(size_t)array->cap*sizeof(GmlVal)+
+                             (size_t)array->row_cap*sizeof(int));
+  return 1;
+}
+int gml_array_heap_adopt(GmlArrayHeap **owner,GmlVal value){
+  int owned_text=value.t==V_STR && value.s && value.d!=0;
+  if((value.t!=V_ARR || !value.arr) && !owned_text) return 1;
+  if(!owner) return 0;
+  if(!*owner){ *owner=calloc(1,sizeof(**owner)); if(!*owner) return 0; }
+  GmlArrayHeap *heap=*owner;
+  if(owned_text) return array_heap_adopt_text(heap,(char *)value.s);
+  GmlArr *root=value.arr;
+  if(root->heap) return root->heap==heap;
+  array_heap_append(heap,root);
+  /* Newly found nodes append to this same work list. Ownership is the visited
+   * marker, so shared children and cycles need neither recursion nor a second set. */
+  for(GmlArr *array=root;array;array=array->heap_next){
+    for(int i=0;i<array->len;i++){
+      GmlVal child=array->data[i];
+      if(child.t==V_STR && child.s && child.d!=0){
+        if(!array_heap_adopt_text(heap,(char *)child.s)) return 0;
+        /* Array-pop and scope cleanup now borrow this collector-owned text. */
+        array->data[i].d=0;
+      }
+      if(child.t==V_ARR && child.arr && !array_heap_append(heap,child.arr)) return 0;
+    }
+  }
+  return 1;
+}
+static void array_heap_unlink(GmlArr *array){
+  GmlArrayHeap *heap=array->heap;
+  if(!heap) return;
+  if(array->heap_previous) array->heap_previous->heap_next=array->heap_next;
+  else heap->first=array->heap_next;
+  if(array->heap_next) array->heap_next->heap_previous=array->heap_previous;
+  else heap->last=array->heap_previous;
+  heap->count--;
+  array->heap=NULL; array->heap_previous=array->heap_next=NULL;
+}
+static void array_heap_free_node(GmlArr *array){
+  array_heap_unlink(array);
+  free(array->row_len); free(array->data); free(array);
+}
+size_t gml_array_heap_count(const GmlArrayHeap *heap){ return heap?heap->count+heap->text_count:0; }
+int gml_array_heap_collection_due(const GmlArrayHeap *heap){
+  return heap && (heap->new_nodes>=256 || heap->new_bytes>=8u*1024u*1024u);
+}
+void gml_array_heap_sweep(GmlArrayHeap *heap,unsigned epoch){
+  if(!heap) return;
+  for(GmlArr *array=heap->first,*next;array;array=next){
+    next=array->heap_next;
+    /* Every node is tracked separately. A dead parent must not recursively free
+     * a child retained through another root. Owned text has its own marked nodes. */
+    if(array->gc_epoch!=epoch) array_heap_free_node(array);
+  }
+  for(size_t i=0;i<heap->text_capacity;i++){
+    GmlOwnedText **link=&heap->texts[i];
+    while(*link){
+      GmlOwnedText *node=*link;
+      if(node->gc_epoch==epoch) link=&node->next;
+      else {*link=node->next;free(node->text);free(node);heap->text_count--;}
+    }
+  }
+  heap->new_nodes=heap->new_bytes=0;
+}
+void gml_array_heap_destroy(GmlArrayHeap **owner){
+  if(!owner || !*owner) return;
+  while((*owner)->first) array_heap_free_node((*owner)->first);
+  for(size_t i=0;i<(*owner)->text_capacity;i++){
+    GmlOwnedText *node=(*owner)->texts[i];
+    while(node){GmlOwnedText *next=node->next;free(node->text);free(node);node=next;}
+  }
+  free((*owner)->texts);
+  free(*owner); *owner=NULL;
+}
+void gml_arr_store_value(GmlArr *array,int index,GmlVal value){
+  if(!array || index<0 || index>=array->cap) return;
+  if(array->heap && !gml_array_heap_adopt(&array->heap,value)) return;
+  if(array->heap && value.t==V_STR) value.d=0;
+  array->data[index]=gml_arr_publish(value);
+}
 
 /* ---------------- var map (key = interned name pointer) ---------------- */
 /* hash/compare keys by CONTENT (FNV-1a + strcmp), not pointer identity: VM names come from
@@ -84,13 +226,25 @@ GmlVal *gml_varmap_put(GmlVarMap *m, const char *key){
 GmlVal *gml_varmap_put_owned(GmlVarMap *m, char *key){
   return gml_varmap_put_owned_hashed(m,key,gml_value_name_hash(key?key:""));
 }
+uint64_t *gml_varmap_value_owner(GmlVal *value){
+  GmlVarSlot *slot=(GmlVarSlot *)((unsigned char *)value - offsetof(GmlVarSlot,val));
+  return &slot->array_owner;
+}
+GmlVal gml_arr_publish(GmlVal value){
+  if(value.t==V_ARR){
+    value.d=0;
+    if(value.arr) ((GmlArr *)value.arr)->cow_owner=0;
+  }
+  return value;
+}
 
 void gml_arr_row_ensure(GmlArr *A, int row){
   if(!A || row<0) return;
   if(row>=A->row_cap){
     int nc=A->row_cap?A->row_cap:8; while(nc<=row) nc*=2;
     int *nr=realloc(A->row_len,(size_t)nc*sizeof(int)); if(!nr) return;
-    A->row_len=nr; for(int i=A->row_cap;i<nc;i++) A->row_len[i]=0; A->row_cap=nc;
+    A->row_len=nr; for(int i=A->row_cap;i<nc;i++) A->row_len[i]=0;
+    array_heap_note_bytes(A->heap,(size_t)(nc-A->row_cap)*sizeof(int)); A->row_cap=nc;
   }
   if(row>=A->height2d) A->height2d=row+1;
 }
@@ -186,7 +340,7 @@ void gml_arr_index_ensure(GmlArr *A, int idx){
       A->data=grown;
       for(int i=A->cap;i<nc;i++) A->data[i]=vreal(0);
     }
-    A->cap=nc; }
+    array_heap_note_bytes(A->heap,(size_t)(nc-A->cap)*sizeof(GmlVal)); A->cap=nc; }
   if(idx>=A->len) A->len=idx+1;
 }
 /* ---- GMS2.3 array FUNCTIONS (array_create/get/set/push/pop/resize/copy/...). The bytecode's
@@ -195,7 +349,7 @@ void gml_arr_index_ensure(GmlArr *A, int idx){
  * caller's GC-tracked temp being freed at scope exit can't dangle the array — the rule ds_ uses. */
 GmlVal gml_arr_store_clone(GmlVal v){
   if(v.t==V_STR){ char *c=v.s?strdup(v.s):NULL; return c?vstr_owned(c):vstr(""); }
-  if(v.t==V_ARR){ gml_arr_mark_escaped(v); return v; }
+  if(v.t==V_ARR){ gml_arr_mark_escaped(v); return gml_arr_publish(v); }
   if(v.t==V_UNDEF) return vundef();
   if(v.t==V_OBJECT) return v;
   return vreal(v.t==V_REAL?v.d:0.0);
@@ -213,7 +367,7 @@ GmlVal gml_arr_new(int size, GmlVal fill){
 void gml_arr_set(GmlVal arr, int idx, GmlVal val){
   if(arr.t!=V_ARR || !arr.arr || idx<0) return;
   GmlArr *A=arr.arr; gml_arr_index_ensure(A,idx);
-  if(idx<A->cap){ A->data[idx]=arr_store_clone(val); if(idx>=A->len) A->len=idx+1; }
+  if(idx<A->cap){ gml_arr_store_value(A,idx,arr_store_clone(val)); if(idx>=A->len) A->len=idx+1; }
 }
 GmlVal gml_arr_get(GmlVal arr, int idx){
   if(arr.t!=V_ARR || !arr.arr || idx<0) return vreal(0);
@@ -231,7 +385,7 @@ GmlVal gml_arr_chain_ensure(GmlVal arr, int idx){
   if(value.t==V_REAL && value.d==0.0){
     gml_arr_index_ensure(A,idx);
     if(idx<A->cap){
-      A->data[idx]=gml_arr_new(0,vreal(0));
+      gml_arr_store_value(A,idx,gml_arr_new(0,vreal(0)));
       value=A->data[idx];
     }
   }
@@ -248,12 +402,12 @@ void gml_arr_set_2d(GmlVal arr, int row, int column, GmlVal val){
     long flat=(long)row*GML_2D_STRIDE+column;
     if(flat<0 || flat>=16000000) return;
     int idx=(int)flat; gml_arr_note_legacy_2d_set(A,idx); gml_arr_index_ensure(A,idx);
-    if(idx<A->cap) A->data[idx]=arr_store_clone(val);
+    if(idx<A->cap) gml_arr_store_value(A,idx,arr_store_clone(val));
     return;
   }
   gml_arr_index_ensure(A,row); if(row>=A->cap) return;
   if(A->data[row].t!=V_ARR || !A->data[row].arr){
-    A->data[row]=gml_arr_new(0,vreal(0));
+    gml_arr_store_value(A,row,gml_arr_new(0,vreal(0)));
     A->nested_2d=1;
   }
   /* A caller-provided row already has ordinary nested-array indexing. Updating
@@ -286,7 +440,7 @@ int gml_arr_nested_get_flat(GmlVal arr,int flat,GmlVal *out){
 void gml_arr_push(GmlVal arr, GmlVal val){
   if(arr.t!=V_ARR || !arr.arr) return;
   GmlArr *A=arr.arr; int idx=A->len; gml_arr_index_ensure(A,idx);
-  if(idx<A->cap){ A->data[idx]=arr_store_clone(val); A->len=idx+1; }
+  if(idx<A->cap){ gml_arr_store_value(A,idx,arr_store_clone(val)); A->len=idx+1; }
 }
 GmlVal gml_arr_pop(GmlVal arr){   /* remove+return last; transfer ownership of an owned string out */
   if(arr.t!=V_ARR || !arr.arr) return vreal(0);
@@ -300,7 +454,7 @@ void gml_arr_resize(GmlVal arr, int size){
 void gml_arr_copy(GmlVal dst, int di, GmlVal src, int si, int count){
   if(dst.t!=V_ARR || !dst.arr || src.t!=V_ARR || !src.arr || di<0 || si<0 || count<=0) return;
   GmlArr *D=dst.arr, *S=src.arr;
-  for(int k=0;k<count;k++){ if(si+k>=S->len) break; gml_arr_index_ensure(D,di+k); if(di+k<D->cap){ D->data[di+k]=arr_store_clone(S->data[si+k]); if(di+k>=D->len) D->len=di+k+1; } }
+  for(int k=0;k<count;k++){ if(si+k>=S->len) break; gml_arr_index_ensure(D,di+k); if(di+k<D->cap){ gml_arr_store_value(D,di+k,arr_store_clone(S->data[si+k])); if(di+k>=D->len) D->len=di+k+1; } }
 }
 void gml_arr_insert(GmlVal arr, int index, GmlVal *values, int count){
   if(arr.t!=V_ARR || !arr.arr || !values || count<=0) return;
@@ -317,7 +471,7 @@ void gml_arr_insert(GmlVal arr, int index, GmlVal *values, int count){
     memmove(&A->data[index+count],&A->data[index],
             (size_t)(old_len-index)*sizeof(*A->data));
   }
-  for(int i=0;i<count;i++) A->data[index+i]=arr_store_clone(values[i]);
+  for(int i=0;i<count;i++) gml_arr_store_value(A,index+i,arr_store_clone(values[i]));
 }
 /* A teardown operation owns its deduplication set. Aliased arrays can span globals, instances and
  * structs, so full VM teardown passes one context across every map without introducing process
@@ -362,6 +516,7 @@ void gml_val_free(GmlValueFreeContext *context,GmlVal v){
   /* Escaped arrays are shared reference values. Outside a full teardown sweep,
    * a local/container cleanup must not free a child another live slot still owns. */
   if(A->escaped && (!context || context->skip_escaped || !context->active)) return;
+  array_heap_unlink(A);
   /* defend against a corrupt GmlArr (garbage len/cap/data from a bad savestate) — free only the
    * struct, never walk a garbage data pointer. */
   if(A->len<0 || A->cap<A->len || A->cap>GML_ARR_MAX_CAP || (A->len>0 && !A->data)){

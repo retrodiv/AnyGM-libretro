@@ -4631,13 +4631,15 @@ int main(int argc,char **argv){
   write_u64(deterministic+80,map_vm_size);
   write_u64(deterministic+96,deterministic_size-112);
   write_u32(deterministic+4,34); write_u32(deterministic+map_vm+4,18);
-  /* Compatibility schema 3 adds classic extended-text blank-line policy to its fingerprint.
+  /* Compatibility schema 4 adds the resolved array-copy policy. This fixed Classic fixture
+   * selects independent value arrays. Schema 3 adds classic extended-text blank-line policy.
    * The fixed Classic fixture resolves that policy and retains the same state payload. Schema 2
    * added early-background compositing; this fixture leaves that policy disabled. Project only
    * the header identity in test scratch to schema 1, preserving every historical payload pin
    * below. The runtime never reads older states. */
   if((uint32_t)read_u64(deterministic+4)!=34 ||
-     (uint32_t)read_u64(deterministic+32)!=3 ||
+     (uint32_t)read_u64(deterministic+32)!=4 ||
+     first->compatibility.array_copy!=ANYGM_ARRAY_COPY_CLASSIC_VALUE ||
      read_u64(deterministic+40)!=first->compatibility.fingerprint ||
      first->win.classic_version!=800 || first->compatibility.early_background_compositing ||
      !first->compatibility.text_compacts_extended_blank_lines){

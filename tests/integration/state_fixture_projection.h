@@ -142,7 +142,7 @@ static void fixture_map(FixtureProjection *p){
  * against the live fixture. Direct state controls cover mutation/restoration of these fields. */
 static int project_fixture_playback(AnygmEngine *engine,uint8_t **data,size_t *written){
   uint8_t *bytes=*data;
-  if(*written<112 || (uint32_t)read_u64(bytes+4)!=50 || engine->render.n_spr<0)return 0;
+  if(*written<112 || (uint32_t)read_u64(bytes+4)!=53 || engine->render.n_spr<0)return 0;
   /* Only a neutral current blend may disappear from this historical scratch pin. */
   size_t render=112+(size_t)read_u64(bytes+64),render_size=(size_t)read_u64(bytes+72);
   const uint8_t neutral_blend[12]={0,0,0,0,1,0,0,0,1,0,0,0};
@@ -212,6 +212,7 @@ static int project_fixture_vm(AnygmEngine *engine,uint8_t **data,size_t *written
   if(*written<112 || (uint32_t)read_u64(bytes+4)!=43 || engine->vm.n_structs ||
      engine->vm.n_tilemaps || engine->vm.n_rtl || engine->vm.n_rte ||
      engine->vm.room_visuals || engine->vm.wait.active || engine->vm.n_timelines ||
+     engine->vm.next_array_owner ||
      engine->vm.n_objects<0)return 0;
   size_t start=112+(size_t)read_u64(bytes+64)+(size_t)read_u64(bytes+72);
   size_t size=(size_t)read_u64(bytes+80);
@@ -219,8 +220,10 @@ static int project_fixture_vm(AnygmEngine *engine,uint8_t **data,size_t *written
   FixtureProjection *p=calloc(1,sizeof(*p));if(!p)return 0;
   /* This bounded fixture has no recycled/relinked object groups. Strip only the verified
    * empty order trailer; nonempty new behavior belongs to its direct continuation controls. */
-  if(size<4 || memcmp(bytes+start+size-4,(const uint8_t[4]){0},4)){free(p);return 0;}
-  p->input=bytes+start;p->size=size-4;p->ok=1;
+  /* Only the neutral ownership trailer may be omitted from this old payload pin. */
+  if(size<24 || memcmp(bytes+start+size-20,(const uint8_t[20]){0},20)){free(p);return 0;}
+  if(memcmp(bytes+start+size-24,(const uint8_t[4]){0},4)){free(p);return 0;}
+  p->input=bytes+start;p->size=size-24;p->ok=1;
   if((size_t)engine->vm.n_objects>(SIZE_MAX-4u)/28u){free(p);return 0;}
   size_t objects=4u+(size_t)engine->vm.n_objects*28u;
   if(objects>p->size || p->size-objects<4u){free(p);return 0;}
@@ -228,7 +231,7 @@ static int project_fixture_vm(AnygmEngine *engine,uint8_t **data,size_t *written
   if((uint32_t)read_u64(p->input+timeline_at)!=0 ||
      (uint32_t)read_u64(p->input+timeline_at+4)!=(uint32_t)engine->vm.n_objects){free(p);return 0;}
   fixture_copy(p,132);
-  if((uint32_t)read_u64(p->output+4)!=29)p->ok=0;
+  if((uint32_t)read_u64(p->output+4)!=31)p->ok=0;
   write_u32(p->output+4,19);
   for(unsigned i=0;i<16;i++)(void)fixture_value(p,0);
   fixture_copy(p,76+26*4+616*8+10*4); /* RNG and unchanged software-3D scalars */
@@ -349,6 +352,16 @@ static int fixture_projection_controls(AnygmEngine *engine,const uint8_t *baseli
     free(bytes);engine->vm.script_args[0]=original;gml_values_release_owned(&array,1);
   }
   engine->vm.script_args[0]=original;
+  const uint32_t unknown_roots[]={50,51,52,54};
+  for(unsigned i=0;i<2 && ok;i++){
+    uint8_t *bytes=NULL;size_t count=0;
+    ok=save_state(engine,&bytes,&count);
+    if(ok){
+      write_u32(bytes+4,unknown_roots[i]);
+      ok=!project_fixture_vm(engine,&bytes,&count);
+    }
+    free(bytes);
+  }
   if(ok){
     uint8_t *bytes=NULL;size_t count=0;
     gml_builtin_call(&engine->vm,"gamepad_set_button_threshold",(GmlVal[]){vreal(5),vreal(0.25)},2);

@@ -440,6 +440,65 @@ static int load_resource_order(GmlcProject *p){
   return ok;
 }
 
+static int main_options_path_equal(const char *left,const char *right){
+  while(*left && *right){
+    char a=*left=='\\'?'/':*left,b=*right=='\\'?'/':*right;
+    if(a!=b) return 0;
+    left++; right++;
+  }
+  return *left==*right;
+}
+
+static int load_main_options(GmlcProject *p,const GmlcJson *root,char *err,size_t errcap){
+  const char *relative=NULL;
+  for(int i=0;i<p->n_resources;i++){
+    const GmlcResource *resource=&p->resources[i];
+    if(resource->type_name && !strcmp(resource->type_name,"GMMainOptions")){
+      if(relative && !main_options_path_equal(relative,resource->path)){
+        snprintf(err,errcap,"multiple main options paths"); return 0;
+      }
+      relative=resource->path;
+    }
+  }
+  const GmlcJson *options=gmlc_json_obj(root,"Options");
+  if(options && options->type!=GMLC_JSON_ARRAY){
+    snprintf(err,errcap,"Options must be an array"); return 0;
+  }
+  for(const GmlcJson *item=options?options->child:NULL;item;item=item->next){
+    const char *name=gmlc_json_str(gmlc_json_obj(item,"name"),"");
+    if(strcmp(name,"Main")) continue;
+    const char *path=gmlc_json_str(gmlc_json_obj(item,"path"),NULL);
+    if(!path || !*path || (relative && !main_options_path_equal(relative,path))){
+      snprintf(err,errcap,"invalid or conflicting main options path"); return 0;
+    }
+    relative=path;
+  }
+  int required=relative!=NULL;
+  char *path=gmlc_path_join(p->root_dir,relative?relative:"options/main/options_main.yy");
+  if(!path){ snprintf(err,errcap,"out of memory while loading main options"); return 0; }
+  if(!required){
+    AnygmFileInfo info={0};
+    int exists=anygm_vfs_stat(p->host,path,&info);
+    if(!p->host->file_stat){
+      uint8_t probe=0; size_t size=0;
+      exists=anygm_vfs_read_prefix(p->host,path,&probe,1,&size);
+    }
+    if(!exists){ free(path); return 1; }
+  }
+  GmlcJson *main=gmlc_json_parse_file(p->host,path,err,errcap);
+  free(path);
+  if(!main) return 0;
+  int ok=main->type==GMLC_JSON_OBJECT,seen=0;
+  for(const GmlcJson *item=ok?main->child:NULL;item;item=item->next){
+    if(!item->name || strcmp(item->name,"option_copy_on_write_enabled")) continue;
+    if(seen++ || item->type!=GMLC_JSON_BOOL){ ok=0; break; }
+    p->source_array_copy=item->b?GML_SOURCE_ARRAY_COPY_ON_WRITE:GML_SOURCE_ARRAY_COPY_REFERENCE;
+  }
+  gmlc_json_free(main);
+  if(!ok) snprintf(err,errcap,"main options require one boolean option_copy_on_write_enabled when present");
+  return ok;
+}
+
 int gmlc_project_load_yyp(GmlcProject *p,const AnygmHostServices *host,
                           const char *path,char *err,size_t errcap){
   gmlc_project_init(p);
@@ -475,6 +534,10 @@ int gmlc_project_load_yyp(GmlcProject *p,const AnygmHostServices *host,
       snprintf(err,errcap,"out of memory while loading resources");
       return 0;
     }
+  }
+  if(!load_main_options(p,root,err,errcap)){
+    gmlc_json_free(root);
+    return 0;
   }
   if(!append_room_order_nodes(p,root) || !load_resource_order(p)){
     gmlc_json_free(root);

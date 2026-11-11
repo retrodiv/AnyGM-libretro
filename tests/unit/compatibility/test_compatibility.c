@@ -109,6 +109,65 @@ int main(void){
     return 1;
   }
   {
+    AnygmCompatibilityProfile enabled={0},owner_selected={0};
+    if(!resolve(0,17,UINT64_C(0x20000000),0,&enabled) ||
+       classic_late.array_copy!=ANYGM_ARRAY_COPY_CLASSIC_VALUE ||
+       first_early.array_copy!=ANYGM_ARRAY_COPY_ON_WRITE ||
+       first_late.array_copy!=ANYGM_ARRAY_COPY_ON_WRITE ||
+       second.array_copy!=ANYGM_ARRAY_COPY_REFERENCE ||
+       enabled.array_copy!=ANYGM_ARRAY_COPY_ON_WRITE ||
+       enabled.fingerprint==second.fingerprint){
+      fputs("array-copy policy selection mismatch\n",stderr); return 1;
+    }
+    GmlWin content={0}; content.bytecode=17;
+    content.has_array_owner_operations=1;
+    AnygmContentFacts facts={0}; char error[128]={0};
+    if(!anygm_content_facts_detect(&content,&facts,error,sizeof error) ||
+       !facts.has_array_owner_operations ||
+       !anygm_compatibility_resolve(&facts,&owner_selected,error,sizeof error) ||
+       owner_selected.array_copy!=ANYGM_ARRAY_COPY_ON_WRITE ||
+       owner_selected.fingerprint!=enabled.fingerprint){
+      fputs("decoded array owner did not select COW policy\n",stderr); return 1;
+    }
+    content.compatibility=&second;
+    if(anygm_policy_array_copy(&content)!=ANYGM_ARRAY_COPY_REFERENCE){
+      fputs("array copy ignored the resolved profile\n",stderr); return 1;
+    }
+    content.compatibility=NULL;
+    if(anygm_policy_array_copy(&content)!=ANYGM_ARRAY_COPY_ON_WRITE){
+      fputs("array copy fixture fallback ignored the decoded owner\n",stderr); return 1;
+    }
+  }
+  {
+    GmlWin content={0}; content.bytecode=15;
+    AnygmContentFacts facts={0}; char error[128]={0};
+    AnygmCompatibilityProfile source_on={0},source_off={0},unspecified={0};
+    AnygmCompatibilityProfile *profiles[]={&unspecified,&source_on,&source_off};
+    for(int setting=0;setting<3;setting++){
+      content.source_array_copy=(GmlSourceArrayCopy)setting;
+      if(!anygm_content_facts_detect(&content,&facts,error,sizeof error) ||
+         !anygm_compatibility_resolve(&facts,profiles[setting],error,sizeof error) ||
+         profiles[setting]->has_modern_function_values ||
+         profiles[setting]->has_modern_struct_semantics ||
+         profiles[setting]->array_copy!=anygm_policy_array_copy(&content)){
+        fputs("normalized source array-copy option did not reach the profile\n",stderr); return 1;
+      }
+    }
+    if(source_on.fingerprint!=unspecified.fingerprint ||
+       source_off.fingerprint==source_on.fingerprint ||
+       source_off.array_copy!=ANYGM_ARRAY_COPY_REFERENCE){
+      fputs("source array-copy option changed unrelated policy or lost state identity\n",stderr); return 1;
+    }
+    facts.has_array_owner_operations=1;
+    if(anygm_compatibility_resolve(&facts,&source_off,error,sizeof error)) return 1;
+    facts.has_array_owner_operations=0; facts.option_flags=UINT64_C(0x20000000);
+    if(anygm_compatibility_resolve(&facts,&source_off,error,sizeof error)) return 1;
+    facts.option_flags=0; facts.classic_revision=800;
+    if(anygm_compatibility_resolve(&facts,&source_off,error,sizeof error)) return 1;
+    facts.classic_revision=0; facts.source_array_copy=(GmlSourceArrayCopy)3;
+    if(anygm_compatibility_resolve(&facts,&source_off,error,sizeof error)) return 1;
+  }
+  {
     GmlWin policy_content={0};
     const AnygmCompatibilityProfile *profiles[]={&classic_early,&first_late,&second,&beta};
     for(size_t i=0;i<sizeof profiles/sizeof profiles[0];i++){

@@ -57,7 +57,13 @@ void gml_builtin_state_write_time_sources(const GmlBuiltinState *state,
 int gml_builtin_state_read_time_sources(GmlBuiltinState *state,
                                         GmlVmStateReader *reader);
 
+/* Copies instance user storage through the existing value-clone owner. */
+int gml_builtin_copy_instance_variables(GmlVM *vm,const GmlInstance *source,uint32_t copy_id,
+                                         GmlVarMap *destination);
+int gml_builtin_fork_array(GmlVM *vm,GmlVal *slot,uint64_t owner);
+
 int gml_builtin_fast_id(GmlVM *vm,const char *name);
+int gml_builtin_resolve_script(GmlVM *vm,const char *name,int *declared);
 /* Code index of the payload's own script for a name it redefines, or -1. */
 int gml_builtin_payload_shadow_script(GmlVM *vm,const char *name);
 GmlVal gml_builtin_call(GmlVM *vm, const char *name, GmlVal *args, int count);

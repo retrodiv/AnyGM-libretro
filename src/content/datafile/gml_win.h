@@ -7,6 +7,7 @@
 #define GML_WIN_H
 #include <stdint.h>
 #include <stddef.h>
+#include "gml_source_options.h"
 
 struct AnygmCompatibilityProfile;
 struct AnygmHostServices;
@@ -151,9 +152,11 @@ typedef struct GmlWin {
   /* Keep newly parsed metadata after the historical save-path tail: external savestates and
    * helper binaries built against an older header retain all pre-existing field offsets. */
   uint64_t option_flags;             /* OPTN flags when the package uses the flagged layout */
+  GmlSourceArrayCopy source_array_copy; /* optional normalized ACPY source setting */
   int option_scaling;                /* OPTN scale: negative keeps the aspect ratio, 0 fills, >0 fixed */
   int classic_executable_layout;     /* CLSC tail: embedded rooms retain encoded chain order */
   int has_room_layers;               /* at least one structurally valid GMS2 ROOM layer list */
+  int has_array_owner_operations;      /* decoded setowner operation, not an operand byte pattern */
   int has_exclusive_bbox_marker;       /* carries a marker chunk used by the far-edge reporting policy */
   const struct AnygmCompatibilityProfile *compatibility; /* immutable runtime policy, engine-owned */
   const struct AnygmHostServices *host; /* borrowed immutable service table, engine-owned */
@@ -168,6 +171,8 @@ int          gml_win_from_mem(GmlWin *w, uint8_t *data, size_t size, int take_ow
 /* Why the most recent gml_win_load_host / gml_win_from_mem returned non-zero. Valid until the next
  * load. Never NULL. */
 const char  *gml_win_last_load_error(void);
+/* Returns 1 when a decoded CODE span uses setowner, 0 when absent, -1 on invalid spans. */
+int          gml_win_has_array_owner_operations(const GmlWin *w);
 void         gml_win_free(GmlWin *w);
 const GmlChunk *gml_chunk(const GmlWin *w, const char *name);
 const char  *gml_str_by_index(const GmlWin *w, uint32_t idx);

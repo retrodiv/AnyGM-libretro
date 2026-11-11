@@ -54,6 +54,7 @@ int gml_vm_instances_bbox(GmlVM *vm, GmlInstance *instance,
 void gml_vm_global_array_set(GmlVM *vm, const char *name, int index,
                              double value);
 double gml_vm_global_array_number(GmlVM *vm, const char *name, int index);
+GmlArr *gml_vm_array_prepare_write(GmlVM *vm,GmlVal *slot,uint64_t *owner);
 int gml_vm_instances_collect_object_slots(GmlVM *vm, int object);
 const int *gml_vm_instances_event_objects(GmlVM *vm, const char *suffix,
                                           int *count);

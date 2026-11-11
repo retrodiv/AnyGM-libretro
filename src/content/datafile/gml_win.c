@@ -344,6 +344,55 @@ static int parse_code(GmlWin *w){
   return 1;
 }
 
+typedef struct { uint32_t begin; uint64_t end; } CodeSpan;
+static int code_span_order(const void *left,const void *right){
+  const CodeSpan *a=left,*b=right;
+  if(a->begin!=b->begin) return a->begin<b->begin?-1:1;
+  return a->end<b->end?-1:a->end>b->end?1:0;
+}
+
+int gml_win_has_array_owner_operations(const GmlWin *w){
+  if(!w || w->bytecode<17 || w->n_code==0) return 0;
+  if(w->n_code<0 || (unsigned)w->n_code>GML_WIN_MAX_CODE_ENTRIES || !w->code) return -1;
+  size_t bytes=0;
+  if(!size_mul((size_t)w->n_code,sizeof(CodeSpan),&bytes)) return -1;
+  CodeSpan *span=malloc(bytes);
+  if(!span) return -1;
+  int count=0,result=0;
+  for(int i=0;i<w->n_code;i++){
+    const GmlCode *code=&w->code[i];
+    uint64_t end=(uint64_t)code->start+code->length;
+    if(end>w->size || (code->length && !w->data)){
+      result=-1; goto done;
+    }
+    if(code->length) span[count++]=(CodeSpan){code->start,end};
+  }
+  /* Child entries may share a parent's complete instruction span. Decode the
+   * union once so many nested functions do not multiply the load-time walk. */
+  qsort(span,(size_t)count,sizeof(*span),code_span_order);
+  for(int i=0;i<count;i++){
+    uint64_t pc=span[i].begin,end=span[i].end;
+    while(i+1<count && span[i+1].begin<end){
+      i++;
+      if(span[i].end>end) end=span[i].end;
+    }
+    while(pc<end){
+      GmlInsn instruction;
+      if(pc>UINT32_MAX){ result=-1; goto done; }
+      int step=gml_decode_bc_bounded(w->data,(size_t)end,(uint32_t)pc,
+                                     w->bytecode,&instruction);
+      if(step<=0 || (uint64_t)step>end-pc){ result=-1; goto done; }
+      if(instruction.kind==OP_BREAK && instruction.sval==-5){
+        result=1; goto done;
+      }
+      pc+=(unsigned)step;
+    }
+  }
+done:
+  free(span);
+  return result;
+}
+
 typedef struct { uint32_t addr; const char *name; uint8_t kind; } RefRec;
 static int cmp_ref_addr(const void *A, const void *B){
   uint32_t a=((const RefRec*)A)->addr, b=((const RefRec*)B)->addr;
@@ -717,6 +766,22 @@ int gml_win_from_mem(GmlWin *w, uint8_t *data, size_t size, int owns){
     return discard_partial_win_because(w,"the code section (CODE) could not be read");
   if(!parse_refs(w))
     return discard_partial_win_because(w,"the variable and function references (VARI/FUNC) could not be read");
+  int array_owner=gml_win_has_array_owner_operations(w);
+  if(array_owner<0)
+    return discard_partial_win_because(w,"the array owner instruction spans could not be read");
+  w->has_array_owner_operations=array_owner;
+  const GmlChunk *array_copy=gml_chunk(w,"ACPY");
+  if(array_copy){
+    if(array_copy->size!=8 || u32(data,array_copy->off)!=1)
+      return discard_partial_win_because(w,"the normalized array-copy setting (ACPY) is not valid");
+    uint32_t setting=u32(data,array_copy->off+4);
+    if((setting!=GML_SOURCE_ARRAY_COPY_ON_WRITE && setting!=GML_SOURCE_ARRAY_COPY_REFERENCE) ||
+       w->classic_version ||
+       (setting==GML_SOURCE_ARRAY_COPY_REFERENCE &&
+        (array_owner || (w->option_flags&UINT64_C(0x20000000)))))
+      return discard_partial_win_because(w,"the normalized array-copy setting (ACPY) conflicts with the content");
+    w->source_array_copy=(GmlSourceArrayCopy)setting;
+  }
   return 0;
 }
 

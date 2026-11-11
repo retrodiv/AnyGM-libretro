@@ -345,7 +345,7 @@ static int argument_get(GmlVM *vm, const char *name, GmlVal *out){
 static int argument_set(GmlVM *vm, const char *name, GmlVal v){
   int idx=argument_index(name);
   if(idx<0) return 0;
-  vm->script_args[idx]=v;
+  vm->script_args[idx]=gml_arr_publish(v);
   if(idx>=vm->script_argc) vm->script_argc=idx+1;
   return 1;
 }
@@ -791,6 +791,7 @@ static const char *vm_varset_filter(GmlVM *vm){
   return vm->diagnostics.varset_filter;
 }
 static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal v){
+  v=gml_arr_publish(v);
   GML_VM_DIAGNOSTIC_VARIABLE_SCOPE(vm,inst,name,-1,v);
   { const char *want=vm_varset_filter(vm);
     if(want && name && !strcmp(want,name)){
@@ -821,7 +822,7 @@ static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal
     GmlArr *a=gml_arr_slot_ensure(slot);
     a->escaped=1;
     gml_arr_index_ensure(a,0);
-    if(a && a->cap>0) a->data[0]=v;
+    if(a && a->cap>0) gml_arr_store_value(a,0,v);
     return;
   }
   if(!var_name_maybe_special(vm,name,nh)){
@@ -1035,7 +1036,64 @@ static const char *vm_trace_call_filter(GmlVM *vm){
   }
   return vm->diagnostics.trace_call;
 }
+GmlArr *gml_vm_array_prepare_write(GmlVM *vm,GmlVal *slot,uint64_t *owner){
+  if(!vm || !slot) return NULL;
+  if(anygm_policy_array_copy(vm->win)!=ANYGM_ARRAY_COPY_ON_WRITE)
+    return gml_arr_slot_ensure(slot);
+  if(!owner) return NULL;
+  uint64_t key=*owner;
+  if(!key){
+    if(vm->next_array_owner>=GML_ARRAY_OWNER_MAX) return NULL;
+    key=vm->next_array_owner+1;
+  }
+  if(slot->t!=V_ARR){
+    GmlArr *array=gml_arr_slot_ensure(slot);
+    if(!array) return NULL;
+    slot->d=0;
+    if(!gml_array_heap_adopt(&vm->array_heap,*slot)) return NULL;
+    array->cow_owner=key;
+  }else if(!gml_builtin_fork_array(vm,slot,key)) return NULL;
+  if(!*owner){
+    *owner=key;
+    vm->next_array_owner=key;
+  }
+  return slot->arr;
+}
+static GmlArr *array_prepare_map(GmlVM *vm,GmlVarMap *map,const char *name,uint32_t hash){
+  GmlVal *slot=gml_varmap_put_hashed(map,name,hash);
+  if(is_room_global_array(name)) return gml_arr_slot_ensure(slot);
+  return gml_vm_array_prepare_write(vm,slot,gml_varmap_value_owner(slot));
+}
+static int array_set_nested_flat(GmlVM *vm,GmlVal root,uint64_t owner,int index,GmlVal value){
+  if(root.t!=V_ARR || !root.arr || !((GmlArr *)root.arr)->nested_2d) return 0;
+  if(owner && index>=0 && index<GML_ARR_MAX_INDEX &&
+     anygm_policy_array_copy(vm->win)==ANYGM_ARRAY_COPY_ON_WRITE){
+    GmlArr *array=root.arr;int row=index/GML_2D_STRIDE;
+    gml_arr_index_ensure(array,row);
+    if(row>=array->cap || !gml_vm_array_prepare_write(vm,&array->data[row],&owner)) return 1;
+  }
+  return gml_arr_nested_set_flat(root,index,value);
+}
+static GmlVal array_write_child(GmlVM *vm,GmlVal root,int index,uint64_t owner,int replace){
+  GmlVal result=vreal(0);
+  if(root.t!=V_ARR || !root.arr || index<0 || index>=GML_ARR_MAX_INDEX) return result;
+  GmlArr *array=root.arr;
+  gml_arr_index_ensure(array,index);
+  if(index>=array->cap) return result;
+  GmlVal *slot=&array->data[index];
+  if(!replace && slot->t!=V_ARR && !(slot->t==V_REAL && slot->d==0)) return *slot;
+  if(owner && anygm_policy_array_copy(vm->win)==ANYGM_ARRAY_COPY_ON_WRITE){
+    if(!gml_vm_array_prepare_write(vm,slot,&owner)) return result;
+  }else if(slot->t!=V_ARR){
+    GmlVal child=gml_arr_new(0,vreal(0));
+    gml_arr_store_value(array,index,child);
+  }
+  result=*slot;
+  if(result.t==V_ARR) result.d=(double)owner;
+  return result;
+}
 static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm, uint32_t nh, int idx, GmlVal v){
+  v=gml_arr_publish(v);
   GML_VM_DIAGNOSTIC_VARIABLE_SCOPE(vm,inst_t,nm,idx,v);
   { const char *debug_name=vm_arrayset_filter(vm);
     if(debug_name && nm && !strcmp(debug_name,nm)){
@@ -1068,20 +1126,34 @@ static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm
   }
   if(!strcmp(nm,"argument")){
     if(idx>=0 && idx<16){
-      vm->script_args[idx]=v;
+      vm->script_args[idx]=gml_arr_publish(v);
       if(idx>=vm->script_argc) vm->script_argc=idx+1;
     }
     return;
   }
+  { int argument=argument_index(nm);
+    if(argument>=0){
+      GmlVal *slot=&vm->script_args[argument];
+      GmlArr *array=gml_vm_array_prepare_write(vm,slot,&vm->script_array_owner[argument]);
+      if(!array) return;
+      if(argument>=vm->script_argc) vm->script_argc=argument+1;
+      array->escaped=1;
+      if(array_set_nested_flat(vm,*slot,vm->script_array_owner[argument],idx,v)) return;
+      gml_arr_mark_escaped(v);gml_arr_note_legacy_2d_set(array,idx);gml_arr_index_ensure(array,idx);
+      if(idx>=0 && idx<array->cap) gml_arr_store_value(array,idx,v);
+      return;
+    }
+  }
   if(is_dynamic_globalvar(vm,inst_t,nm,nh)){
     GmlVal *slot=gml_varmap_put_hashed(&vm->globals,nm,nh);
-    GmlArr *array=gml_arr_slot_ensure(slot);
+    GmlArr *array=gml_vm_array_prepare_write(vm,slot,gml_varmap_value_owner(slot));
+    if(!array) return;
     array->escaped=1;
-    if(gml_arr_nested_set_flat(*slot,idx,v)) return;
+    if(array_set_nested_flat(vm,*slot,*gml_varmap_value_owner(slot),idx,v)) return;
     gml_arr_mark_escaped(v);
     gml_arr_note_legacy_2d_set(array,idx);
     gml_arr_index_ensure(array,idx);
-    if(idx>=0 && idx<array->cap) array->data[idx]=v;
+    if(idx>=0 && idx<array->cap) gml_arr_store_value(array,idx,v);
     return;
   }
   if(!strcmp(nm,"alarm") && array_uses_instance_alarm(vm,inst_t)){
@@ -1130,34 +1202,40 @@ static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm
   if(inst_t==IT_ALL && !is_room_global_array(nm)){
     for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
       if(!o->active || o->marked) continue;
-      GmlVal *slot=gml_varmap_put_hashed(&o->vars,nm,nh); GmlArr *A=gml_arr_slot_ensure(slot);
+      GmlArr *A=array_prepare_map(vm,&o->vars,nm,nh);
+      if(!A) continue;
+      GmlVal *slot=gml_varmap_get_hashed(&o->vars,nm,nh);
       A->escaped=1;
-      if(gml_arr_nested_set_flat(*slot,idx,v)) continue;
+      if(array_set_nested_flat(vm,*slot,*gml_varmap_value_owner(slot),idx,v)) continue;
       gml_arr_mark_escaped(v); gml_arr_note_legacy_2d_set(A,idx); gml_arr_index_ensure(A,idx);
-      if(idx>=0 && idx<A->cap) A->data[idx]=v; }
+      if(idx>=0 && idx<A->cap) gml_arr_store_value(A,idx,v); }
     return;
   }
   /* Non-alarm array write to OBJECT scope also fans out to all instances. */
   if(is_object_scope(vm,inst_t) && !is_room_global_array(nm)){
     for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
       if(!o->active || o->marked || !gml_object_is(vm,o->obj,inst_t)) continue;
-      GmlVal *slot=gml_varmap_put_hashed(&o->vars,nm,nh); GmlArr *A=gml_arr_slot_ensure(slot);
+      GmlArr *A=array_prepare_map(vm,&o->vars,nm,nh);
+      if(!A) continue;
+      GmlVal *slot=gml_varmap_get_hashed(&o->vars,nm,nh);
       A->escaped=1;
-      if(gml_arr_nested_set_flat(*slot,idx,v)) continue;
+      if(array_set_nested_flat(vm,*slot,*gml_varmap_value_owner(slot),idx,v)) continue;
       gml_arr_mark_escaped(v); gml_arr_note_legacy_2d_set(A,idx); gml_arr_index_ensure(A,idx);
-      if(idx>=0 && idx<A->cap) A->data[idx]=v; }
+      if(idx>=0 && idx<A->cap) gml_arr_store_value(A,idx,v); }
     return;
   }
   GmlVarMap *m=is_room_global_array(nm)? &vm->globals : scope_map(vm,locals,inst_t); if(!m) return;
-  GmlVal *slot=gml_varmap_put_hashed(m,nm,nh); GmlArr *A=gml_arr_slot_ensure(slot);
+  GmlArr *A=array_prepare_map(vm,m,nm,nh);
+  if(!A) return;
+  GmlVal *slot=gml_varmap_get_hashed(m,nm,nh);
   /* The array container itself lives in a global/instance map. A later `var alias = field`
    * only borrows that same pointer in this VM; mark the owner before the local scope is cleaned,
    * otherwise the alias frees the persistent array and the next event reads dangling memory. */
   if(m!=locals) A->escaped=1;
-  if(gml_arr_nested_set_flat(*slot,idx,v)) return;
+  if(array_set_nested_flat(vm,*slot,*gml_varmap_value_owner(slot),idx,v)) return;
   if(m!=locals || A->escaped) gml_arr_mark_escaped(v);   /* element outlives scope if its owner already does */
   gml_arr_note_legacy_2d_set(A,idx); gml_arr_index_ensure(A,idx);
-  if(idx>=0 && idx<A->cap) A->data[idx]=v;
+  if(idx>=0 && idx<A->cap) gml_arr_store_value(A,idx,v);
 }
 static GmlVal array_get_h(
     GmlVM *vm,GmlVarMap *locals,int inst_t,
@@ -1246,6 +1324,7 @@ static GmlVal array_get_inst_field_h(GmlVM *vm, GmlInstance *s, const char *nm, 
 }
 static void array_set_inst_field_h(GmlVM *vm,GmlInstance *s,const char *nm,uint32_t nh,int idx,GmlVal v){
   if(!s) return;
+  v=gml_arr_publish(v);
   GML_VM_DIAGNOSTIC_VARIABLE_INSTANCE(vm,s,nm,idx,v);
   { const char *debug_name=vm_arrayset_filter(vm);
     if(debug_name && nm && !strcmp(debug_name,nm)){
@@ -1261,12 +1340,13 @@ static void array_set_inst_field_h(GmlVM *vm,GmlInstance *s,const char *nm,uint3
   if(!inst_is_struct_ref(s) && inst_builtin_set(vm,s,nm,v)) return;
   gml_arr_mark_escaped(v);
   GmlVal *slot=gml_varmap_put_hashed(&s->vars,nm,nh);
-  GmlArr *A=gml_arr_slot_ensure(slot);
+  GmlArr *A=gml_vm_array_prepare_write(vm,slot,gml_varmap_value_owner(slot));
+  if(!A) return;
   A->escaped=1;
-  if(gml_arr_nested_set_flat(*slot,idx,v)) return;
+  if(array_set_nested_flat(vm,*slot,*gml_varmap_value_owner(slot),idx,v)) return;
   gml_arr_note_legacy_2d_set(A,idx);
   gml_arr_index_ensure(A,idx);
-  if(idx>=0 && idx<A->cap) A->data[idx]=v;
+  if(idx>=0 && idx<A->cap) gml_arr_store_value(A,idx,v);
 }
 static int inst_is_struct_ref(const GmlInstance *in){
   return in && GML_IS_STRUCT_ID((double)in->id);
@@ -1346,6 +1426,7 @@ static GmlVal inst_get_any_h(GmlVM *vm, GmlInstance *t, const char *nm, uint32_t
   GmlVal *p=gml_varmap_get_hashed(&t->vars,nm,nh); return p?*p:vreal(0);
 }
 static void inst_set_any_h(GmlVM *vm, GmlInstance *t, const char *nm, uint32_t nh, GmlVal v){
+  v=gml_arr_publish(v);
   GML_VM_DIAGNOSTIC_VARIABLE_INSTANCE(vm,t,nm,-1,v);
   gml_arr_mark_escaped(v);   /* instance vars outlive the current scope */
   if(inst_is_struct_ref(t)){ method_cache_invalidate(t,nm); *gml_varmap_put_hashed(&t->vars,nm,nh)=v; return; }
@@ -1444,7 +1525,12 @@ void gml_vm_struct_free_slot_push(GmlVM *vm, int slot){
 static void gc_mark_struct(GmlVM *vm, unsigned id, GmlInstance ***wl, int *wn, int *wcap){
   GmlInstance *s = gml_struct_find(vm,id);
   if(s && !s->marked){ s->marked=1;
-    if(*wn >= *wcap){ *wcap = *wcap? *wcap*2 : 256; *wl = realloc(*wl,(size_t)*wcap*sizeof(GmlInstance*)); }
+    if(*wn >= *wcap){
+      int capacity=*wcap?*wcap*2:256;
+      GmlInstance **next=realloc(*wl,(size_t)capacity*sizeof(*next));
+      if(!next){ vm->gc_incomplete=1; return; }
+      *wl=next; *wcap=capacity;
+    }
     if(*wl) (*wl)[(*wn)++] = s;
   }
 }
@@ -1452,13 +1538,16 @@ static void gc_mark_struct(GmlVM *vm, unsigned id, GmlInstance ***wl, int *wn, i
  * A recursion limit alone bounds stack use, not the number of walks, and can leave reachable
  * objects unmarked. The epoch also terminates cycles without revisiting their nodes. */
 static void gc_scan_arr(GmlVM *vm, GmlArr *A, GmlInstance ***wl, int *wn, int *wcap, int depth){
-  if(!A || A->gc_epoch==vm->gc_epoch || depth>GML_GC_MAX_ARRAY_DEPTH) return;
+  if(!A || A->gc_epoch==vm->gc_epoch) return;
+  if(depth>GML_GC_MAX_ARRAY_DEPTH){ vm->gc_incomplete=1; return; }
   A->gc_epoch=vm->gc_epoch;
   for(int i=0;i<A->len;i++){ GmlVal v=A->data[i];
+    if(v.t==V_STR) gml_array_heap_mark_text(vm->array_heap,v.s,vm->gc_epoch);
     if(gml_val_is_number_or_object(v) && GML_IS_STRUCT_ID(v.d)) gc_mark_struct(vm,(unsigned)v.d,wl,wn,wcap);
     else if(v.t==V_ARR && v.arr) gc_scan_arr(vm,(GmlArr*)v.arr,wl,wn,wcap,depth+1); }
 }
 static void gc_scan_val(GmlVM *vm, GmlVal v, GmlInstance ***wl, int *wn, int *wcap){
+  if(v.t==V_STR) gml_array_heap_mark_text(vm->array_heap,v.s,vm->gc_epoch);
   if(gml_val_is_number_or_object(v) && GML_IS_STRUCT_ID(v.d)) gc_mark_struct(vm,(unsigned)v.d,wl,wn,wcap);
   else if(v.t==V_ARR && v.arr) gc_scan_arr(vm,(GmlArr*)v.arr,wl,wn,wcap,0);
 }
@@ -1477,8 +1566,11 @@ static void gc_scan_vm(GmlVM *vm, GmlVarMap *m, GmlInstance ***wl, int *wn, int 
   for(int i=0;i<m->cap;i++) if(m->slots[i].key) gc_scan_val(vm,m->slots[i].val,wl,wn,wcap);
 }
 void gml_struct_gc(GmlVM *vm){
+  if(!vm || vm->execution_depth>0) return;
   /* No slot can be reached or swept when the complete pool is already free. */
-  if(vm->n_structs<=0 || vm->n_struct_free==vm->n_structs) return;
+  if((vm->n_structs<=0 || vm->n_struct_free==vm->n_structs) &&
+     !gml_array_heap_count(vm->array_heap)) return;
+  vm->gc_incomplete=0;
   /* A fresh array carries epoch 0, so a pass never claims one it has not reached. Skipping 0 on
    * wrap keeps that true for as long as the process runs. */
   if(++vm->gc_epoch==0) vm->gc_epoch=1;
@@ -1490,12 +1582,24 @@ void gml_struct_gc(GmlVM *vm){
   for(int i=0;i<vm->code_static_count;i++) gc_scan_vm(vm,&vm->code_static[i],&wl,&wn,&wcap);
   for(int i=0;i<vm->inst_count;i++) gc_scan_vm(vm,&vm->inst[i].vars,&wl,&wn,&wcap);
   for(int i=0;i<16;i++) gc_scan_val(vm,vm->script_args[i],&wl,&wn,&wcap);
+  for(int i=0;i<vm->n_timelines;i++) for(int m=0;m<vm->timelines[i].n;m++){
+    GmlTimelineMoment *moment=&vm->timelines[i].moments[m];
+    for(int c=0;c<moment->n_callbacks;c++)
+      gc_scan_val(vm,moment->callbacks[c],&wl,&wn,&wcap);
+  }
+  for(int i=0;i<vm->wait.n_frames && i<GML_WAIT_MAX_FRAMES;i++){
+    GmlWaitFrame *frame=&vm->wait.frames[i];
+    gc_scan_vm(vm,&frame->locals,&wl,&wn,&wcap);
+    for(int k=0;k<16;k++) gc_scan_val(vm,frame->args[k],&wl,&wn,&wcap);
+    for(int k=0;k<frame->stack_n;k++) gc_scan_val(vm,frame->stack[k],&wl,&wn,&wcap);
+  }
   GcBuiltinRoots builtin_roots={vm,&wl,&wn,&wcap};
   gml_builtin_state_visit_values(vm->builtins,
                                  gc_scan_builtin_value,
                                  &builtin_roots);
   /* transitive: a live struct's own fields keep other structs/arrays alive */
   while(wn>0){ GmlInstance *s=wl[--wn]; gc_scan_vm(vm,&s->vars,&wl,&wn,&wcap); }
+  if(vm->gc_incomplete){ free(wl); return; }
   /* sweep: free the unmarked, recycle their slots. gml_varmap_free_ex(,1) skips escaped (aliased) arrays,
    * exactly like instance teardown, so a shared GmlArr is never double-freed. */
   for(int i=0;i<vm->n_structs;i++){ GmlInstance *s=vm->structs[i];
@@ -1504,6 +1608,7 @@ void gml_struct_gc(GmlVM *vm){
       gml_vm_struct_free_slot_push(vm,i);
     }
   }
+  gml_array_heap_sweep(vm->array_heap,vm->gc_epoch);
   free(wl);
 }
 static GmlInstance *vm_inst_from_ref(GmlVM *vm, GmlVal iv){
@@ -1557,6 +1662,7 @@ void gml_vm_assign_current_scope(GmlVM *vm, const char *name, GmlVal v){
 }
 int gml_inst_var_set_val(GmlVM *vm, GmlVal ref, const char *name, GmlVal v){
   if(!vm || !name) return 0;
+  v=gml_arr_publish(v);
   GmlInstance *t=vm_inst_from_ref(vm,ref);
   if(!t) return 0;
   gml_arr_mark_escaped(v);
@@ -2901,8 +3007,8 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
   int save_code_index=vm->cur_code_index;
   int save_caller_index=vm->caller_code_index;
   unsigned save_call_seq=vm->call_seq;
-  GmlVal save_args[16]; int save_argc=vm->script_argc;
-  for(int i=0;i<16;i++) save_args[i]=vm->script_args[i];
+  GmlVal save_args[16]; uint64_t save_array_owner[16]; int save_argc=vm->script_argc;
+  for(int i=0;i<16;i++){save_args[i]=vm->script_args[i];save_array_owner[i]=vm->script_array_owner[i];}
   vm->cur_self=self; vm->cur_other=other;
   vm->cur_code_index=ci;
   vm->caller_code_index=save_code_index;
@@ -2913,7 +3019,10 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
   GmlVarMap locals={0};
   int argc=n_args<0?0:(n_args<16?n_args:16);
   vm->script_argc=argc;
-  for(int i=0;i<16;i++) vm->script_args[i]=(i<argc && args)? args[i] : argument_missing(vm);
+  for(int i=0;i<16;i++){
+    vm->script_args[i]=(i<argc && args)?(resume?args[i]:gml_arr_publish(args[i])):argument_missing(vm);
+    vm->script_array_owner[i]=resume?resume->array_owner[i]:0;
+  }
   const char *arglog=anygm_host_development_setting(vm->host,"GML_LOG_CODE_ARGS");
   if(arglog && *arglog && strstr(w->code[ci].name,arglog)){
     
@@ -3132,15 +3241,15 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
               v=array_get_h(vm,&locals,it,nm,nh,idx);
             }
           } else if(in.reftype==0x10 || in.reftype==0x90){
-            /* GMS2.3 array-following push (first dimension from a named variable). Stack top->down:
-             * index, instance-type. ArrayPushAF(0x10)=read; ArrayPopAF(0x90)=write chain (must yield a
-             * live sub-array reference so a following popaf stores into it). An expression receiver
-             * (`global.a[i][j]`, `obj.a[i][j]`) is encoded below a StackTop -9 marker, just like a
-             * normal StackTop field access. Consume that marker and resolve the actual receiver;
-             * otherwise a global nested store is silently redirected into self.a. */
-            int idx=(int)(sp>0?asnum(stk[--sp]):0);
-            GmlVal iv=sp>0?stk[--sp]:vreal(IT_SELF);
-            if(anygm_policy_has_modern_function_values(w) && sp>0 && iv.t==V_REAL && iv.d==-9.0) iv=stk[--sp];
+            /* Specialized local/global/builtin pushes name a whole array root and consume
+             * no receiver or index. Generic pushes consume index and instance-type and yield
+             * the selected child. The decoder retains this distinction in the raw opcode.
+             * Generic expression receivers may also carry a StackTop -9 marker. */
+            int whole_root=in.oldkind>=0xC1 && in.oldkind<=0xC3;
+            int idx=whole_root?0:(int)(sp>0?asnum(stk[--sp]):0);
+            GmlVal iv=whole_root?vreal(in.inst):(sp>0?stk[--sp]:vreal(IT_SELF));
+            if(!whole_root && anygm_policy_has_modern_function_values(w) && sp>0 &&
+               iv.t==V_REAL && iv.d==-9.0) iv=stk[--sp];
             GmlVarMap *m=NULL;
             int it=(int)asnum(iv);
             if(is_room_global_array(nm)) m=&vm->globals;
@@ -3151,15 +3260,35 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
               if(t) m=&t->vars;
             }
             v=vreal(0);
-            if(m && idx>=0){
-              if(in.reftype==0x90){ GmlVal *slot=gml_varmap_put_hashed(m,nm,nh); GmlArr *A=gml_arr_slot_ensure(slot);
-                if(m!=&locals) A->escaped=1;
-                gml_arr_index_ensure(A,idx);
-                if(idx<A->cap){ if(A->data[idx].t!=V_ARR){ A->data[idx].t=V_ARR; A->data[idx].arr=calloc(1,sizeof(GmlArr));
-                    if(A->escaped && A->data[idx].arr) ((GmlArr*)A->data[idx].arr)->escaped=1; }
-                  v=A->data[idx]; } }
-              else { GmlVal *slot=gml_varmap_get_hashed(m,nm,nh);
-                if(slot && slot->t==V_ARR){ GmlArr *A=slot->arr; if(idx<A->len) v=A->data[idx]; } }
+            int argument_scope=iv.t==V_REAL && (it==IT_SELF || it==IT_LOCAL || it==IT_ARG ||
+              (whole_root && it==IT_BUILTIN));
+            int whole_argument=argument_scope && !strcmp(nm,"argument");
+            int argument=argument_scope?argument_index(nm):-1;
+            GmlVal *slot=NULL;uint64_t *owner=NULL;
+            if(whole_argument && idx>=0 && idx<16){
+              slot=&vm->script_args[idx];owner=&vm->script_array_owner[idx];
+            }else if(argument>=0){
+              slot=&vm->script_args[argument];owner=&vm->script_array_owner[argument];
+            }else if(m){
+              slot=in.reftype==0x90?gml_varmap_put_hashed(m,nm,nh):gml_varmap_get_hashed(m,nm,nh);
+              if(slot) owner=gml_varmap_value_owner(slot);
+            }
+            if(slot && idx>=0){
+              if(in.reftype==0x90){
+                GmlArr *array=is_room_global_array(nm)?gml_arr_slot_ensure(slot)
+                  :gml_vm_array_prepare_write(vm,slot,owner);
+                if(array){
+                  if(m!=&locals) array->escaped=1;
+                  uint64_t key=anygm_policy_array_copy(w)==ANYGM_ARRAY_COPY_ON_WRITE &&
+                    !is_room_global_array(nm)?*owner:0;
+                  if(whole_root || whole_argument){v=*slot;v.d=(double)key;}
+                  else v=array_write_child(vm,*slot,idx,key,1);
+                  if(v.t==V_ARR && v.arr && array->escaped) ((GmlArr *)v.arr)->escaped=1;
+                }
+              }else if(whole_root || whole_argument) v=*slot;
+              else if(slot->t==V_ARR && slot->arr){
+                GmlArr *array=slot->arr;if(idx<array->len) v=array->data[idx];
+              }
             }
           } else if(in.reftype==0x80){ /* StackTop: instance.var */
             /* GMS2.3 emits `push.e -9` (InstanceType.StackTop sentinel) between the instance
@@ -3213,6 +3342,7 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
           } else { v=var_get_h(vm,in.inst,nm,nh); scope_read=1; }
           if(scope_read && STR_IS_HEAP(v) && gml_input_text_variable(nm)) GC_TRACK(v.s);
         } else v=vreal(0);
+        if(v.t==V_ARR && in.reftype!=0x90) v.d=0;
         if(sp<STK){ stk[sp]=v; stkt[sp]=in.type1; sp++; }
         break;
       }
@@ -3289,7 +3419,7 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
             }
             break;
           }
-          GmlVal v = sp>0? stk[--sp] : vreal(0);
+          GmlVal v = gml_arr_publish(sp>0?stk[--sp]:vreal(0));
           /* locals/arguments die at scope exit, so their owned strings stay tracked and are freed
            * then (str_gc). Only instance/global stores persist beyond the run — untrack those so the
            * var owns the string (else it dangles at scope exit; re-assigning it later leaks it). */
@@ -3437,7 +3567,30 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
          * otherwise repeated script calls walk the whole builtin name chain before
          * reaching the script fallback. */
         GmlVal rv;
-        if(sci>=0 && !hp_builtin){
+        GmlVal *self_callable=sci<0 && bid<=0 && nm && vm->cur_self
+          ?gml_varmap_get(&vm->cur_self->vars,nm):NULL;
+        if(self_callable){
+          int declared=0;
+          int script=gml_builtin_resolve_script(vm,nm,&declared);
+          /* Preserve the existing packaged-script and empty-declaration
+           * priority before falling back to an unresolved self-field call. */
+          if(script>=0 || declared) self_callable=NULL;
+        }
+        int callable_code=-1;
+        if(self_callable && gml_val_is_number_or_object(*self_callable) &&
+           isfinite(self_callable->d) && self_callable->d>=0 &&
+           self_callable->d<=INT_MAX && floor(self_callable->d)==self_callable->d){
+          if(GML_IS_STRUCT_ID(self_callable->d)){
+            GmlInstance *method=gml_struct_find(vm,(unsigned)self_callable->d);
+            method_struct_info(method,&callable_code,NULL,NULL);
+          }else if(GML_IS_FUNCVAL((int)self_callable->d))
+            callable_code=(int)self_callable->d & 0x00FFFFFF;
+        }
+        if(callable_code>=0 && callable_code<w->n_code){
+          /* Dynamic self fields must resolve on every invocation: copies can
+           * bind the same named method to different instance identities. */
+          VM_DIRECT_CALL(rv,gml_vm_call_callable(vm,*self_callable,a,na));
+        }else if(sci>=0 && !hp_builtin){
           if(!code_micro_maybe(vm,sci,a,na,&rv))
             VM_DIRECT_CALL(rv,gml_vm_run_code(vm,sci,vm->cur_self,vm->cur_other,a,na));
         }
@@ -3708,8 +3861,16 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
                       * receiver. A later terminal pushaf on the empty sub-array still yields zero. */
             int idx=(int)(sp>0?asnum(stk[--sp]):0); GmlVal av=sp>0?stk[--sp]:vreal(0);
             GmlVal out=vreal(0);
-            if(in.sval==-4) out=gml_arr_chain_ensure(av,idx);
-            else if(av.t==V_ARR && av.arr){ GmlArr *A=av.arr; if(idx>=0 && idx<A->len) out=A->data[idx]; }
+            if(in.sval==-4){
+              uint64_t owner=0;
+              if(av.t==V_ARR && av.d>=1 && av.d<=GML_ARRAY_OWNER_MAX &&
+                 av.d==(double)(uint64_t)av.d && anygm_policy_array_copy(w)==ANYGM_ARRAY_COPY_ON_WRITE)
+                owner=(uint64_t)av.d;
+              out=owner?array_write_child(vm,av,idx,owner,0):gml_arr_chain_ensure(av,idx);
+            }else if(av.t==V_ARR && av.arr){
+              GmlArr *A=av.arr;if(idx>=0 && idx<A->len) out=A->data[idx];
+              if(out.t==V_ARR) out.d=0;
+            }
             if(sp<STK){ stk[sp]=out; stkt[sp]=DT_VAR; sp++; } break; }
           case -3:{ /* popaf: A[idx] = value. */
             if(aref_n>0){ /* compound-assign write: use the reference saved at savearef; the store
@@ -3724,16 +3885,16 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
                 val=stk[sp-3];
                 base=sp-3;
               }
-              if(A && idx>=0){ gml_arr_index_ensure(A,idx); if(idx<A->cap){ A->data[idx]=val; if(val.t==V_STR) GC_UNTRACK(val.s); } }
+              if(A && idx>=0){ gml_arr_index_ensure(A,idx); if(idx<A->cap){ gml_arr_store_value(A,idx,val); if(val.t==V_STR) GC_UNTRACK(val.s); } }
               if(base>=0 && base<=sp) sp=base;
               break; }
             /* plain store. Stack: idx, A, value (top->down). */
             int idx=(int)(sp>0?asnum(stk[--sp]):0); GmlVal av=sp>0?stk[--sp]:vreal(0);
             GmlVal val=sp>0?stk[--sp]:vreal(0);
             if(av.t==V_ARR && av.arr && idx>=0){ GmlArr *A=av.arr; gml_arr_index_ensure(A,idx);
-              if(idx<A->cap){ A->data[idx]=val; if(val.t==V_STR) GC_UNTRACK(val.s); } }
+              if(idx<A->cap){ gml_arr_store_value(A,idx,val); if(val.t==V_STR) GC_UNTRACK(val.s); } }
             break; }
-          case -5: /* setowner: pop the copy-on-write owner id (COW is not modelled; arrays mutate in place). */
+          case -5: /* Compiler site tokens do not replace stable resolved lvalue identities. */
             if(sp>0) sp--;
             break;
           case -8:{ /* savearef: remember the array element being read so the paired popaf can write
@@ -3800,8 +3961,8 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
       frame->wait_site=wait_site;
       frame->self_id=park_self->id;
       frame->other_id=park_other?park_other->id:0;
-      frame->argc=argc;
-      for(int i=0;i<16;i++) frame->args[i]=vm->script_args[i];
+      frame->argc=vm->script_argc;
+      for(int i=0;i<16;i++){frame->args[i]=vm->script_args[i];frame->array_owner[i]=vm->script_array_owner[i];}
       frame->push_child_result=vm->wait.parking?1:0;
       frame->locals=locals; memset(&locals,0,sizeof locals);
       frame->strings=str_gc; frame->n_strings=str_gc_n;
@@ -3872,6 +4033,7 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
   #undef GC_TRACK
   #undef STR_IS_HEAP
   #undef GC_UNTRACK
+  ret=gml_arr_publish(ret);
   gml_arr_mark_escaped(ret);      /* a returned array escapes to the caller */
   gml_varmap_free_ex(&locals,1);      /* keep escaped arrays alive — persistent slots alias them */
  vm_run_restore:
@@ -3884,7 +4046,7 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
   vm->call_seq=save_call_seq;
   if(vm->code_depth>0) vm->code_depth--;
   vm->script_argc=save_argc;
-  for(int i=0;i<16;i++) vm->script_args[i]=save_args[i];
+  for(int i=0;i<16;i++){vm->script_args[i]=save_args[i];vm->script_array_owner[i]=save_array_owner[i];}
   if(cp) codeprof_add(vm,ci,codeprof_now_ms(vm)-cp_t0,watchdog);
   vm->execution_depth--;
   return ret;

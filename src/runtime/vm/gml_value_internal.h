@@ -39,6 +39,17 @@ void gml_varmap_free(GmlVarMap *map);
 
 void gml_arr_row_ensure(GmlArr *array, int row);
 
+/* Track graphs published by instance copying. The heap is independent of a VM's
+ * address so a transactional engine move preserves its allocation ownership. */
+size_t gml_array_heap_count(const GmlArrayHeap *heap);
+int gml_array_heap_collection_due(const GmlArrayHeap *heap);
+void gml_array_heap_sweep(GmlArrayHeap *heap, unsigned epoch);
+void gml_array_heap_destroy(GmlArrayHeap **heap);
+void gml_array_heap_mark_text(GmlArrayHeap *heap,const char *text,unsigned epoch);
+/* Store a value already prepared by the caller, adopting children of a tracked
+ * parent. This does not duplicate strings or change array assignment policy. */
+void gml_arr_store_value(GmlArr *array, int index, GmlVal value);
+
 /* ---- arrays ---- */
 #define GML_2D_STRIDE 32000
 #endif

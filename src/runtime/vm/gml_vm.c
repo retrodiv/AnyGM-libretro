@@ -521,6 +521,7 @@ void gml_vm_free(GmlVM *vm){
                                       gml_vm_release_builtin_value,
                                       &free_context);
   gml_value_free_context_end(&free_context);
+  gml_array_heap_destroy(&vm->array_heap);
   gml_vm_state_runtime_strings_clear(vm);
   free(vm->state_runtime_strings); vm->state_runtime_strings=NULL;
   vm->state_runtime_string_capacity=0;

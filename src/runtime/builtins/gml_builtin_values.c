@@ -807,6 +807,7 @@ static int varmap_delete_key(GmlVarMap *m, const char *key){
       ?gml_varmap_put_owned(&nm,(char*)slot->key)
       :gml_varmap_put(&nm,slot->key);
     *value=slot->val;
+    *gml_varmap_value_owner(value)=slot->array_owner;
   }
   if(m->slots[found].key_owned) free((char*)m->slots[found].key);
   free(m->slots);
@@ -818,7 +819,7 @@ GmlVal var_store_clone(GmlVal v){
     char *c=v.s?strdup(v.s):NULL;
     return c?vstr(c):vstr("");
   }
-  if(v.t==V_ARR){ gml_arr_mark_escaped(v); return v; }
+  if(v.t==V_ARR){ gml_arr_mark_escaped(v); return gml_arr_publish(v); }
   if(v.t==V_UNDEF) return vundef();
   if(v.t==V_OBJECT) return v;
   return vreal(v.t==V_REAL?v.d:0.0);
@@ -871,6 +872,8 @@ typedef struct {
   VariableCloneArray *array; int array_count, array_cap;
   VariableCloneStruct *structure; int structure_count, structure_cap;
   int key_copy_failed;
+  int retain_structs;
+  int retain_array_elements;
 } VariableCloneContext;
 
 static GmlVal variable_clone_value(VariableCloneContext *context, GmlVal value, int depth);
@@ -908,9 +911,12 @@ static GmlVal variable_clone_array(VariableCloneContext *context, GmlArr *source
   for(int i=0;i<context->array_count;i++) if(context->array[i].source==source){
     GmlVal found=vreal(0); found.t=V_ARR; found.arr=context->array[i].clone; return found;
   }
+  if(context->retain_structs && depth<0){ context->key_copy_failed=1; return vreal(0); }
   GmlArr *clone=calloc(1,sizeof(*clone));
-  if(!clone) return vreal(0);
-  if(!variable_clone_note_array(context,source,clone)){ free(clone); return vreal(0); }
+  if(!clone){ context->key_copy_failed=1; return vreal(0); }
+  if(!variable_clone_note_array(context,source,clone)){
+    context->key_copy_failed=1; free(clone); return vreal(0);
+  }
   clone->escaped=1;
   clone->is_2d=source->is_2d; clone->height2d=source->height2d;
   clone->nested_2d=source->nested_2d;
@@ -919,17 +925,19 @@ static GmlVal variable_clone_array(VariableCloneContext *context, GmlArr *source
     if(clone->row_len){
       memcpy(clone->row_len,source->row_len,(size_t)source->row_cap*sizeof(*clone->row_len));
       clone->row_cap=source->row_cap;
-    }
+    } else context->key_copy_failed=1;
   }
   if(source->len>0 && source->data){
     clone->data=calloc((size_t)source->len,sizeof(*clone->data));
     if(clone->data){
       clone->len=clone->cap=source->len;
       for(int i=0;i<source->len;i++)
-        clone->data[i]=depth>0
+        clone->data[i]=context->retain_array_elements
+          ?(source->data[i].t==V_STR?vstr(source->data[i].s):source->data[i])
+          :(depth>0 || context->retain_structs)
           ?variable_clone_value(context,source->data[i],depth-1)
           :gml_arr_store_clone(source->data[i]);
-    }
+    } else context->key_copy_failed=1;
   }
   GmlVal result=vreal(0); result.t=V_ARR; result.arr=clone; return result;
 }
@@ -969,11 +977,15 @@ static GmlVal variable_clone_struct(VariableCloneContext *context, GmlInstance *
 
 static GmlVal variable_clone_value(VariableCloneContext *context, GmlVal value, int depth){
   if(value.t==V_STR){
+    /* Instance fields already hold persistent immutable text. Copying the
+     * reference preserves that lifetime without creating an unowned allocation. */
+    if(context->retain_structs) return vstr(value.s);
     char *copy=strdup(value.s?value.s:"");
+    if(!copy) context->key_copy_failed=1;
     return copy?vstr_owned(copy):vstr("");
   }
   if(value.t==V_ARR) return variable_clone_array(context,(GmlArr*)value.arr,depth);
-  if(gml_val_is_number_or_object(value) && GML_IS_STRUCT_ID(value.d)){
+  if(!context->retain_structs && gml_val_is_number_or_object(value) && GML_IS_STRUCT_ID(value.d)){
     GmlInstance *source=gml_struct_find(context->vm,(unsigned)value.d);
     if(source){
       GmlVal copy=variable_clone_struct(context,source,depth);
@@ -983,6 +995,91 @@ static GmlVal variable_clone_value(VariableCloneContext *context, GmlVal value, 
   }
   if(value.t==V_OBJECT) return value;
   return value.t==V_UNDEF?vundef():vreal(value.d);
+}
+
+static GmlVal instance_copy_method(VariableCloneContext *context,GmlVal value,
+                                   uint32_t source_id,uint32_t copy_id){
+  if(!gml_value_is_method(context->vm,value)) return value;
+  GmlInstance *method=gml_struct_find(context->vm,(unsigned)value.d);
+  GmlVal *receiver=gml_varmap_get(&method->vars,"__self");
+  if(!receiver || !gml_val_is_number_or_object(*receiver) || receiver->d!=source_id) return value;
+  /* Clone only this direct method wrapper through the existing memoized owner.
+   * Arrays, ordinary structs and methods bound elsewhere retain their references. */
+  GmlVal result=variable_clone_struct(context,method,0);
+  if(result.d==value.d){ context->key_copy_failed=1; return value; }
+  GmlInstance *copy=gml_struct_find(context->vm,(unsigned)result.d);
+  GmlVal *bound=copy?gml_varmap_get(&copy->vars,"__self"):NULL;
+  if(!bound){ context->key_copy_failed=1; return value; }
+  bound->d=copy_id;
+  result.t=value.t;
+  return result;
+}
+
+int gml_builtin_copy_instance_variables(GmlVM *vm,const GmlInstance *source,uint32_t copy_id,
+                                         GmlVarMap *destination){
+  VariableCloneContext context={.vm=vm,.retain_structs=1};
+  int legacy=anygm_policy_array_copy(vm->win)==ANYGM_ARRAY_COPY_CLASSIC_VALUE;
+  int unbound=gml_physics_copy_requires_unbound(vm,source);
+  GmlVal *roots=source->vars.len?calloc((size_t)source->vars.len,sizeof(*roots)):NULL;
+  if(source->vars.len && !roots) return 0;
+  int root_count=0;
+  for(int i=0;i<source->vars.cap;i++){
+    const GmlVarSlot *slot=&source->vars.slots[i];
+    if(!slot->key) continue;
+    if(unbound && gml_physics_copy_omits_key(slot->key)) continue;
+    char *key=strdup(slot->key);
+    if(!key){ context.key_copy_failed=1; break; }
+    GmlVal value=legacy?variable_clone_value(&context,slot->val,128):slot->val;
+    value=instance_copy_method(&context,value,source->id,copy_id);
+    if(value.t==V_STR) value=vstr(value.s);
+    *gml_varmap_put_owned(destination,key)=value;
+    roots[root_count++]=(!legacy && value.t==V_ARR)?vundef():value;
+  }
+  if(!context.key_copy_failed && unbound)
+    *gml_varmap_put(destination,"__phy_body")=vreal(-1);
+  if(!context.key_copy_failed){
+    for(int i=0;i<source->vars.cap;i++) if(source->vars.slots[i].key){
+      if(!gml_array_heap_adopt(&vm->array_heap,source->vars.slots[i].val)){
+        context.key_copy_failed=1; break;
+      }
+    }
+    for(int i=0;i<root_count && !context.key_copy_failed;i++)
+      if(!gml_array_heap_adopt(&vm->array_heap,roots[i])) context.key_copy_failed=1;
+  }
+  if(!context.key_copy_failed)
+    for(int i=0;i<destination->cap;i++) if(destination->slots[i].key)
+      destination->slots[i].val=gml_arr_publish(destination->slots[i].val);
+  if(context.key_copy_failed){
+    gml_values_release_owned(roots,(size_t)root_count);
+    for(int i=0;i<destination->cap;i++){
+      if(destination->slots[i].key_owned) free((char*)destination->slots[i].key);
+    }
+    free(destination->slots);
+    *destination=(GmlVarMap){0};
+  }
+  free(roots); free(context.array); free(context.structure);
+  return !context.key_copy_failed;
+}
+
+int gml_builtin_fork_array(GmlVM *vm,GmlVal *slot,uint64_t owner){
+  if(!vm || !slot || slot->t!=V_ARR || !slot->arr || !owner ||
+     owner>GML_ARRAY_OWNER_MAX) return 0;
+  GmlArr *source=slot->arr;
+  if(source->cow_owner==owner) return 1;
+  /* Adopt the source before allocating a fork. Unpublished partial clones then
+   * have the same bounded collector lifetime without freeing shared children. */
+  if(!gml_array_heap_adopt(&vm->array_heap,*slot)) return 0;
+  VariableCloneContext context={.vm=vm,.retain_array_elements=1};
+  GmlVal clone=variable_clone_array(&context,source,0);
+  int ok=clone.t==V_ARR && clone.arr && gml_array_heap_adopt(&vm->array_heap,clone);
+  if(ok && !context.key_copy_failed){
+    GmlArr *array=clone.arr;
+    for(int i=0;i<array->len;i++) array->data[i]=gml_arr_publish(array->data[i]);
+    array->cow_owner=owner;
+    *slot=clone;
+  }else ok=0;
+  free(context.array); free(context.structure);
+  return ok;
 }
 
 static GmlVal gml_variable_clone(GmlVM *vm, GmlVal *args, int count){

@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "anygm.h"
+#include "gml_source_options.h"
 
 typedef enum {
   GMLC_RES_SPRITE,
@@ -270,6 +271,7 @@ typedef struct {
   char *name;
   char *startup_code_path;
   uint32_t game_id;
+  GmlSourceArrayCopy source_array_copy;
   int classic_version;
   int classic_scaling;
   int classic_interpolate;

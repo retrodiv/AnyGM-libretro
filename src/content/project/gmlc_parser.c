@@ -976,10 +976,14 @@ typedef struct {
   int receiver_on_stack;
   int is_array;
   int is_array_2d;
+  int array_direct;
+  int array_direct_prefix;
   int accessor;
   Span index_span;
   Span index2_span;
   char *index_src;
+  Span array_prefix[32];
+  unsigned array_prefix_count;
 } LValue;
 
 enum {
@@ -990,8 +994,33 @@ enum {
 };
 
 static int emit_array_2d_index_cast(Compiler *c, Span s);
+static int emit_lvalue_base_read(Compiler *c,LValue *lv);
 
-static int emit_lvalue_address(Compiler *c, LValue *lv){
+static int emit_lvalue_address_mode(Compiler *c, LValue *lv,int write){
+  if(write && lv->array_direct_prefix && !lv->array_direct){
+    c->unsupported=1;
+    snprintf(c->lex.err,sizeof(c->lex.err),"unsupported ordinary write after direct array prefix");
+    return 0;
+  }
+  if(lv->array_direct){
+    LValue base=*lv;
+    base.array_direct=0;base.array_direct_prefix=0;base.array_prefix_count=0;
+    if(lv->array_prefix_count){
+      base.index_span=lv->array_prefix[0];
+      if(!emit_lvalue_address_mode(c,&base,0) ||
+         !emit_push_var(c,0,lv->name,0x10)) return 0;
+      for(unsigned i=1;i<lv->array_prefix_count;i++){
+        Span index=lv->array_prefix[i];
+        if(!compile_expr_slice(c,lv->index_src+index.start,index.end-index.start) ||
+           !emit_u32(&c->code,fw(OP_BREAK,DT_INT16,-2))) return 0;
+      }
+    }else{
+      base.is_array=0;
+      if(!emit_lvalue_base_read(c,&base)) return 0;
+    }
+    return compile_expr_slice(c,lv->index_src+lv->index_span.start,
+                              lv->index_span.end-lv->index_span.start);
+  }
   if(lv->is_stacktop){
     if(!lv->receiver_on_stack){
       if(!emit_receiver_value(c,lv->receiver)) return 0;
@@ -1003,6 +1032,13 @@ static int emit_lvalue_address(Compiler *c, LValue *lv){
   }
   if(lv->is_array){
     if(!lv->index_src) return 0;
+    for(unsigned i=0;i<lv->array_prefix_count;i++){
+      Span index=lv->array_prefix[i];
+      if(!compile_expr_slice(c,lv->index_src+index.start,index.end-index.start)) return 0;
+      if(!i){
+        if(!emit_push_var(c,0,lv->name,write?0x90:0x10)) return 0;
+      }else if(!emit_u32(&c->code,fw(OP_BREAK,DT_INT16,write?-4:-2))) return 0;
+    }
     if(!compile_expr_slice(c,lv->index_src+lv->index_span.start,lv->index_span.end-lv->index_span.start)) return 0;
     if(lv->is_array_2d){
       if(!emit_array_2d_index_cast(c,lv->index_span)) return 0;
@@ -1013,6 +1049,9 @@ static int emit_lvalue_address(Compiler *c, LValue *lv){
     }
   }
   return 1;
+}
+static int emit_lvalue_address(Compiler *c,LValue *lv){
+  return emit_lvalue_address_mode(c,lv,0);
 }
 
 static int span_is_integer_literal(const char *src, Span s){
@@ -1088,6 +1127,29 @@ static int parse_function_value(Compiler *c, int emit_value){
   return emit_value ? emit_script_funcval(c,ci) : 1;
 }
 
+static int parse_member_call(Compiler *c,const LValue *member){
+  LValue target=*member;
+  if(target.receiver_on_stack){
+    char temporary[64];
+    snprintf(temporary,sizeof temporary,"@@member_receiver@@%zu",c->code.len);
+    if(!add_local(c,temporary) || !emit_conv(c,DT_VAR,DT_VAR) ||
+       !emit_pop_var(c,IT_LOCAL,temporary,0xA0,DT_VAR)) return 0;
+    snprintf(target.receiver,sizeof target.receiver,"%s",temporary);
+    target.receiver_on_stack=0;
+  }
+  if(!need(c,"(")) return 0;
+  int argc=0;
+  if(!parse_call_args_reversed(c,&argc)) return 0;
+  if(target.is_stacktop){
+    if(!emit_lvalue_address(c,&target)) return 0;
+  }else if(!emit_push_real(c,target.inst)) return 0;
+  /* Native member calls place arguments below the receiver and callable.
+   * Retain the receiver while the ordinary StackTop read consumes its copy. */
+  return emit_conv(c,DT_VAR,DT_VAR) && emit_dup(c,DT_VAR) &&
+    emit_conv(c,DT_VAR,DT_INT32) && emit_push_var(c,0,target.name,0x80) &&
+    emit_callv(c,argc);
+}
+
 /* Compile postfix operations whose receiver is already on the value stack. Classic
  * GML commonly dereferences a value returned by a call, for example
  * `(instance_place(x,y,obj)).object_index`.  Named receivers use LValue below;
@@ -1104,7 +1166,11 @@ static int parse_value_postfix(Compiler *c){
       char field[128];
       snprintf(field,sizeof(field),"%s",c->lex.tok.text);
       lx_next(&c->lex);
-      if(!emit_conv(c,DT_VAR,DT_INT32) || !emit_push_var(c,0,field,0x80)) return 0;
+      if(tok_is(c,"(")){
+        LValue member={.inst=IT_STACK,.is_stacktop=1,.receiver_on_stack=1};
+        snprintf(member.name,sizeof member.name,"%s",field);
+        if(!parse_member_call(c,&member)) return 0;
+      }else if(!emit_conv(c,DT_VAR,DT_INT32) || !emit_push_var(c,0,field,0x80)) return 0;
       expr_not_const(c);
       c->expr_boolish=0;
       continue;
@@ -1217,7 +1283,8 @@ static int parse_primary(Compiler *c){
     if(tok_is(c,".") || tok_is(c,"[")){
       LValue lv;
       if(!parse_lvalue_from_name(c,name,&lv)) return 0;
-      int ok=emit_lvalue_read(c,&lv);
+      int ok=tok_is(c,"(") && !lv.is_array && !lv.accessor
+        ?parse_member_call(c,&lv):emit_lvalue_read(c,&lv);
       free(lv.index_src);
       if(!ok) return 0;
       expr_not_const(c);
@@ -1527,12 +1594,33 @@ static int parse_lvalue_tail(Compiler *c, LValue *lv){
     else if(tok_is(c,".") && (lv->is_array || lv->accessor!=ACCESS_NONE)) progressed=1;
     if(!progressed) return 1;
     if(eat(c,"[")){
+      if(lv->is_array || lv->accessor){
+        if(lv->accessor || lv->is_array_2d || lv->array_prefix_count>=32){
+          c->unsupported=1;
+          snprintf(c->lex.err,sizeof(c->lex.err),"unsupported array chain");
+          return 0;
+        }
+        lv->array_prefix[lv->array_prefix_count++]=lv->index_span;
+        if(lv->array_direct) lv->array_direct_prefix=1;
+        lv->is_array=0;lv->array_direct=0;
+      }
       size_t close_pos=0;
       if(!scan_square_span(c,c->lex.tok.start,&lv->index_span,&close_pos)) return 0;
-      lv->index_src=gmlc_strdup(c->lex.src);
+      if(!lv->index_src) lv->index_src=gmlc_strdup(c->lex.src);
       if(!lv->index_src) return 0;
       if(lv->index_span.start<lv->index_span.end){
         char ch=c->lex.src[lv->index_span.start];
+        if(ch=='@'){
+          if(!lv->array_prefix_count && !lv->is_stacktop &&
+             lv->inst!=IT_GLOBAL && !strcmp(lv->name,"argument")){
+            c->unsupported=1;
+            snprintf(c->lex.err,sizeof(c->lex.err),"direct access to the arguments collection is invalid");
+            free(lv->index_src);lv->index_src=NULL;
+            return 0;
+          }
+          lv->array_direct=1;lv->index_span.start++;
+          trim_span(c->lex.src,&lv->index_span);
+        }
         if(ch=='?' || ch=='|' || ch=='#'){
           lv->accessor=(ch=='?')?ACCESS_MAP:(ch=='|')?ACCESS_LIST:ACCESS_GRID;
           lv->index_span.start++;
@@ -1574,6 +1662,17 @@ static int parse_lvalue_tail(Compiler *c, LValue *lv){
         }
         lv->reftype=0x00;
       }
+      if(lv->array_direct && lv->is_array_2d){
+        c->unsupported=1;
+        snprintf(c->lex.err,sizeof(c->lex.err),"unsupported two-index direct array accessor");
+        free(lv->index_src);lv->index_src=NULL;
+        return 0;
+      }
+      if(lv->array_prefix_count && (lv->accessor || lv->is_array_2d)){
+        c->unsupported=1;
+        snprintf(c->lex.err,sizeof(c->lex.err),"unsupported mixed array chain");
+        return 0;
+      }
       c->lex.pos=close_pos+1;
       lx_next(&c->lex);
     }
@@ -1587,6 +1686,8 @@ static int parse_lvalue_tail(Compiler *c, LValue *lv){
       lv->index_src=NULL;
       lv->is_array=0;
       lv->is_array_2d=0;
+      lv->array_prefix_count=0;
+      lv->array_direct=lv->array_direct_prefix=0;
       lv->accessor=ACCESS_NONE;
       lv->reftype=0x80;
       lv->inst=IT_STACK;
@@ -1682,6 +1783,7 @@ static int emit_lvalue_read(Compiler *c, LValue *lv){
   if(lv->accessor) return emit_accessor_read(c,lv);
   if(lv->is_array){
     if(!emit_lvalue_address(c,lv)) return 0;
+    if(lv->array_direct || lv->array_prefix_count) return emit_u32(&c->code,fw(OP_BREAK,DT_INT16,-2));
     return emit_push_var(c,0,lv->name,0x00);
   }
   if(lv->is_stacktop){
@@ -1693,7 +1795,10 @@ static int emit_lvalue_read(Compiler *c, LValue *lv){
 
 static int emit_lvalue_write(Compiler *c, LValue *lv, uint8_t type1){
   if(lv->accessor) return emit_accessor_write(c,lv);
-  if(lv->is_array) return emit_pop_var(c,0,lv->name,0x00,type1);
+  if(lv->is_array){
+    if(lv->array_direct || lv->array_prefix_count) return emit_u32(&c->code,fw(OP_BREAK,DT_INT16,-3));
+    return emit_pop_var(c,0,lv->name,0x00,type1);
+  }
   if(lv->is_stacktop) return emit_pop_var(c,0,lv->name,0x80,type1);
   return emit_pop_var(c,lv->inst,lv->name,0xA0,type1);
 }
@@ -1992,7 +2097,7 @@ static int parse_assignment_tail(Compiler *c, LValue *lv){
      * receiver that is already resident on the stack. */
     if(lv->receiver_on_stack &&
        (!emit_conv(c,DT_VAR,DT_VAR) || !emit_swap_top(c))) return 0;
-    if((lv->is_array || lv->is_stacktop) && !emit_lvalue_address(c,lv)) return 0;
+    if((lv->is_array || lv->is_stacktop) && !emit_lvalue_address_mode(c,lv,1)) return 0;
   } else {
     if(lv->is_stacktop && !lv->is_array && !lv->accessor){
       if(!emit_lvalue_address(c,lv) ||
@@ -2009,15 +2114,25 @@ static int parse_assignment_tail(Compiler *c, LValue *lv){
       eat(c,";");
       return 1;
     }
+    if(lv->array_direct){
+      /* Retain the actual array/index pair on the ordinary operand stack. Both
+       * components are variable-width slots, so DUP survives calls and waits
+       * without evaluating an index or chained receiver a second time. */
+      if(!emit_lvalue_address_mode(c,lv,1) || !emit_conv(c,DT_VAR,DT_VAR) ||
+         !emit_u32(&c->code,fw(OP_DUP,DT_VAR,1)) ||
+         !emit_u32(&c->code,fw(OP_BREAK,DT_INT16,-2))) return 0;
+    }else if(!emit_lvalue_read(c,lv)) return 0;
     if(is_inc || is_dec){
-      if(!emit_lvalue_read(c,lv) ||
-         !emit_push_i16_full(c,1) ||
+      if(!emit_push_i16_full(c,1) ||
          !emit_binary_typed(c,is_inc?OP_ADD:OP_SUB,DT_INT32,DT_VAR)) return 0;
     } else {
-      if(!emit_lvalue_read(c,lv) || !parse_expr(c)) return 0;
+      if(!parse_expr(c)) return 0;
       emit_binary(c,binop);
     }
-    if((lv->is_array || lv->is_stacktop) && !emit_lvalue_address(c,lv)) return 0;
+    if(lv->array_direct){
+      if(!emit_conv(c,DT_VAR,DT_VAR) ||
+         !emit_u32(&c->code,fw(OP_DUP,DT_VAR,(int16_t)0x9001))) return 0;
+    }else if((lv->is_array || lv->is_stacktop) && !emit_lvalue_address_mode(c,lv,1)) return 0;
   }
   if(!emit_lvalue_write(c,lv,DT_VAR)) return 0;
   eat(c,";");
@@ -2089,11 +2204,16 @@ static int parse_simple_or_assign(Compiler *c){
         snprintf(lv.name,sizeof(lv.name),"%s",c->lex.tok.text);
         lx_next(&c->lex);
       }
-      if(!parse_lvalue_tail(c,&lv)) return 0;
+      if(!parse_lvalue_tail(c,&lv)){free(lv.index_src);return 0;}
       if(tok_is(c,"=")||tok_is(c,"+=")||tok_is(c,"-=")||tok_is(c,"*=")||
-         tok_is(c,"/=")||tok_is(c,"%=")||tok_is(c,"++")||tok_is(c,"--"))
-        return parse_assignment_tail(c,&lv);
-      if(!emit_lvalue_read(c,&lv) || !parse_value_postfix(c)) return 0;
+         tok_is(c,"/=")||tok_is(c,"%=")||tok_is(c,"++")||tok_is(c,"--")){
+        int ok=parse_assignment_tail(c,&lv);free(lv.index_src);return ok;
+      }
+      int ok=tok_is(c,"(") && !lv.is_array && !lv.accessor
+        ?parse_member_call(c,&lv):emit_lvalue_read(c,&lv);
+      if(ok) ok=parse_value_postfix(c);
+      free(lv.index_src);
+      if(!ok) return 0;
       eat(c,";");
       return emit_popz(c);
     }
@@ -2118,7 +2238,9 @@ static int parse_simple_or_assign(Compiler *c){
       free(lv.index_src);
       return ok;
     }
-    if(!emit_lvalue_read(c,&lv)){ free(lv.index_src); return 0; }
+    int read=tok_is(c,"(") && !lv.is_array && !lv.accessor
+      ?parse_member_call(c,&lv):emit_lvalue_read(c,&lv);
+    if(!read){ free(lv.index_src); return 0; }
     free(lv.index_src);
     while(tok_is(c,"(")){
       lx_next(&c->lex);

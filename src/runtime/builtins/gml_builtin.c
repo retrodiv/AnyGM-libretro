@@ -1622,13 +1622,12 @@ GmlVal gml_builtin_continue_values_strings(GmlVM *vm, const char *nm,
   return gml_builtin_try_values_strings(vm,nm,a,n);
 }
 
-GmlVal gml_builtin_try_scripts_fallback(GmlVM *vm, const char *nm, GmlVal *a, int n){
-  GmlRender *R=(GmlRender*)vm->render;
-  (void)R;
+int gml_builtin_resolve_script(GmlVM *vm,const char *nm,int *declared){
   /* ---- fallback: a user script called by name. bc14-16 reference scripts by BARE name (scr_foo,
    * whose CODE entry is gml_Script_scr_foo); bc17/GMS2 references them ALREADY prefixed
    * (gml_Script_foo). Handle both so scripts dispatch instead of falling through to a no-op. ---- */
-  int ci,declared=0;
+  int ci;
+  *declared=0;
   if(!strncmp(nm,"gml_Script_",11)) ci=gml_code_index_by_name(vm->win,nm);
   else {
     char sn[160];
@@ -1639,7 +1638,13 @@ GmlVal gml_builtin_try_scripts_fallback(GmlVM *vm, const char *nm, GmlVal *a, in
       ci=gml_code_index_by_name(vm->win,sn);
     }
   }
-  if(ci<0) ci=script_asset_code_of(vm,nm,&declared);
+  if(ci<0) ci=script_asset_code_of(vm,nm,declared);
+  return ci;
+}
+
+GmlVal gml_builtin_try_scripts_fallback(GmlVM *vm, const char *nm, GmlVal *a, int n){
+  int declared=0;
+  int ci=gml_builtin_resolve_script(vm,nm,&declared);
   if(ci>=0){
     GmlVal rv=gml_vm_run_code(vm,ci,vm->cur_self,vm->cur_other,a,n);
     /* report the resolution for the caller's per-site cache — but never for names the chain

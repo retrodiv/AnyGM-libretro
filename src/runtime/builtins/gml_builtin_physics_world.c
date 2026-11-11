@@ -17,13 +17,34 @@ static void store(GmlInstance *in,const char *name,double number){
   GmlVal *v=gml_varmap_put(&in->vars,name);
   if(v) *v=vreal(number);
 }
-static int initialized(const GmlInstance *in){ return value(in,"__phy_body",0)!=0; }
+static int initialized(const GmlInstance *in){ return value(in,"__phy_body",0)>0; }
+
+int gml_physics_copy_requires_unbound(const GmlVM *vm,const GmlInstance *source){
+  return value(source,"__phy_body",0)!=0 ||
+    (source->obj>=0 && source->obj<vm->n_objects && vm->objects[source->obj].physics_enabled);
+}
+
+int gml_physics_copy_omits_key(const char *name){
+  if(!strncmp(name,"__phy_",6)) return 1;
+  const char *names[]={
+    "phy_position_x","phy_position_y","phy_rotation","phy_linear_velocity_x",
+    "phy_linear_velocity_y","phy_angular_velocity","phy_linear_damping","phy_angular_damping",
+    "phy_active","phy_bullet","phy_fixed_rotation","phy_mass","phy_inertia","phy_com_x",
+    "phy_com_y","phy_dynamic","phy_kinematic","phy_sleeping","phy_speed","phy_speed_x",
+    "phy_speed_y","phy_col_normal_x","phy_col_normal_y","phy_collision_x","phy_collision_y"
+  };
+  for(size_t i=0;i<sizeof names/sizeof names[0];i++) if(!strcmp(name,names[i])) return 1;
+  return 0;
+}
 
 /* A new first fixture may replace the body type established by a template. */
 enum { PHYS_KINEMATIC_FROM_FIXTURE=2 };
 
 int gml_physics_body_enabled(GmlVM *vm,const GmlInstance *in){
   if(!vm || !in || gml_physics_world_scale(vm)<=0) return 0;
+  /* Negative body state suppresses template materialization for instance_copy.
+   * Explicit fixture binding initializes ordinary positive body state again. */
+  if(value(in,"__phy_body",0)<0) return 0;
   return initialized(in) || (in->obj>=0 && in->obj<vm->n_objects &&
                             vm->objects[in->obj].physics_enabled);
 }

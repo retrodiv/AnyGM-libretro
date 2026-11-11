@@ -421,7 +421,9 @@ void gml_vm_step(GmlVM *vm){
   gml_vm_frame_advance_layers(vm);
   /* Collect transient structures between frames while stacks and locals are empty. Without this,
    * unreferenced per-step structures accumulate indefinitely. */
-  if(vm->n_structs>0 && vm->frame - vm->structs_last_gc_frame >= 120){
+  if(((vm->n_structs>0 || gml_array_heap_count(vm->array_heap)>0) &&
+       vm->frame - vm->structs_last_gc_frame >= 120) ||
+     gml_array_heap_collection_due(vm->array_heap)){
     vm->structs_last_gc_frame = vm->frame; gml_struct_gc(vm); }
   int n=vm->inst_count;
   int prev_alloc_base=vm->step_alloc_base;

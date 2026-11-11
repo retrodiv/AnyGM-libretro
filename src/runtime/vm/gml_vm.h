@@ -290,6 +290,7 @@ typedef struct GmlWaitFrame {
   uint32_t  self_id, other_id;  /* instance ids: pointers do not survive a pool growth or a state */
   int       argc;
   GmlVal    args[16];
+  uint64_t array_owner[16];
   GmlVal   *stack; uint8_t *stack_type; int stack_n;  /* the operand stack at the resume point */
   uint32_t  wait_site;          /* the wait call site this run already visited, so the resumed run
                                  * parks on its next visit instead of spinning one extra iteration */
@@ -447,6 +448,7 @@ typedef struct GmlVM {
   const char *cur_event; int cur_event_obj;   /* current event suffix + object level (for event_inherited) */
   int      event_type, event_number;          /* transient GM event_type/event_number builtins */
   GmlVal script_args[16]; int script_argc;     /* current script argumentN/argument_count */
+  uint64_t script_array_owner[16];
   /* WELL512 uses the Lomont recurrence and unsigned MSVC-LCG high-word seed expansion.
    * random(x) scales the next value by x/2^32. */
   uint32_t rng_well[16]; int rng_index;
@@ -516,6 +518,9 @@ typedef struct GmlVM {
                                                    * reused slot fails the gen check → NULL, not a wrong struct. */
   int *struct_free, n_struct_free, cap_struct_free;  /* GC free-list: reclaimed struct slots for reuse (bounded pool) */
   unsigned gc_epoch;                              /* bumped per collection; stamps arrays already scanned this pass */
+  GmlArrayHeap *array_heap;
+  uint64_t next_array_owner;
+  int gc_incomplete; /* conservative collection on traversal/allocation failure */
   long structs_last_gc_frame;
   GmlTileMap *tilemaps; int n_tilemaps, cap_tilemaps, next_tilemap_id;  /* per-room GMS2 tile layers (collision) */
 } GmlVM;
@@ -533,6 +538,8 @@ int gml_room_layer_data_off(GmlVM *vm);
 unsigned long gml_vm_unset_reads(const GmlVM *vm);
 uint32_t gml_room_layer_type_off(GmlVM *vm, uint32_t lp);  /* per-layer type-data offset with effect fields */
 void gml_struct_gc(GmlVM *vm);
+/* Array lvalue keys stay exactly representable in writable bytecode views. */
+#define GML_ARRAY_OWNER_MAX UINT64_C(9007199254740991)
 void gml_path_eval_public(GmlVM *vm, int pi, double t, double *ox, double *oy);
 double gml_path_speed_public(GmlVM *vm, int index, double position);
 int gml_path_assign(GmlVM *vm, int destination, int source);
@@ -641,6 +648,7 @@ GmlInstance *gml_instance_create_depth(GmlVM *vm, double x, double y, int obj, i
 GmlInstance *gml_instance_create_layer(GmlVM *vm, double x, double y, int obj, int layer_id);  /* applies layer depth/order BEFORE Create */
 GmlInstance *gml_struct_new(GmlVM *vm);              /* GMS2.3: allocate a struct (standalone instance) */
 GmlInstance *gml_struct_find(GmlVM *vm, unsigned id);
+int64_t      gml_instance_copy(GmlVM *vm, int perform_create); /* returns fresh ID even if Create destroys it */
 void         gml_instance_change(GmlVM *vm, GmlInstance *in, int obj, int perform_events);
 void         gml_path_start(GmlVM *vm, GmlInstance *in, int path, double speed, double endaction, int absolute);
 /* tile-layer runtime mutations (tile_layer_* builtins) on the current room's tiles */

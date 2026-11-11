@@ -595,7 +595,7 @@ void gml_vm_instances_prepare_step(GmlVM *vm, int extent){
       vm->step_free[vm->step_free_n++]=i;
   }
 }
-GmlInstance *gml_vm_instances_alloc(GmlVM *vm){
+static GmlInstance *instance_alloc(GmlVM *vm,int reuse_live){
   /* A deactivated/dormant instance keeps active=0 but still exists.  During a step, reuse only
    * holes that were already free at frame start: a slot destroyed earlier in this same step can
    * still be referenced by the fixed Studio event snapshot.  The old allocator reserved the
@@ -615,6 +615,7 @@ GmlInstance *gml_vm_instances_alloc(GmlVM *vm){
       memset(&vm->inst[i],0,sizeof(GmlInstance)); return &vm->inst[i]; }
   }
   if(vm->inst_count>=vm->inst_cap){
+    if(!reuse_live || vm->inst_cap<=0) return NULL;
     /* pool full: do NOT realloc — moving the array would dangle every held instance pointer
      * (cur_self/cur_other, with-frames, the room-enter loop) and segfault. Reuse the last slot. */
     if(!vm->diagnostics.instance_pool_warned){ vm->diagnostics.instance_pool_warned=1;
@@ -624,6 +625,9 @@ GmlInstance *gml_vm_instances_alloc(GmlVM *vm){
     gml_varmap_free(&in->vars); memset(in,0,sizeof(*in)); return in;
   }
   GmlInstance *in=&vm->inst[vm->inst_count++]; memset(in,0,sizeof(*in)); return in;
+}
+GmlInstance *gml_vm_instances_alloc(GmlVM *vm){
+  return instance_alloc(vm,1);
 }
 /* Family live counts include an object's descendants and allow skipping queries
  * with no live candidates. Deactivated instances remain counted; exact scans still
@@ -812,6 +816,79 @@ GmlInstance *gml_instance_create_layer(GmlVM *vm, double x, double y, int obj, i
   GmlRtLayer *layer=gml_rt_layer_find(vm,layer_id);
   if(!layer) return instance_create_configured(vm,x,y,obj,0,0,-1);
   return instance_create_configured(vm,x,y,obj,1,layer->depth,layer->order);
+}
+int64_t gml_instance_copy(GmlVM *vm,int perform_create){
+  GmlInstance *source=vm?vm->cur_self:NULL;
+  if(!source || (!source->active && !source->deactivated) || source->marked ||
+     source->obj<0 || source->obj>=vm->n_objects) return -4;
+  /* Build independent storage before publishing a new identity. Never recycle a
+   * live slot here: the source and every held event receiver must stay intact. */
+  GmlInstance *copy=instance_alloc(vm,0);
+  if(!copy) return -4;
+  GmlVarMap variables={0};
+  /* Storage preparation allocates only array/struct values and cannot mint an
+   * instance identity. Bind copied methods to the identity initialization will use. */
+  uint32_t id=vm->next_id;
+  if(!gml_builtin_copy_instance_variables(vm,source,id,&variables)) return -4;
+  gml_vm_instances_initialize(vm,copy,source->x,source->y,source->obj);
+  copy->x=source->x;
+  copy->y=source->y;
+  copy->xprevious=source->xprevious;
+  copy->yprevious=source->yprevious;
+  copy->xstart=source->xstart;
+  copy->ystart=source->ystart;
+  copy->sprite_index=source->sprite_index;
+  copy->mask_index=source->mask_index;
+  copy->image_index=source->image_index;
+  copy->image_speed=source->image_speed;
+  copy->image_xscale=source->image_xscale;
+  copy->image_yscale=source->image_yscale;
+  copy->image_angle=source->image_angle;
+  copy->image_alpha=source->image_alpha;
+  copy->image_blend=source->image_blend;
+  copy->depth=source->depth;
+  copy->visible=source->visible;
+  copy->solid=source->solid;
+  copy->persistent=source->persistent;
+  copy->hspeed=source->hspeed;
+  copy->vspeed=source->vspeed;
+  copy->direction=source->direction;
+  copy->speed=source->speed;
+  copy->gravity=source->gravity;
+  copy->gravity_direction=source->gravity_direction;
+  copy->friction=source->friction;
+  copy->path_index=source->path_index;
+  copy->path_position=source->path_position;
+  copy->path_positionprevious=source->path_positionprevious;
+  copy->path_speed=source->path_speed;
+  copy->path_orientation=source->path_orientation;
+  copy->path_scale=source->path_scale;
+  copy->path_endaction=source->path_endaction;
+  copy->path_xoff=source->path_xoff;
+  copy->path_yoff=source->path_yoff;
+  copy->path_origin_x=source->path_origin_x;
+  copy->path_origin_y=source->path_origin_y;
+  copy->path_relative=source->path_relative;
+  copy->timeline_index=source->timeline_index;
+  copy->timeline_position=source->timeline_position;
+  copy->timeline_speed=source->timeline_speed;
+  copy->timeline_running=source->timeline_running;
+  copy->timeline_loop=source->timeline_loop;
+  copy->draw_layer_order=source->draw_layer_order;
+  memcpy(copy->alarm,source->alarm,sizeof copy->alarm);
+  copy->vars=variables;
+  if(vm->render && (int)copy->sprite_index>=0)
+    gml_render_prefetch_sprite((GmlRender*)vm->render,(int)copy->sprite_index);
+  if(perform_create){
+    GmlInstance *saved_other=vm->cur_other;
+    vm->cur_other=NULL;
+    /* Variable defaults already belong to the copied instance. Running
+     * PreCreate again would replace them before its optional Create callback. */
+    gml_run_event(vm,copy,"Create_0");
+    vm->cur_other=saved_other;
+  }
+  /* A callback may destroy this instance and create another in its slot. */
+  return (int64_t)id;
 }
 void gml_instance_change(GmlVM *vm, GmlInstance *in, int obj, int perform_events){
   gml_colgrid_touch(vm,in);   /* object swap changes sprite/mask -> bbox */
