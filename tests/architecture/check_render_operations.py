@@ -299,7 +299,7 @@ DISPATCH_DEVICE_EXTRA = {
 }
 API_DRAW_PREFIXES = (
     "draw_", "action_draw_", "d3d_draw_", "surface_copy", "vertex_submit",
-    "part_system_drawit",
+    "part_system_drawit", "physics_draw_",
 )
 API_NONPAINT = {
     "draw_enable_alphablend", "draw_enable_drawevent", "draw_getpixel", "draw_texture_flush",

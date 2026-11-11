@@ -155,6 +155,36 @@ extern "C" int gml_physics_chain_valid(const GmlPhysicsFixture *fixture,double s
   return 1;
 }
 
+extern "C" void gml_physics_fixture_outline(const GmlPhysicsFixture *fixture,
+                                            const GmlPhysicsBody *pose,double scale,
+                                            GmlPhysicsOutlineLine line,
+                                            GmlPhysicsOutlineCircle circle,void *context) {
+  b2Transform transform;
+  if (!fixture || !pose || !line || !circle || !bounded(scale) || scale<=0 ||
+      !query_transform(*pose,scale,transform)) return;
+  Shape storage;
+  const int count=fixture_children(*fixture);
+  for (int child=0;child<count;child++) {
+    const b2Shape *shape=storage.make(*fixture,scale,child);
+    if (!shape) continue;
+    if (shape->GetType()==b2Shape::e_circle) {
+      b2Vec2 center=b2Mul(transform,storage.circle.m_p);
+      circle(context,center.x/scale,center.y/scale,storage.circle.m_radius/scale);
+    } else if (shape->GetType()==b2Shape::e_polygon) {
+      const auto &polygon=storage.polygon;
+      for (int i=0;i<polygon.m_count;i++) {
+        b2Vec2 a=b2Mul(transform,polygon.m_vertices[i]);
+        b2Vec2 b=b2Mul(transform,polygon.m_vertices[(i+1)%polygon.m_count]);
+        line(context,a.x/scale,a.y/scale,b.x/scale,b.y/scale);
+      }
+    } else if (shape->GetType()==b2Shape::e_edge) {
+      b2Vec2 a=b2Mul(transform,storage.edge.m_vertex1);
+      b2Vec2 b=b2Mul(transform,storage.edge.m_vertex2);
+      line(context,a.x/scale,a.y/scale,b.x/scale,b.y/scale);
+    }
+  }
+}
+
 extern "C" int gml_physics_fixture_overlap(const GmlPhysicsFixture *a,const GmlPhysicsBody *pose_a,
                                            const GmlPhysicsFixture *b,const GmlPhysicsBody *pose_b,
                                            double scale) {

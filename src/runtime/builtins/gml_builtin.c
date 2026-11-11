@@ -1204,6 +1204,11 @@ static int d3_try_draw_2d_builtin(GmlVM *vm,const char *name,GmlVal *args,int co
   return 0;
 }
 
+GmlVal gml_builtin_draw_primitive(GmlVM *vm,const char *name,GmlVal *args,int count){
+  if(d3_try_draw_2d_builtin(vm,name,args,count)) return vreal(0);
+  return gml_builtin_try_draw(vm,name,args,count);
+}
+
 /* Portable contract for the legacy shadow helpers distributed as GML extension
  * functions. Their geometry uses the unscaled metrics exposed by
  * sprite_width and sprite_height. */

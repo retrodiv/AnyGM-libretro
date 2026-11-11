@@ -139,11 +139,16 @@ typedef struct {
 typedef int (*GmlPhysicsRayVisitor)(void *context,const GmlPhysicsRayHit *hit);
 
 typedef int (*GmlPhysicsFilter)(void *context,int object_a,int object_b);
+typedef void (*GmlPhysicsOutlineLine)(void *context,double x1,double y1,double x2,double y2);
+typedef void (*GmlPhysicsOutlineCircle)(void *context,double x,double y,double radius);
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 int gml_physics_chain_valid(const GmlPhysicsFixture *fixture,double scale);
+void gml_physics_fixture_outline(const GmlPhysicsFixture *fixture,const GmlPhysicsBody *pose,
+                                 double scale,GmlPhysicsOutlineLine line,
+                                 GmlPhysicsOutlineCircle circle,void *context);
 int gml_physics_fixture_overlap(const GmlPhysicsFixture *a,const GmlPhysicsBody *pose_a,
                                 const GmlPhysicsFixture *b,const GmlPhysicsBody *pose_b,double scale);
 void gml_physics_fixture_raycast(const GmlPhysicsFixture *fixture,const GmlPhysicsBody *pose,

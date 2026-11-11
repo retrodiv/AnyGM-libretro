@@ -350,9 +350,30 @@ static void joint_set_value(GmlVM *vm,GmlPhysicsJoint *joint,int field,double nu
   *setting=canonical;
 }
 
+static void physics_outline_line(void *context,double x1,double y1,double x2,double y2){
+  GmlVal args[]={vreal(x1),vreal(y1),vreal(x2),vreal(y2)};
+  gml_builtin_draw_primitive((GmlVM*)context,"draw_line",args,4);
+}
+static void physics_outline_circle(void *context,double x,double y,double radius){
+  GmlVal args[]={vreal(x),vreal(y),vreal(radius),vreal(1)};
+  gml_builtin_draw_primitive((GmlVM*)context,"draw_circle",args,4);
+}
+static GmlVal physics_draw_debug(GmlVM *vm){
+  GmlInstance *self=vm->cur_self;
+  double scale=gml_physics_world_scale(vm);
+  if(!vm->render || !self || !self->active || self->marked || scale<=0) return vundef();
+  gml_physics_initialize_body(vm,self);
+  GmlPhysicsBody pose=gml_physics_body_pose(self);
+  for(int i=0;i<GML_PHYS_FIXTURE_MAX;i++){
+    const GmlPhysicsFixture *fixture=&vm->builtins->phys_fixture[i];
+    if(fixture->live && fixture->bound_inst==(int)self->id)
+      gml_physics_fixture_outline(fixture,&pose,scale,physics_outline_line,physics_outline_circle,vm);
+  }
+  return vundef();
+}
+
 GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
-  GmlRender *R=(GmlRender*)vm->render;
-  (void)R;
+  if(!strcmp(nm,"physics_draw_debug")) return physics_draw_debug(vm);
   if(!strcmp(nm,"physics_test_overlap")) return vreal(physics_overlap(vm,a,n));
   if(!strcmp(nm,"physics_raycast")) return physics_raycast(vm,a,n);
   if(!strcmp(nm,"physics_fixture_create")){

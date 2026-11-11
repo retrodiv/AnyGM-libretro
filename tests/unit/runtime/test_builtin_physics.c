@@ -6,6 +6,7 @@
 #include "gml_vm_internal.h"
 #include "gml_particle.h"
 #include "gml_physics_solver.h"
+#include "gml_render_internal.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -952,6 +953,106 @@ static void malformed_geometry_and_mass(void){
   gml_vm_free(&vm);
 }
 
+typedef struct {
+  GmlPhysicsPoint lines[16][2];
+  int line_count,circle_count;
+  double x,y,radius;
+} OutlineCapture;
+static void capture_outline_line(void *context,double x1,double y1,double x2,double y2){
+  OutlineCapture *capture=context;
+  assert(capture->line_count<16);
+  GmlPhysicsPoint *line=capture->lines[capture->line_count++];
+  line[0]=(GmlPhysicsPoint){x1,y1}; line[1]=(GmlPhysicsPoint){x2,y2};
+}
+static void capture_outline_circle(void *context,double x,double y,double radius){
+  OutlineCapture *capture=context;
+  capture->circle_count++; capture->x=x; capture->y=y; capture->radius=radius;
+}
+static void outline_geometry(void){
+  GmlPhysicsBody pose={.x=12,.y=14,.angle=90};
+  GmlPhysicsFixture fixture={.shape=2,.w=3,.h=2};
+  OutlineCapture capture={0};
+  gml_physics_fixture_outline(&fixture,&pose,1,capture_outline_line,capture_outline_circle,&capture);
+  const double corners[][2]={{14,11},{14,17},{10,17},{10,11}};
+  assert(capture.line_count==4 && capture.circle_count==0);
+  for(int i=0;i<4;i++) for(int point=0;point<2;point++){
+    const GmlPhysicsPoint *actual=&capture.lines[i][point];
+    const double *expected=corners[(i+point)%4];
+    assert(fabs(actual->x-expected[0])<0.00001 && fabs(actual->y-expected[1])<0.00001);
+  }
+  capture=(OutlineCapture){0}; fixture.shape=1; fixture.radius=3;
+  gml_physics_fixture_outline(&fixture,&pose,1,capture_outline_line,capture_outline_circle,&capture);
+  assert(capture.line_count==0 && capture.circle_count==1);
+  assert(capture.x==12 && capture.y==14 && capture.radius==3);
+  capture=(OutlineCapture){0}; fixture.shape=4; fixture.x1=-3; fixture.x2=3;
+  gml_physics_fixture_outline(&fixture,&pose,1,capture_outline_line,capture_outline_circle,&capture);
+  assert(capture.line_count==1 && fabs(capture.lines[0][0].y-11)<0.00001);
+  assert(fabs(capture.lines[0][1].y-17)<0.00001);
+  GmlPhysicsPoint chain[]={{0,0},{3,0},{0,3}};
+  fixture.shape=GML_PHYS_FIXTURE_CHAIN; fixture.points=3; fixture.chain=chain;
+  capture=(OutlineCapture){0};
+  gml_physics_fixture_outline(&fixture,&pose,1,capture_outline_line,capture_outline_circle,&capture);
+  assert(capture.line_count==2);
+  fixture.shape=GML_PHYS_FIXTURE_LOOP; capture=(OutlineCapture){0};
+  gml_physics_fixture_outline(&fixture,&pose,1,capture_outline_line,capture_outline_circle,&capture);
+  assert(capture.line_count==3 && fabs(capture.lines[2][1].x-12)<0.00001);
+  fixture.shape=3; fixture.chain=NULL;
+  fixture.px[1]=3; fixture.py[2]=3; capture=(OutlineCapture){0};
+  gml_physics_fixture_outline(&fixture,&pose,1,capture_outline_line,capture_outline_circle,&capture);
+  assert(capture.line_count==3);
+  capture=(OutlineCapture){0}; pose.x=NAN;
+  gml_physics_fixture_outline(&fixture,&pose,1,capture_outline_line,capture_outline_circle,&capture);
+  assert(capture.line_count==0 && capture.circle_count==0);
+}
+static void instance_debug_drawing(void){
+  for(int cached=0;cached<2;cached++) for(int active3d=0;active3d<2;active3d++) for(int shape=0;shape<3;shape++){
+    GmlVM vm; GmlWin win; setup(&vm,&win); win.bytecode=17;
+    CALL(&vm,"physics_world_create",1);
+    uint32_t pixels[32*32]={0},expected[32*32]={0};
+    GmlRender render={.fb=pixels,.base_fb=pixels,.fbw=32,.fbh=32,.base_fbw=32,.base_fbh=32,
+      .color=0x00ff00,.alpha=0.5,.alphablend=1,.color_write_mask=15,.active_shader=-1,.target_id=-1};
+    vm.render=&render; vm.cur_self=&vm.inst[0];
+    if(active3d){
+      call(&vm,"d3d_start",NULL,0);
+      CALL(&vm,"d3d_set_projection_ortho",0,0,32,32,0);
+      CALL(&vm,"d3d_set_hidden",0);
+    }
+    double fixture=call(&vm,"physics_fixture_create",NULL,0).d;
+    vm.inst[0].x=10; vm.inst[0].y=11;
+    if(shape==0) CALL(&vm,"physics_fixture_set_box_shape",fixture,3,2);
+    else if(shape==1) CALL(&vm,"physics_fixture_set_circle_shape",fixture,3);
+    else CALL(&vm,"physics_fixture_set_edge_shape",fixture,-3,0,3,0);
+    double bound=CALL(&vm,"physics_fixture_bind",fixture,vm.inst[0].id).d;
+    assert(bound>0);
+    bind_box(&vm,1,24,24,2,2,1);
+    GmlVal value=physics_query(&vm,cached,"physics_draw_debug",NULL,0);
+    assert(value.t==V_UNDEF);
+    gml_render_flush_rotated_batch(&render);
+    render.fb=render.base_fb=expected;
+    if(shape==0){
+      CALL(&vm,"draw_line",7,9,13,9); CALL(&vm,"draw_line",13,9,13,13);
+      CALL(&vm,"draw_line",13,13,7,13); CALL(&vm,"draw_line",7,13,7,9);
+    } else if(shape==1) CALL(&vm,"draw_circle",10,11,3,1);
+    else CALL(&vm,"draw_line",7,11,13,11);
+    gml_render_flush_rotated_batch(&render);
+    assert(!memcmp(pixels,expected,sizeof pixels));
+    int count=0; for(int i=0;i<32*32;i++) count+=pixels[i]!=0;
+    assert(count>0 && render.color==0x00ff00 && render.alpha==0.5);
+    render.fb=render.base_fb=pixels;
+    memset(pixels,0,sizeof pixels);
+    vm.inst[0].marked=1;
+    physics_query(&vm,cached,"physics_draw_debug",NULL,0);
+    vm.inst[0].marked=0; vm.cur_self=NULL;
+    physics_query(&vm,cached,"physics_draw_debug",NULL,0);
+    vm.cur_self=&vm.inst[0];
+    CALL(&vm,"physics_remove_fixture",vm.inst[0].id,bound);
+    physics_query(&vm,cached,"physics_draw_debug",NULL,0);
+    for(int i=0;i<32*32;i++) assert(pixels[i]==0);
+    vm.render=NULL; gml_vm_free(&vm); free(render.rotated_batch);
+  }
+  puts("physics debug: named/cached 2D/3D outlines, color, opacity, ownership and deletion passed");
+}
+
 int main(void){
   units_and_ownership(); offset_and_rotation(); binding_origin_and_phase(); floor_joints_and_restore(); filtering_and_sensors(); malformed_geometry_and_mass();
   if(!bound_fixture_properties()) return EXIT_FAILURE;
@@ -964,6 +1065,8 @@ int main(void){
   kinematic_fixture_templates();
   chain_fixtures();
   chain_state_budget();
+  outline_geometry();
+  instance_debug_drawing();
   puts("physics: units, fixture lifetime, offsets, rotation, contacts, joints and restore passed");
   return 0;
 }
