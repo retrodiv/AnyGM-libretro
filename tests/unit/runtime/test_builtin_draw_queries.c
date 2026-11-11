@@ -5,6 +5,7 @@
 #include "gml_vm_internal.h"
 #include "gml_particle.h"
 #include "gml_render_internal.h"
+#include "gml_software3d_internal.h"
 #include "anygm_test_runner.h"
 #include "memory_vfs.h"
 #include "../media/font_test_fixture.h"
@@ -973,6 +974,152 @@ static int camera_capacity_case(void){
   return ok;
 }
 
+static GmlVal vertex_copy_format(GmlVM *vm){
+  gml_builtin_call(vm,"vertex_format_begin",NULL,0);
+  gml_builtin_call(vm,"vertex_format_add_position",NULL,0);
+  gml_builtin_call(vm,"vertex_format_add_colour",NULL,0);
+  GmlVal custom[]={vreal(4),vreal(5)};
+  gml_builtin_call(vm,"vertex_format_add_custom",custom,2);
+  return gml_builtin_call(vm,"vertex_format_end",NULL,0);
+}
+static void vertex_copy_word(unsigned char *data,uint32_t value){
+  for(int i=0;i<4;i++) data[i]=(unsigned char)(value>>(8*i));
+}
+static GmlVal vertex_copy_source(GmlVM *vm,unsigned char bytes[64]){
+  for(int i=0;i<64;i++) bytes[i]=(unsigned char)(0xa0+i);
+  vertex_copy_word(bytes,0x3fa00000u); vertex_copy_word(bytes+4,0x40200000u);
+  vertex_copy_word(bytes+8,0x80563412u); vertex_copy_word(bytes+12,0x7fc12345u);
+  vertex_copy_word(bytes+16,0x80000000u);
+  vertex_copy_word(bytes+28,0x40c00000u); vertex_copy_word(bytes+32,0x40e00000u);
+  vertex_copy_word(bytes+36,0xff654321u);
+  GmlVal create[]={vreal(64),vreal(0),vreal(1)};
+  GmlVal source=gml_builtin_call(vm,"buffer_create",create,3);
+  for(int i=0;i<64;i++){
+    GmlVal poke[]={source,vreal(i),vreal(1),vreal(bytes[i])};
+    gml_builtin_call(vm,"buffer_poke",poke,4);
+  }
+  GmlVal seek[]={source,vreal(0),vreal(11)};
+  gml_builtin_call(vm,"buffer_seek",seek,3);
+  return source;
+}
+static int vertex_buffer_transfers_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlVM vm={0}; unsigned char bytes[64];
+    GmlVal format=vertex_copy_format(&vm),source=vertex_copy_source(&vm,bytes);
+    GmlVal create[]={source,format,vreal(28),vreal(-1)};
+    GmlVal whole=query(&vm,"vertex_create_buffer_from_buffer",create,2,cached,&ok);
+    GmlVal part=query(&vm,"vertex_create_buffer_from_buffer_ext",create,4,cached,&ok);
+    if(whole.d<0 || part.d<0){ gml_vm_free(&vm); return 0; }
+    GmlVertexBuffer *all=&vm.software3d->vertex_buffer[(int)whole.d];
+    GmlVertexBuffer *one=&vm.software3d->vertex_buffer[(int)part.d];
+    ok &= all->vertex_n==2 && all->data_size==56 && !memcmp(all->data,bytes,56);
+    ok &= one->vertex_n==1 && one->data_size==28 && !memcmp(one->data,bytes+28,28);
+    ok &= all->vertex[0].x==1.25 && all->vertex[0].y==2.5 && all->vertex[0].r==0x12;
+    ok &= all->vertex[0].alpha==128.0/255 && one->vertex[0].x==6 && one->vertex[0].y==7;
+    create[2]=vreal(-4); create[3]=vreal(10000);
+    GmlVal clipped=query(&vm,"vertex_create_buffer_from_buffer_ext",create,4,cached,&ok);
+    ok &= clipped.d>=0 && real_is(gml_builtin_call(&vm,"vertex_get_buffer_size",&clipped,1),56);
+    GmlVal destination=gml_builtin_call(&vm,"vertex_create_buffer",NULL,0);
+    GmlVal copy[]={destination,vreal(1),whole,vreal(0),vreal(99)};
+    ok &= query(&vm,"vertex_update_buffer_from_vertex",copy,5,cached,&ok).t==V_UNDEF;
+    GmlVertexBuffer *target=&vm.software3d->vertex_buffer[(int)destination.d];
+    if(target->data_size<84){ gml_vm_free(&vm); return 0; }
+    ok &= target->format==(int)format.d && target->vertex_n==3 && target->data_size==84;
+    for(int i=0;i<28;i++) ok &= target->data[i]==0;
+    ok &= !memcmp(target->data+28,bytes,56) && target->vertex[0].alpha==0;
+    GmlVal update[]={whole,vreal(8),source,vreal(36),vreal(4)};
+    query(&vm,"vertex_update_buffer_from_buffer",update,5,cached,&ok);
+    ok &= !memcmp(all->data+8,bytes+36,4) && !memcmp(all->data+12,bytes+12,16);
+    ok &= all->vertex[0].x==1.25 && all->vertex[0].r==0x21 && all->vertex[0].alpha==1;
+    update[0]=destination; update[1]=vreal(84); update[3]=vreal(0);
+    query(&vm,"vertex_update_buffer_from_buffer",update,5,cached,&ok);
+    ok &= target->data_size==88 && target->vertex_n==3;
+    update[1]=vreal(88); update[3]=vreal(4); update[4]=vreal(24);
+    query(&vm,"vertex_update_buffer_from_buffer",update,5,cached,&ok);
+    ok &= target->data_size==112 && target->vertex_n==4 && !memcmp(target->data+84,bytes,28);
+    ok &= target->vertex[3].x==1.25 && target->vertex[3].alpha==128.0/255;
+    GmlVal seek=gml_builtin_call(&vm,"buffer_tell",&source,1); ok &= real_is(seek,11);
+    unsigned char before[112]; memcpy(before,target->data,sizeof before);
+    const double invalid[]={-1,NAN,INFINITY,2147483648.0};
+    for(unsigned i=0;i<sizeof invalid/sizeof invalid[0];i++){
+      update[1]=vreal(invalid[i]);
+      query(&vm,"vertex_update_buffer_from_buffer",update,5,cached,&ok);
+      ok &= target->data_size==112 && !memcmp(target->data,before,sizeof before);
+      create[0]=vreal(invalid[i]);
+      ok &= real_is(query(&vm,"vertex_create_buffer_from_buffer",create,2,cached,&ok),-1);
+    }
+    gml_builtin_call(&vm,"vertex_freeze",&destination,1);
+    update[1]=vreal(0); query(&vm,"vertex_update_buffer_from_buffer",update,3,cached,&ok);
+    ok &= !memcmp(target->data,before,sizeof before);
+    gml_builtin_call(&vm,"vertex_freeze",&whole,1);
+    copy[0]=part; copy[1]=vreal(0);
+    query(&vm,"vertex_update_buffer_from_vertex",copy,3,cached,&ok);
+    ok &= one->data_size==28 && !memcmp(one->data,bytes+28,28);
+    gml_vm_free(&vm);
+  }
+  if(ok) puts("vertex transfers: copied bytes, custom payloads, ranges, growth, gaps, startup and frozen resources passed");
+  return ok;
+}
+static int vertex_buffer_state_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlWin win={0}; GmlVM vm={.win=&win,.room_index=-1,.pending_room=-1};
+    vm.particles=gml_particle_state_create(&vm); gml_vm_software3d_reset(&vm);
+    unsigned char bytes[64];
+    GmlVal format=vertex_copy_format(&vm),source=vertex_copy_source(&vm,bytes);
+    GmlVal create[]={source,format};
+    GmlVal whole=query(&vm,"vertex_create_buffer_from_buffer",create,2,cached,&ok);
+    if(whole.t!=V_REAL || whole.d<0){ gml_vm_free(&vm); return 0; }
+    GmlVal pending=gml_builtin_call(&vm,"vertex_create_buffer",NULL,0);
+    GmlVal begin[]={pending,format}; gml_builtin_call(&vm,"vertex_begin",begin,2);
+    GmlVal position[]={pending,vreal(17.25),vreal(19.5)};
+    gml_builtin_call(&vm,"vertex_position",position,3);
+    gml_builtin_call(&vm,"vertex_freeze",&whole,1);
+    gml_builtin_call(&vm,"vertex_format_begin",NULL,0);
+    gml_builtin_call(&vm,"vertex_format_add_position",NULL,0);
+    size_t resource_size=gml_software3d_resources_state_size(vm.software3d);
+    unsigned char *resource=malloc(resource_size),*check=malloc(resource_size);
+    if(!resource || !check){ free(resource); free(check); gml_vm_free(&vm); return 0; }
+    ok &= gml_software3d_resources_state_save(vm.software3d,resource,resource_size);
+    resource[4]=1;
+    ok &= !gml_software3d_resources_state_load(vm.software3d,resource,resource_size);
+    resource[4]=2;
+    ok &= gml_software3d_resources_state_save(vm.software3d,check,resource_size);
+    ok &= !memcmp(resource,check,resource_size);
+    ok &= !gml_software3d_resources_state_load(vm.software3d,resource,resource_size-1);
+    free(resource); free(check);
+    size_t capacity=gml_vm_state_size(&vm),written=0,used=0,again=0;
+    unsigned char *state=malloc(capacity),*after=malloc(capacity);
+    int saved=state && after && gml_vm_state_save(&vm,state,capacity,&written);
+    if(!saved){ free(state); free(after); gml_vm_free(&vm); return 0; }
+    gml_builtin_call(&vm,"vertex_delete_buffer",&whole,1);
+    gml_builtin_call(&vm,"vertex_delete_buffer",&pending,1);
+    gml_builtin_call(&vm,"vertex_format_delete",&format,1);
+    if(!gml_vm_state_load(&vm,state,written,&used)){
+      free(state); free(after); gml_vm_free(&vm); return 0;
+    }
+    ok &= used==written;
+    ok &= gml_vm_state_save(&vm,after,capacity,&again) && again==written && !memcmp(state,after,written);
+    free(state); free(after);
+    GmlVertexBuffer *restored=&vm.software3d->vertex_buffer[(int)whole.d];
+    ok &= restored->used && restored->frozen && restored->vertex_n==2 && !memcmp(restored->data,bytes,56);
+    GmlVertexBuffer *partial=&vm.software3d->vertex_buffer[(int)pending.d];
+    ok &= partial->attr_index==1 && partial->partial.x==17.25 && partial->partial.y==19.5;
+    gml_builtin_call(&vm,"vertex_format_add_colour",NULL,0);
+    GmlVal built=gml_builtin_call(&vm,"vertex_format_end",NULL,0);
+    int stride=0; ok &= gml_software3d_vertex_format_info(vm.software3d,(int)built.d,&stride,NULL) && stride==12;
+    GmlVal colour[]={pending,vreal(0x563412),vreal(0.5)};
+    gml_builtin_call(&vm,"vertex_colour",colour,3);
+    GmlVal custom[]={pending,vreal(1),vreal(2),vreal(3),vreal(4)};
+    gml_builtin_call(&vm,"vertex_float4",custom,5);
+    ok &= partial->vertex_n==1 && partial->vertex[0].x==17.25 && partial->vertex[0].alpha==0.5;
+    gml_vm_free(&vm);
+  }
+  if(ok) puts("vertex state: exact bytes, formats, frozen resources, partial builders and transactional rejection passed");
+  return ok;
+}
+
 int main(int argc,char **argv){
   const char *filter=NULL;
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2];
@@ -983,6 +1130,8 @@ int main(int argc,char **argv){
     {"buffer_surface_transfer",buffer_surface_transfer_case},
     {"vertex_format_information",vertex_format_information_case},
     {"vertex_resource_existence",vertex_resource_existence_case},
+    {"vertex_buffer_transfers",vertex_buffer_transfers_case},
+    {"vertex_buffer_state",vertex_buffer_state_case},
     {"display_frequency",display_frequency_case},
     {"explicit_default_speed",explicit_default_speed_case},{"circle_precision",circle_case},
     {"application_surface_lifetime",application_surface_lifetime_case},{"shader_asset_names",shader_case},

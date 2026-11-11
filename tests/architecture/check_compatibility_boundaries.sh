@@ -682,7 +682,7 @@ fail_matches "Software-3D model operations belong only to gml_software3d_models.
   "$software3d_model_operation_definitions"
 
 software3d_model_state_definitions=$(find src -type f -name '*.c' -exec grep -n -H -E \
-  '^[[:space:]]*(static[[:space:]]+)?(double|int|size_t|uint32_t|void)[[:space:]]+(d3_blob_(write|read|u32|read_u32|double|read_double|write_model|read_model)|gml_d3_models_state_(size|save|load))[[:space:]]*\(' \
+  '^[[:space:]]*(static[[:space:]]+)?(double|int|size_t|uint32_t|void)[[:space:]]+(d3_blob_(write|read|u32|read_u32|double|read_double|write_model|read_model)|gml_software3d_resources_state_(size|save|load))[[:space:]]*\(' \
   {} + 2>/dev/null | grep -v '^src/video/software3d/gml_software3d_models\.c:' || true)
 fail_matches "Software-3D canonical model-state definitions belong only to gml_software3d_models.c:" \
   "$software3d_model_state_definitions"

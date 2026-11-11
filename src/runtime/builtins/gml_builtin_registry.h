@@ -1966,7 +1966,11 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1868, LAYER_IS_DRAW_DEPTH_FORCED, "layer_is_draw_depth_forced", PLATFORM, PLATFORM_EXTENSIONS, ALWAYS) \
   ENTRY(1869, LAYER_INSTANCE_GET_INSTANCE, "layer_instance_get_instance", PLATFORM, PLATFORM_EXTENSIONS, ALWAYS) \
   ENTRY(1870, LAYER_ELEMENT_MOVE, "layer_element_move", PLATFORM, PLATFORM_EXTENSIONS, ALWAYS) \
-  ENTRY(1871, PHYSICS_DRAW_DEBUG, "physics_draw_debug", PHYSICS, PHYSICS, ALWAYS)
+  ENTRY(1871, PHYSICS_DRAW_DEBUG, "physics_draw_debug", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1872, VERTEX_CREATE_BUFFER_FROM_BUFFER, "vertex_create_buffer_from_buffer", DRAW, DRAW, ALWAYS) \
+  ENTRY(1873, VERTEX_CREATE_BUFFER_FROM_BUFFER_EXT, "vertex_create_buffer_from_buffer_ext", DRAW, DRAW, ALWAYS) \
+  ENTRY(1874, VERTEX_UPDATE_BUFFER_FROM_BUFFER, "vertex_update_buffer_from_buffer", DRAW, DRAW, ALWAYS) \
+  ENTRY(1875, VERTEX_UPDATE_BUFFER_FROM_VERTEX, "vertex_update_buffer_from_vertex", DRAW, DRAW, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -1981,7 +1985,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1872
+  GML_BUILTIN_ID_LIMIT = 1876
 } GmlBuiltinId;
 
 #endif

@@ -20,6 +20,67 @@ static double builtin_game_speed(GmlVM *vm){
   double v=p?N(p,1,0):60.0;
   return v>0 ? v : 60.0;
 }
+static int vertex_transfer_number(double value,int minimum,int *out){
+  if(!isfinite(value) || value<minimum || value>INT_MAX) return 0;
+  *out=(int)value;
+  return 1;
+}
+static GmlVal vertex_create_from_buffer(GmlVM *vm,GmlVal *args,int count,int extended){
+  int source,format,offset=0,vertices=0,stride;
+  if(count<(extended?4:2) ||
+     !vertex_transfer_number(N(args,count,0),0,&source) ||
+     !vertex_transfer_number(N(args,count,1),0,&format) ||
+     !gml_software3d_vertex_format_info(vm->software3d,format,&stride,NULL) || stride<=0)
+    return vreal(-1);
+  GmlBuiltinBuffer *buffer=buffer_at(vm,vm_buffer_slot(vm,source));
+  if(!buffer || !buffer->live) return vreal(-1);
+  size_t size=((size_t)buffer->size/(size_t)stride)*(size_t)stride;
+  if(extended){
+    if(!vertex_transfer_number(N(args,count,2),INT_MIN,&offset) ||
+       !vertex_transfer_number(N(args,count,3),-1,&vertices)) return vreal(-1);
+    if(offset<0) offset=0;
+    if(offset>buffer->size) return vreal(-1);
+    size=((size_t)(buffer->size-offset)/(size_t)stride)*(size_t)stride;
+    if(vertices>=0 && (size_t)vertices<size/(size_t)stride)
+      size=(size_t)vertices*(size_t)stride;
+  }
+  const unsigned char *data=buffer->data;
+  if(offset) data+=offset;
+  return vreal(gml_software3d_vertex_buffer_from_bytes(vm->software3d,format,data,size));
+}
+static GmlVal vertex_update_from_buffer(GmlVM *vm,GmlVal *args,int count){
+  int destination,offset,source,source_offset=0,size=-1;
+  if(count<3 || !vertex_transfer_number(N(args,count,0),0,&destination) ||
+     !vertex_transfer_number(N(args,count,1),0,&offset) ||
+     !vertex_transfer_number(N(args,count,2),0,&source) ||
+     (count>3 && !vertex_transfer_number(N(args,count,3),0,&source_offset)) ||
+     (count>4 && !vertex_transfer_number(N(args,count,4),-1,&size))) return vundef();
+  GmlBuiltinBuffer *buffer=buffer_at(vm,vm_buffer_slot(vm,source));
+  if(!buffer || !buffer->live || source_offset>buffer->size) return vundef();
+  if(size<0) size=buffer->size-source_offset;
+  if(size>buffer->size-source_offset) size=buffer->size-source_offset;
+  if(!size) return vundef();
+  const unsigned char *data=buffer->data;
+  if(source_offset) data+=source_offset;
+  gml_software3d_vertex_buffer_write(vm->software3d,destination,(size_t)offset,data,(size_t)size);
+  return vundef();
+}
+static GmlVal vertex_update_from_vertex(GmlVM *vm,GmlVal *args,int count){
+  int destination,offset,source,source_offset=0,vertices=-1;
+  if(count<3 || !vertex_transfer_number(N(args,count,0),0,&destination) ||
+     !vertex_transfer_number(N(args,count,1),0,&offset) ||
+     !vertex_transfer_number(N(args,count,2),0,&source) ||
+     (count>3 && !vertex_transfer_number(N(args,count,3),0,&source_offset)) ||
+     (count>4 && !vertex_transfer_number(N(args,count,4),-1,&vertices))) return vundef();
+  int available=gml_software3d_vertex_buffer_number(vm->software3d,source);
+  if(source_offset>available) return vundef();
+  if(vertices<0) vertices=available-source_offset;
+  if(vertices>available-source_offset) vertices=available-source_offset;
+  if(!vertices) return vundef();
+  gml_software3d_vertex_buffer_copy(vm->software3d,destination,(size_t)offset,
+                                    source,(size_t)source_offset,(size_t)vertices);
+  return vundef();
+}
 static int vertex_info_number(GmlInstance *record,const char *name,int value){
   GmlVal *field=gml_varmap_put(&record->vars,name);
   if(!field) return 0;
@@ -787,6 +848,12 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       gml_software3d_vertex_format_delete(vertex_graphics,(int)N(a,n,0));
       return vreal(0); }
     if(!strcmp(nm,"vertex_create_buffer")) return vreal(gml_software3d_vertex_buffer_create(vertex_graphics,0));
+    if(!strcmp(nm,"vertex_create_buffer_from_buffer"))
+      return vertex_create_from_buffer(vm,a,n,0);
+    if(!strcmp(nm,"vertex_create_buffer_from_buffer_ext"))
+      return vertex_create_from_buffer(vm,a,n,1);
+    if(!strcmp(nm,"vertex_update_buffer_from_buffer")) return vertex_update_from_buffer(vm,a,n);
+    if(!strcmp(nm,"vertex_update_buffer_from_vertex")) return vertex_update_from_vertex(vm,a,n);
     if(!strcmp(nm,"vertex_create_buffer_ext")){
       double requested=N(a,n,0); int bytes=requested>INT_MAX?INT_MAX:(requested>0?(int)requested:0);
       return vreal(gml_software3d_vertex_buffer_create(vertex_graphics,bytes)); }

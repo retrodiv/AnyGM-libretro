@@ -4,6 +4,7 @@
 /* Software fixed-function model resources and their canonical payload. */
 #include "gml_software3d_internal.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -275,7 +276,7 @@ int gml_software3d_model_vertex_get(const GmlSoftware3D *graphics,int id,
   return 1;
 }
 
-enum { GML_MODEL_STATE_SCHEMA=1 };
+enum { GML_MODEL_STATE_SCHEMA=2 };
 #define GML_MODEL_STATE_MAGIC UINT32_C(0x534D4441)
 typedef struct { unsigned char *data; size_t cap,pos; int ok; } D3BlobW;
 typedef struct { const unsigned char *data; size_t cap,pos; int ok; } D3BlobR;
@@ -313,15 +314,22 @@ static double d3_blob_read_double(D3BlobR *reader){
   for(unsigned i=0;i<8;i++) bits|=(uint64_t)b[i]<<(i*8);
   double value=0; memcpy(&value,&bits,sizeof value); return value;
 }
+static void d3_blob_write_vertex(D3BlobW *writer,const GmlD3Vertex *vertex){
+  const double values[12]={vertex->x,vertex->y,vertex->z,vertex->u,vertex->v,
+    vertex->r,vertex->g,vertex->b,vertex->alpha,vertex->nx,vertex->ny,vertex->nz};
+  for(unsigned value=0;value<12;value++) d3_blob_double(writer,values[value]);
+  d3_blob_u32(writer,(uint32_t)vertex->has_normal);
+}
+static void d3_blob_read_vertex(D3BlobR *reader,GmlD3Vertex *vertex){
+  double values[12]; for(unsigned value=0;value<12;value++) values[value]=d3_blob_read_double(reader);
+  vertex->x=values[0]; vertex->y=values[1]; vertex->z=values[2];
+  vertex->u=values[3]; vertex->v=values[4]; vertex->r=values[5]; vertex->g=values[6];
+  vertex->b=values[7]; vertex->alpha=values[8]; vertex->nx=values[9]; vertex->ny=values[10]; vertex->nz=values[11];
+  vertex->has_normal=(int)d3_blob_read_u32(reader);
+}
 static void d3_blob_write_model(D3BlobW *writer,const GmlD3Model *model){
   d3_blob_u32(writer,(uint32_t)model->vertex_n); d3_blob_u32(writer,(uint32_t)model->batch_n);
-  for(int i=0;i<model->vertex_n;i++){
-    const GmlD3Vertex *vertex=&model->vertex[i];
-    const double values[12]={vertex->x,vertex->y,vertex->z,vertex->u,vertex->v,
-      vertex->r,vertex->g,vertex->b,vertex->alpha,vertex->nx,vertex->ny,vertex->nz};
-    for(unsigned value=0;value<12;value++) d3_blob_double(writer,values[value]);
-    d3_blob_u32(writer,(uint32_t)vertex->has_normal);
-  }
+  for(int i=0;i<model->vertex_n;i++) d3_blob_write_vertex(writer,&model->vertex[i]);
   for(int i=0;i<model->batch_n;i++){
     d3_blob_u32(writer,(uint32_t)model->batch[i].kind);
     d3_blob_u32(writer,(uint32_t)model->batch[i].first);
@@ -331,16 +339,11 @@ static void d3_blob_write_model(D3BlobW *writer,const GmlD3Model *model){
 static int d3_blob_read_model(D3BlobR *reader,GmlD3Model *model){
   uint32_t vertex_n=d3_blob_read_u32(reader),batch_n=d3_blob_read_u32(reader);
   if(!reader->ok || vertex_n>GML_D3_MODEL_VERTEX_MAX || batch_n>GML_D3_MODEL_VERTEX_MAX ||
+     reader->pos>reader->cap || (size_t)vertex_n>(reader->cap-reader->pos)/100 ||
+     (size_t)batch_n>(reader->cap-reader->pos-(size_t)vertex_n*100)/12 ||
      !d3_model_grow_vertices(model,(int)vertex_n) || !d3_model_grow_batches(model,(int)batch_n)) return 0;
   model->vertex_n=(int)vertex_n; model->batch_n=(int)batch_n; model->building=-1;
-  for(int i=0;i<model->vertex_n;i++){
-    double values[12]; for(unsigned value=0;value<12;value++) values[value]=d3_blob_read_double(reader);
-    GmlD3Vertex *vertex=&model->vertex[i];
-    vertex->x=values[0]; vertex->y=values[1]; vertex->z=values[2];
-    vertex->u=values[3]; vertex->v=values[4]; vertex->r=values[5]; vertex->g=values[6];
-    vertex->b=values[7]; vertex->alpha=values[8]; vertex->nx=values[9]; vertex->ny=values[10]; vertex->nz=values[11];
-    vertex->has_normal=(int)d3_blob_read_u32(reader);
-  }
+  for(int i=0;i<model->vertex_n;i++) d3_blob_read_vertex(reader,&model->vertex[i]);
   for(int i=0;i<model->batch_n;i++){
     GmlD3Batch *batch=&model->batch[i];
     batch->kind=(int)d3_blob_read_u32(reader); batch->first=(int)d3_blob_read_u32(reader);
@@ -350,45 +353,153 @@ static int d3_blob_read_model(D3BlobR *reader,GmlD3Model *model){
   }
   return reader->ok;
 }
-size_t gml_d3_models_state_size(GmlSoftware3D *graphics){
-  if(!graphics) return 0;
-  D3BlobW writer={.ok=1};
-  d3_blob_u32(&writer,GML_MODEL_STATE_MAGIC); /* ADMS */
-  d3_blob_u32(&writer,GML_MODEL_STATE_SCHEMA);
-  int count=0; for(int i=0;i<GML_D3_MODEL_MAX;i++) if(graphics->d3_model[i].used) count++;
-  d3_blob_u32(&writer,(uint32_t)count);
-  for(int i=0;i<GML_D3_MODEL_MAX;i++) if(graphics->d3_model[i].used){
-    d3_blob_u32(&writer,(uint32_t)i); d3_blob_write_model(&writer,&graphics->d3_model[i]);
+static void d3_blob_write_format(D3BlobW *writer,const GmlVertexFormat *format){
+  d3_blob_u32(writer,(uint32_t)format->n_attr);
+  for(int i=0;i<format->n_attr;i++){
+    const GmlVertexAttr *attr=&format->attr[i];
+    d3_blob_u32(writer,attr->kind); d3_blob_u32(writer,attr->type);
+    d3_blob_u32(writer,attr->usage); d3_blob_u32(writer,attr->count);
+    d3_blob_u32(writer,attr->bytes);
   }
+}
+static int d3_blob_read_format(D3BlobR *reader,GmlVertexFormat *format){
+  uint32_t count=d3_blob_read_u32(reader);
+  if(!reader->ok || count>GML_VERTEX_ATTR_MAX) return 0;
+  format->n_attr=(int)count; format->stride=0;
+  for(uint32_t i=0;i<count;i++){
+    uint32_t kind=d3_blob_read_u32(reader),type=d3_blob_read_u32(reader);
+    uint32_t usage=d3_blob_read_u32(reader),components=d3_blob_read_u32(reader);
+    uint32_t bytes=d3_blob_read_u32(reader);
+    if(kind>UINT8_MAX || type>UINT8_MAX || usage>UINT8_MAX || components>UINT8_MAX ||
+       bytes<4 || bytes>UINT16_MAX || (type>=1 && type<=4 && bytes<type*4)) return 0;
+    format->attr[i]=(GmlVertexAttr){(unsigned char)kind,(unsigned char)type,
+      (unsigned char)usage,(unsigned char)components,(unsigned short)bytes};
+    format->stride+=(int)bytes;
+  }
+  return reader->ok;
+}
+static void d3_blob_write_resources(D3BlobW *writer,const GmlSoftware3D *graphics){
+  d3_blob_u32(writer,GML_MODEL_STATE_MAGIC);
+  d3_blob_u32(writer,GML_MODEL_STATE_SCHEMA);
+  int count=0; for(int i=0;i<GML_D3_MODEL_MAX;i++) count+=graphics->d3_model[i].used!=0;
+  d3_blob_u32(writer,(uint32_t)count);
+  for(int i=0;i<GML_D3_MODEL_MAX;i++) if(graphics->d3_model[i].used){
+    d3_blob_u32(writer,(uint32_t)i); d3_blob_write_model(writer,&graphics->d3_model[i]);
+  }
+  d3_blob_u32(writer,(uint32_t)graphics->vertex_builder_active);
+  d3_blob_write_format(writer,&graphics->vertex_builder);
+  count=0; for(int i=0;i<GML_VERTEX_FORMAT_MAX;i++) count+=graphics->vertex_format[i].used!=0;
+  d3_blob_u32(writer,(uint32_t)count);
+  for(int i=0;i<GML_VERTEX_FORMAT_MAX;i++) if(graphics->vertex_format[i].used){
+    d3_blob_u32(writer,(uint32_t)i); d3_blob_write_format(writer,&graphics->vertex_format[i]);
+  }
+  count=0; for(int i=0;i<GML_VERTEX_BUFFER_MAX;i++) count+=graphics->vertex_buffer[i].used!=0;
+  d3_blob_u32(writer,(uint32_t)count);
+  for(int i=0;i<GML_VERTEX_BUFFER_MAX;i++) if(graphics->vertex_buffer[i].used){
+    const GmlVertexBuffer *buffer=&graphics->vertex_buffer[i];
+    size_t bytes=buffer->data_size;
+    if(buffer->attr_index>0 && buffer->layout.stride>0){
+      if((size_t)buffer->vertex_n+1>SIZE_MAX/(size_t)buffer->layout.stride){ writer->ok=0; return; }
+      size_t pending=((size_t)buffer->vertex_n+1)*(size_t)buffer->layout.stride;
+      if(bytes<pending) bytes=pending;
+    }
+    if(buffer->data_size>UINT32_MAX || bytes>UINT32_MAX || bytes>buffer->data_cap){ writer->ok=0; return; }
+    d3_blob_u32(writer,(uint32_t)i); d3_blob_u32(writer,(uint32_t)buffer->frozen);
+    d3_blob_u32(writer,(uint32_t)buffer->format); d3_blob_u32(writer,(uint32_t)buffer->attr_index);
+    d3_blob_u32(writer,(uint32_t)buffer->reserve_bytes); d3_blob_u32(writer,(uint32_t)buffer->vertex_n);
+    d3_blob_u32(writer,(uint32_t)buffer->data_size); d3_blob_u32(writer,(uint32_t)bytes);
+    d3_blob_write_format(writer,&buffer->layout);
+    d3_blob_write_vertex(writer,&buffer->partial);
+    if(bytes) d3_blob_write(writer,buffer->data,bytes);
+    for(int vertex=0;vertex<buffer->vertex_n;vertex++) d3_blob_write_vertex(writer,&buffer->vertex[vertex]);
+  }
+}
+size_t gml_software3d_resources_state_size(GmlSoftware3D *graphics){
+  if(!graphics) return 0;
+  D3BlobW writer={.ok=1}; d3_blob_write_resources(&writer,graphics);
   return writer.ok?writer.pos:0;
 }
-int gml_d3_models_state_save(GmlSoftware3D *graphics,void *data,size_t capacity){
+int gml_software3d_resources_state_save(GmlSoftware3D *graphics,void *data,size_t capacity){
   if(!graphics) return 0;
-  D3BlobW writer={.data=data,.cap=capacity,.ok=1};
-  d3_blob_u32(&writer,GML_MODEL_STATE_MAGIC); /* ADMS */
-  d3_blob_u32(&writer,GML_MODEL_STATE_SCHEMA);
-  int count=0; for(int i=0;i<GML_D3_MODEL_MAX;i++) if(graphics->d3_model[i].used) count++;
-  d3_blob_u32(&writer,(uint32_t)count);
-  for(int i=0;i<GML_D3_MODEL_MAX;i++) if(graphics->d3_model[i].used){
-    d3_blob_u32(&writer,(uint32_t)i); d3_blob_write_model(&writer,&graphics->d3_model[i]);
-  }
-  return writer.ok&&writer.pos==capacity;
+  D3BlobW writer={.data=data,.cap=capacity,.ok=1}; d3_blob_write_resources(&writer,graphics);
+  return writer.ok && writer.pos==capacity;
 }
-int gml_d3_models_state_load(GmlSoftware3D *graphics,const void *data,size_t size){
-  if(!graphics) return 0;
-  gml_software3d_models_clear_all(graphics);
-  if(!data || size<12) return size==0;
-  D3BlobR reader={.data=data,.cap=size,.ok=1};
-  uint32_t magic=d3_blob_read_u32(&reader),schema=d3_blob_read_u32(&reader);
-  uint32_t count=d3_blob_read_u32(&reader);
-  if(magic!=GML_MODEL_STATE_MAGIC || schema!=GML_MODEL_STATE_SCHEMA ||
-     count>GML_D3_MODEL_MAX) reader.ok=0;
-  for(uint32_t i=0;i<count&&reader.ok;i++){
-    uint32_t id=d3_blob_read_u32(&reader);
-    if(id>=GML_D3_MODEL_MAX || graphics->d3_model[id].used){ reader.ok=0; break; }
+static int d3_blob_read_resources(D3BlobR *reader,GmlSoftware3D *graphics){
+  uint32_t magic=d3_blob_read_u32(reader),schema=d3_blob_read_u32(reader);
+  uint32_t count=d3_blob_read_u32(reader);
+  if(magic!=GML_MODEL_STATE_MAGIC || schema!=GML_MODEL_STATE_SCHEMA || count>GML_D3_MODEL_MAX) return 0;
+  for(uint32_t i=0;i<count;i++){
+    uint32_t id=d3_blob_read_u32(reader);
+    if(!reader->ok || id>=GML_D3_MODEL_MAX || graphics->d3_model[id].used) return 0;
     graphics->d3_model[id].used=1; graphics->d3_model[id].building=-1;
-    if(!d3_blob_read_model(&reader,&graphics->d3_model[id])) break;
+    if(!d3_blob_read_model(reader,&graphics->d3_model[id])) return 0;
   }
-  if(!reader.ok || reader.pos!=size){ gml_software3d_models_clear_all(graphics); return 0; }
+  uint32_t active=d3_blob_read_u32(reader);
+  if(active>1 || !d3_blob_read_format(reader,&graphics->vertex_builder)) return 0;
+  graphics->vertex_builder_active=(int)active;
+  count=d3_blob_read_u32(reader);
+  if(!reader->ok || count>GML_VERTEX_FORMAT_MAX) return 0;
+  for(uint32_t i=0;i<count;i++){
+    uint32_t id=d3_blob_read_u32(reader);
+    if(id>=GML_VERTEX_FORMAT_MAX || graphics->vertex_format[id].used ||
+       !d3_blob_read_format(reader,&graphics->vertex_format[id]) ||
+       !graphics->vertex_format[id].n_attr) return 0;
+    graphics->vertex_format[id].used=1;
+  }
+  count=d3_blob_read_u32(reader);
+  if(!reader->ok || count>GML_VERTEX_BUFFER_MAX) return 0;
+  for(uint32_t i=0;i<count;i++){
+    uint32_t id=d3_blob_read_u32(reader),frozen=d3_blob_read_u32(reader);
+    int format=(int32_t)d3_blob_read_u32(reader);
+    uint32_t attr=d3_blob_read_u32(reader),reserve=d3_blob_read_u32(reader),vertices=d3_blob_read_u32(reader);
+    uint32_t size=d3_blob_read_u32(reader),bytes=d3_blob_read_u32(reader);
+    if(!reader->ok || id>=GML_VERTEX_BUFFER_MAX || graphics->vertex_buffer[id].used || frozen>1 ||
+       format < -1 || format>=GML_VERTEX_FORMAT_MAX || attr>GML_VERTEX_ATTR_MAX ||
+       reserve>INT_MAX || vertices>GML_VERTEX_MAX || size>bytes) return 0;
+    GmlVertexBuffer *buffer=&graphics->vertex_buffer[id];
+    if(!d3_blob_read_format(reader,&buffer->layout) || reader->pos>reader->cap ||
+       reader->cap-reader->pos<100 || bytes>reader->cap-reader->pos-100 ||
+       (size_t)vertices>(reader->cap-reader->pos-100-bytes)/100) return 0;
+    buffer->used=1; buffer->format=format; buffer->frozen=(int)frozen;
+    buffer->reserve_bytes=(int)reserve; buffer->attr_index=(int)attr;
+    buffer->vertex_n=buffer->vertex_cap=(int)vertices;
+    buffer->data_size=size; buffer->data_cap=bytes;
+    d3_blob_read_vertex(reader,&buffer->partial);
+    if(bytes){
+      buffer->data=malloc(bytes);
+      if(!buffer->data) return 0;
+      d3_blob_read(reader,buffer->data,bytes);
+    }
+    if(vertices){
+      buffer->vertex=malloc((size_t)vertices*sizeof *buffer->vertex);
+      if(!buffer->vertex) return 0;
+      for(uint32_t vertex=0;vertex<vertices;vertex++) d3_blob_read_vertex(reader,&buffer->vertex[vertex]);
+    }
+    if(format>=0){
+      const GmlVertexFormat *layout=&buffer->layout;
+      if(!layout->n_attr || attr>=(uint32_t)layout->n_attr || size/(uint32_t)layout->stride!=vertices ||
+         (attr && ((size_t)vertices+1)*(size_t)layout->stride>bytes)) return 0;
+    }else if(attr || vertices || bytes || buffer->layout.n_attr) return 0;
+  }
+  return reader->ok && reader->pos==reader->cap;
+}
+int gml_software3d_resources_state_load(GmlSoftware3D *graphics,const void *data,size_t size){
+  if(!graphics || !data || size<12) return 0;
+  GmlSoftware3D *staged=gml_software3d_create();
+  if(!staged) return 0;
+  D3BlobR reader={.data=data,.cap=size,.ok=1};
+  if(!d3_blob_read_resources(&reader,staged)){ gml_software3d_destroy(staged); return 0; }
+  for(int i=0;i<GML_D3_MODEL_MAX;i++){
+    GmlD3Model previous=graphics->d3_model[i];
+    graphics->d3_model[i]=staged->d3_model[i]; staged->d3_model[i]=previous;
+  }
+  for(int i=0;i<GML_VERTEX_BUFFER_MAX;i++){
+    GmlVertexBuffer previous=graphics->vertex_buffer[i];
+    graphics->vertex_buffer[i]=staged->vertex_buffer[i]; staged->vertex_buffer[i]=previous;
+  }
+  memcpy(graphics->vertex_format,staged->vertex_format,sizeof graphics->vertex_format);
+  graphics->vertex_builder=staged->vertex_builder;
+  graphics->vertex_builder_active=staged->vertex_builder_active;
+  gml_software3d_destroy(staged);
   return 1;
 }

@@ -19,6 +19,7 @@ static void vertex_resources_reset(GmlSoftware3D *graphics){
   if(!graphics) return;
   for(int i=0;i<GML_VERTEX_BUFFER_MAX;i++){
     free(graphics->vertex_buffer[i].vertex);
+    free(graphics->vertex_buffer[i].data);
     memset(&graphics->vertex_buffer[i],0,sizeof(graphics->vertex_buffer[i]));
     graphics->vertex_buffer[i].format=-1;
   }
@@ -31,7 +32,8 @@ static void vertex_resources_reset(GmlSoftware3D *graphics){
 }
 int gml_software3d_vertex_format_add(GmlSoftware3D *graphics,int kind,int type,int usage,int count,int bytes){
   if(!graphics || !graphics->vertex_builder_active ||
-     graphics->vertex_builder.n_attr>=GML_VERTEX_ATTR_MAX || bytes<=0) return 0;
+     graphics->vertex_builder.n_attr>=GML_VERTEX_ATTR_MAX || bytes<4 || bytes>USHRT_MAX ||
+     (type>=1 && type<=4 && bytes<type*4)) return 0;
   GmlVertexAttr *attr=&graphics->vertex_builder.attr[graphics->vertex_builder.n_attr++];
   attr->kind=(unsigned char)kind; attr->type=(unsigned char)type;
   attr->usage=(unsigned char)usage; attr->count=(unsigned char)count;
@@ -76,12 +78,82 @@ static int vertex_buffer_grow(GmlVertexBuffer *buffer,int needed){
   buffer->vertex=grown; buffer->vertex_cap=capacity;
   return 1;
 }
+static int vertex_data_grow(GmlVertexBuffer *buffer,size_t needed){
+  if(needed<=buffer->data_cap) return 1;
+  size_t capacity=buffer->data_cap?buffer->data_cap:256;
+  while(capacity<needed){
+    if(capacity>SIZE_MAX/2){ capacity=needed; break; }
+    capacity*=2;
+  }
+  unsigned char *data=realloc(buffer->data,capacity);
+  if(!data) return 0;
+  memset(data+buffer->data_cap,0,capacity-buffer->data_cap);
+  buffer->data=data; buffer->data_cap=capacity;
+  return 1;
+}
+static void vertex_write_float(unsigned char *data,double value){
+  float number=(float)value; uint32_t bits;
+  memcpy(&bits,&number,sizeof bits);
+  for(int i=0;i<4;i++) data[i]=(unsigned char)(bits>>(8*i));
+}
+static double vertex_read_float(const unsigned char *data){
+  uint32_t bits=(uint32_t)data[0]|((uint32_t)data[1]<<8)|
+                ((uint32_t)data[2]<<16)|((uint32_t)data[3]<<24);
+  float number; memcpy(&number,&bits,sizeof number);
+  return number;
+}
+static unsigned char vertex_byte(double value){
+  if(!isfinite(value)) return 0;
+  double byte=fmod(trunc(value),256);
+  if(byte<0) byte+=256;
+  return (unsigned char)byte;
+}
+static void vertex_encode_attribute(unsigned char *data,const GmlVertexAttr *attr,
+                                     int kind,const double value[4]){
+  if(attr->type>=1 && attr->type<=4){
+    for(int i=0;i<attr->type;i++) vertex_write_float(data+4*i,value[i]);
+  }else if(kind==GML_VERTEX_COLOR){
+    uint32_t color=(uint32_t)value[0];
+    for(int i=0;i<3;i++) data[i]=(unsigned char)(color>>(8*i));
+    data[3]=vertex_byte(fmax(0,fmin(1,value[1]))*255);
+  }else for(int i=0;i<4;i++) data[i]=vertex_byte(value[i]);
+}
+static void vertex_apply_attribute(GmlD3Vertex *vertex,int kind,const double value[4]){
+  if(kind==GML_VERTEX_POSITION2){ vertex->x=value[0]; vertex->y=value[1]; }
+  else if(kind==GML_VERTEX_POSITION3){ vertex->x=value[0]; vertex->y=value[1]; vertex->z=value[2]; }
+  else if(kind==GML_VERTEX_NORMAL){ vertex->nx=value[0]; vertex->ny=value[1]; vertex->nz=value[2]; vertex->has_normal=1; }
+  else if(kind==GML_VERTEX_TEXCOORD){ vertex->u=value[0]; vertex->v=value[1]; }
+  else if(kind==GML_VERTEX_COLOR){
+    uint32_t color=(uint32_t)value[0];
+    vertex->r=color&255; vertex->g=(color>>8)&255; vertex->b=(color>>16)&255;
+    vertex->alpha=value[1];
+  }
+}
+static void vertex_decode(GmlD3Vertex *vertex,const GmlVertexFormat *format,
+                           const unsigned char *data){
+  memset(vertex,0,sizeof *vertex);
+  vertex->r=vertex->g=vertex->b=255; vertex->alpha=1;
+  for(int i=0;i<format->n_attr;i++){
+    const GmlVertexAttr *attr=&format->attr[i];
+    double value[4]={0};
+    if(attr->type>=1 && attr->type<=4){
+      for(int component=0;component<attr->type;component++)
+        value[component]=vertex_read_float(data+4*component);
+    }else if(attr->kind==GML_VERTEX_COLOR){
+      value[0]=(double)((uint32_t)data[0]|((uint32_t)data[1]<<8)|((uint32_t)data[2]<<16));
+      value[1]=data[3]/255.0;
+    }else for(int component=0;component<4;component++) value[component]=data[component];
+    vertex_apply_attribute(vertex,attr->kind,value);
+    data+=attr->bytes;
+  }
+}
 int gml_software3d_vertex_buffer_begin(GmlSoftware3D *graphics,int id,int format){
   if(!graphics || id<0 || id>=GML_VERTEX_BUFFER_MAX || !graphics->vertex_buffer[id].used ||
      format<0 || format>=GML_VERTEX_FORMAT_MAX || !graphics->vertex_format[format].used) return 0;
   GmlVertexBuffer *buffer=&graphics->vertex_buffer[id];
   if(buffer->frozen) return 0;
-  buffer->format=format; buffer->vertex_n=0; vertex_partial_init(buffer);
+  buffer->format=format; buffer->vertex_n=0; buffer->data_size=0; vertex_partial_init(buffer);
+  buffer->layout=graphics->vertex_format[format];
   int stride=graphics->vertex_format[format].stride;
   int wanted=stride>0?buffer->reserve_bytes/stride:0;
   if(wanted>GML_VERTEX_MAX) wanted=GML_VERTEX_MAX;
@@ -98,22 +170,25 @@ int gml_software3d_vertex_buffer_attribute(GmlSoftware3D *graphics,int id,int su
   if(!graphics || id<0 || id>=GML_VERTEX_BUFFER_MAX || !graphics->vertex_buffer[id].used) return 0;
   GmlVertexBuffer *buffer=&graphics->vertex_buffer[id];
   if(buffer->frozen || buffer->format<0 || buffer->format>=GML_VERTEX_FORMAT_MAX) return 0;
-  GmlVertexFormat *format=&graphics->vertex_format[buffer->format];
-  if(!format->used || buffer->attr_index<0 || buffer->attr_index>=format->n_attr) return 0;
+  GmlVertexFormat *format=&buffer->layout;
+  if(!graphics->vertex_format[buffer->format].used || buffer->attr_index<0 ||
+     buffer->attr_index>=format->n_attr) return 0;
   GmlVertexAttr *attr=&format->attr[buffer->attr_index];
   int kind=attr->kind==GML_VERTEX_CUSTOM?supplied_kind:attr->kind;
   (void)count;
-  if(kind==GML_VERTEX_POSITION2){ buffer->partial.x=value[0]; buffer->partial.y=value[1]; }
-  else if(kind==GML_VERTEX_POSITION3){ buffer->partial.x=value[0]; buffer->partial.y=value[1]; buffer->partial.z=value[2]; }
-  else if(kind==GML_VERTEX_NORMAL){ buffer->partial.nx=value[0]; buffer->partial.ny=value[1]; buffer->partial.nz=value[2]; buffer->partial.has_normal=1; }
-  else if(kind==GML_VERTEX_TEXCOORD){ buffer->partial.u=value[0]; buffer->partial.v=value[1]; }
-  else if(kind==GML_VERTEX_COLOR){
-    uint32_t color=(uint32_t)value[0];
-    buffer->partial.r=color&255; buffer->partial.g=(color>>8)&255; buffer->partial.b=(color>>16)&255;
-    buffer->partial.alpha=value[1];
-  }
+  if(format->stride<=0 || (size_t)buffer->vertex_n+1>SIZE_MAX/(size_t)format->stride) return 0;
+  size_t offset=(size_t)buffer->vertex_n*(size_t)format->stride;
+  if(!vertex_buffer_grow(buffer,buffer->vertex_n+1) ||
+     !vertex_data_grow(buffer,offset+(size_t)format->stride)) return 0;
+  if(!buffer->attr_index) memset(buffer->data+offset,0,(size_t)format->stride);
+  for(int i=0;i<buffer->attr_index;i++) offset+=format->attr[i].bytes;
+  vertex_encode_attribute(buffer->data+offset,attr,kind,value);
+  vertex_apply_attribute(&buffer->partial,kind,value);
   buffer->attr_index++;
-  if(buffer->attr_index==format->n_attr) return vertex_buffer_commit(buffer);
+  if(buffer->attr_index==format->n_attr){
+    if(!vertex_buffer_commit(buffer)) return 0;
+    buffer->data_size=(size_t)buffer->vertex_n*(size_t)format->stride;
+  }
   return 1;
 }
 void gml_software3d_model_clear_data(GmlD3Model *model){
@@ -125,7 +200,10 @@ void gml_software3d_model_clear_data(GmlD3Model *model){
 }
 void gml_software3d_destroy(GmlSoftware3D *graphics){
   if(!graphics) return;
-  for(int i=0;i<GML_VERTEX_BUFFER_MAX;i++) free(graphics->vertex_buffer[i].vertex);
+  for(int i=0;i<GML_VERTEX_BUFFER_MAX;i++){
+    free(graphics->vertex_buffer[i].vertex);
+    free(graphics->vertex_buffer[i].data);
+  }
   for(int i=0;i<GML_D3_MODEL_MAX;i++) gml_software3d_model_clear_data(&graphics->d3_model[i]);
   free(graphics->vertex_blend_scratch);
   free(graphics->d3.depth);
@@ -329,6 +407,7 @@ void gml_software3d_vertex_buffer_delete(GmlSoftware3D *graphics,int id){
   if(!graphics || id<0 || id>=GML_VERTEX_BUFFER_MAX ||
      !graphics->vertex_buffer[id].used) return;
   free(graphics->vertex_buffer[id].vertex);
+  free(graphics->vertex_buffer[id].data);
   memset(&graphics->vertex_buffer[id],0,sizeof(graphics->vertex_buffer[id]));
   graphics->vertex_buffer[id].format=-1;
 }
@@ -348,8 +427,8 @@ int gml_software3d_vertex_buffer_attribute_ubyte4(
   int kind=GML_VERTEX_CUSTOM;
   if(buffer->format>=0 && buffer->format<GML_VERTEX_FORMAT_MAX &&
      buffer->attr_index>=0 &&
-     buffer->attr_index<graphics->vertex_format[buffer->format].n_attr &&
-     graphics->vertex_format[buffer->format].attr[buffer->attr_index].kind==
+     buffer->attr_index<buffer->layout.n_attr &&
+     buffer->layout.attr[buffer->attr_index].kind==
        GML_VERTEX_COLOR){
     uint32_t color=((uint32_t)value[0]&255)|
       (((uint32_t)value[1]&255)<<8)|(((uint32_t)value[2]&255)<<16);
@@ -377,9 +456,83 @@ size_t gml_software3d_vertex_buffer_size(const GmlSoftware3D *graphics,int id){
   if(!graphics || id<0 || id>=GML_VERTEX_BUFFER_MAX ||
      !graphics->vertex_buffer[id].used) return 0;
   const GmlVertexBuffer *buffer=&graphics->vertex_buffer[id];
-  int stride=buffer->format>=0 && buffer->format<GML_VERTEX_FORMAT_MAX ?
-    graphics->vertex_format[buffer->format].stride:0;
-  return stride>0?(size_t)buffer->vertex_n*(size_t)stride:0;
+  return buffer->data_size;
+}
+
+static int vertex_prepare_write(GmlVertexBuffer *buffer,const GmlVertexFormat *format,
+                                  size_t offset,size_t count){
+  if(buffer->frozen || format->stride<=0 || offset>SIZE_MAX-count) return 0;
+  size_t end=offset+count,vertices=end/(size_t)format->stride;
+  if(vertices>GML_VERTEX_MAX || (vertices==GML_VERTEX_MAX && end%(size_t)format->stride)) return 0;
+  size_t size=buffer->data_size>end?buffer->data_size:end;
+  if(!vertex_buffer_grow(buffer,(int)(size/(size_t)format->stride)) ||
+     !vertex_data_grow(buffer,size)) return 0;
+  return 1;
+}
+static void vertex_finish_write(GmlVertexBuffer *buffer,const GmlVertexFormat *format,
+                                 int format_id,size_t offset,size_t count){
+  size_t end=offset+count;
+  int first=(int)(offset/(size_t)format->stride);
+  if(first>buffer->vertex_n) first=buffer->vertex_n;
+  if(end>buffer->data_size) buffer->data_size=end;
+  buffer->vertex_n=(int)(buffer->data_size/(size_t)format->stride);
+  size_t last=end/(size_t)format->stride+(end%(size_t)format->stride!=0);
+  if(last>(size_t)buffer->vertex_n) last=(size_t)buffer->vertex_n;
+  for(int vertex=first;vertex<(int)last;vertex++)
+    vertex_decode(&buffer->vertex[vertex],format,
+                    buffer->data+(size_t)vertex*(size_t)format->stride);
+  buffer->format=format_id; vertex_partial_init(buffer);
+}
+int gml_software3d_vertex_buffer_write(GmlSoftware3D *graphics,int id,size_t offset,
+                                       const void *data,size_t size){
+  if(!gml_software3d_vertex_buffer_exists(graphics,id) || (!data && size)) return 0;
+  GmlVertexBuffer *buffer=&graphics->vertex_buffer[id];
+  const GmlVertexFormat *format=&buffer->layout;
+  if(!vertex_prepare_write(buffer,format,offset,size)) return 0;
+  if(offset>buffer->data_size) memset(buffer->data+buffer->data_size,0,offset-buffer->data_size);
+  if(size) memmove(buffer->data+offset,data,size);
+  vertex_finish_write(buffer,format,buffer->format,offset,size);
+  return 1;
+}
+int gml_software3d_vertex_buffer_from_bytes(GmlSoftware3D *graphics,int format,
+                                            const void *data,size_t size){
+  if(!gml_software3d_vertex_format_exists(graphics,format)) return -1;
+  int id=gml_software3d_vertex_buffer_create(graphics,0);
+  if(id<0) return -1;
+  graphics->vertex_buffer[id].format=format;
+  graphics->vertex_buffer[id].layout=graphics->vertex_format[format];
+  if(!gml_software3d_vertex_buffer_write(graphics,id,0,data,size)){
+    gml_software3d_vertex_buffer_delete(graphics,id); return -1;
+  }
+  return id;
+}
+int gml_software3d_vertex_buffer_copy(GmlSoftware3D *graphics,int destination,
+                                      size_t destination_vertex,int source,
+                                      size_t source_vertex,size_t count){
+  if(!gml_software3d_vertex_buffer_exists(graphics,destination) ||
+     !gml_software3d_vertex_buffer_exists(graphics,source)) return 0;
+  GmlVertexBuffer *target=&graphics->vertex_buffer[destination];
+  const GmlVertexBuffer *origin=&graphics->vertex_buffer[source];
+  if(origin->frozen || !origin->layout.n_attr) return 0;
+  int format_id=target->format;
+  if(!target->vertex_n) format_id=origin->format;
+  const GmlVertexFormat *format=target->vertex_n?&target->layout:&origin->layout;
+  const GmlVertexFormat *source_format=&origin->layout;
+  if(format->stride!=source_format->stride || format->n_attr!=source_format->n_attr) return 0;
+  for(int i=0;i<format->n_attr;i++){
+    const GmlVertexAttr *a=&format->attr[i],*b=&source_format->attr[i];
+    if(a->type!=b->type || a->usage!=b->usage || a->bytes!=b->bytes) return 0;
+  }
+  if(source_vertex>(size_t)origin->vertex_n || count>(size_t)origin->vertex_n-source_vertex ||
+     destination_vertex>GML_VERTEX_MAX || count>GML_VERTEX_MAX-destination_vertex) return 0;
+  if(destination_vertex>SIZE_MAX/(size_t)format->stride || count>SIZE_MAX/(size_t)format->stride) return 0;
+  size_t offset=destination_vertex*(size_t)format->stride,bytes=count*(size_t)format->stride;
+  if(!vertex_prepare_write(target,format,offset,bytes)) return 0;
+  if(offset>target->data_size) memset(target->data+target->data_size,0,offset-target->data_size);
+  if(bytes) memmove(target->data+offset,origin->data+source_vertex*(size_t)format->stride,bytes);
+  target->layout=*format;
+  vertex_finish_write(target,format,format_id,offset,bytes);
+  return 1;
 }
 
 void gml_software3d_primitive_2d_begin(GmlSoftware3D *graphics,

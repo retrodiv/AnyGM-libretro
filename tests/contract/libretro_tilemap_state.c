@@ -4,6 +4,7 @@
 #include "libretro_internal.h"
 #include "engine_internal.h"
 #include "gml_builtin.h"
+#include "gml_software3d_internal.h"
 #include "synthetic_content.h"
 
 #include <stdio.h>
@@ -365,8 +366,75 @@ done:
   return ok;
 }
 
+static int run_vertex_case(int response){
+  AnygmSyntheticContent fixture={0}; Ring ring={0};
+  uint8_t *cold=NULL,*saved=NULL; size_t saved_size=0;
+  int ok=1;
+  negotiation=response; monitor_changed=option_update=0;
+  REQUIRE(anygm_synthetic_tilemap_content_create(&fixture),"create vertex capacity fixture");
+  retro_set_environment(environment); retro_set_video_refresh(video); retro_init();
+  struct retro_game_info info={fixture.path,NULL,0,NULL};
+  REQUIRE(retro_load_game(&info),"load vertex capacity fixture");
+  ring.initial=ring.capacity=retro_serialize_size();
+  REQUIRE(ring.capacity>0 && g_libretro.startup_ring_compact,"vertex cold compact policy");
+  ring.bytes=malloc(ring.capacity); cold=malloc(ring.capacity);
+  REQUIRE(ring.bytes && cold && push(&ring),"vertex ring before first frame");
+  memcpy(cold,ring.bytes,ring.initial); retro_run();
+  REQUIRE(push(&ring),"vertex first completed frame");
+  GmlVM *vm=&g_libretro.engine->vm;
+  gml_builtin_call(vm,"vertex_format_begin",NULL,0);
+  gml_builtin_call(vm,"vertex_format_add_position",NULL,0);
+  gml_builtin_call(vm,"vertex_format_add_colour",NULL,0);
+  GmlVal format=gml_builtin_call(vm,"vertex_format_end",NULL,0);
+  GmlVal create[]={vreal(512*12),vreal(0),vreal(1)};
+  GmlVal source=gml_builtin_call(vm,"buffer_create",create,3);
+  GmlVal poke[]={source,vreal(0),vreal(8),vreal(1.25)};
+  gml_builtin_call(vm,"buffer_poke",poke,4);
+  poke[1]=vreal(4); poke[3]=vreal(2.5); gml_builtin_call(vm,"buffer_poke",poke,4);
+  GmlVal from[]={source,format};
+  GmlVal buffer=gml_builtin_call(vm,"vertex_create_buffer_from_buffer",from,2);
+  REQUIRE(buffer.t==V_REAL && buffer.d>=0,"create vertex data after cold allocation");
+  GmlVal pending=gml_builtin_call(vm,"vertex_create_buffer",NULL,0);
+  GmlVal begin[]={pending,format}; gml_builtin_call(vm,"vertex_begin",begin,2);
+  GmlVal position[]={pending,vreal(17.25),vreal(19.5)};
+  gml_builtin_call(vm,"vertex_position",position,3);
+  REQUIRE(push(&ring),"vertex resources and unfinished vertex fit old ring");
+  saved_size=ring.capacity; saved=malloc(saved_size);
+  REQUIRE(saved,"allocate vertex snapshot copy"); memcpy(saved,ring.bytes,saved_size);
+  poke[1]=vreal(0); poke[3]=vreal(99); gml_builtin_call(vm,"buffer_poke",poke,4);
+  GmlVal update[]={buffer,vreal(0),source,vreal(0),vreal(8)};
+  gml_builtin_call(vm,"vertex_update_buffer_from_buffer",update,5);
+  REQUIRE(vm->software3d->vertex_buffer[(int)buffer.d].vertex[0].x==99,"observe changed vertex before rewind");
+  REQUIRE(push(&ring),"updated vertex ring push");
+  REQUIRE(retro_unserialize(saved,saved_size),"restore vertex resource ring entry");
+  vm=&g_libretro.engine->vm;
+  GmlVertexBuffer *restored=&vm->software3d->vertex_buffer[(int)buffer.d];
+  REQUIRE(restored->vertex_n==512 && restored->vertex[0].x==1.25 && restored->vertex[0].y==2.5,
+          "rewind restores original vertex data");
+  REQUIRE(vm->software3d->vertex_buffer[(int)pending.d].attr_index==1 &&
+          vm->software3d->vertex_buffer[(int)pending.d].partial.x==17.25,
+          "rewind restores unfinished vertex construction");
+  monitor_changed=option_update=1; retro_run();
+  REQUIRE(push(&ring),"vertex ring accepts live high-resolution geometry");
+  retro_reset(); REQUIRE(push(&ring),"vertex ring immediately across Reset");
+  REQUIRE(retro_unserialize(saved,saved_size)==(response>0),"vertex Reset follows fixed and variable state policy");
+  retro_run(); REQUIRE(push(&ring),"vertex ring after fresh reset frame");
+  REQUIRE(retro_unserialize(saved,saved_size) && push(&ring),"vertex resources restore after Reset");
+  REQUIRE(retro_unserialize(cold,ring.initial) && push(&ring),"vertex cold state restores empty resources");
+  REQUIRE(!gml_software3d_vertex_buffer_exists(g_libretro.engine->vm.software3d,(int)buffer.d),
+          "cold state removes later vertex resources");
+  REQUIRE(ring.accepted==9 && ring.rejected==0,"every vertex frontend push accepted");
+  printf("vertex frontend: negotiation=%d cold=%zu final=%zu accepted=%u rejected=%u\n",
+         response,ring.initial,ring.capacity,ring.accepted,ring.rejected);
+done:
+  free(cold); free(saved); free(ring.bytes);
+  retro_unload_game(); retro_deinit(); anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 int main(void){
   for(int response=-1;response<=1;response++) if(!run_case(response)) return 1;
   for(int response=-1;response<=1;response++) if(!run_ds_case(response)) return 1;
+  for(int response=-1;response<=1;response++) if(!run_vertex_case(response)) return 1;
   return 0;
 }

@@ -18,7 +18,7 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=25 };
+enum { GML_VM_STATE_SCHEMA=26 };
 enum { STATE_MAX_TILEMAPS=512, STATE_TILEMAP_RECORD_BYTES=56 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 /* IDs are assigned in canonical traversal order, never from addresses. Zero is the null array;
@@ -1685,12 +1685,12 @@ static void sw_vm(StateW *s, GmlVM *vm){
     for(int i=0;i<GML_SOFTWARE3D_STATE_COLOR_COUNT;i++) sw_u32(s,colors[i]);
   }
   {
-    size_t model_size=gml_d3_models_state_size(gml_vm_software3d_ensure(vm));
+    size_t model_size=gml_software3d_resources_state_size(gml_vm_software3d_ensure(vm));
     if(model_size>UINT32_MAX){ s->ok=0; model_size=0; }
     sw_u32(s,(uint32_t)model_size);
     if(s->data){
       if(s->pos<=s->cap && model_size<=s->cap-s->pos){
-        if(!gml_d3_models_state_save(gml_vm_software3d_ensure(vm),s->data+s->pos,model_size)) s->ok=0;
+        if(!gml_software3d_resources_state_save(gml_vm_software3d_ensure(vm),s->data+s->pos,model_size)) s->ok=0;
       } else s->ok=0;
     }
     s->pos+=model_size;
@@ -1877,7 +1877,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   }
   uint32_t model_size=sr_u32(&s);
   if(s.ok && s.pos<=s.cap && model_size<=s.cap-s.pos){
-    if(!gml_d3_models_state_load(gml_vm_software3d_ensure(vm),s.data+s.pos,model_size)) s.ok=0;
+    if(!gml_software3d_resources_state_load(gml_vm_software3d_ensure(vm),s.data+s.pos,model_size)) s.ok=0;
     s.pos+=model_size;
   } else s.ok=0;
   int count=sr_i32(&s);

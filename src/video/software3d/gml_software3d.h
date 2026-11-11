@@ -166,6 +166,13 @@ int gml_software3d_vertex_format_element_info(const GmlSoftware3D *software3d,
                                                GmlSoftware3DVertexElementInfo *out);
 int gml_software3d_vertex_buffer_create(GmlSoftware3D *software3d,
                                         int reserve_bytes);
+int gml_software3d_vertex_buffer_from_bytes(GmlSoftware3D *software3d,int format,
+                                            const void *data,size_t size);
+int gml_software3d_vertex_buffer_write(GmlSoftware3D *software3d,int id,size_t offset,
+                                       const void *data,size_t size);
+int gml_software3d_vertex_buffer_copy(GmlSoftware3D *software3d,int destination,
+                                      size_t destination_vertex,int source,
+                                      size_t source_vertex,size_t count);
 void gml_software3d_vertex_buffer_delete(GmlSoftware3D *software3d,int id);
 int gml_software3d_vertex_buffer_exists(const GmlSoftware3D *software3d,int id);
 int gml_software3d_vertex_buffer_begin(GmlSoftware3D *software3d,
@@ -272,8 +279,8 @@ void gml_software3d_state_set(
   const int flags[GML_SOFTWARE3D_STATE_FLAG_COUNT],
   const double values[GML_SOFTWARE3D_STATE_VALUE_COUNT],
   const uint32_t colors[GML_SOFTWARE3D_STATE_COLOR_COUNT]);
-size_t gml_d3_models_state_size(GmlSoftware3D *software3d);
-int gml_d3_models_state_save(GmlSoftware3D *software3d,void *data,size_t capacity);
-int gml_d3_models_state_load(GmlSoftware3D *software3d,const void *data,size_t size);
+size_t gml_software3d_resources_state_size(GmlSoftware3D *software3d);
+int gml_software3d_resources_state_save(GmlSoftware3D *software3d,void *data,size_t capacity);
+int gml_software3d_resources_state_load(GmlSoftware3D *software3d,const void *data,size_t size);
 
 #endif

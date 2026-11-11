@@ -12,8 +12,7 @@ typedef GmlSoftware3DVertex GmlD3Vertex;
 
 /* Vertex formats and buffers are runtime resources independent of
  * the legacy d3d_model API.  The software backend stores a canonical vertex
- * rather than mirroring a host GPU layout; format stride is still tracked so
- * the public size/query functions retain their documented byte semantics. */
+ * alongside the original attribute bytes used by buffer transfers. */
 #define GML_VERTEX_FORMAT_MAX 128
 #define GML_VERTEX_BUFFER_MAX 256
 #define GML_VERTEX_ATTR_MAX 16
@@ -34,9 +33,12 @@ typedef struct {
 } GmlVertexFormat;
 typedef struct {
   int used,frozen,format,attr_index,reserve_bytes;
+  GmlVertexFormat layout;
   GmlD3Vertex partial;
   GmlD3Vertex *vertex;
   int vertex_n,vertex_cap;
+  unsigned char *data;
+  size_t data_size,data_cap;
 } GmlVertexBuffer;
 typedef struct {
   int active, hidden, culling, ortho, classic;
