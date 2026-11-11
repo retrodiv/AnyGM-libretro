@@ -481,6 +481,45 @@ static int layers_case(void){
   }
   return ok;
 }
+static int forced_layer_depth_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlWin win={0};
+    GmlVM vm={.win=&win};
+    vm.particles=gml_particle_state_create(&vm);
+    gml_vm_software3d_reset(&vm);
+    if(!vm.particles){ gml_vm_free(&vm); return 0; }
+    const char *depth="layer_get_forced_depth",*enabled="layer_is_draw_depth_forced";
+    ok &= real_is(query(&vm,depth,NULL,0,cached,&ok),0);
+    ok &= real_is(query(&vm,enabled,NULL,0,cached,&ok),0);
+    GmlVal initial[]={vreal(81),vstr("sample")};
+    GmlVal layer=query(&vm,"layer_create",initial,2,cached,&ok);
+    GmlVal force[]={vreal(1),vreal(-12.75)};
+    query(&vm,"layer_force_draw_depth",force,2,cached,&ok);
+    ok &= real_is(query(&vm,depth,NULL,0,cached,&ok),-12);
+    ok &= real_is(query(&vm,enabled,NULL,0,cached,&ok),1);
+    ok &= real_is(query(&vm,"layer_get_depth",&layer,1,cached,&ok),81);
+
+    size_t size=gml_vm_state_size(&vm),written=0,used=0;
+    void *state=malloc(size);
+    int saved=state && gml_vm_state_save(&vm,state,size,&written);
+    force[0]=vreal(0); force[1]=vreal(20);
+    query(&vm,"layer_force_draw_depth",force,2,cached,&ok);
+    ok &= real_is(query(&vm,depth,NULL,0,cached,&ok),20);
+    ok &= real_is(query(&vm,enabled,NULL,0,cached,&ok),0);
+    force[0]=vreal(1); force[1]=vreal(NAN);
+    query(&vm,"layer_force_draw_depth",force,2,cached,&ok);
+    ok &= real_is(query(&vm,depth,NULL,0,cached,&ok),20);
+    ok &= real_is(query(&vm,enabled,NULL,0,cached,&ok),0);
+    ok &= saved && gml_vm_state_load(&vm,state,written,&used) && used==written;
+    ok &= real_is(query(&vm,depth,NULL,0,cached,&ok),-12);
+    ok &= real_is(query(&vm,enabled,NULL,0,cached,&ok),1);
+    free(state);
+    gml_vm_free(&vm);
+  }
+  if(ok) puts("forced layer depth: default, signed value, toggle and restore passed");
+  return ok;
+}
 static int alpha_case(void){
   GmlRender render={0}; GmlVM vm={.render=&render}; int ok=1;
   for(int enabled=1;enabled>=0;enabled--){
@@ -866,7 +905,8 @@ int main(int argc,char **argv){
     {"display_frequency",display_frequency_case},
     {"explicit_default_speed",explicit_default_speed_case},{"circle_precision",circle_case},
     {"application_surface_lifetime",application_surface_lifetime_case},{"shader_asset_names",shader_case},
-    {"all_live_layers_at_depth",layers_case},{"retired_alpha_controls",alpha_case},
+    {"all_live_layers_at_depth",layers_case},{"forced_layer_depth",forced_layer_depth_case},
+    {"retired_alpha_controls",alpha_case},
     {"integer_layer_depth",layer_integer_depth_case},{"alpha_reference_bounds",alpha_reference_bounds_case},
     {"background_source_region",background_part_case},{"background_name_alias",background_names_case},
     {"authored_font_styles",font_styles_case},{"runtime_font_styles",runtime_font_styles_case},

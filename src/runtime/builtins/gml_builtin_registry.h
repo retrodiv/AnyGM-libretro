@@ -1961,7 +1961,9 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1863, TILE_GET_TOP, "tile_get_top", LAYERS, LAYERS_LATE, ALWAYS) \
   ENTRY(1864, TILE_GET_IDS_AT_DEPTH, "tile_get_ids_at_depth", LAYERS, LAYERS_LATE, ALWAYS) \
   ENTRY(1865, TILE_SET_ALPHA, "tile_set_alpha", LAYERS, LAYERS_LATE, ALWAYS) \
-  ENTRY(1866, TILE_SET_VISIBLE, "tile_set_visible", LAYERS, LAYERS_LATE, ALWAYS)
+  ENTRY(1866, TILE_SET_VISIBLE, "tile_set_visible", LAYERS, LAYERS_LATE, ALWAYS) \
+  ENTRY(1867, LAYER_GET_FORCED_DEPTH, "layer_get_forced_depth", PLATFORM, PLATFORM_EXTENSIONS, ALWAYS) \
+  ENTRY(1868, LAYER_IS_DRAW_DEPTH_FORCED, "layer_is_draw_depth_forced", PLATFORM, PLATFORM_EXTENSIONS, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -1976,7 +1978,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1867
+  GML_BUILTIN_ID_LIMIT = 1869
 } GmlBuiltinId;
 
 #endif

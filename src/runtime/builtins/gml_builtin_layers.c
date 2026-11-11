@@ -181,7 +181,21 @@ int builtin_layer_exact(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out
       gml_set_global_arr(vm,"__gml_layer_shader",slot,shader>=0?shader+1:0); }
     *out=vreal(0); return 1;
   }
-  if(!strcmp(nm,"layer_force_draw_depth")||!strcmp(nm,"layer_reset_target_all")){
+  if(!strcmp(nm,"layer_force_draw_depth")){
+    double depth=layer_depth_argument(N(a,n,1));
+    if(n>=2 && isfinite(depth)){
+      gml_set_global_scalar(vm,"__gml_layer_force_depth",N(a,n,0)>=0.5);
+      gml_set_global_scalar(vm,"__gml_layer_forced_depth",depth);
+    }
+    *out=vreal(0); return 1;
+  }
+  if(!strcmp(nm,"layer_is_draw_depth_forced")){
+    *out=vreal(gml_global_num(vm,"__gml_layer_force_depth")!=0); return 1;
+  }
+  if(!strcmp(nm,"layer_get_forced_depth")){
+    *out=vreal(gml_global_num(vm,"__gml_layer_forced_depth")); return 1;
+  }
+  if(!strcmp(nm,"layer_reset_target_all")){
     *out=vreal(0); return 1;
   }
 
