@@ -575,6 +575,7 @@ void    gml_vm_rebind(GmlVM *vm,GmlWin *win,const AnygmHostServices *host);
 void    gml_vm_free(GmlVM *vm);
 void    gml_vm_fire_game_end(GmlVM *vm);
 void    gml_vm_set_launch_parameters(GmlVM *vm,const char *executable,const char *parameters);
+void    gml_mouse_track(GmlVM *vm);                     /* refresh mouse_lastbutton from new presses */
 void    gml_keyboard_track(GmlVM *vm);                  /* refresh keyboard_key/keyboard_lastkey */
 int     gml_vm_wait_resume(GmlVM *vm);                  /* 1 = the parked event finished, 0 = still waiting */
 void    gml_vm_wait_cancel(GmlVM *vm);                  /* discard a parked run and its frames */

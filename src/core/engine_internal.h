@@ -368,7 +368,7 @@ struct AnygmEngine {
   /* Track a virtual cursor warp against absolute host pointer readings. */
   int mouse_warped;
   double mouse_host_x,mouse_host_y;
-  uint8_t mouse_button_current[3],mouse_button_previous[3];
+  uint8_t mouse_button_current[ANYGM_MAX_MOUSE_BUTTONS],mouse_button_previous[ANYGM_MAX_MOUSE_BUTTONS];
   /* Held suppression is canonical; cleared edge observations last only this poll. */
   uint8_t mouse_button_cleared,mouse_button_edges_cleared;
   int mouse_wheel;

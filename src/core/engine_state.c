@@ -729,7 +729,7 @@ bool state_unserialize_impl(AnygmEngine *engine,const void *d, size_t n, int sch
   memset(engine->key_press_raised,0,sizeof engine->key_press_raised);
   memset(engine->key_press_step,0,sizeof engine->key_press_step);
   uint32_t mouse_cleared=cr_u32(&core);
-  if(mouse_cleared>7u) return false;
+  if(mouse_cleared>31u) return false;
   engine->mouse_button_cleared=(uint8_t)mouse_cleared;
   engine->mouse_button_edges_cleared=0;
   if(!state_read_completed_frame(engine,&core)) return false;

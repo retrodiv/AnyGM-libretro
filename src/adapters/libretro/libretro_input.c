@@ -236,6 +236,8 @@ pointer_state:
   input->mouse_buttons[0]=input_state(0,RETRO_DEVICE_MOUSE,0,RETRO_DEVICE_ID_MOUSE_LEFT)?1u:0u;
   input->mouse_buttons[1]=input_state(0,RETRO_DEVICE_MOUSE,0,RETRO_DEVICE_ID_MOUSE_RIGHT)?1u:0u;
   input->mouse_buttons[2]=input_state(0,RETRO_DEVICE_MOUSE,0,RETRO_DEVICE_ID_MOUSE_MIDDLE)?1u:0u;
+  input->mouse_buttons[3]=input_state(0,RETRO_DEVICE_MOUSE,0,RETRO_DEVICE_ID_MOUSE_BUTTON_4)?1u:0u;
+  input->mouse_buttons[4]=input_state(0,RETRO_DEVICE_MOUSE,0,RETRO_DEVICE_ID_MOUSE_BUTTON_5)?1u:0u;
   if(input_state(0,RETRO_DEVICE_MOUSE,0,RETRO_DEVICE_ID_MOUSE_WHEELUP)) input->wheel_delta++;
   if(input_state(0,RETRO_DEVICE_MOUSE,0,RETRO_DEVICE_ID_MOUSE_WHEELDOWN)) input->wheel_delta--;
 }

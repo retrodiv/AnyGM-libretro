@@ -44,7 +44,7 @@ static int advance(MouseSession *session,int buttons,int pointer){
   input.pointer_x=input.pointer_y=pointer?0:-1;
   input.pointer_pressed=pointer!=0;
   input.wheel_delta=2;
-  for(int i=0;i<3;i++) input.mouse_buttons[i]=(buttons&(1<<i))!=0;
+  for(unsigned i=0;i<ANYGM_MAX_MOUSE_BUTTONS;i++) input.mouse_buttons[i]=(buttons&(1<<i))!=0;
   return anygm_run_frame(session->engine,&input,&output)==ANYGM_OK;
 }
 static int observe(MouseSession *session,int held,int pressed,int released,const char *label){
@@ -55,7 +55,7 @@ static int observe(MouseSession *session,int held,int pressed,int released,const
   static const char *names[]={"mouse_check_button","mouse_check_button_pressed",
                               "mouse_check_button_released"};
   int masks[]={held,pressed,released};
-  for(int edge=0;edge<3;edge++) for(int button=1;button<=3;button++){
+  for(int edge=0;edge<3;edge++) for(int button=1;button<=5;button++){
     GmlVal arg=vreal(button);
     GmlVal result=gml_builtin_call(vm,names[edge],&arg,1);
     if(result.t!=V_REAL || result.d!=((masks[edge]&(1<<(button-1)))!=0)) ok=0;
@@ -104,7 +104,7 @@ static int temporal_case(void){
     REQUIRE(observe(&session,0,0,0,"clear while up"));
     REQUIRE(advance(&session,5,0));
     REQUIRE(observe(&session,5,5,0,"fresh left and middle press"));
-    const double ignored[]={0,4,-2,NAN,INFINITY,-INFINITY,1e100};
+    const double ignored[]={0,6,-2,NAN,INFINITY,-INFINITY,1e100};
     for(size_t i=0;i<sizeof ignored/sizeof ignored[0];i++){
       REQUIRE(clear_button(&session,ignored[i],cached));
       REQUIRE(observe(&session,5,5,0,"invalid button is harmless"));
@@ -209,10 +209,60 @@ done:
   free(saved); free(again); close_session(&session); return ok;
 }
 
+static double selector(MouseSession *session,const char *name){
+  return gml_global_num(&session->engine->vm,name);
+}
+static int selectors_case(void){
+  MouseSession session={0},second={0}; int ok=0;
+  uint8_t *saved=NULL,*again=NULL;size_t size=0,again_size=0;
+  REQUIRE(open_session(&session) && open_session(&second));
+  REQUIRE(selector(&session,"mouse_button")==0 && selector(&session,"mouse_lastbutton")==0);
+  REQUIRE(advance(&session,1,0));
+  REQUIRE(selector(&session,"mouse_button")==1 && selector(&session,"mouse_lastbutton")==1);
+  REQUIRE(advance(&session,17,0));
+  REQUIRE(observe(&session,17,16,0,"side two is independent of left"));
+  REQUIRE(selector(&session,"mouse_button")==5 && selector(&session,"mouse_lastbutton")==5);
+  gml_vm_assign_current_scope(&session.engine->vm,"mouse_button",vreal(2));
+  REQUIRE(selector(&session,"mouse_button")==5);
+  gml_vm_assign_current_scope(&session.engine->vm,"mouse_lastbutton",vreal(0));
+  REQUIRE(advance(&session,17,0));
+  REQUIRE(selector(&session,"mouse_lastbutton")==0);
+  REQUIRE(advance(&session,1,0));
+  REQUIRE(selector(&session,"mouse_button")==1 && selector(&session,"mouse_lastbutton")==0);
+  REQUIRE(advance(&session,9,0));
+  REQUIRE(observe(&session,9,8,0,"side one is independent of left"));
+  REQUIRE(selector(&session,"mouse_button")==4 && selector(&session,"mouse_lastbutton")==4);
+  REQUIRE(clear_button(&session,4,1));
+  REQUIRE(selector(&session,"mouse_button")==0 && selector(&session,"mouse_lastbutton")==4);
+  saved=save(&session,&size,1); REQUIRE(saved);
+  REQUIRE(advance(&session,0,0) && advance(&session,16,0));
+  REQUIRE(selector(&session,"mouse_lastbutton")==5);
+  REQUIRE(anygm_state_load(session.engine,saved,size)==ANYGM_OK);
+  again=save(&session,&again_size,1);
+  REQUIRE(again && again_size==size && !memcmp(saved,again,size));
+  REQUIRE(selector(&session,"mouse_button")==0 && selector(&session,"mouse_lastbutton")==4);
+  REQUIRE(advance(&session,9,0));
+  REQUIRE(observe(&session,1,0,0,"restored side suppression survives held input"));
+  REQUIRE(advance(&session,1,0));
+  REQUIRE(observe(&session,1,0,8,"side release remains visible"));
+  REQUIRE(advance(&session,31,0));
+  REQUIRE(observe(&session,31,30,0,"all five buttons are independent"));
+  REQUIRE(selector(&session,"mouse_button")==5 && selector(&session,"mouse_lastbutton")==5);
+  REQUIRE(clear_button(&session,-1,0));
+  REQUIRE(observe(&session,0,0,0,"all-button clear includes both sides"));
+  REQUIRE(selector(&session,"mouse_button")==0 && selector(&session,"mouse_lastbutton")==5);
+  REQUIRE(selector(&second,"mouse_button")==0 && selector(&second,"mouse_lastbutton")==0);
+  REQUIRE(anygm_reset(session.engine)==ANYGM_OK);
+  REQUIRE(selector(&session,"mouse_button")==0 && selector(&session,"mouse_lastbutton")==0);
+  ok=1;
+done:
+  free(saved);free(again);close_session(&session);close_session(&second);return ok;
+}
+
 int main(int argc,char **argv){
   static const AnygmTestCase cases[]={
     {"temporal",temporal_case}, {"isolation",isolation_case},
-    {"restoration",restoration_case}, {"cold_restoration",cold_restoration_case}
+    {"restoration",restoration_case}, {"cold_restoration",cold_restoration_case}, {"selectors",selectors_case}
   };
   AnygmTestGroup group={"mouse",cases,sizeof cases/sizeof cases[0]};
   AnygmTestResult result={0};

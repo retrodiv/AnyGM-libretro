@@ -142,7 +142,7 @@ static void fixture_map(FixtureProjection *p){
  * against the live fixture. Direct state controls cover mutation/restoration of these fields. */
 static int project_fixture_playback(AnygmEngine *engine,uint8_t **data,size_t *written){
   uint8_t *bytes=*data;
-  if(*written<112 || (uint32_t)read_u64(bytes+4)!=56 || engine->render.n_spr<0)return 0;
+  if(*written<112 || (uint32_t)read_u64(bytes+4)!=57 || engine->render.n_spr<0)return 0;
   /* Only a neutral current blend may disappear from this historical scratch pin. */
   size_t render=112+(size_t)read_u64(bytes+64),render_size=(size_t)read_u64(bytes+72);
   const uint8_t neutral_blend[12]={0,0,0,0,1,0,0,0,1,0,0,0};
@@ -367,7 +367,7 @@ static int fixture_projection_controls(AnygmEngine *engine,const uint8_t *baseli
     free(bytes);engine->vm.script_args[0]=original;gml_values_release_owned(&array,1);
   }
   engine->vm.script_args[0]=original;
-  const uint32_t unknown_roots[]={50,51,52,53,54,55,57};
+  const uint32_t unknown_roots[]={50,51,52,53,54,55,56,58};
   for(unsigned i=0;i<sizeof unknown_roots/sizeof unknown_roots[0] && ok;i++){
     uint8_t *bytes=NULL;size_t count=0;
     ok=save_state(engine,&bytes,&count);

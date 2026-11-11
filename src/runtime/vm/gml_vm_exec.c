@@ -484,7 +484,7 @@ static const char *const g_special_var_names[]={
   "brush_color","brush_style","pen_color","pen_size",
   "bs_hollow","bs_solid",
   "bboxmode_automatic","bboxmode_fullimage","bboxmode_manual",
-  "event_type","event_number","mouse_x","mouse_y",
+  "event_type","event_number","mouse_x","mouse_y","mouse_button","mouse_lastbutton",
   "current_time","current_second","current_minute","current_hour","current_day","current_weekday",
   "current_month","current_year","os_type","os_windows","os_uwp","os_xboxone","os_ps3","os_ps4","os_psvita",
   "os_macosx","os_linux","os_ios","os_android","os_unknown","os_switch_operating_system","room_width",
@@ -738,6 +738,11 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
     GmlRoom r; if(gml_vm_room_get(vm,vm->room_index,&r)==0)
       return vreal(name[5]=='w'? (double)r.width : (double)r.height);
     return vreal(0); }
+  if((!strcmp(name,"mouse_button") || !strcmp(name,"mouse_lastbutton")) &&
+     !inst_is_struct_ref(var_target(vm,inst))){
+    GmlVal *slot=gml_varmap_get_hashed(&vm->globals,name,nh);
+    return slot?vreal(asnum(*slot)):vreal(0);
+  }
   if(!strcmp(name,"mouse_x")||!strcmp(name,"mouse_y")){   /* GM built-in: mouse in room coords */
     double mx,my; gml_input_mouse(vm,&mx,&my,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
     return vreal(name[6]=='x'? mx : my); }
@@ -863,7 +868,7 @@ static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal
       return;
     }
   }
-  if(!strcmp(name,"game_id") || !strcmp(name,"instance_id")) return;
+  if(!strcmp(name,"game_id") || !strcmp(name,"instance_id") || !strcmp(name,"mouse_button")) return;
   if(!strcmp(name,"room")){
     int target=(int)asnum(v);
     gml_vm_warm_audio_for_room(vm,target);
@@ -872,6 +877,10 @@ static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal
   if(argument_set(vm,name,v)) return;
   /* Content clears these by assignment ("keyboard_key = 0" after acting on a key), so they are
    * writable variables and not read-only reports. */
+  if(!strcmp(name,"mouse_lastbutton")){
+    *gml_varmap_put_hashed(&vm->globals,name,nh)=vreal(asnum(v));
+    return;
+  }
   if(!strcmp(name,"keyboard_key")){ vm->current_key=asnum(v); return; }
   if(!strcmp(name,"keyboard_lastkey")){ vm->last_key=asnum(v); return; }
   if(!strcmp(name,"keyboard_string") || !strcmp(name,"keyboard_lastchar")){
@@ -2438,7 +2447,11 @@ void gml_input_mouse_set(GmlVM *vm,double x,double y){
   if(vm&&vm->input.mouse_set) vm->input.mouse_set(vm->input.userdata,x,y);
 }
 void gml_input_mouse_clear(GmlVM *vm,int button){
-  if(vm&&vm->input.mouse_clear) vm->input.mouse_clear(vm->input.userdata,button);
+  if(!vm || !vm->input.mouse_clear) return;
+  vm->input.mouse_clear(vm->input.userdata,button);
+  double current=gml_global_num(vm,"mouse_button");
+  if(current!=0 && (button==-1 || (button>=1 && button<=5 && current==button)))
+    *gml_varmap_put(&vm->globals,"mouse_button")=vreal(0);
 }
 static int code_micro_maybe(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *out);
 static inline int builtin_hotprof_on(GmlVM *vm){

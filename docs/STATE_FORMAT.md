@@ -20,9 +20,15 @@ failed partial reads leave the canonical image unpublished and invalid as a
 current resource. See R03-P9-INCREMENTAL-CHECKPOINT in
 [the renderer map](RENDERER_BACKENDS.md) for owners and controls.
 
-The current AnyGM save-state schema is `56`. It is the format transported by
+The current AnyGM save-state schema is `57`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `57` expands the existing mouse suppression mask to five bits for left, right,
+middle and the two side buttons. The fixed root field offsets and VM schema `33`
+are unchanged. The writable `mouse_lastbutton` value uses the existing VM globals
+codec. Raw button snapshots remain poll-local; restoration seeds their edge baseline
+from the next host poll. Older root schemas are rejected transactionally.
 
 Schema `56` retains each sprite's bounding-box mode in the renderer's existing
 resource-metadata table. Authored sprites also retain their four mutable bounds;

@@ -65,7 +65,7 @@ static int neutral_vm_body_end_controls(const AnygmEngine *engine,
     return fail("current neutral VM trailer was not located");
   uint8_t *candidate=malloc(size);
   if(!candidate) return fail("neutral trailer control allocation");
-  const uint32_t roots[]={53,54,55,57},vms[]={31,32,34};
+  const uint32_t roots[]={53,54,55,56,58},vms[]={31,32,34};
   size_t vm_start=STATE_HEADER_SIZE+(size_t)read_u64(bytes+64)+
                   (size_t)read_u64(bytes+72);
   int ok=1;
@@ -1741,7 +1741,7 @@ int main(void){
   size_t mouse_mask_offset=key_pending_offset+
     sizeof engine->key_press_carry+sizeof engine->key_release_defer;
   if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
-                               mouse_mask_offset,8,"unsupported mouse suppression bit");
+                               mouse_mask_offset,32,"unsupported mouse suppression bit");
   if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
                                mouse_mask_offset,UINT32_MAX,"extreme mouse suppression mask");
   if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,

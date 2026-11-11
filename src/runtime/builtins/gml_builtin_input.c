@@ -263,7 +263,7 @@ GmlVal gml_builtin_try_input(GmlVM *vm, const char *nm, GmlVal *a, int n){
   /* ---- mouse (the host pointer/mouse device via gml_input_mouse) ---- */
   if(!strcmp(nm,"mouse_clear")){
     double button=N(a,n,0);
-    if(n>=1 && isfinite(button) && button>-2.0 && button<4.0)
+    if(n>=1 && isfinite(button) && button>-2.0 && button<6.0)
       gml_input_mouse_clear(vm,(int)button);
     return vundef();
   }

@@ -397,6 +397,7 @@ static int gml_vm_finish_classic_room_request(GmlVM *vm,int previous_alloc_base)
 void gml_vm_step(GmlVM *vm){
   /* Before any modal hold, because the two variables a held frame is waiting on are exactly these. */
   gml_keyboard_track(vm);
+  gml_mouse_track(vm);
   if(vm && vm->classic_info_active){
     if(gml_keyboard_check(vm,1,1)) vm->classic_info_active=0;
     return;

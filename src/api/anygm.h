@@ -15,15 +15,16 @@ extern "C" {
  * runtime library version, and every publishable metadata file declares the literal "Git" instead
  * of a number, so no copy can promise a value that has gone stale. CONTRIBUTING.md owns the single
  * increment step. */
-#define ANYGM_VERSION "0.1.811"
-#define ANYGM_API_VERSION 7u
+#define ANYGM_VERSION "0.1.812"
+#define ANYGM_API_VERSION 8u
 #define ANYGM_HOST_SERVICES_VERSION 2u
-#define ANYGM_STATE_SCHEMA 56u
+#define ANYGM_STATE_SCHEMA 57u
 #define ANYGM_MAX_GAMEPADS 4u
 #define ANYGM_MAX_GAMEPAD_BUTTONS 16u
 #define ANYGM_MAX_GAMEPAD_AXES 4u
 /* gamepad_connected: beyond Off (0) and On (1), the default resolves per content. */
 #define ANYGM_GAMEPAD_AUTO 2u
+#define ANYGM_MAX_MOUSE_BUTTONS 5u
 #define ANYGM_MAX_KEYS 512u
 #define ANYGM_MAX_TEXT_EVENTS 256u
 #define ANYGM_MAX_RUNTIME_OVERRIDES 256u
@@ -475,7 +476,8 @@ typedef struct AnygmInputFrame {
   int32_t mouse_delta_x;
   int32_t mouse_delta_y;
   int32_t wheel_delta;
-  uint8_t mouse_buttons[3];
+  /* Left, right, middle, side one, side two. */
+  uint8_t mouse_buttons[ANYGM_MAX_MOUSE_BUTTONS];
   uint8_t pointer_pressed;
   /* Ordered Unicode scalar values delivered by the host, not inferred from
    * held keys. U+0008 erases the preceding character. Other controls and

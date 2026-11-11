@@ -717,16 +717,16 @@ double gp_axis_value_filtered(GmlVM *vm, int dev, int ax){
   double dz = gp_deadzone_get(vm,dev);
   return fabs(v) < dz ? 0.0 : v;
 }
-/* GM mouse button constant -> state bitmask: mb_left=1,mb_right=2,mb_middle=3,mb_any=-1,mb_none=0 */
+/* GM mouse button constant -> state bitmask: mb_left=1,mb_right=2,mb_middle=3,mb_side1=4,mb_side2=5,mb_any=-1,mb_none=0 */
 static int mb_mask(int mb){
-  switch(mb){ case 1: return 1; case 2: return 2; case 3: return 4; case -1: return 7; default: return 0; }
+  switch(mb){ case 1: return 1; case 2: return 2; case 3: return 4; case 4: return 8; case 5: return 16; case -1: return 31; default: return 0; }
 }
 int mouse_btn_check(GmlVM *vm,int mb, int edge){
   int held, pressed, released;
   gml_input_mouse(vm,NULL,NULL,NULL,NULL,NULL,NULL,&held,&pressed,&released,NULL);
   int m = mb_mask(mb);
   int v = edge==1 ? pressed : edge==2 ? released : held;
-  int r = (mb==0) ? !(v&7) : ((v & m) != 0);
+  int r = (mb==0) ? !(v&31) : ((v & m) != 0);
   return r;
 }
 

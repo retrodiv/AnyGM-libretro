@@ -254,10 +254,16 @@ static int live_state_case(int response,unsigned source_width,unsigned source_he
   retro_run();
   REQUIRE(video_width==adjusted_width && video_height==adjusted_height,"restored frame uses current CRT policy");
   logical_on=0; changed=1; retro_run();
-  REQUIRE(video_width==1280 && video_height==960 && !g_libretro.engine->host_crt_active,
-          "CRT ignored with logical raster off");
+  REQUIRE(video_width==adjusted_width && video_height==adjusted_height &&
+          g_libretro.engine->host_crt_active && g_libretro.engine->config.present_logical_raster,
+          "CRT forces logical raster despite the stored off selection");
+  REQUIRE(snapshot(&ring,&capacity,initial),"forced logical snapshot");
+  crt_on=0; changed=1; retro_run();
+  REQUIRE(video_width==1280 && video_height==960 && !g_libretro.engine->host_crt_active &&
+          !g_libretro.engine->config.present_logical_raster,
+          "disabling CRT restores the stored monitor raster");
   REQUIRE(snapshot(&ring,&capacity,initial),"monitor snapshot");
-  logical_on=1; changed=1; retro_run();
+  crt_on=1; logical_on=1; changed=1; retro_run();
   REQUIRE(video_width==adjusted_width && video_height==adjusted_height,"remembered CRT selection");
   retro_reset();
   REQUIRE(snapshot(&ring,&capacity,initial),"cold Reset snapshot in original ring");

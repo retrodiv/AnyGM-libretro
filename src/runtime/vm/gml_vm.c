@@ -223,6 +223,27 @@ void gml_keyboard_track(GmlVM *vm){
   }
   vm->current_key=held;
 }
+/* A snapshot has no within-poll event order: simultaneous new presses choose the highest
+ * button number. Keep both public selectors in the existing globals/state owner. */
+void gml_mouse_track(GmlVM *vm){
+  if(!vm) return;
+  int held=0,pressed=0,current=0,next=0,last=0;
+  gml_input_mouse(vm,NULL,NULL,NULL,NULL,NULL,NULL,&held,&pressed,NULL,NULL);
+  double previous=gml_global_num(vm,"mouse_button");
+  for(int button=1;button<=5;button++){
+    if(previous==button) current=button;
+    if(pressed & (1<<(button-1))) last=button;
+  }
+  next=current;
+  if(last) next=last;
+  else if(current && !(held & (1<<(current-1)))){
+    next=0;
+    for(int button=1;button<=5;button++)
+      if(held & (1<<(button-1))) next=button;
+  }
+  if(next!=current) *gml_varmap_put(&vm->globals,"mouse_button")=vreal(next);
+  if(last) *gml_varmap_put(&vm->globals,"mouse_lastbutton")=vreal(last);
+}
 int gml_keyboard_check(GmlVM *vm, int vk, int edge){
   if(!vm) return 0;
   if(edge<0 || edge>2) edge=0;

@@ -239,7 +239,7 @@ static int resolve_const(Compiler *c, const char *name, double *out){
   if(!strcmp(name,"c_white")){ *out=16777215; return 1; }
   if(!strcmp(name,"c_lime")){ *out=65280; return 1; }
   static const struct { const char *name; int value; } mouse_buttons[]={
-    {"mb_any",-1}, {"mb_none",0}, {"mb_left",1}, {"mb_right",2}, {"mb_middle",3}
+    {"mb_any",-1}, {"mb_none",0}, {"mb_left",1}, {"mb_right",2}, {"mb_middle",3}, {"mb_side1",4}, {"mb_side2",5}
   };
   for(int i=0;i<(int)(sizeof(mouse_buttons)/sizeof(*mouse_buttons));i++)
     if(!strcmp(name,mouse_buttons[i].name)){ *out=mouse_buttons[i].value; return 1; }

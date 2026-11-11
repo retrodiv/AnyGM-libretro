@@ -10,8 +10,16 @@
 
 /* Each port holds a different button, so an answer taken from the wrong one is visible rather than
  * merely unproven. */
+static unsigned mouse_mask;
 static int16_t input_state_callback(unsigned port,unsigned device,unsigned index,unsigned id){
   (void)index;
+  if(device==RETRO_DEVICE_MOUSE){
+    static const unsigned ids[]={RETRO_DEVICE_ID_MOUSE_LEFT,RETRO_DEVICE_ID_MOUSE_RIGHT,
+      RETRO_DEVICE_ID_MOUSE_MIDDLE,RETRO_DEVICE_ID_MOUSE_BUTTON_4,RETRO_DEVICE_ID_MOUSE_BUTTON_5};
+    for(unsigned button=0;button<ANYGM_MAX_MOUSE_BUTTONS;button++)
+      if(id==ids[button]) return (mouse_mask&(1u<<button))!=0;
+    return 0;
+  }
   if(device!=RETRO_DEVICE_JOYPAD) return 0;
   switch(port){
     case 0: return id==RETRO_DEVICE_ID_JOYPAD_RIGHT;
@@ -71,6 +79,14 @@ static void keyboard_emulation_reports_no_pads(void){
 }
 
 int main(void){
+  for(mouse_mask=0;mouse_mask<32;mouse_mask++){
+    AnygmInputFrame input;
+    snapshot(&input,ANYGM_GAMEPAD_AUTO);
+    for(unsigned button=0;button<ANYGM_MAX_MOUSE_BUTTONS;button++)
+      expect(input.mouse_buttons[button]==((mouse_mask&(1u<<button))!=0),
+             "mouse snapshot lost or aliased a button");
+  }
+  mouse_mask=0;
   every_port_carries_its_own_device();
   keyboard_emulation_reports_no_pads();
   if(failures) return 1;

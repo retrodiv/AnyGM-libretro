@@ -28,7 +28,7 @@ static void fail(const char *label){
  * pass by covering only its first entries. */
 static const char *const recognized_names[]={
   "undefined","game_id","room","room_speed","fps","delta_time","view_current","view_enabled",
-  "background_color","event_type","mouse_x","current_time","os_type","os_windows",
+  "background_color","event_type","mouse_x","mouse_button","mouse_lastbutton","current_time","os_type","os_windows",
   "room_width","room_height","instance_count","health","lives","score","id","object_index",
   "sprite_width","image_number","x","y","xprevious","sprite_index","image_index","image_alpha",
   "depth","visible","solid","hspeed","vspeed","direction","speed","layer",

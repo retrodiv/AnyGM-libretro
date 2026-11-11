@@ -392,3 +392,15 @@ A new adapter is ready when it can:
 - save and restore state transactionally;
 - report diagnostics only through its host callback; and
 - shut down with no open VFS handles or adapter-owned callbacks still in use.
+
+### Mouse selectors
+
+The input frame carries left, right, middle and two side buttons in that order.
+`mouse_button` reports the most recently pressed button still selected and is
+read-only. Releasing that button selects the highest remaining held button.
+`mouse_lastbutton` retains the last press across release and accepts assignments.
+Clearing the current button resets its selector without erasing the last press.
+The snapshot interface cannot preserve event order inside a poll: simultaneous
+new presses choose the highest button number deterministically. This is a portable
+policy, not a measurement of native event ordering. Both selectors use the existing
+VM globals/state owner in CPU and OpenGL sessions; no drawing fallback is added.

@@ -402,14 +402,14 @@ void engine_input_poll_mouse(AnygmEngine *engine){
     if(engine->mouse_pixel_y < 0) engine->mouse_pixel_y = 0;
   }
   engine->mouse_button_current[0]=(engine->input.mouse_buttons[0]!=0) || pp;
-  engine->mouse_button_current[1]=engine->input.mouse_buttons[1]!=0;
-  engine->mouse_button_current[2]=engine->input.mouse_buttons[2]!=0;
+  for(unsigned i=1;i<ANYGM_MAX_MOUSE_BUTTONS;i++)
+    engine->mouse_button_current[i]=engine->input.mouse_buttons[i]!=0;
   engine->mouse_button_edges_cleared=0;
-  for(int i=0;i<3;i++)
+  for(unsigned i=0;i<ANYGM_MAX_MOUSE_BUTTONS;i++)
     if(!engine->mouse_button_current[i]) engine->mouse_button_cleared&=~(1u<<i);
 }
 /* Fill GM-space mouse state. Spaces: room (view transform), GUI (display_set_gui_size space),
- * window (presented-frame px). held/pressed/released are bitmasks: bit0=left,1=right,2=middle. */
+ * window (presented-frame px). held/pressed/released are bitmasks: bit0=left,1=right,2=middle,3=side one,4=side two. */
 static void engine_input_mouse(void *userdata,double *rx, double *ry, double *gx, double *gy, double *wx, double *wy,
                      int *held, int *pressed, int *released, int *wheel){
   AnygmEngine *engine=userdata;
@@ -475,11 +475,13 @@ static void engine_input_mouse(void *userdata,double *rx, double *ry, double *gx
     if(rx) *rx = roomx;
     if(ry) *ry = roomy;
   }
-  int h = (engine->mouse_button_current[0] ? 1 : 0) | (engine->mouse_button_current[1] ? 2 : 0) | (engine->mouse_button_current[2] ? 4 : 0);
-  int p = ((engine->mouse_button_current[0] && !engine->mouse_button_previous[0]) ? 1 : 0) | ((engine->mouse_button_current[1] && !engine->mouse_button_previous[1]) ? 2 : 0) |
-          ((engine->mouse_button_current[2] && !engine->mouse_button_previous[2]) ? 4 : 0);
-  int r = ((!engine->mouse_button_current[0] && engine->mouse_button_previous[0]) ? 1 : 0) | ((!engine->mouse_button_current[1] && engine->mouse_button_previous[1]) ? 2 : 0) |
-          ((!engine->mouse_button_current[2] && engine->mouse_button_previous[2]) ? 4 : 0);
+  int h=0,p=0,r=0;
+  for(unsigned i=0;i<ANYGM_MAX_MOUSE_BUTTONS;i++){
+    int bit=1<<i;
+    if(engine->mouse_button_current[i]) h|=bit;
+    if(engine->mouse_button_current[i] && !engine->mouse_button_previous[i]) p|=bit;
+    if(!engine->mouse_button_current[i] && engine->mouse_button_previous[i]) r|=bit;
+  }
   int cleared_edges=engine->mouse_button_cleared | engine->mouse_button_edges_cleared;
   if(held) *held = h & ~engine->mouse_button_cleared;
   if(pressed) *pressed = p & ~cleared_edges;
@@ -488,9 +490,9 @@ static void engine_input_mouse(void *userdata,double *rx, double *ry, double *gx
 }
 static void engine_input_mouse_clear(void *userdata,int button){
   AnygmEngine *engine=userdata;
-  unsigned mask=button==-1?7u:(button>=1 && button<=3?1u<<(button-1):0u);
+  unsigned mask=button==-1?31u:(button>=1 && button<=5?1u<<(button-1):0u);
   engine->mouse_button_edges_cleared|=mask;
-  for(int i=0;i<3;i++)
+  for(unsigned i=0;i<ANYGM_MAX_MOUSE_BUTTONS;i++)
     if(engine->mouse_button_current[i]) engine->mouse_button_cleared|=mask & (1u<<i);
 }
 static void engine_input_mouse_set(void *userdata,double x, double y){

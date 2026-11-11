@@ -335,10 +335,25 @@ static int run_ds_case(int response){
   size_t vm_end=112+(size_t)read_word64(saved+64)+(size_t)read_word64(saved+72)+
                      (size_t)read_word64(saved+80);
   size_t object_bytes=4+28*(size_t)g_libretro.engine->vm.n_objects;
-  REQUIRE(vm_end>=object_bytes+4 && vm_end<=saved_size &&
-          !memcmp(saved+vm_end-4,(const unsigned char[4]){0},4),
-          "locate VM object table before the empty order trailer");
-  memset(ring.bytes+vm_end-4-object_bytes,255,4);
+  /* This neutral fixture has neither reordered instances nor array ownership. Validate both
+   * trailers and every original object word before corrupting the count, not a property. */
+  const size_t trailer_bytes=24; /* order count, then the empty ownership trailer */
+  REQUIRE(vm_end>=object_bytes+trailer_bytes && vm_end<=saved_size &&
+          !g_libretro.engine->vm.next_array_owner &&
+          !memcmp(saved+vm_end-trailer_bytes,(const unsigned char[24]){0},trailer_bytes),
+          "locate VM object table before empty order and ownership trailers");
+  size_t object_at=vm_end-trailer_bytes-object_bytes;
+  REQUIRE((uint32_t)read_word64(saved+object_at)==(uint32_t)g_libretro.engine->vm.n_objects,
+          "verify original object-table count before corruption");
+  for(int object=0;object<g_libretro.engine->vm.n_objects;object++){
+    const GmlObject *live=&g_libretro.engine->vm.objects[object];
+    const int words[]={live->sprite_index,live->mask_index,live->parent,live->depth,
+                       live->visible,live->solid,live->persistent};
+    for(unsigned word=0;word<7;word++)
+      REQUIRE((uint32_t)read_word64(saved+object_at+4+28*(size_t)object+4*word)==
+              (uint32_t)words[word],"verify original object words before corruption");
+  }
+  memset(ring.bytes+object_at,255,4);
   size_t payload_size=(size_t)read_word64(saved+96);
   REQUIRE(payload_size<=saved_size-112,"validate payload checksum span");
   write_word64(ring.bytes+56,payload_hash(ring.bytes+112,payload_size));
