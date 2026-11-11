@@ -533,11 +533,7 @@ void gml_vm_free(GmlVM *vm){
   for(int i=0;i<vm->n_objects;i++) free(vm->objects[i].events);
   gml_vm_paths_clear(vm);
   gml_vm_sequences_clear(vm);
-  for(int i=0;i<vm->n_timelines;i++){
-    free(vm->timelines[i].moments);
-    free(vm->timelines[i].owned_name);
-  }
-  free(vm->timelines);
+  gml_vm_timelines_clear(vm);
   free(vm->objects); free(vm->col_events); free(vm->col_pair_cache); free(vm->event_cache);
   gml_vm_rooms_clear_tilemaps(vm);
   free(vm->rtl); free(vm->rte); free(vm->view_ovr); free(vm->tilemaps);

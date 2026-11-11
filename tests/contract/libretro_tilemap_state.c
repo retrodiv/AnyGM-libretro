@@ -432,9 +432,68 @@ done:
   return ok;
 }
 
+static int run_timeline_case(int response){
+  AnygmSyntheticContent fixture={0}; Ring ring={0};
+  uint8_t *cold=NULL,*saved=NULL; size_t saved_size=0;
+  int ok=1;
+  negotiation=response; monitor_changed=option_update=0;
+  REQUIRE(anygm_synthetic_tilemap_content_create(&fixture),"create timeline capacity fixture");
+  retro_set_environment(environment); retro_set_video_refresh(video); retro_init();
+  struct retro_game_info info={fixture.path,NULL,0,NULL};
+  REQUIRE(retro_load_game(&info),"load timeline capacity fixture");
+  ring.initial=ring.capacity=retro_serialize_size();
+  REQUIRE(ring.capacity>0 && g_libretro.startup_ring_compact,"timeline cold compact policy");
+  ring.bytes=malloc(ring.capacity); cold=malloc(ring.capacity);
+  REQUIRE(ring.bytes && cold && push(&ring),"timeline ring before first frame");
+  memcpy(cold,ring.bytes,ring.initial); retro_run();
+  REQUIRE(push(&ring),"timeline first completed frame");
+  GmlVM *vm=&g_libretro.engine->vm;
+  REQUIRE(vm->win->n_code>0,"timeline inert callback code");
+  GmlVal timeline=gml_builtin_call(vm,"timeline_add",NULL,0);
+  REQUIRE(timeline.t==V_REAL && timeline.d>=0,"create timeline after cold capacity");
+  int index=(int)timeline.d;
+  GmlVal add[]={timeline,vreal(0),vreal(GML_FUNCVAL_TAG)};
+  for(int step=0;step<512;step++){
+    add[1]=vreal(step); gml_builtin_call(vm,"timeline_moment_add_script",add,3);
+  }
+  REQUIRE(vm->timelines[index].n==512,"largest authored timeline transition");
+  REQUIRE(push(&ring),"timeline growth fits existing frontend ring");
+  saved_size=ring.capacity; saved=malloc(saved_size);
+  REQUIRE(saved,"retain timeline snapshot"); memcpy(saved,ring.bytes,saved_size);
+  gml_builtin_call(vm,"timeline_delete",&timeline,1);
+  REQUIRE(!vm->timelines[index].name && push(&ring),"timeline deletion push");
+  REQUIRE(retro_unserialize(saved,saved_size),"rewind restores deleted timeline");
+  vm=&g_libretro.engine->vm;
+  REQUIRE(vm->timelines[index].name && vm->timelines[index].n==512 &&
+          vm->timelines[index].moments[511].callbacks[0].d==GML_FUNCVAL_TAG,
+          "rewind restores exact timeline callable/step table");
+  gml_builtin_call(vm,"game_restart",NULL,0); retro_run();
+  vm=&g_libretro.engine->vm;
+  REQUIRE(vm->n_timelines>index && vm->timelines[index].name && vm->timelines[index].n==512 &&
+          vm->timelines[index].moments[511].callbacks[0].d==GML_FUNCVAL_TAG,
+          "game_restart preserves shared timeline resources");
+  REQUIRE(push(&ring),"timeline ring accepts game_restart");
+  monitor_changed=option_update=1; retro_run();
+  REQUIRE(push(&ring),"timeline ring accepts live high-resolution geometry");
+  retro_reset(); REQUIRE(push(&ring),"timeline ring immediately across Reset");
+  REQUIRE(retro_unserialize(saved,saved_size)==(response>0),"timeline Reset fixed/variable policy");
+  retro_run(); REQUIRE(push(&ring),"timeline ring after fresh reset frame");
+  REQUIRE(retro_unserialize(saved,saved_size) && push(&ring),"timeline resources restore after Reset");
+  REQUIRE(retro_unserialize(cold,ring.initial) && push(&ring),"timeline cold state restores authored table");
+  REQUIRE(g_libretro.engine->vm.n_timelines==index,"cold state removes later timeline identities");
+  REQUIRE(ring.accepted==10 && ring.rejected==0,"every timeline frontend push accepted");
+  printf("timeline frontend: negotiation=%d cold=%zu final=%zu accepted=%u rejected=%u\n",
+         response,ring.initial,ring.capacity,ring.accepted,ring.rejected);
+done:
+  free(cold); free(saved); free(ring.bytes);
+  retro_unload_game(); retro_deinit(); anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 int main(void){
   for(int response=-1;response<=1;response++) if(!run_case(response)) return 1;
   for(int response=-1;response<=1;response++) if(!run_ds_case(response)) return 1;
   for(int response=-1;response<=1;response++) if(!run_vertex_case(response)) return 1;
+  for(int response=-1;response<=1;response++) if(!run_timeline_case(response)) return 1;
   return 0;
 }

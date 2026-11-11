@@ -742,8 +742,27 @@ static void parse_timelines(GmlVM *vm){
   vm->timelines=timelines; vm->n_timelines=(int)n; vm->cap_timelines=cap;
 }
 
+void gml_vm_timelines_clear(GmlVM *vm){
+  for(int i=0;i<vm->n_timelines;i++){
+    for(int m=0;m<vm->timelines[i].n;m++) free(vm->timelines[i].moments[m].callbacks);
+    free(vm->timelines[i].moments); free(vm->timelines[i].owned_name);
+  }
+  free(vm->timelines); vm->timelines=NULL; vm->n_timelines=vm->cap_timelines=0;
+}
+
+GmlTimelineTable gml_vm_timelines_take(GmlVM *vm){
+  GmlTimelineTable table={vm->timelines,vm->n_timelines,vm->cap_timelines};
+  vm->timelines=NULL; vm->n_timelines=vm->cap_timelines=0;
+  return table;
+}
+
+void gml_vm_timelines_restore(GmlVM *vm, GmlTimelineTable table){
+  gml_vm_timelines_clear(vm);
+  vm->timelines=table.items; vm->n_timelines=table.count; vm->cap_timelines=table.capacity;
+}
+
 int gml_timeline_add(GmlVM *vm){
-  if(!vm) return -1;
+  if(!vm || vm->n_timelines>=GML_TIMELINE_MAX_ASSETS) return -1;
   if(vm->n_timelines>=vm->cap_timelines){
     int cap=vm->cap_timelines>0?vm->cap_timelines*2:4;
     if(cap<=vm->n_timelines) cap=vm->n_timelines+1;
@@ -770,7 +789,62 @@ void gml_timeline_clear(GmlVM *vm, int index){
   GmlTimeline *timeline=&vm->timelines[index];
   /* Keep the old allocation alive: this may be called by a moment that is currently being
    * interpreted. The generation check stops that playback before it can visit another moment. */
+  for(int m=0;m<timeline->n;m++){
+    free(timeline->moments[m].callbacks);
+    timeline->moments[m].callbacks=NULL; timeline->moments[m].n_callbacks=0;
+  }
   timeline->n=0; timeline->last_step=-1; timeline->generation++;
+}
+
+void gml_timeline_delete(GmlVM *vm, int index){
+  if(!vm || index<0 || index>=vm->n_timelines || !vm->timelines[index].name) return;
+  GmlTimeline *timeline=&vm->timelines[index];
+  gml_timeline_clear(vm,index);
+  free(timeline->moments); timeline->moments=NULL;
+  /* A previously returned name may still be a borrowed GML string. Retain its small allocation
+   * until VM teardown; the tombstone never reuses this asset identity. */
+  timeline->name=NULL;
+}
+
+void gml_timeline_moment_clear(GmlVM *vm, int index, int step){
+  if(!vm || index<0 || index>=vm->n_timelines || !vm->timelines[index].name) return;
+  GmlTimeline *timeline=&vm->timelines[index];
+  for(int i=0;i<timeline->n;i++){
+    GmlTimelineMoment *moment=&timeline->moments[i];
+    if(moment->step!=step) continue;
+    moment->code=-1;
+    free(moment->callbacks); moment->callbacks=NULL; moment->n_callbacks=0;
+    timeline->generation++;
+  }
+}
+
+int gml_timeline_moment_add(GmlVM *vm, int index, int step, GmlVal callback){
+  if(!vm || index<0 || index>=vm->n_timelines || !vm->timelines[index].name || step<0)
+    return 0;
+  GmlTimeline *timeline=&vm->timelines[index];
+  for(int m=0;m<timeline->n;m++) if(timeline->moments[m].step==step){
+    GmlTimelineMoment *moment=&timeline->moments[m];
+    if(moment->n_callbacks>=GML_TIMELINE_MAX_MOMENTS) return 0;
+    GmlVal *callbacks=realloc(moment->callbacks,(size_t)(moment->n_callbacks+1)*sizeof(*callbacks));
+    if(!callbacks) return 0;
+    callbacks[moment->n_callbacks++]=callback; moment->callbacks=callbacks;
+    timeline->generation++; return 1;
+  }
+  if(timeline->n>=GML_TIMELINE_MAX_MOMENTS) return 0;
+  GmlVal *callbacks=malloc(sizeof(*callbacks));
+  if(!callbacks) return 0;
+  callbacks[0]=callback;
+  GmlTimelineMoment *moments=realloc(timeline->moments,
+                                    (size_t)(timeline->n+1)*sizeof(*moments));
+  if(!moments){ free(callbacks); return 0; }
+  /* Preserve existing native order; new moments enter in step order. */
+  int at=timeline->n;
+  while(at>0 && moments[at-1].step>step){ moments[at]=moments[at-1]; at--; }
+  moments[at]=(GmlTimelineMoment){.step=step,.code=-1,.callbacks=callbacks,.n_callbacks=1};
+  timeline->moments=moments; timeline->n++;
+  if(step>timeline->last_step) timeline->last_step=step;
+  timeline->generation++;
+  return 1;
 }
 /* evaluate a path at position t in [0,1] -> (x,y) in path-local coords */
 static void path_eval_ex(GmlPath *p, double t, double *ox, double *oy, double *osp){
@@ -2649,35 +2723,51 @@ void gml_vm_goto_room_order(GmlVM *vm, int order_index){
   gml_room_enter(vm,idx);
 }
 
+static int timeline_playback_unchanged(GmlVM *vm, GmlInstance *in, int index,
+                                       double position, unsigned generation){
+  return in->active && !in->marked && in->timeline_running &&
+    index>=0 && index<vm->n_timelines && vm->timelines[index].generation==generation &&
+    (int)in->timeline_index==index && in->timeline_position==position;
+}
+
+static int timeline_fire_moment(GmlVM *vm, GmlInstance *in, GmlTimelineMoment moment,
+                                int index, double position, unsigned generation){
+  if(moment.code>=0 && moment.code<vm->win->n_code){
+    GmlVal r=gml_vm_run_code(vm,moment.code,in,NULL,NULL,0);
+    if(r.t==V_STR && r.d!=0) free((char*)r.s);
+    if(!timeline_playback_unchanged(vm,in,index,position,generation)) return 0;
+  }
+  for(int c=0;c<moment.n_callbacks;c++){
+    GmlVal callback=moment.callbacks[c];
+    GmlInstance *saved_self=vm->cur_self,*saved_other=vm->cur_other;
+    vm->cur_self=in; vm->cur_other=NULL;
+    GmlVal r=gml_vm_call_callable(vm,callback,NULL,0);
+    vm->cur_self=saved_self; vm->cur_other=saved_other;
+    if(r.t==V_STR && r.d!=0) free((char*)r.s);
+    /* A callback can free or resize its own moment list or the complete timeline table.
+     * Check stable identity before borrowing either allocation again. */
+    if(!timeline_playback_unchanged(vm,in,index,position,generation)) return 0;
+  }
+  return timeline_playback_unchanged(vm,in,index,position,generation);
+}
+
 static int timeline_fire_range(GmlVM *vm, GmlInstance *in, GmlTimeline *timeline,
                                double from, double to, int forward,
                                int expected_index, double expected_position,
                                unsigned expected_generation){
   if(forward){
     for(int m=0;m<timeline->n;m++){
-      GmlTimelineMoment *moment=&timeline->moments[m];
-      if(moment->step<from || moment->step>=to) continue;
-      if(moment->code>=0 && moment->code<vm->win->n_code){
-        GmlVal r=gml_vm_run_code(vm,moment->code,in,NULL,NULL,0);
-        if(r.t==V_STR && r.d!=0) free((char*)r.s);
-      }
-      if(!in->active || in->marked || !in->timeline_running ||
-         expected_index<0 || expected_index>=vm->n_timelines ||
-         vm->timelines[expected_index].generation!=expected_generation ||
-         (int)in->timeline_index!=expected_index || in->timeline_position!=expected_position) return 0;
+      GmlTimelineMoment moment=timeline->moments[m];
+      if(moment.step<from || moment.step>=to) continue;
+      if(!timeline_fire_moment(vm,in,moment,expected_index,expected_position,expected_generation))
+        return 0;
     }
   } else {
     for(int m=timeline->n-1;m>=0;m--){
-      GmlTimelineMoment *moment=&timeline->moments[m];
-      if(moment->step>from || moment->step<=to) continue;
-      if(moment->code>=0 && moment->code<vm->win->n_code){
-        GmlVal r=gml_vm_run_code(vm,moment->code,in,NULL,NULL,0);
-        if(r.t==V_STR && r.d!=0) free((char*)r.s);
-      }
-      if(!in->active || in->marked || !in->timeline_running ||
-         expected_index<0 || expected_index>=vm->n_timelines ||
-         vm->timelines[expected_index].generation!=expected_generation ||
-         (int)in->timeline_index!=expected_index || in->timeline_position!=expected_position) return 0;
+      GmlTimelineMoment moment=timeline->moments[m];
+      if(moment.step>from || moment.step<=to) continue;
+      if(!timeline_fire_moment(vm,in,moment,expected_index,expected_position,expected_generation))
+        return 0;
     }
   }
   return 1;

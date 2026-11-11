@@ -107,14 +107,21 @@ uint32_t gml_sequence_colour(const GmlSeqGraphic *g, const char *track, double h
 int gml_sequence_sprite_at(const GmlSeqGraphic *g, double head, double *key_head);
 
 /* ---- timelines (parsed from native package and compiler-authored TMLN records) ---- */
-typedef struct { int step, code; } GmlTimelineMoment;
+typedef struct {
+  int step, code;
+  GmlVal *callbacks;
+  int n_callbacks;
+} GmlTimelineMoment;
+#define GML_TIMELINE_MAX_ASSETS 100000
+#define GML_TIMELINE_MAX_MOMENTS 100000
 typedef struct {
   const char *name;
-  char *owned_name;                 /* non-NULL only for timeline_add() assets */
+  char *owned_name;                 /* runtime or restored asset name, retained on deletion */
   GmlTimelineMoment *moments;
   int n, last_step;
-  unsigned generation;             /* invalidates playback snapshots after a runtime clear */
+  unsigned generation;             /* invalidates playback snapshots after mutation */
 } GmlTimeline;
+typedef struct { GmlTimeline *items; int count, capacity; } GmlTimelineTable;
 
 /* ---- object (parsed from OBJT) ---- */
 #define GML_OBJECT_PHYSICS_POINT_MAX 32
@@ -678,6 +685,12 @@ int          gml_vm_instances_event_lookup(GmlVM *vm, const char *suffix, int ob
                                            int *handler_object, int *code);
 int          gml_timeline_add(GmlVM *vm);                    /* append an empty runtime timeline */
 void         gml_timeline_clear(GmlVM *vm, int timeline);    /* remove every moment, retaining the asset */
+void         gml_timeline_delete(GmlVM *vm, int timeline);
+void         gml_timeline_moment_clear(GmlVM *vm, int timeline, int step);
+int          gml_timeline_moment_add(GmlVM *vm, int timeline, int step, GmlVal callback);
+void         gml_vm_timelines_clear(GmlVM *vm);
+GmlTimelineTable gml_vm_timelines_take(GmlVM *vm);
+void         gml_vm_timelines_restore(GmlVM *vm, GmlTimelineTable table);
 /* Collision-candidate grid hooks (gml_builtin_collision.c): touch = a bbox input
  * (x/y/scale/angle/sprite/mask) of `in` was written after the current build;
  * invalidate = drop the build. The cached mode policy remains in gml_builtin.c. */

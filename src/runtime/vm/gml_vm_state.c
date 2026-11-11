@@ -18,7 +18,7 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=26 };
+enum { GML_VM_STATE_SCHEMA=27 };
 enum { STATE_MAX_TILEMAPS=512, STATE_TILEMAP_RECORD_BYTES=56 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 /* IDs are assigned in canonical traversal order, never from addresses. Zero is the null array;
@@ -1648,6 +1648,76 @@ static void sr_instance_order(StateR *s,GmlVM *vm){
   free(slots);free(seen);
 }
 
+static void state_timelines_free(GmlTimeline *table, int count){
+  if(!table) return;
+  for(int i=0;i<count;i++){
+    for(int m=0;m<table[i].n;m++) free(table[i].moments[m].callbacks);
+    free(table[i].moments); free(table[i].owned_name);
+  }
+  free(table);
+}
+
+static void sw_timelines(StateW *s, GmlVM *vm){
+  if(vm->n_timelines<0 || vm->n_timelines>GML_TIMELINE_MAX_ASSETS){ s->ok=0; return; }
+  sw_i32(s,vm->n_timelines);
+  for(int i=0;i<vm->n_timelines;i++){
+    GmlTimeline *timeline=&vm->timelines[i];
+    sw_u8(s,timeline->name!=NULL); sw_u32(s,timeline->generation);
+    if(!timeline->name) continue;
+    sw_str(s,timeline->name);
+    if(timeline->n<0 || timeline->n>GML_TIMELINE_MAX_MOMENTS){ s->ok=0; return; }
+    sw_i32(s,timeline->n);
+    for(int m=0;m<timeline->n;m++){
+      GmlTimelineMoment *moment=&timeline->moments[m];
+      sw_i32(s,moment->step); sw_i32(s,moment->code); sw_i32(s,moment->n_callbacks);
+      if(moment->n_callbacks<0 || moment->n_callbacks>GML_TIMELINE_MAX_MOMENTS){ s->ok=0; return; }
+      for(int c=0;c<moment->n_callbacks;c++) sw_d(s,moment->callbacks[c].d);
+    }
+  }
+}
+
+static GmlTimeline *sr_timelines(StateR *s, GmlVM *vm, int *total){
+  int count=sr_i32(s);
+  if(count<0 || count>GML_TIMELINE_MAX_ASSETS || s->pos>s->cap ||
+     (size_t)count>(s->cap-s->pos)/5u){ s->ok=0; return NULL; }
+  GmlTimeline *table=count?calloc((size_t)count,sizeof(*table)):NULL;
+  if(count && !table){ s->ok=0; return NULL; }
+  for(int i=0;i<count && s->ok;i++){
+    GmlTimeline *timeline=&table[i];
+    unsigned live=sr_u8(s); timeline->generation=sr_u32(s); timeline->last_step=-1;
+    if(live>1){ s->ok=0; break; }
+    if(!live) continue;
+    timeline->name=timeline->owned_name=sr_str_dup(s);
+    int moments=sr_i32(s);
+    if(!timeline->name || moments<0 || moments>GML_TIMELINE_MAX_MOMENTS ||
+       s->pos>s->cap || (size_t)moments>(s->cap-s->pos)/12u){ s->ok=0; break; }
+    timeline->moments=moments?calloc((size_t)moments,sizeof(*timeline->moments)):NULL;
+    if(moments && !timeline->moments){ s->ok=0; break; }
+    timeline->n=moments;
+    for(int m=0;m<moments && s->ok;m++){
+      GmlTimelineMoment *moment=&timeline->moments[m];
+      moment->step=sr_i32(s); moment->code=sr_i32(s);
+      int callbacks=sr_i32(s);
+      if(moment->code < -1 || moment->code>=vm->win->n_code || callbacks<0 ||
+         callbacks>GML_TIMELINE_MAX_MOMENTS || s->pos>s->cap ||
+         (size_t)callbacks>(s->cap-s->pos)/8u){ s->ok=0; break; }
+      moment->callbacks=callbacks?calloc((size_t)callbacks,sizeof(*moment->callbacks)):NULL;
+      if(callbacks && !moment->callbacks){ s->ok=0; break; }
+      moment->n_callbacks=callbacks;
+      for(int c=0;c<callbacks;c++){
+        double value=sr_d(s);
+        if(!isfinite(value) || value<0 || value>INT_MAX || floor(value)!=value){ s->ok=0; break; }
+        if(!GML_IS_FUNCVAL((int)value) || ((int)value&0x00FFFFFF)>=vm->win->n_code)
+          s->ok=0;
+        moment->callbacks[c]=vreal(value);
+      }
+      if(moment->step>timeline->last_step) timeline->last_step=moment->step;
+    }
+  }
+  if(!s->ok){ state_timelines_free(table,count); return NULL; }
+  *total=count; return table;
+}
+
 static void sw_vm(StateW *s, GmlVM *vm){
   s->vm=vm; s->compact_strings=1; s->array_meta=1;
   GmlBuiltinState *builtin_state=gml_builtin_state_ensure(vm);
@@ -1801,6 +1871,7 @@ static void sw_vm(StateW *s, GmlVM *vm){
       }
     }
   }
+  sw_timelines(s,vm);
   sw_object_properties(s,vm);
   sw_instance_order(s,vm);
   vm_state_profile_globals(vm);
@@ -2166,6 +2237,8 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
       if(restored_dynamic!=total-authored) s.ok=0;
     }
   }
+  int timeline_count=0;
+  GmlTimeline *timelines=s.ok?sr_timelines(&s,vm,&timeline_count):NULL;
   if(s.ok) sr_object_properties(&s,vm);
   vm->cur_self=vm->cur_other=NULL; vm->cur_event=NULL; vm->cur_event_obj=0;
   vm->step_active=0; vm->step_alloc_base=0;
@@ -2191,9 +2264,13 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   vm->time_sample_draw_ms=vm->time_sample_cpu_ms;
   if(used) *used=s.pos;
   if(s.ok && s.pos<=len){
+    state_timelines_free(vm->timelines,vm->n_timelines);
+    vm->timelines=timelines; vm->n_timelines=vm->cap_timelines=timeline_count;
+    timelines=NULL;
     gml_vm_warm_audio_for_room_window(vm);
     gml_vm_prefetch_room_assets(vm);
   }
+  state_timelines_free(timelines,timeline_count);
   int ok=s.ok && s.pos<=len;
   if(!ok) runtime_clear(vm,s.arrays,s.array_count);
   for(uint32_t i=0;i<s.shape_count;i++)free(s.shapes[i].slots);

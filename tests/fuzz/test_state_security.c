@@ -1271,6 +1271,64 @@ static int instance_order_state_cases(const AnygmHostServices *services,const An
   free(candidate);free(baseline);anygm_destroy(engine);return ok;
 }
 
+static int timeline_state_cases(const AnygmHostServices *services,const AnygmContentSource *source){
+  AnygmEngine *engine=NULL; uint8_t *baseline=NULL,*candidate=NULL; size_t size=0;
+  int ok=anygm_create(services,&engine)==ANYGM_OK && anygm_load(engine,source,NULL)==ANYGM_OK;
+  if(!ok || engine->vm.n_timelines || engine->vm.n_objects!=1 || engine->win.n_code<1){
+    anygm_destroy(engine); return fail("timeline security fixture shape");
+  }
+  GmlVal timeline=gml_builtin_call(&engine->vm,"timeline_add",NULL,0);
+  GmlVal action[]={timeline,vreal(17),vreal(GML_FUNCVAL_TAG)};
+  gml_builtin_call(&engine->vm,"timeline_moment_add_script",action,3);
+  ok=timeline.d==0 && engine->vm.timelines[0].n==1 && save_state(engine,&baseline,&size);
+  if(!ok){ anygm_destroy(engine); return fail("timeline security fixture population"); }
+  candidate=malloc(size);
+  if(!candidate){ free(baseline); anygm_destroy(engine); return 0; }
+  /* A fresh fixture has canonical instance order, so the writer emits zero changed groups. */
+  const size_t order_bytes=4;
+  size_t vm_start=STATE_HEADER_SIZE+(size_t)read_u64(baseline+64)+(size_t)read_u64(baseline+72);
+  size_t vm_end=vm_start+(size_t)read_u64(baseline+80);
+  size_t name_size=strlen(engine->vm.timelines[0].name);
+  size_t bytes=35+name_size;
+  ok=name_size<128 && vm_end>=order_bytes+32+bytes &&
+     !memcmp(baseline+vm_end-4,(const uint8_t[4]){0},4);
+  size_t at=ok?vm_end-order_bytes-32-bytes:0;
+  StateCursor cursor={baseline,size,at,ok};
+  ok=ok && cursor_u32(&cursor)==1 && baseline[at+4]==1 &&
+    baseline[at+9]==0 && baseline[at+10]==name_size &&
+    !memcmp(baseline+at+11,engine->vm.timelines[0].name,name_size);
+  cursor.offset=at+11+name_size;
+  ok=ok && cursor_u32(&cursor)==1 && cursor_u32(&cursor)==17 &&
+    cursor_u32(&cursor)==UINT32_MAX && cursor_u32(&cursor)==1 && cursor.ok;
+  size_t moment=at+15+name_size;
+  if(!ok) fail("timeline security fixture does not identify its table");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,at,
+                              GML_TIMELINE_MAX_ASSETS+1u,"oversized timeline table");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,at+4,2,"invalid timeline live flag");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,at+11+name_size,
+                              GML_TIMELINE_MAX_MOMENTS+1u,"oversized timeline moments");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,moment+4,
+                              (uint32_t)engine->win.n_code,"invalid timeline code");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,moment+8,
+                              UINT32_MAX,"invalid timeline callback count");
+  if(ok){
+    memcpy(candidate,baseline,size); write_u64(candidate+moment+12,UINT64_C(0x7ff8000000000000));
+    refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,size,baseline,size,"nonfinite timeline callback");
+  }
+  if(ok){
+    memcpy(candidate,baseline,size); write_u32(candidate+vm_end,0); refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,size,baseline,size,"audio rejection after timeline publication");
+  }
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,vm_start+4,26,"previous timeline-free VM schema");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,4,45,"previous timeline-free root schema");
+  if(ok){
+    gml_builtin_call(&engine->vm,"timeline_delete",&timeline,1);
+    ok=anygm_state_load(engine,baseline,size)==ANYGM_OK && engine_matches(engine,baseline,size);
+  }
+  free(candidate); free(baseline); anygm_destroy(engine); return ok;
+}
+
 int main(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_list_override_content_create(&fixture))
@@ -1369,7 +1427,7 @@ int main(void){
   size_t audio_start=vm_start+(size_t)vm_size;
   if(audio_start+(size_t)audio_size!=state_size) ok=fail("section arithmetic is inconsistent");
 
-  /* Object properties follow the path table. Assert the synthetic table's exact
+  /* Object properties follow the timeline and path tables. Assert the synthetic table's exact
    * extent before moving the existing path mutations to their current offsets. */
   const size_t object_bytes=4+28;
   size_t object_table=audio_start-4-object_bytes;
@@ -1404,7 +1462,11 @@ int main(void){
 
   /* One runtime path: table header, metadata, two samples, two controls. */
   const size_t path_record_size=4+3*4+1+8+4+2*4*8+4+2*3*8;
-  size_t path_table=object_table-12-path_record_size;
+  size_t timeline_table=object_table-4;
+  StateCursor timeline_cursor={baseline,state_size,timeline_table,1};
+  if(engine->vm.n_timelines || cursor_u32(&timeline_cursor)!=0)
+    ok=fail("path mutation fixture requires an empty timeline table");
+  size_t path_table=timeline_table-12-path_record_size;
   StateCursor path_cursor={baseline,state_size,path_table,1};
   if(cursor_u32(&path_cursor)!=1 || cursor_u32(&path_cursor)!=0 ||
      cursor_u32(&path_cursor)!=1 || cursor_u32(&path_cursor)!=0)
@@ -1592,6 +1654,7 @@ int main(void){
   if(ok) ok=io_identity_state_cases(&services,&source);
   if(ok) ok=buffer_state_cases(&services,&source);
   if(ok) ok=grid_state_cases(&services,&source);
+  if(ok) ok=timeline_state_cases(&services,&source);
 
   if(ok) ok=content_override_state_cases(&services,&fixture);
 

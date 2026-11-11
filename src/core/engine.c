@@ -1414,11 +1414,18 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   if(engine->vm.game_end){
     if(engine->vm.game_end == 2){
       uint32_t display_request=engine_display_request(engine);
+      GmlTimelineTable timeline_assets=gml_vm_timelines_take(&engine->vm);
       engine->vm.game_end = 0;
       gml_audio_free(engine->audio); engine->audio=NULL; engine->vm.audio=NULL;
       gml_vm_free(&engine->vm);
       engine_dispatch_renderer_retire(engine);
-      if(!boot_runtime(engine)) return ANYGM_ERROR_INVALID_CONTENT;
+      if(!boot_runtime_prepare(engine)){
+        gml_vm_timelines_restore(&engine->vm,timeline_assets);
+        gml_vm_timelines_clear(&engine->vm);
+        return ANYGM_ERROR_INVALID_CONTENT;
+      }
+      gml_vm_timelines_restore(&engine->vm,timeline_assets);
+      boot_runtime_start(engine,-1);
       engine_retain_display_request(engine,display_request);
     } else {
       engine->runtime_ended = 1;

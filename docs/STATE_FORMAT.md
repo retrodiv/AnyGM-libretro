@@ -20,9 +20,18 @@ failed partial reads leave the canonical image unpublished and invalid as a
 current resource. See R03-P9-INCREMENTAL-CHECKPOINT in
 [the renderer map](RENDERER_BACKENDS.md) for owners and controls.
 
-The current AnyGM save-state schema is `45`. It is the format transported by
+The current AnyGM save-state schema is `46`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `46` introduces VM schema `27`. After the path table, the VM payload contains the
+complete timeline table, including authored edits, empty moments, runtime assets and deleted
+identities. Every entry stores a live byte and generation; live entries also carry a name,
+moment count and, per moment, step, code index and ordered callable references. Callback values
+are normalized function handles, independent of the installing method receiver. Restore bounds
+counts and remaining extents, validates referenced code identities, stages the complete
+table and publishes it only after the VM payload validates. Older root and VM schemas reject;
+there is no legacy reader. Graphics resource schema remains `2`.
 
 Schema `45` introduces VM schema `26` and graphics resource schema `2`. The existing
 model blob now also carries vertex formats, an unfinished format builder and live vertex

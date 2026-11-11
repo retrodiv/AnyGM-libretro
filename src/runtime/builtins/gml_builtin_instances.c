@@ -464,6 +464,40 @@ static GmlVal gml_builtin_try_instances_timelines(GmlVM *vm, const char *nm, Gml
   }
   if(!strcmp(nm,"timeline_add")) return vreal(gml_timeline_add(vm));
   if(!strcmp(nm,"timeline_clear")){ gml_timeline_clear(vm,(int)N(a,n,0)); return vreal(0); }
+  if(!strcmp(nm,"timeline_delete") || !strcmp(nm,"timeline_moment_clear") ||
+     !strcmp(nm,"timeline_moment_add_script")){
+    double index=N(a,n,0);
+    if(n<1 || !isfinite(index) || index<0 || index>=vm->n_timelines) return vreal(0);
+    if(!strcmp(nm,"timeline_delete")){ gml_timeline_delete(vm,(int)index); return vreal(0); }
+    double step=N(a,n,1);
+    if(n<2 || !isfinite(step) || step<0 || step>INT_MAX) return vreal(0);
+    if(!strcmp(nm,"timeline_moment_clear")){
+      gml_timeline_moment_clear(vm,(int)index,(int)step); return vreal(0);
+    }
+    if(n<3 || !vm->win) return vreal(0);
+    int code=-1;
+    if(a[2].t==V_STR && a[2].s){
+      code=gml_code_index_by_name(vm->win,a[2].s);
+      if(code<0){
+        size_t length=strlen(a[2].s);
+        if(length>SIZE_MAX-12) return vreal(0);
+        char *name=malloc(length+12);
+        if(!name) return vreal(0);
+        snprintf(name,length+12,"gml_Script_%s",a[2].s);
+        code=gml_code_index_by_name(vm->win,name); free(name);
+      }
+    } else {
+      if(!gml_val_is_number_or_object(a[2]) || !isfinite(a[2].d) ||
+         a[2].d<0 || a[2].d>INT_MAX || floor(a[2].d)!=a[2].d) return vreal(0);
+      code=script_ref_code_of(vm,a[2]);
+    }
+    if(code<0 || code>=vm->win->n_code) return vreal(0);
+    /* A timeline owns a script action, executed on each playing instance. It does not retain
+     * the temporary method receiver supplied when that action was installed. */
+    GmlVal callback=vreal(GML_FUNCVAL_TAG|code);
+    gml_timeline_moment_add(vm,(int)index,(int)step,callback);
+    return vreal(0);
+  }
   if(!strcmp(nm,"action_set_timeline") || !strcmp(nm,"action_timeline_set")){ if(vm->cur_self){
       vm->cur_self->timeline_index=N(a,n,0); vm->cur_self->timeline_position=N(a,n,1);
       vm->cur_self->timeline_running=N(a,n,2)!=0; vm->cur_self->timeline_loop=N(a,n,3)!=0; }
