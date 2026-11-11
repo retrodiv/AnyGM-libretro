@@ -4,6 +4,7 @@
 #include "persistent_test_fixture.h"
 
 #include "gml_builtin.h"
+#include "gml_builtin_internal.h"
 #include "anygm_vfs.h"
 #include "gml_image_codec.h"
 #include "stdio_vfs.h"
@@ -215,6 +216,10 @@ typedef struct FileLookupCounters {
   AnygmHostServices base;
   unsigned stats;
   unsigned directory_opens;
+  const char *unavailable_directory;
+  void *unavailable_handle;
+  int fail_directory_open;
+  int omit_dot_entries;
 } FileLookupCounters;
 
 static AnygmResult counted_file_stat(void *userdata,const char *path,AnygmFileInfo *info){
@@ -226,7 +231,32 @@ static AnygmResult counted_file_stat(void *userdata,const char *path,AnygmFileIn
 static void *counted_directory_open(void *userdata,const char *path){
   FileLookupCounters *counts=userdata;
   counts->directory_opens++;
-  return counts->base.directory_open(counts->base.userdata,path);
+  size_t length=strlen(path);
+  while(length && path[length-1]=='/') length--;
+  int unavailable=counts->unavailable_directory &&
+    strlen(counts->unavailable_directory)==length &&
+    !strncmp(path,counts->unavailable_directory,length);
+  if(unavailable && counts->fail_directory_open) return NULL;
+  void *handle=counts->base.directory_open(counts->base.userdata,path);
+  if(unavailable) counts->unavailable_handle=handle;
+  return handle;
+}
+
+static AnygmResult counted_directory_read(void *userdata,void *handle,AnygmDirectoryEntry *entry){
+  FileLookupCounters *counts=userdata;
+  if(handle==counts->unavailable_handle) return ANYGM_ERROR_IO;
+  AnygmResult result;
+  do {
+    result=counts->base.directory_read(counts->base.userdata,handle,entry);
+  } while(result==ANYGM_OK && counts->omit_dot_entries &&
+          (!strcmp(entry->name,".") || !strcmp(entry->name,"..")));
+  return result;
+}
+
+static void counted_directory_close(void *userdata,void *handle){
+  FileLookupCounters *counts=userdata;
+  if(handle==counts->unavailable_handle) counts->unavailable_handle=NULL;
+  counts->base.directory_close(counts->base.userdata,handle);
 }
 
 int expect_file_lookup_probes_case(void){
@@ -283,6 +313,84 @@ int expect_file_lookup_probes_case(void){
   gml_vm_free(&vm);
   unlink(save_file);unlink(content_file);unlink(later_file);
   rmdir(save_root);rmdir(content_root);
+  return ok;
+}
+
+int expect_missing_path_components_case(void){
+  FileLookupCounters counts={0};
+  counts.base.struct_size=sizeof counts.base;
+  counts.base.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&counts.base);
+  AnygmHostServices services=counts.base;
+  services.userdata=&counts;
+  services.file_stat=counted_file_stat;
+  services.directory_open=counted_directory_open;
+  services.directory_read=counted_directory_read;
+  services.directory_close=counted_directory_close;
+  char content_root[]="/tmp/gml-components-content-XXXXXX";
+  char save_root[]="/tmp/gml-components-save-XXXXXX";
+  if(!mkdtemp(content_root)) return 0;
+  if(!mkdtemp(save_root)){ rmdir(content_root); return 0; }
+  char mixed_dir[640],child[768],flat[640],fallback[768],shadow_flat[640];
+  snprintf(mixed_dir,sizeof mixed_dir,"%s/MiXeD",content_root);
+  snprintf(child,sizeof child,"%s/Child.TXT",mixed_dir);
+  snprintf(flat,sizeof flat,"%s/missing@deeper@file.txt",content_root);
+  snprintf(fallback,sizeof fallback,"%s/MiXeD/absent/deeper.txt",content_root);
+  snprintf(shadow_flat,sizeof shadow_flat,"%s/mixed@child.txt",save_root);
+  GmlWin win={0};
+  snprintf(win.content_dir,sizeof win.content_dir,"%s",content_root);
+  snprintf(win.save_dir,sizeof win.save_dir,"%s",save_root);
+  GmlVM vm={0};vm.win=&win;vm.host=&services;
+  int ok=mkdir(mixed_dir,0700)==0 && fixture_write_text(child,"child");
+  GmlVal name=vstr("missing/deeper/file.txt");
+  GmlVal exists=gml_builtin_call(&vm,"file_exists",&name,1);
+  int missing=exists.t==V_REAL && exists.d==0 && counts.directory_opens<=4;
+  if(!missing) fprintf(stderr,"missing components: directory_opens=%u\n",counts.directory_opens);
+  ok=ok && missing;
+  counts.directory_opens=0;
+  name=vstr("mixed/absent/deeper.txt");
+  exists=gml_builtin_call(&vm,"file_exists",&name,1);
+  missing=exists.t==V_REAL && exists.d==0 && counts.directory_opens<=5;
+  if(!missing) fprintf(stderr,"folded missing components: directory_opens=%u\n",counts.directory_opens);
+  ok=ok && missing;
+  /* Keep the corrected prefix and complete unresolved suffix for callers that open the path. */
+  char *resolved=resolve_read_path(&vm,name.s);
+  ok=ok && resolved && !strcmp(resolved,fallback);
+  free(resolved);
+  /* The normal roots still precede the flattened included-file fallback, and a new
+   * operation must see an exported file created after the miss. */
+  ok=fixture_write_text(flat,"flat") && ok;
+  name=vstr("missing/deeper/file.txt");
+  exists=gml_builtin_call(&vm,"file_exists",&name,1);
+  ok=ok && exists.t==V_REAL && exists.d==1;
+  name=vstr("missing\\deeper\\file.txt");
+  exists=gml_builtin_call(&vm,"file_exists",&name,1);
+  ok=ok && exists.t==V_REAL && exists.d==1;
+  ok=fixture_write_text(shadow_flat,"shadow") && ok;
+  resolved=resolve_read_path(&vm,"mixed/child.txt");
+  ok=ok && resolved && !strcmp(resolved,child);
+  free(resolved);
+  /* Some directory services omit special entries. Neither spelling proves absence. */
+  counts.omit_dot_entries=1;
+  name=vstr("./mixed/child.txt");
+  exists=gml_builtin_call(&vm,"file_exists",&name,1);
+  ok=ok && exists.t==V_REAL && exists.d==1;
+  name=vstr("MiXeD/../mixed/child.txt");
+  exists=gml_builtin_call(&vm,"file_exists",&name,1);
+  ok=ok && exists.t==V_REAL && exists.d==1;
+  /* A failed enumeration is unknown. The exact first component can still be traversed,
+   * allowing the next directory to repair the final filename's case. */
+  counts.omit_dot_entries=0;
+  counts.unavailable_directory=content_root;
+  name=vstr("MiXeD/child.txt");
+  exists=gml_builtin_call(&vm,"file_exists",&name,1);
+  ok=ok && exists.t==V_REAL && exists.d==1;
+  counts.fail_directory_open=1;
+  exists=gml_builtin_call(&vm,"file_exists",&name,1);
+  ok=ok && exists.t==V_REAL && exists.d==1;
+  gml_vm_free(&vm);
+  unlink(child);unlink(flat);unlink(shadow_flat);
+  rmdir(mixed_dir);rmdir(save_root);rmdir(content_root);
   return ok;
 }
 

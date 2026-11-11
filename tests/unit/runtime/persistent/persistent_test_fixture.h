@@ -102,6 +102,7 @@ int expect_state_load_ignores_unmatched_dynamic_records(void);
 int expect_file_sandbox(GmlVM *vm,const char *save_dir);
 int expect_file_sandbox_case(void);
 int expect_file_lookup_probes_case(void);
+int expect_missing_path_components_case(void);
 int expect_portable_extension_io(void);
 int expect_native_timeline_import(const char *path);
 int expect_timeline_case(void);

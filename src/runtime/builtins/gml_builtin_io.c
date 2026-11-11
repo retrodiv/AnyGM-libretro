@@ -72,7 +72,8 @@ static int path_component_equal_folded(const char *left,size_t left_size,
 }
 static int path_component_casefold(GmlVM *vm,const char *directory,
                                    const char *component,size_t component_size,
-                                   char *resolved,size_t resolved_size){
+                                   char *resolved,size_t resolved_size,int *absent){
+  if(absent) *absent=0;
   if(!vm || !vm->host || !vm->host->directory_open ||
      !vm->host->directory_read || !vm->host->directory_close ||
      !directory || !component || !component_size || !resolved ||
@@ -82,7 +83,8 @@ static int path_component_casefold(GmlVM *vm,const char *directory,
   int found=0;
   AnygmDirectoryEntry entry={0};
   entry.struct_size=sizeof entry;
-  while(vm->host->directory_read(vm->host->userdata,handle,&entry)==ANYGM_OK){
+  AnygmResult status;
+  while((status=vm->host->directory_read(vm->host->userdata,handle,&entry))==ANYGM_OK){
     if(path_component_equal_folded(component,component_size,entry.name) &&
        (!found || strcmp(entry.name,resolved)<0)){
       snprintf(resolved,resolved_size,"%s",entry.name);
@@ -92,6 +94,10 @@ static int path_component_casefold(GmlVM *vm,const char *directory,
     entry.struct_size=sizeof entry;
   }
   vm->host->directory_close(vm->host->userdata,handle);
+  /* A host can omit special entries. A failed read/open is likewise not an absence proof. */
+  int special=component[0]=='.' &&
+    (component_size==1 || (component_size==2 && component[1]=='.'));
+  if(absent && !found && !special && status==ANYGM_RESULT_END) *absent=1;
   return found;
 }
 /* Installed Windows paths use case-insensitive component lookup. Keep exact-path reads fast, then
@@ -117,26 +123,31 @@ static char *path_under_read(GmlVM *vm,const char *directory,const char *relativ
   }
   resolved[used]=0;
   const char *cursor=relative?relative:"";
+  int missing=0;
   while(*cursor){
     while(*cursor=='/' || *cursor=='\\') cursor++;
     if(!*cursor) break;
     const char *end=cursor;
     while(*end && *end!='/' && *end!='\\') end++;
     size_t component_size=(size_t)(end-cursor);
+    /* Parent traversal can change what a normalizing host exposes below this spelling. */
+    if(component_size==2 && cursor[0]=='.' && cursor[1]=='.') missing=0;
     size_t directory_size=used;
     if(used && used+1<capacity){
       resolved[used++]='/';
       resolved[used]=0;
     }
     char candidate[sizeof(((AnygmDirectoryEntry *)0)->name)]={0};
-    if(component_size>=sizeof candidate ||
+    int absent=0;
+    if(missing || component_size>=sizeof candidate ||
        !path_component_casefold(vm,directory_size?resolved:"",cursor,component_size,
-                                candidate,sizeof candidate)){
+                                candidate,sizeof candidate,&absent)){
       if(used+component_size>=capacity){
         free(resolved);
         return exact;
       }
       memcpy(resolved+used,cursor,component_size);
+      if(absent) missing=1;
     } else {
       memcpy(resolved+used,candidate,component_size);
     }
@@ -144,7 +155,7 @@ static char *path_under_read(GmlVM *vm,const char *directory,const char *relativ
     resolved[used]=0;
     cursor=end;
   }
-  if(info && strcmp(exact,resolved)) path_stat(vm,resolved,info);
+  if(info && !missing && strcmp(exact,resolved)) path_stat(vm,resolved,info);
   free(exact);
   return resolved;
 }
