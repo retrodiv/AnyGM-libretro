@@ -20,9 +20,15 @@ failed partial reads leave the canonical image unpublished and invalid as a
 current resource. See R03-P9-INCREMENTAL-CHECKPOINT in
 [the renderer map](RENDERER_BACKENDS.md) for owners and controls.
 
-The current AnyGM save-state schema is `48`. It is the format transported by
+The current AnyGM save-state schema is `49`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `49` appends the active blend selector and RGB/alpha equations to the renderer
+payload. The selector retains either an existing preset or a validated four-factor tuple;
+the GPU state stack carries the same selector. Malformed domains and older root layouts
+reject transactionally. VM schema `28`, audio schema `5` and graphics resource schema `2`
+are unchanged; the renderer payload has no separate embedded schema field.
 
 Schema `48` introduces VM schema `28` and audio schema `5`. Emitter records retain a
 positive pitch multiplier and three velocity components; active voices retain their derived

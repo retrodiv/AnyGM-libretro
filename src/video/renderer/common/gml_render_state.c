@@ -409,6 +409,8 @@ static void render_state_write(GmlRender *render,int view_surface,CoreW *s,
     memcpy(&bits,&sprite->playback_speed,sizeof bits);cw_u32(s,bits);
     cw_i32(s,sprite->playback_speed_type);cw_i32(s,sprite->playback_speed_valid);
   }
+  cw_i32(s,render->blendmode);
+  cw_i32(s,render->blend_equation);cw_i32(s,render->blend_equation_alpha);
 }
 
 
@@ -733,7 +735,10 @@ static int render_state_read(GmlRender *render,CoreR *s){
     g->alphablend=cr_i32(s); g->alpha_test_enable=cr_i32(s); g->blendmode=cr_i32(s);
     g->blend_equation=cr_i32(s); g->blend_equation_alpha=cr_i32(s); g->interp=cr_i32(s);
     uint32_t reference=cr_u32(s),mask=cr_u32(s);
-    if(reference>255 || mask>15 || g->interp<0 || g->interp>1) s->ok=0;
+    if(reference>255 || mask>15 || g->interp<0 || g->interp>1 ||
+       !gml_render_blend_mode_valid(g->blendmode) ||
+       g->blend_equation<0 || g->blend_equation>5 ||
+       g->blend_equation_alpha<0 || g->blend_equation_alpha>5) s->ok=0;
     g->alpha_test_ref=(uint8_t)reference; g->color_write_mask=(uint8_t)mask;
     for(int j=0;j<GML_RENDER_TEXTURE_STAGES-1;j++){
       int enabled=cr_i32(s);
@@ -749,6 +754,15 @@ static int render_state_read(GmlRender *render,CoreR *s){
     if(type<0 || type>1 || valid<0 || valid>1){s->ok=0;break;}
     memcpy(&render->spr[i].playback_speed,&bits,sizeof bits);
     render->spr[i].playback_speed_type=type;render->spr[i].playback_speed_valid=valid;
+  }
+  int blend=cr_i32(s),rgb_equation=cr_i32(s),alpha_equation=cr_i32(s);
+  /* Resource-only renderer owners also use an unconfigured zero equation.
+   * Preserve that existing value exactly rather than rejecting our own writer. */
+  if(!gml_render_blend_mode_valid(blend) || rgb_equation<0 || rgb_equation>5 ||
+     alpha_equation<0 || alpha_equation>5)s->ok=0;
+  if(s->ok){
+    render->blendmode=blend;render->blend_equation=rgb_equation;
+    render->blend_equation_alpha=alpha_equation;
   }
   /* The application target is presentation storage, not a serialized surface record. A
    * successful load must not retain a device/journal version from the pre-load timeline. */

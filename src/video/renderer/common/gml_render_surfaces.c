@@ -521,6 +521,7 @@ void gml_render_lose_volatile_device(GmlRender *r){
 
 int gml_render_application_scene_enqueue_primitive(GmlRender *r,
                                                    const GmlRenderDrawOp *operation){
+  if(r && r->alphablend && gml_render_blend_is_extended(r->blendmode))return 0;
   if(!r || r->classic_phase_scene_target || !r->resident_application_pass || !gml_render_device(r) ||
      (!gml_render_particle_line_valid(operation) &&
       !gml_render_classic_alpha_rect_valid(operation) &&
@@ -559,6 +560,7 @@ int gml_render_application_scene_enqueue_primitive(GmlRender *r,
 
 static int enqueue_primitives(GmlRender *r,const GmlRenderDrawOp *operations,uint32_t count,
                               const GmlRenderResourceSource *source){
+  if(r && r->alphablend && gml_render_blend_is_extended(r->blendmode))return 0;
   if(!r || r->classic_phase_scene_target || !r->resident_application_pass || !gml_render_device(r) ||
      !operations || !count || count>65536u || !gml_render_scene_target_matches(r)) return 0;
   GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
@@ -629,6 +631,7 @@ int gml_render_application_scene_enqueue(GmlRender *r,const GmlRenderDrawOp *ope
 int gml_render_application_scene_enqueue_quads(GmlRender *r,
   const GmlRenderDrawOp *operation,uint32_t count,
   const GmlRenderDrawStateSnapshot *state,const GmlRenderResourceSource *source){
+  if(r && r->alphablend && gml_render_blend_is_extended(r->blendmode))return 0;
   GmlRenderPendingSceneBatch *pending;
   GmlRenderImageRef next;
   uint32_t state_index=0,source_index=0;
@@ -2127,6 +2130,10 @@ void gml_render_application_resource_dispose(GmlRender *r){
 GmlRenderResourceExecution gml_render_application_scene_submit(
   GmlRender *r,const GmlRenderDrawBatch *batch,
   const GmlRenderResourceSource *sources,uint32_t source_count){
+  /* Extended factor tuples retain ordinary counted CPU execution. Previously queued
+   * packets still flush through their captured state; device reads remain available. */
+  if(r && r->alphablend && gml_render_blend_is_extended(r->blendmode))
+    return GML_RENDER_RESOURCE_EXEC_FAILED;
   GmlRenderResource *resource=r && r->resident_application_pass &&
     gml_render_scene_target_matches(r)
     ?gml_render_scene_target_resource_ensure(r)

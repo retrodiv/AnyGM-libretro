@@ -1509,6 +1509,7 @@ alpha, the independent target alpha, channel masks and draw order.
 | Blend variant | CPU execution | GPU debt |
 |---|---|---|
 | `bm_src_colour, bm_src_alpha` | Saturated source-square plus destination-times-source-alpha, independently for RGBA | Counted CPU fallback for sprites, surfaces and primitives; native scene admission remains unqualified |
+| Extended RGB/alpha factor tuples outside the retained presets | Shared CPU colour-factor leaf applies all eleven factors independently to RGB and alpha, including zero-alpha source colour and saturated source alpha | Ordinary counted CPU fallback for sprites, surfaces, text and primitives. Scene enqueue/submit refuses these tuples before new device writes; earlier captured packets still flush and resource observations remain active. Native device blending of these tuples is unqualified debt. |
 
 R03-SPR-REPLACEMENT-FUNCTION extends ordinary/ext nearest ONE/ZERO sprites
 across Classic/Studio,SCREEN/application/explicit zero/numbered targets and

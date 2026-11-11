@@ -443,7 +443,8 @@ typedef struct GmlRender {
   int       blendmode;   /* 0=normal, 1=add, 2=(zero, inverse-source-colour), 3=multiply, 4=max preset,
                           * 5=(source colour, one), 6=replace, 7=inverse destination alpha,
                           * 8=(inverse destination colour, zero),
-                          * 9..11=destination-dependent colour factors. */
+                          * 9..12=colour-dependent factors; validated packed tuples retain
+                          * separate RGB/alpha factors through gml_render_draw.h. */
   int       blend_equation, blend_equation_alpha; /* 1 add, 2 max, 3 subtract, 4 reverse-subtract, 5 min */
   struct GmlGpuState {
     int alphablend, alpha_test_enable, blendmode, blend_equation, blend_equation_alpha, interp;

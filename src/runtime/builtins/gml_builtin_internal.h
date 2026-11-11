@@ -246,6 +246,7 @@ void gml_physics_apply_torque(GmlVM *vm,GmlInstance *instance,double torque,int 
  */
 /* Additional registry-owner shared operations. */
 void builtin_set_blendmode_ext(GmlVM *vm,GmlRender *R,int src,int dst);
+void builtin_set_blendmode_args(GmlVM *vm,GmlRender *r,GmlVal *args,int count,int separate);
 void builtin_set_blendmode(GmlRender *R, int bm);
 void draw_legacy_sprite_shadow(GmlVM *vm,double vertical_extra,double alpha);
 GmlSoftware3D *graphics_state_for_vm(GmlVM *vm);

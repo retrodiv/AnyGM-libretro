@@ -608,6 +608,58 @@ done:
   return ok;
 }
 
+static int blend_factors_equal(GmlVM *vm,const int expected[4]){
+  GmlVal value=gml_builtin_call(vm,"gpu_get_blendmode_ext_sepalpha",NULL,0);
+  int ok=value.t==V_ARR && gml_val_array_length(value)==4;
+  for(int i=0;i<4 && ok;i++)ok=gml_arr_get(value,i).d==expected[i];
+  gml_values_release_owned(&value,1);return ok;
+}
+
+static int run_blend_case(int response){
+  AnygmSyntheticContent fixture={0};Ring ring={0};
+  uint8_t *cold=NULL,*saved=NULL;size_t saved_size=0;int ok=1;
+  const int stacked[]={2,1,1,2},live[]={7,8,9,10},normal[]={5,6,5,6};
+  negotiation=response;monitor_changed=option_update=0;
+  REQUIRE(anygm_synthetic_tilemap_content_create(&fixture),"create blend capacity fixture");
+  retro_set_environment(environment);retro_set_video_refresh(video);retro_init();
+  struct retro_game_info info={fixture.path,NULL,0,NULL};
+  REQUIRE(retro_load_game(&info),"load blend capacity fixture");
+  ring.initial=ring.capacity=retro_serialize_size();
+  REQUIRE(ring.capacity>0 && g_libretro.startup_ring_compact,"blend cold compact policy");
+  ring.bytes=malloc(ring.capacity);cold=malloc(ring.capacity);
+  REQUIRE(ring.bytes && cold && push(&ring),"blend ring before first frame");
+  memcpy(cold,ring.bytes,ring.initial);retro_run();REQUIRE(push(&ring),"blend first frame");
+  GmlVM *vm=&g_libretro.engine->vm;
+  gml_builtin_call(vm,"gpu_set_blendmode_ext_sepalpha",(GmlVal[]){vreal(2),vreal(1),vreal(1),vreal(2)},4);
+  gml_builtin_call(vm,"gpu_set_blendequation_sepalpha",(GmlVal[]){vreal(3),vreal(5)},2);
+  for(int i=0;i<16;i++)gml_builtin_call(vm,"gpu_push_state",NULL,0);
+  gml_builtin_call(vm,"gpu_set_blendmode_ext_sepalpha",(GmlVal[]){vreal(7),vreal(8),vreal(9),vreal(10)},4);
+  REQUIRE(blend_factors_equal(vm,live) && push(&ring),"largest blend stack fits cold ring");
+  saved_size=ring.capacity;saved=malloc(saved_size);REQUIRE(saved,"retain blend snapshot");
+  memcpy(saved,ring.bytes,saved_size);
+  gml_builtin_call(vm,"gpu_set_blendmode",(GmlVal[]){vreal(0)},1);
+  REQUIRE(blend_factors_equal(vm,normal) && push(&ring),"changed blend push");
+  REQUIRE(retro_unserialize(saved,saved_size) && blend_factors_equal(&g_libretro.engine->vm,live),
+          "rewind restores independent live factors");
+  monitor_changed=option_update=1;retro_run();REQUIRE(push(&ring),"blend ring after geometry");
+  retro_reset();vm=&g_libretro.engine->vm;
+  REQUIRE(blend_factors_equal(vm,normal) && push(&ring),"Reset clears live blend");
+  REQUIRE(retro_unserialize(saved,saved_size)==(response>0),"blend Reset fixed/variable policy");
+  retro_run();REQUIRE(push(&ring),"blend ring after first reset frame");
+  REQUIRE(retro_unserialize(saved,saved_size) && blend_factors_equal(&g_libretro.engine->vm,live),
+          "blend restore after Reset");
+  vm=&g_libretro.engine->vm;gml_builtin_call(vm,"gpu_pop_state",NULL,0);
+  REQUIRE(blend_factors_equal(vm,stacked) && push(&ring),"restored stack contains independent factors");
+  REQUIRE(retro_unserialize(cold,ring.initial) && blend_factors_equal(&g_libretro.engine->vm,normal) && push(&ring),
+          "cold restore removes later blend stack");
+  REQUIRE(ring.accepted==9 && ring.rejected==0,"every blend frontend push accepted");
+  printf("blend frontend: negotiation=%d cold=%zu final=%zu accepted=%u rejected=%u\n",
+         response,ring.initial,ring.capacity,ring.accepted,ring.rejected);
+done:
+  free(cold);free(saved);free(ring.bytes);
+  retro_unload_game();retro_deinit();anygm_synthetic_content_destroy(&fixture);return ok;
+}
+
 int main(void){
   for(int response=-1;response<=1;response++) if(!run_case(response)) return 1;
   for(int response=-1;response<=1;response++) if(!run_ds_case(response)) return 1;
@@ -615,5 +667,6 @@ int main(void){
   for(int response=-1;response<=1;response++) if(!run_timeline_case(response)) return 1;
   for(int response=-1;response<=1;response++) if(!run_music_case(response)) return 1;
   for(int response=-1;response<=1;response++) if(!run_emitter_case(response)) return 1;
+  for(int response=-1;response<=1;response++) if(!run_blend_case(response)) return 1;
   return 0;
 }

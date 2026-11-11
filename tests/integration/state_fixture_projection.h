@@ -142,7 +142,16 @@ static void fixture_map(FixtureProjection *p){
  * against the live fixture. Direct state controls cover mutation/restoration of these fields. */
 static int project_fixture_playback(AnygmEngine *engine,uint8_t **data,size_t *written){
   uint8_t *bytes=*data;
-  if(*written<112 || (uint32_t)read_u64(bytes+4)!=48 || engine->render.n_spr<0)return 0;
+  if(*written<112 || (uint32_t)read_u64(bytes+4)!=49 || engine->render.n_spr<0)return 0;
+  /* Only a neutral current blend may disappear from this historical scratch pin. */
+  size_t render=112+(size_t)read_u64(bytes+64),render_size=(size_t)read_u64(bytes+72);
+  const uint8_t neutral_blend[12]={0,0,0,0,1,0,0,0,1,0,0,0};
+  if(render>*written || render_size>*written-render || render_size<sizeof neutral_blend ||
+     memcmp(bytes+render+render_size-sizeof neutral_blend,neutral_blend,sizeof neutral_blend))return 0;
+  size_t blend_end=render+render_size;
+  memmove(bytes+blend_end-sizeof neutral_blend,bytes+blend_end,*written-blend_end);
+  *written-=sizeof neutral_blend;
+  write_u64(bytes+72,render_size-sizeof neutral_blend);
   /* Only neutral audio is projected: the new inactive-voice pitch cells and default
    * music trailer are checked before removing them from scratch, never from runtime. */
   size_t audio=112;
@@ -332,6 +341,17 @@ static int fixture_projection_controls(AnygmEngine *engine,const uint8_t *baseli
     free(bytes);engine->vm.script_args[0]=original;gml_values_release_owned(&array,1);
   }
   engine->vm.script_args[0]=original;
+  if(ok){
+    uint8_t *bytes=NULL;size_t count=0;
+    ok=save_state(engine,&bytes,&count);
+    size_t render=112+(size_t)read_u64(bytes+64),render_size=(size_t)read_u64(bytes+72);
+    if(ok && render<=count && render_size<=count-render && render_size>=12u){
+      write_u32(bytes+render+render_size-12u,1u);
+      write_u64(bytes+56,state_checksum(bytes+112,count-112));
+      ok=!project_fixture_vm(engine,&bytes,&count);
+    }else ok=0;
+    free(bytes);
+  }
   /* A non-default new audio cell must fail closed instead of disappearing into an old pin. */
   if(ok){
     uint8_t *bytes=NULL;size_t count=0;

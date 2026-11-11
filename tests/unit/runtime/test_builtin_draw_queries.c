@@ -1234,6 +1234,101 @@ static int vertex_buffer_state_case(void){
   return ok;
 }
 
+static int blend_array_is(GmlVal value,const int *factors,int count){
+  if(value.t!=V_ARR || gml_val_array_length(value)!=count)return 0;
+  for(int i=0;i<count;i++)if(!real_is(gml_arr_get(value,i),factors[i]))return 0;
+  return 1;
+}
+
+static int extended_blend_queries_case(void){
+  const int normal[]={5,6,5,6},custom[]={2,1,1,2};
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlWin win={.bytecode=17};GmlRender render;GmlVM vm={.win=&win};
+    if(gml_render_init(&render,&win))return 0;
+    vm.render=&render;
+    GmlVal retained=query(&vm,"gpu_get_blendmode_ext",NULL,0,cached,&ok);
+    GmlVal first=query(&vm,"gpu_get_blendmode_ext_sepalpha",NULL,0,cached,&ok);
+    ok &= blend_array_is(retained,normal,2) && blend_array_is(first,normal,4);
+    if(first.t==V_ARR)for(int i=0;i<4;i++)gml_arr_set(first,i,vreal(custom[i]));
+    query(&vm,"gpu_set_blendmode_ext_sepalpha",&first,1,cached,&ok);
+    GmlVal current=query(&vm,"gpu_get_blendmode_ext_sepalpha",NULL,0,cached,&ok);
+    ok &= blend_array_is(current,custom,4) && blend_array_is(retained,normal,2);
+    query(&vm,"gpu_push_state",NULL,0,0,&ok);
+    query(&vm,"gpu_set_blendmode",(GmlVal[]){vreal(1)},1,cached,&ok);
+    query(&vm,"gpu_pop_state",NULL,0,0,&ok);
+    GmlVal popped=query(&vm,"gpu_get_blendmode_ext_sepalpha",NULL,0,cached,&ok);
+    ok &= blend_array_is(popped,custom,4);
+    int target=gml_surface_create(&render,2,2);
+    ok &= target>0 && gml_surface_set_target(&render,target);
+    query(&vm,"draw_clear_alpha",(GmlVal[]){vreal(0x604020),vreal(64.0/255.0)},2,0,&ok);
+    query(&vm,"draw_set_colour",(GmlVal[]){vreal(0x305070)},1,0,&ok);
+    query(&vm,"draw_set_alpha",(GmlVal[]){vreal(128.0/255.0)},1,0,&ok);
+    query(&vm,"draw_rectangle",(GmlVal[]){vreal(0),vreal(0),vreal(1),vreal(1),vreal(0)},5,0,&ok);
+    gml_render_prepare_draw(&render);
+    /* RGB replaces the source, alpha retains the destination: independent factors. */
+    ok &= render.fb[0]==UINT32_C(0x40705030);
+    gml_surface_reset_target(&render);
+    size_t size=gml_render_state_size(&render,-1),written=0,used=0;
+    uint8_t *state=malloc(size),*again=malloc(size);
+    ok &= state && again && gml_render_state_save(&render,-1,state,size,&written) && written==size;
+    query(&vm,"gpu_set_blendmode",(GmlVal[]){vreal(0)},1,cached,&ok);
+    ok &= state && gml_render_state_load(&render,state,size,&used) && used==size;
+    GmlVal restored=query(&vm,"gpu_get_blendmode_ext_sepalpha",NULL,0,cached,&ok);
+    ok &= blend_array_is(restored,custom,4);
+    ok &= again && gml_render_state_save(&render,-1,again,size,&written) && written==size && !memcmp(state,again,size);
+    free(state);free(again);
+    GmlVal values[]={retained,first,current,popped,restored};gml_values_release_owned(values,5);
+    vm.render=NULL;vm.win=NULL;gml_vm_free(&vm);gml_render_free(&render);
+  }
+  return ok;
+}
+
+static int extended_blend_factor_matrix_case(void){
+  const int preserved[][2]={{5,6},{5,2},{1,4},{9,1},{5,4},{3,2},{2,1},
+    {8,7},{10,1},{9,3},{9,9},{7,9},{3,5}};
+  const unsigned alphas[]={0,128,255};
+  GmlWin win={.bytecode=17};GmlRender render;GmlVM vm={.win=&win};int ok=1;
+  if(gml_render_init(&render,&win))return 0;
+  vm.render=&render;
+  int target=gml_surface_create(&render,1,1);
+  if(target<=0 || !gml_surface_set_target(&render,target)){gml_render_free(&render);return 0;}
+  for(int source=1;source<=11 && ok;source++)for(int dest=1;dest<=11 && ok;dest++)
+  for(int source_alpha=1;source_alpha<=11 && ok;source_alpha++)
+  for(int dest_alpha=1;dest_alpha<=11 && ok;dest_alpha++){
+    int factors[]={source,dest,source_alpha,dest_alpha},legacy=0;
+    for(unsigned i=0;i<sizeof preserved/sizeof preserved[0];i++)
+      legacy|=source==source_alpha && dest==dest_alpha &&
+        source==preserved[i][0] && dest==preserved[i][1];
+    GmlVal args[]={vreal(source),vreal(dest),vreal(source_alpha),vreal(dest_alpha)};
+    query(&vm,"gpu_set_blendmode_ext_sepalpha",args,4,1,&ok);
+    GmlVal value=query(&vm,"gpu_get_blendmode_ext_sepalpha",NULL,0,1,&ok);
+    ok &= blend_array_is(value,factors,4);gml_values_release_owned(&value,1);
+    /* Existing preset rounding remains protected by its original controls. */
+    if(legacy)continue;
+    for(unsigned a=0;a<sizeof alphas/sizeof alphas[0] && ok;a++){
+      const unsigned sc[]={112,80,48,alphas[a]},dc[]={32,64,96,64};
+      unsigned result[4];
+      for(unsigned c=0;c<4u;c++){
+        long double sf[]={0,0,1,sc[c]/255.0L,1-sc[c]/255.0L,sc[3]/255.0L,
+          1-sc[3]/255.0L,dc[3]/255.0L,1-dc[3]/255.0L,dc[c]/255.0L,
+          1-dc[c]/255.0L,c==3u?1:fminl(sc[3],255u-dc[3])/255.0L};
+        long double channel=sc[c]*sf[factors[c==3u?2:0]]+dc[c]*sf[factors[c==3u?3:1]];
+        result[c]=(unsigned)llroundl(fminl(channel,255));
+      }
+      uint32_t expected=(result[3]<<24)|(result[0]<<16)|(result[1]<<8)|result[2];
+      render.fb[0]=0x40204060u;render.color=0x305070u;render.alpha=alphas[a]/255.0;
+      gml_builtin_call(&vm,"draw_point",(GmlVal[]){vreal(0),vreal(0)},2);
+      if(render.fb[0]!=expected){
+        fprintf(stderr,"extended factor matrix: %d,%d,%d,%d alpha=%u got=%08x expected=%08x\n",
+          source,dest,source_alpha,dest_alpha,alphas[a],render.fb[0],expected);ok=0;
+      }
+    }
+  }
+  gml_surface_reset_target(&render);vm.render=NULL;vm.win=NULL;gml_vm_free(&vm);gml_render_free(&render);
+  return ok;
+}
+
 int main(int argc,char **argv){
   const char *filter=NULL;
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2];
@@ -1257,6 +1352,8 @@ int main(int argc,char **argv){
     {"authored_font_styles",font_styles_case},{"runtime_font_styles",runtime_font_styles_case},
     {"inverse_destination_colour",inverse_destination_colour_case},
     {"source_colour_source_alpha",source_colour_source_alpha_case},
+    {"extended_blend_queries",extended_blend_queries_case},
+    {"extended_blend_factor_matrix",extended_blend_factor_matrix_case},
     {"color_query_roundtrip",color_query_roundtrip_case},
     {"camera_capacity",camera_capacity_case}};
   const AnygmTestGroup group={"draw_queries",cases,sizeof cases/sizeof cases[0]};

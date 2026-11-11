@@ -167,3 +167,14 @@ Doppler factor. The resulting emitter-source pitch is bounded to 1/256..256 for 
 Freeing an emitter stops its attached voices through the existing stop path, so reusing its
 identifier does not retune old sounds. Emitter and derived voice state participate in the current
 transactional format; this does not add the separate Audio Playback Ended callback API.
+
+## Extended blend queries
+
+The extended blend getters return independently owned arrays of RGB source/destination
+factors, followed by alpha source/destination factors in the four-element form. The matching
+setters accept either scalar factors or those arrays. Existing preset raster bodies remain;
+other valid tuples use the shared CPU factor executor, including during ordinary counted
+fallback in the OpenGL fallback renderer. Device execution of those tuples remains unqualified.
+State push/pop and the current save-state format retain the active tuple and equations.
+Invalid, nonintegral or nonfinite factors and short arrays leave the selected mode unchanged;
+this invalid-input policy is not a measured native-runner exception contract.

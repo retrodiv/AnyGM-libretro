@@ -20672,7 +20672,10 @@ int main(void){
   const char *selected=getenv("GML_RENDER_RESOURCE_CASE");
   if(selected){
     int passed;
-    if(!strcmp(selected,"opaque-clear-complement")) passed=opaque_rectangle_clear_complement();
+    if(!strcmp(selected,"state-without-context")) passed=state_without_context();
+    else if(!strcmp(selected,"metadata-pending-state")) passed=metadata_state_capacity_preserves_pending_pixels();
+    else if(!strcmp(selected,"zero-base-runtime-state")) passed=zero_base_runtime_sprite_state();
+    else if(!strcmp(selected,"opaque-clear-complement")) passed=opaque_rectangle_clear_complement();
     else if(!strcmp(selected,"large-rotated-multiply")) passed=resident_large_rotated_multiply();
     else if(!strcmp(selected,"borrowed-screen-handoff")) passed=resident_borrowed_application_screen_handoff();
     else if(!strcmp(selected,"deferred-borrowed-screen")) passed=resident_deferred_borrowed_screen_materialization();

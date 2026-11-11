@@ -107,12 +107,31 @@ void builtin_set_blendmode_ext(GmlVM *vm,GmlRender *R,int src,int dst){
   else if(src==9 && dst==9) state.blend_mode=GML_RENDER_BLEND_DEST_DEST_COLOUR;
   else if(src==7 && dst==9) state.blend_mode=GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR;
   else if(src==3 && dst==5) state.blend_mode=GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA;
-  else state.blend_mode=0;                             /* includes normal (5,6) */
+  else if(src==5 && dst==6) state.blend_mode=0;
+  else state.blend_mode=gml_render_blend_pack_factors((int[]){src,dst,src,dst});
+  if(state.blend_mode<0)return;
   gml_render_draw_state_update(R,&state,GML_RENDER_DRAW_STATE_BLEND_MODE);
   if(builtin_setting(vm,"GML_DBG_BM"))
     anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,
                     "[bm] gpu_set_blendmode_ext(%d,%d) -> mode %d\n",
                     src,dst,state.blend_mode);
+}
+void builtin_set_blendmode_args(GmlVM *vm,GmlRender *r,GmlVal *args,int count,int separate){
+  int factors[4],required=separate?4:2;
+  if(count<1 || (args[0].t!=V_ARR && count<required))return;
+  if(args[0].t==V_ARR && gml_val_array_length(args[0])<required)return;
+  for(int i=0;i<required;i++){
+    GmlVal value=args[0].t==V_ARR?gml_arr_get(args[0],i):args[i];
+    double number=N(&value,1,0);
+    if(!isfinite(number) || number<1 || number>11 || floor(number)!=number)return;
+    factors[i]=(int)number;
+  }
+  if(!separate){factors[2]=factors[0];factors[3]=factors[1];}
+  if(factors[0]==factors[2] && factors[1]==factors[3]){
+    builtin_set_blendmode_ext(vm,r,factors[0],factors[1]);return;
+  }
+  GmlRenderDrawState state={0};state.blend_mode=gml_render_blend_pack_factors(factors);
+  gml_render_draw_state_update(r,&state,GML_RENDER_DRAW_STATE_BLEND_MODE);
 }
 void builtin_set_blendmode(GmlRender *R, int bm){
   if(!R) return;
@@ -1666,6 +1685,13 @@ GmlVal gml_builtin_try_platform_tail(GmlVM *vm, const char *nm, GmlVal *a, int n
     int preset=internal==0?0:internal==1?1:internal==4?2:internal==2?3:-1;
     return vreal(preset);
   }
+  if(!strcmp(nm,"gpu_get_blendmode_ext") || !strcmp(nm,"gpu_get_blendmode_ext_sepalpha")){
+    int factors[4],count=!strcmp(nm,"gpu_get_blendmode_ext")?2:4;
+    gml_render_blend_mode_factors(builtin_draw_state((GmlRender*)vm->render).blend_mode,factors);
+    GmlVal result=gml_arr_new(count,vreal(0));
+    for(int i=0;i<count;i++)gml_arr_set(result,i,vreal(factors[i]));
+    return result;
+  }
   if(!strcmp(nm,"gpu_get_colorwriteenable")){
     GmlRender *R2=(GmlRender*)vm->render;
     unsigned mask=builtin_draw_state(R2).color_write_mask;
@@ -1701,7 +1727,8 @@ GmlVal gml_builtin_try_platform_tail(GmlVM *vm, const char *nm, GmlVal *a, int n
   }
   if(!strcmp(nm,"gpu_set_blendmode_ext")||!strcmp(nm,"gpu_set_blendmode_ext_sepalpha")||
      !strcmp(nm,"draw_set_blend_mode_ext")){
-    builtin_set_blendmode_ext(vm,(GmlRender*)vm->render,(int)N(a,n,0),(int)N(a,n,1));
+    builtin_set_blendmode_args(vm,(GmlRender*)vm->render,a,n,
+      !strcmp(nm,"gpu_set_blendmode_ext_sepalpha"));
     return vreal(0);
   }
   if(!strcmp(nm,"gpu_set_blendequation")||!strcmp(nm,"gpu_set_blendequation_sepalpha")){

@@ -233,9 +233,47 @@ enum {
   GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA=12
 };
 
+/* The existing scalar selector owns extended factors too. Four validated nibbles
+ * retain RGB source/destination and alpha source/destination without a shadow state. */
+static inline int gml_render_blend_is_extended(int mode){
+  if(((unsigned)mode&~65535u)!=65536u)return 0;
+  for(unsigned shift=0;shift<16u;shift+=4u){
+    unsigned factor=((unsigned)mode>>shift)&15u;
+    if(factor<1u || factor>11u)return 0;
+  }
+  return 1;
+}
+
+static inline int gml_render_blend_mode_valid(int mode){
+  return (mode>=0 && mode<=GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA) ||
+    gml_render_blend_is_extended(mode);
+}
+
+static inline void gml_render_blend_mode_factors(int mode,int factors[4]){
+  static const unsigned char pairs[][2]={
+    {5,6},{5,2},{1,4},{9,1},{5,4},{3,2},{2,1},
+    {8,7},{10,1},{9,3},{9,9},{7,9},{3,5}};
+  if(gml_render_blend_is_extended(mode)){
+    for(unsigned i=0;i<4u;i++)factors[i]=(int)(((unsigned)mode>>(4u*i))&15u);
+  }else{
+    unsigned index=mode>=0 && mode<(int)(sizeof pairs/sizeof pairs[0])?(unsigned)mode:0u;
+    factors[0]=factors[2]=pairs[index][0];factors[1]=factors[3]=pairs[index][1];
+  }
+}
+
+static inline int gml_render_blend_pack_factors(const int factors[4]){
+  unsigned mode=65536u;
+  for(unsigned i=0;i<4u;i++){
+    if(factors[i]<1 || factors[i]>11)return -1;
+    mode|=(unsigned)factors[i]<<(4u*i);
+  }
+  return (int)mode;
+}
+
 static inline int gml_render_blend_uses_destination_colour(int mode){
-  return mode>=GML_RENDER_BLEND_DEST_SOURCE_COLOUR &&
-         mode<=GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA;
+  return (mode>=GML_RENDER_BLEND_DEST_SOURCE_COLOUR &&
+          mode<=GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA) ||
+         gml_render_blend_is_extended(mode);
 }
 
 typedef enum GmlRenderBlendEquation {

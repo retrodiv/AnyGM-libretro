@@ -566,7 +566,7 @@ static GmlVal gml_builtin_call_fast_id_impl(GmlVM *vm, int id, const char *nm, G
       builtin_set_blendmode(R,(int)N(a,n,0));
       return vreal(0);
     case BID_GPU_SET_BLENDMODE_EXT:
-      builtin_set_blendmode_ext(vm,R,(int)N(a,n,0),(int)N(a,n,1));
+      builtin_set_blendmode_args(vm,R,a,n,0);
       return vreal(0);
     case BID_SHADER_SET:
       gml_render_shader_set_current(R,(int)N(a,n,0));

@@ -64,17 +64,41 @@ static inline uint32_t blend_multiply_pixel(const GmlRender *r,uint32_t dst,int 
 
 /* Colour-factor pairs apply factors to RGBA, even when source coverage is zero.
  * Alpha testing is a separate fragment-admission decision made by the sampling kernel. */
+static inline unsigned blend_extended_factor(int factor,unsigned channel,
+                                             const unsigned source[4],const unsigned dest[4]){
+  switch(factor){
+    case 1:return 0u;
+    case 2:return 255u;
+    case 3:return source[channel];
+    case 4:return 255u-source[channel];
+    case 5:return source[3];
+    case 6:return 255u-source[3];
+    case 7:return dest[3];
+    case 8:return 255u-dest[3];
+    case 9:return dest[channel];
+    case 10:return 255u-dest[channel];
+    case 11:return channel==3u?255u:(source[3]<255u-dest[3]?source[3]:255u-dest[3]);
+    default:return 0u;
+  }
+}
+
 static inline uint32_t blend_destination_colour_pixel(const GmlRender *r,uint32_t destination,
                                                         int sr,int sg,int sb,unsigned sa){
   unsigned source[4]={(unsigned)sr,(unsigned)sg,(unsigned)sb,sa>255u?255u:sa};
   unsigned dest[4]={(destination>>16)&255u,(destination>>8)&255u,
                     destination&255u,destination>>24};
   unsigned out[4];
+  int extended=gml_render_blend_is_extended(r->blendmode),factors[4]={0};
+  if(extended)gml_render_blend_mode_factors(r->blendmode,factors);
   int source_colour_alpha=r->blendmode==GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA;
   for(int channel=0;channel<4;channel++){
     unsigned sf=r->blendmode==GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR?dest[3]:dest[channel];
     unsigned df=r->blendmode==GML_RENDER_BLEND_DEST_SOURCE_COLOUR?source[channel]:dest[channel];
     if(source_colour_alpha){sf=source[channel];df=source[3];}
+    if(extended){
+      sf=blend_extended_factor(factors[channel==3?2:0],(unsigned)channel,source,dest);
+      df=blend_extended_factor(factors[channel==3?3:1],(unsigned)channel,source,dest);
+    }
     int equation=channel==3?r->blend_equation_alpha:r->blend_equation;
     int value;
     if(equation==2) value=source[channel]>dest[channel]?source[channel]:dest[channel];

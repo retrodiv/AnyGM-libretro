@@ -1211,7 +1211,7 @@ static int sprite_playback_state_cases(const AnygmHostServices *services,const A
     gml_render_sprite_set_playback(&engine->render,sprite,0.125,0) && save_state(engine,&baseline,&size);
   if(!ok){free(baseline);anygm_destroy(engine);return 0;}
   size_t render_start=112+(size_t)read_u64(baseline+64),render_size=(size_t)read_u64(baseline+72);
-  size_t count=(size_t)engine->render.n_spr,trailer=4+12*count;
+  size_t count=(size_t)engine->render.n_spr,trailer=4+12*count+12;
   if(trailer>render_size){free(baseline);anygm_destroy(engine);return 0;}
   size_t at=render_start+render_size-trailer;
   ok=(uint32_t)read_u64(baseline+at)==count &&
@@ -1356,6 +1356,45 @@ static int emitter_state_cases(AnygmEngine *engine){
   free(candidate); free(baseline);
   if(!ok) fail("emitter state validation/rollback failed");
   return ok;
+}
+
+static int blend_state_cases(AnygmEngine *engine){
+  GmlVM *vm=&engine->vm;
+  GmlVal stacked[]={vreal(2),vreal(1),vreal(1),vreal(2)};
+  GmlVal live[]={vreal(7),vreal(8),vreal(9),vreal(10)};
+  gml_builtin_call(vm,"gpu_set_blendmode_ext_sepalpha",stacked,4);
+  gml_builtin_call(vm,"gpu_set_blendequation_sepalpha",(GmlVal[]){vreal(3),vreal(5)},2);
+  gml_builtin_call(vm,"gpu_push_state",NULL,0);
+  gml_builtin_call(vm,"gpu_set_blendmode_ext_sepalpha",live,4);
+  gml_builtin_call(vm,"gpu_set_blendequation_sepalpha",(GmlVal[]){vreal(4),vreal(2)},2);
+  uint8_t *baseline=NULL,*candidate=NULL;size_t size=0;
+  int ok=save_state(engine,&baseline,&size);
+  candidate=ok?malloc(size):NULL;ok=ok && candidate;
+  size_t start=ok?112+(size_t)read_u64(baseline+64):0;
+  size_t length=ok?(size_t)read_u64(baseline+72):0;
+  if(!ok || length<12u){free(baseline);free(candidate);return 0;}
+  size_t at=start+length-12u;
+  gml_builtin_call(vm,"gpu_set_blendmode",(GmlVal[]){vreal(0)},1);
+  ok=anygm_state_load(engine,baseline,size)==ANYGM_OK && engine_matches(engine,baseline,size);
+  GmlVal values=gml_builtin_call(&engine->vm,"gpu_get_blendmode_ext_sepalpha",NULL,0);
+  ok=ok && values.t==V_ARR && gml_val_array_length(values)==4;
+  for(int i=0;i<4 && ok;i++)ok=gml_arr_get(values,i).d==live[i].d;
+  gml_values_release_owned(&values,1);
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,at,65536u,"invalid live blend tuple");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,at+4,6,"invalid RGB blend equation");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,at+8,UINT32_MAX,"invalid alpha blend equation");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,4,48,"previous live-blend-free public schema");
+  uint8_t pattern[12];write_u32(pattern,UINT32_C(0x12112));write_u32(pattern+4,3);write_u32(pattern+8,5);
+  size_t stack_at=0;int matches=0;
+  for(size_t i=start;ok && i+sizeof pattern<=start+length;i++)
+    if(!memcmp(baseline+i,pattern,sizeof pattern)){stack_at=i;matches++;}
+  ok=ok && matches==1;
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,stack_at,UINT32_C(0x1000c),
+                             "invalid stacked blend tuple");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,stack_at+4,UINT32_MAX,
+                             "invalid stacked blend equation");
+  free(candidate);free(baseline);
+  return ok?1:fail("blend tuple/equation validation and rollback failed");
 }
 
 int main(void){
@@ -1710,6 +1749,7 @@ int main(void){
 
   if(ok) ok=content_override_state_cases(&services,&fixture);
   if(ok) ok=emitter_state_cases(engine);
+  if(ok) ok=blend_state_cases(engine);
 
   free(candidate);
   free(baseline);
