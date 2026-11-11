@@ -6,6 +6,7 @@
 
 #include "gml_gpu_internal.h"
 #include "gml_gpu_opengl_api.h"
+#include "gml_gpu_opengl_variants.h"
 
 enum {
   GL_PLAN_MAP_SLOTS=GML_PLAN_MAX_OPERATIONS*2,
@@ -186,7 +187,7 @@ typedef struct GlScene {
   GLint checkpoint_u_image,checkpoint_u_previous,checkpoint_u_alpha;
   uint32_t checkpoint_mask_width,checkpoint_mask_height;
   int checkpoint_program_failed;
-  GlSceneProgram main_program,filtered_program,compact_programs[53];
+  GlSceneProgram main_program,filtered_program,compact_programs[GL_SCENE_COMPACT_PROGRAM_COUNT];
   GLuint vertex_buffer,vertex_array,instance_buffer,instance_array;
   GLuint upload_buffer;
   size_t upload_capacity;

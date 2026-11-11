@@ -102,8 +102,23 @@ int gml_gpu_opengl_build_program(GmlGpuBackend *backend,char *error,size_t error
   return 1;
 }
 
+typedef struct {
+  const char *defines;
+  int surface_body;
+  const char *filter_uniform;
+  unsigned requirements;
+} GlSceneProgramDescription;
+
+static const GlSceneProgramDescription scene_program_descriptions[GL_SCENE_PROGRAM_COUNT]={
+#define GML_OPENGL_SCENE_DESCRIPTION(name,defines,surface,uniform,requirements) \
+  [GL_SCENE_PROGRAM_##name]={defines,surface,uniform,requirements},
+  GML_OPENGL_SCENE_VARIANTS(GML_OPENGL_SCENE_DESCRIPTION)
+#undef GML_OPENGL_SCENE_DESCRIPTION
+};
+
 static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
-                               int mode,char *error,size_t error_capacity){
+                               GlSceneProgramVariant variant,char *error,size_t error_capacity){
+  const GlSceneProgramDescription *description=&scene_program_descriptions[variant];
   const char *prefix=backend->api==GML_GPU_API_OPENGLES3
     ?GML_GPU_OPENGL_PREFIX_ES:GML_GPU_OPENGL_PREFIX_DESKTOP;
   char vertex_source[sizeof(GML_GPU_OPENGL_PREFIX_ES)+
@@ -117,62 +132,9 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
   int vertex_length=snprintf(vertex_source,sizeof vertex_source,"%s%s",prefix,
                              GML_GPU_OPENGL_SCENE_INSTANCED_VERTEX_BODY);
   int fragment_length=snprintf(fragment_source,sizeof fragment_source,"%s%s%s",prefix,
-                               mode==1?"#define GML_SCENE_FILTERED_ONLY 1\n":
-                               mode==2?"#define GML_SCENE_CONSTANT_FILTER 0\n":
-                               mode==3?"#define GML_SCENE_CONSTANT_FILTER 14\n":
-                               mode==4?"#define GML_SCENE_STRETCHED_FILTER 1\n":
-                               mode==5?"#define GML_SCENE_CONSTANT_FILTER 65\n":
-                               mode==6?"#define GML_SCENE_CONSTANT_FILTER 21\n":
-                               mode==7?"#define GML_SCENE_CONSTANT_FILTER 22\n":
-                               mode==8?"#define GML_SCENE_CONSTANT_FILTER 72\n":
-                               mode==9?"#define GML_SCENE_CONSTANT_FILTER 79\n":
-                               mode==10?"#define GML_SCENE_CONSTANT_FILTER 82\n":
-                               mode==11?"#define GML_SCENE_CONSTANT_FILTER 79\n#define GML_SCENE_PLAIN_NATIVE 1\n":
-                               mode==12?"#define GML_SCENE_CONSTANT_FILTER 82\n#define GML_SCENE_PLAIN_NATIVE 1\n":
-                               mode==13?"#define GML_SCENE_CONSTANT_FILTER 15\n":
-                               mode==14?"#define GML_SCENE_CONSTANT_FILTER 27\n":
-                               mode==15?"#define GML_SCENE_CONSTANT_FILTER 51\n":
-                               mode==16?"#define GML_SCENE_CONSTANT_FILTER 43\n":
-                               mode==17?"#define GML_SCENE_CONSTANT_FILTER 38\n":
-                               mode==18?"#define GML_SCENE_CONSTANT_FILTER 25\n":
-                               mode==19?"#define GML_SCENE_CONSTANT_FILTER 26\n":
-                               mode==20?"#define GML_SCENE_CONSTANT_FILTER 32\n":
-                               mode==21?"#define GML_SCENE_CONSTANT_FILTER 33\n":
-                               mode==22?"#define GML_SCENE_CONSTANT_FILTER 153\n":
-                               mode==23?"#define GML_SCENE_CONSTANT_FILTER 21\n#define GML_SCENE_PLAIN_NATIVE 1\n":
-                               mode==24?"#define GML_SCENE_CONSTANT_FILTER 22\n#define GML_SCENE_PLAIN_NATIVE 1\n":
-                               mode==25?"#define GML_SCENE_CONSTANT_FILTER 25\n#define GML_SCENE_PLAIN_NATIVE 1\n":
-                               mode==26?"#define GML_SCENE_CONSTANT_FILTER 26\n#define GML_SCENE_PLAIN_NATIVE 1\n":
-                               mode==27?"#define GML_SCENE_CONSTANT_FILTER 25\n#define GML_SCENE_PLAIN_NATIVE 1\n#define GML_SCENE_WHITE_TINT 1\n":
-                               mode==28?"#define GML_SCENE_CONSTANT_FILTER 25\n#define GML_SCENE_PLAIN_NATIVE 1\n#define GML_SCENE_WHITE_TINT 1\n#define GML_SCENE_ZERO_ALPHA_BLEND 1\n":
-                               mode==29?"#define GML_SCENE_CONSTANT_FILTER 53\n":
-                               mode==30?"#define GML_SCENE_CONSTANT_FILTER 55\n":
-                               mode==31?"#define GML_SCENE_CONSTANT_FILTER 147\n":
-                               mode==32?"#define GML_SCENE_CONSTANT_FILTER 149\n":
-                               mode==33?"#define GML_SCENE_CONSTANT_FILTER 30\n":
-                               mode==34?"#define GML_SCENE_CONSTANT_FILTER 23\n":
-                               mode==35?"#define GML_SCENE_CONSTANT_FILTER 24\n":
-                               mode==36?"#define GML_SCENE_CONSTANT_FILTER 34\n":
-                               mode==37?"#define GML_SCENE_CONSTANT_FILTER 35\n":
-                               mode==38?"#define GML_SCENE_CONSTANT_FILTER 36\n":
-                               mode==39?"#define GML_SCENE_CONSTANT_FILTER 39\n":
-                               mode==40?"#define GML_SCENE_CONSTANT_FILTER 41\n":
-                               mode==41?"#define GML_SCENE_CONSTANT_FILTER 31\n":
-                               mode==42?"#define GML_SCENE_CONSTANT_FILTER 40\n":
-                               mode==43?"#define GML_SCENE_CONSTANT_FILTER 149\n#define GML_SCENE_PLAIN_NATIVE 1\n#define GML_SCENE_WHITE_TINT 1\n":
-                               mode==44?"#define GML_SCENE_CONSTANT_FILTER 38\n#define GML_SCENE_PLAIN_NATIVE 1\n#define GML_SCENE_WHITE_TINT 1\n":
-                               mode==45?"#define GML_SCENE_CONSTANT_FILTER 37\n":
-                               mode==46?"#define GML_SCENE_CONSTANT_FILTER 42\n":
-                               mode==47?"#define GML_SCENE_CONSTANT_FILTER 84\n":
-                               mode==48?"#define GML_SCENE_CONSTANT_FILTER 79\n#define GML_SCENE_PLAIN_NATIVE 1\n#define GML_SCENE_ZERO_ALPHA_BLEND 1\n":
-                               mode==49?"#define GML_SCENE_CONSTANT_FILTER 180\n":
-                               mode==50?"#define GML_SCENE_CONSTANT_FILTER 181\n":
-                               mode==51?"#define GML_SCENE_CONSTANT_FILTER 182\n":
-                               mode==52?"#define GML_SCENE_CONSTANT_FILTER 183\n":
-                               mode==53?"#define GML_SCENE_CONSTANT_FILTER 184\n":
-                               mode==54?"#define GML_SCENE_CONSTANT_FILTER 185\n":"",
-                               mode==29 || mode==30?GML_GPU_OPENGL_SCENE_SURFACE_FRAGMENT_BODY:
-                                                    GML_GPU_OPENGL_SCENE_FRAGMENT_BODY);
+                               description->defines,
+                               description->surface_body?GML_GPU_OPENGL_SCENE_SURFACE_FRAGMENT_BODY:
+                                                         GML_GPU_OPENGL_SCENE_FRAGMENT_BODY);
   if(vertex_length<0 || (size_t)vertex_length>=sizeof vertex_source ||
      fragment_length<0 || (size_t)fragment_length>=sizeof fragment_source){
     gml_gpu_opengl_record_error(error,error_capacity,"scene shader source exceeds buffer capacity");
@@ -222,7 +184,7 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
   scene->u_extent=backend->gl.GetUniformLocation(scene->program,"u_extent");
   scene->u_image=backend->gl.GetUniformLocation(scene->program,"u_image");
   scene->u_filter=backend->gl.GetUniformLocation(scene->program,
-    mode==4?"u_selected_filter":"u_filter");
+    description->filter_uniform);
   scene->u_additive_bytes=backend->gl.GetUniformLocation(scene->program,"u_additive_bytes");
   scene->u_alpha_test=backend->gl.GetUniformLocation(scene->program,"u_alpha_test");
   scene->u_source_alpha_key=backend->gl.GetUniformLocation(scene->program,"u_source_alpha_key");
@@ -241,7 +203,8 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
   scene->u_recovery_application=backend->gl.GetUniformLocation(scene->program,"u_recovery_application");
   scene->u_recovery_rect=backend->gl.GetUniformLocation(scene->program,"u_recovery_rect");
   scene->rotated_alpha16_valid=0;
-  if((!mode && (scene->a_position01<0 || scene->a_position23<0 ||
+  unsigned required=description->requirements;
+  if((variant==GL_SCENE_PROGRAM_GENERAL && (scene->a_position01<0 || scene->a_position23<0 ||
      scene->a_texcoord01<0 || scene->a_texcoord23<0 ||
      scene->a_colour[0]<0 || scene->a_colour[1]<0 ||
      scene->a_colour[2]<0 || scene->a_colour[3]<0 ||
@@ -255,18 +218,18 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
      scene->u_previous<0 || scene->u_region_origin<0 || scene->u_rotated_alpha16<0 ||
      scene->u_point_map_x<0 || scene->u_point_map_y<0 || scene->u_point_origin<0 ||
      scene->u_recovery_screen<0 || scene->u_recovery_application<0 || scene->u_recovery_rect<0)) ||
-     ((mode==13 || mode==14) && (scene->u_previous<0 || scene->u_region_origin<0 ||
-       scene->u_rotated_alpha16<0)) ||
-     (mode==14 && (scene->u_point_map_x<0 || scene->u_point_map_y<0 ||
-       scene->u_point_origin<0)) ||
-     ((mode==34 || mode==35) && (scene->u_recovery_screen<0 ||
+     ((required&GL_SCENE_REQUIRE_PREVIOUS) && (scene->u_previous<0 ||
+       scene->u_region_origin<0 || scene->u_rotated_alpha16<0)) ||
+     ((required&GL_SCENE_REQUIRE_POINT_MAP) && (scene->u_point_map_x<0 ||
+       scene->u_point_map_y<0 || scene->u_point_origin<0)) ||
+     ((required&GL_SCENE_REQUIRE_RECOVERY) && (scene->u_recovery_screen<0 ||
        scene->u_recovery_application<0 || scene->u_recovery_rect<0)) ||
-     (mode && (scene->a_position01<0 || scene->a_position23<0 ||
-       (mode!=8 && mode!=30 && mode!=33 && mode!=34 && mode!=35 && mode!=38 && mode!=40 && mode!=43 &&
-        (scene->a_colour[0]<0 || scene->a_colour[1]<0 || scene->a_colour[2]<0 ||
-                    scene->a_colour[3]<0)) || scene->u_extent<0 ||
-       ((mode!=20 && mode!=21 && mode!=36 && mode!=37 && mode!=38 && mode!=41) && scene->u_image<0) ||
-       ((mode==1 || mode==4) && scene->u_filter<0)))){
+     (variant!=GL_SCENE_PROGRAM_GENERAL && (scene->a_position01<0 || scene->a_position23<0 ||
+       ((required&GL_SCENE_REQUIRE_COLOUR) &&
+        (scene->a_colour[0]<0 || scene->a_colour[1]<0 ||
+         scene->a_colour[2]<0 || scene->a_colour[3]<0)) || scene->u_extent<0 ||
+       ((required&GL_SCENE_REQUIRE_IMAGE) && scene->u_image<0) ||
+       ((required&GL_SCENE_REQUIRE_FILTER) && scene->u_filter<0)))){
     gml_gpu_opengl_record_error(error,error_capacity,"scene program is missing an attribute or uniform");
     backend->gl.DeleteProgram(scene->program);
     scene->program=0;
@@ -276,86 +239,88 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
 }
 
 int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error_capacity){
-  return build_scene_program(backend,&backend->scene.main_program,0,error,error_capacity);
+  return build_scene_program(backend,&backend->scene.main_program,GL_SCENE_PROGRAM_GENERAL,error,error_capacity);
+}
+
+static GlSceneProgramVariant scene_program_variant(uint32_t filter,int native_flags){
+  if(filter==GL_SCENE_NATIVE_POINT_FILTER || filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER) filter=79u;
+  if(filter==GL_SCENE_NATIVE_POINT_STAMP_FILTER) filter=82u;
+  int plain=native_flags&GL_SCENE_NATIVE_PLAIN;
+  if(filter>=GL_SCENE_NATIVE_TEXTURE_NEAREST_FILTER &&
+     filter<=GL_SCENE_NATIVE_TEXTURE_SURFACE_LINEAR_FILTER)
+    return (GlSceneProgramVariant)(GL_SCENE_PROGRAM_CONSTANT_180+
+      filter-GL_SCENE_NATIVE_TEXTURE_NEAREST_FILTER);
+  switch(filter){
+  case 38u:
+    return plain && (native_flags&GL_SCENE_NATIVE_WHITE_TINT)?
+      GL_SCENE_PROGRAM_CONSTANT_38_PLAIN_WHITE:GL_SCENE_PROGRAM_CONSTANT_38;
+  case 149u:
+    return plain && (native_flags&GL_SCENE_NATIVE_WHITE_TINT)?
+      GL_SCENE_PROGRAM_CONSTANT_149_PLAIN_WHITE:GL_SCENE_PROGRAM_CONSTANT_149;
+  case 25u:
+    if(plain && (native_flags&GL_SCENE_NATIVE_ZERO_ALPHA_BLEND))
+      return GL_SCENE_PROGRAM_CONSTANT_25_PLAIN_WHITE_ZERO_ALPHA;
+    if(plain && (native_flags&GL_SCENE_NATIVE_WHITE_TINT))
+      return GL_SCENE_PROGRAM_CONSTANT_25_PLAIN_WHITE;
+    return plain?GL_SCENE_PROGRAM_CONSTANT_25_PLAIN:GL_SCENE_PROGRAM_CONSTANT_25;
+  case 21u:
+    return plain?GL_SCENE_PROGRAM_CONSTANT_21_PLAIN:GL_SCENE_PROGRAM_CONSTANT_21;
+  case 22u:
+    return plain?GL_SCENE_PROGRAM_CONSTANT_22_PLAIN:GL_SCENE_PROGRAM_CONSTANT_22;
+  case 26u:
+    return plain?GL_SCENE_PROGRAM_CONSTANT_26_PLAIN:GL_SCENE_PROGRAM_CONSTANT_26;
+  case 79u:case 80u:
+    if(plain && (native_flags&GL_SCENE_NATIVE_ZERO_ALPHA_BLEND))
+      return GL_SCENE_PROGRAM_CONSTANT_79_PLAIN_ZERO_ALPHA;
+    return plain?GL_SCENE_PROGRAM_CONSTANT_79_PLAIN:GL_SCENE_PROGRAM_CONSTANT_79;
+  case 82u:
+    return plain?GL_SCENE_PROGRAM_CONSTANT_82_PLAIN:GL_SCENE_PROGRAM_CONSTANT_82;
+  case 84u:return GL_SCENE_PROGRAM_CONSTANT_84;
+  case 42u:return GL_SCENE_PROGRAM_CONSTANT_42;
+  case 37u:return GL_SCENE_PROGRAM_CONSTANT_37;
+  case 40u:return GL_SCENE_PROGRAM_CONSTANT_40;
+  case 31u:return GL_SCENE_PROGRAM_CONSTANT_31;
+  case 23u:return GL_SCENE_PROGRAM_CONSTANT_23;
+  case 24u:return GL_SCENE_PROGRAM_CONSTANT_24;
+  case 34u:return GL_SCENE_PROGRAM_CONSTANT_34;
+  case 35u:return GL_SCENE_PROGRAM_CONSTANT_35;
+  case 36u:return GL_SCENE_PROGRAM_CONSTANT_36;
+  case 39u:return GL_SCENE_PROGRAM_CONSTANT_39;
+  case 41u:return GL_SCENE_PROGRAM_CONSTANT_41;
+  case 30u:return GL_SCENE_PROGRAM_CONSTANT_30;
+  case 53u:return GL_SCENE_PROGRAM_CONSTANT_53;
+  case 55u:return GL_SCENE_PROGRAM_CONSTANT_55;
+  case 147u:return GL_SCENE_PROGRAM_CONSTANT_147;
+  case 51u:return GL_SCENE_PROGRAM_CONSTANT_51;
+  case 43u:return GL_SCENE_PROGRAM_CONSTANT_43;
+  case 27u:return GL_SCENE_PROGRAM_CONSTANT_27;
+  case 15u:return GL_SCENE_PROGRAM_CONSTANT_15;
+  case 0u:return GL_SCENE_PROGRAM_CONSTANT_0;
+  case 14u:return GL_SCENE_PROGRAM_CONSTANT_14;
+  case 77u:return GL_SCENE_PROGRAM_STRETCHED;
+  case 78u:return GL_SCENE_PROGRAM_STRETCHED;
+  case 65u:return GL_SCENE_PROGRAM_CONSTANT_65;
+  case 66u:return GL_SCENE_PROGRAM_CONSTANT_65;
+  case 72u:return GL_SCENE_PROGRAM_CONSTANT_72;
+  case 32u:return GL_SCENE_PROGRAM_CONSTANT_32;
+  case 33u:return GL_SCENE_PROGRAM_CONSTANT_33;
+  case 153u:return GL_SCENE_PROGRAM_CONSTANT_153;
+  default:
+    if((filter>=65u && filter<=74u) || (filter>=79u && filter<=82u) ||
+       (filter>=112u && filter<=115u) || (filter>=137u && filter<=158u))
+      return GL_SCENE_PROGRAM_FILTERED_ONLY;
+    return GL_SCENE_PROGRAM_GENERAL;
+  }
 }
 
 GlSceneProgram *gml_gpu_opengl_scene_draw_program(GmlGpuBackend *backend,uint32_t filter,int native_flags,
                                                    char *error,size_t error_capacity){
   GlScene *scene=&backend->scene;
-  GlSceneProgram *program=&scene->main_program;
-  if(filter==GL_SCENE_NATIVE_POINT_FILTER || filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER) filter=79u;
-  if(filter==GL_SCENE_NATIVE_POINT_STAMP_FILTER) filter=82u;
-  int mode=0;
-  int plain_native=native_flags&GL_SCENE_NATIVE_PLAIN;
-  if(filter>=GL_SCENE_NATIVE_TEXTURE_NEAREST_FILTER &&
-     filter<=GL_SCENE_NATIVE_TEXTURE_SURFACE_LINEAR_FILTER){
-    unsigned index=47u+filter-GL_SCENE_NATIVE_TEXTURE_NEAREST_FILTER;
-    program=&scene->compact_programs[index];mode=(int)index+2;
-  }else if(plain_native && (filter==38u || filter==149u) && (native_flags&GL_SCENE_NATIVE_WHITE_TINT)){
-    unsigned index=filter==149u?41u:42u;
-    program=&scene->compact_programs[index];mode=(int)index+2;
-  }else if(filter==84u){
-    program=&scene->compact_programs[45];mode=47;
-  }else if(filter==42u){
-    program=&scene->compact_programs[44];mode=46;
-  }else if(filter==37u){
-    program=&scene->compact_programs[43];mode=45;
-  }else if(filter==40u){
-    program=&scene->compact_programs[40];mode=42;
-  }else if(filter==31u){
-    program=&scene->compact_programs[39];mode=41;
-  }else if(filter==23u || filter==24u || filter==34u || filter==35u || filter==36u ||
-     filter==39u || filter==41u){
-    unsigned index=filter==23u?32u:filter==24u?33u:filter==34u?34u:
-      filter==35u?35u:filter==36u?36u:filter==39u?37u:38u;
-    program=&scene->compact_programs[index];mode=(int)index+2;
-  }else if(filter==30u){
-    program=&scene->compact_programs[31];mode=33;
-  }else if(filter==53u || filter==55u || filter==147u || filter==149u){
-    unsigned index=filter==53u?27u:filter==55u?28u:filter==147u?29u:30u;
-    program=&scene->compact_programs[index];mode=(int)index+2;
-  }else if(plain_native && filter==25u && (native_flags&GL_SCENE_NATIVE_ZERO_ALPHA_BLEND)){
-    program=&scene->compact_programs[26];mode=28;
-  }else if(plain_native && filter==25u && (native_flags&GL_SCENE_NATIVE_WHITE_TINT)){
-    program=&scene->compact_programs[25];mode=27;
-  }else if(plain_native && (filter==21u || filter==22u || filter==25u || filter==26u)){
-    unsigned index=filter==21u?21u:filter==22u?22u:filter==25u?23u:24u;
-    program=&scene->compact_programs[index];mode=(int)index+2;
-  }else if(filter==51u || filter==43u || filter==38u){
-    unsigned index=filter==51u?13u:filter==43u?14u:15u;
-    program=&scene->compact_programs[index];mode=(int)index+2;
-  }else if(filter==27u){
-    program=&scene->compact_programs[12];mode=14;
-  }else if(filter==15u){
-    program=&scene->compact_programs[11];mode=13;
-  }else if(plain_native && (filter==79u || filter==80u) && (native_flags&GL_SCENE_NATIVE_ZERO_ALPHA_BLEND)){
-    program=&scene->compact_programs[46];mode=48;
-  }else if(plain_native && (filter==79u || filter==80u || filter==82u)){
-    unsigned index=filter==82u?10u:9u;
-    program=&scene->compact_programs[index];mode=(int)index+2;
-  }else if(filter==0u || filter==14u || filter==77u || filter==78u){
-    unsigned index=filter==0u?0u:filter==14u?1u:2u;
-    program=&scene->compact_programs[index];mode=(int)index+2;
-  }else if(filter==65u || filter==66u){
-    program=&scene->compact_programs[3];mode=5;
-  }else if(filter==21u || filter==22u || filter==72u){
-    unsigned index=filter==21u?4u:filter==22u?5u:6u;
-    program=&scene->compact_programs[index];mode=(int)index+2;
-  }else if(filter==79u || filter==80u || filter==82u){
-    unsigned index=filter==82u?8u:7u;
-    program=&scene->compact_programs[index];mode=(int)index+2;
-  }else if(filter==25u || filter==26u){
-    unsigned index=filter==25u?16u:17u;
-    program=&scene->compact_programs[index];mode=(int)index+2;
-  }else if(filter==32u || filter==33u || filter==153u){
-    unsigned index=filter==32u?18u:filter==33u?19u:20u;
-    program=&scene->compact_programs[index];mode=(int)index+2;
-  }else if(filter==21u || filter==22u ||
-     (filter>=65u && filter<=74u) || (filter>=79u && filter<=82u) ||
-     (filter>=112u && filter<=115u) || (filter>=137u && filter<=158u)){
-    program=&scene->filtered_program;mode=1;
-  }
-  return build_scene_program(backend,program,mode,error,error_capacity)?program:NULL;
+  GlSceneProgramVariant variant=scene_program_variant(filter,native_flags);
+  GlSceneProgram *program=variant==GL_SCENE_PROGRAM_GENERAL?&scene->main_program:
+    variant==GL_SCENE_PROGRAM_FILTERED_ONLY?&scene->filtered_program:
+    &scene->compact_programs[(unsigned)variant-GL_SCENE_PROGRAM_CONSTANT_0];
+  return build_scene_program(backend,program,variant,error,error_capacity)?program:NULL;
 }
 
 static GlSceneExactProgram *build_exact_program(GmlGpuBackend *backend,

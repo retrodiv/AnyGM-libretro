@@ -186,6 +186,13 @@ their obsolete attachment and use a whole-attachment buffer clear when both APIs
 are available. Earlier ordered image consumers retain their reads. Drivers lacking
 those APIs keep the scoped clear. CPU fill semantics and state bytes are unchanged.
 
+Scene program identities, exact source prefixes, fragment-body selection and required
+uniform groups are declared together in gml_gpu_opengl_variants.h. Named identities
+select the existing context-owned general, filtered and compact caches; their counts
+come from that declaration. Selector aliases and native-flag precedence remain in the
+program selector. The shader calculation bodies and context-loss/destruction owners
+are shared unchanged.
+
 The CPU/OpenGL image comparisons in this repository are diagnostic. Routine
 checks skip them; `make check GPU_PIXEL_PARITY=1` runs them and direct
 execution uses `ANYGM_TEST_GPU_PIXEL_PARITY=1`. Real-device paired pixel probes
