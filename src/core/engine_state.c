@@ -487,6 +487,10 @@ static int state_launch_matches_engine(const AnygmEngine *engine,
 }
 
 static void state_write(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity){
+  uint64_t save_t0=0,save_t1=0,save_t2=0,save_t3=0,save_t4=0,save_t5=0;
+  int save_time=s->data &&
+    anygm_host_development_setting(&engine->host,"GML_DBG_STATE_TIME")!=NULL;
+  if(save_time) save_t0=anygm_host_monotonic_time_ns(&engine->host);
   /* A proven current context lets a writer preserve the actual resident pixels,
    * rather than substituting their CPU recipe. Metadata queries do neither, and
    * hosts without this proof retain the established context-free state path. */
@@ -521,6 +525,7 @@ static void state_write(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity
   cw_u32(s,engine->mouse_button_cleared);
   state_write_completed_frame(engine,s,frame_exceeds_capacity);
   if(frame_exceeds_capacity && *frame_exceeds_capacity) return;
+  if(save_time) save_t1=anygm_host_monotonic_time_ns(&engine->host);
   size_t coren=s->pos-core_start;
   size_t render_start=s->pos;
   int derived_view_surface=(int)gml_global_arr(&engine->vm,"view_surface_id",0);
@@ -539,6 +544,7 @@ static void state_write(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity
     cw_raw(s,NULL,measured);
   }
   size_t rendern=s->pos-render_start;
+  if(save_time) save_t2=anygm_host_monotonic_time_ns(&engine->host);
   size_t vmn=0, audn=0;
   if(s->data){
     size_t wr=0, avail=s->pos<=s->cap? s->cap-s->pos : 0;
@@ -551,6 +557,7 @@ static void state_write(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity
     if(!vmn) s->ok=0;
     s->pos+=vmn;
   }
+  if(save_time) save_t3=anygm_host_monotonic_time_ns(&engine->host);
   if(s->data){
     size_t wr=0, avail=s->pos<=s->cap? s->cap-s->pos : 0;
     uint8_t *dst=s->data+(s->pos<=s->cap? s->pos : s->cap);
@@ -561,6 +568,7 @@ static void state_write(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity
     audn = gml_audio_state_size(engine->audio);
     s->pos+=audn;
   }
+  if(save_time) save_t4=anygm_host_monotonic_time_ns(&engine->host);
   if(s->data && s->ok && s->pos<=s->cap){
     AnygmStateHeader header={0};
     header.total_size=s->pos;
@@ -575,6 +583,19 @@ static void state_write(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity
     header.payload_checksum=state_hash_bytes(s->data+ANYGM_STATE_HEADER_SIZE,
                                              (size_t)header.payload_size);
     state_header_write(s->data,&header);
+  }
+  if(save_time){
+    save_t5=anygm_host_monotonic_time_ns(&engine->host);
+    if(engine->diagnostics.state_save_time_prints++<16){
+      #define SAVE_MS(a,b) ((double)((b)-(a))/1000000.0)
+      engine_logf(engine,ANYGM_LOG_DEBUG,
+        "[state-save-time] core=%.2fms frame=%.2fms render=%.2fms vm=%.2fms "
+        "audio=%.2fms checksum=%.2fms bytes=%llu\n",
+        SAVE_MS(save_t0,save_t5),SAVE_MS(save_t0,save_t1),SAVE_MS(save_t1,save_t2),
+        SAVE_MS(save_t2,save_t3),SAVE_MS(save_t3,save_t4),SAVE_MS(save_t4,save_t5),
+        (unsigned long long)s->pos);
+      #undef SAVE_MS
+    }
   }
   state_profile_maybe_log(engine,s->pos, rendern, vmn, audn);
 }

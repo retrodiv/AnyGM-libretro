@@ -106,6 +106,7 @@ typedef struct {
   int state_frame_dropped_reported;
   int state_overflow_warned;
   int state_time_prints;
+  int state_save_time_prints;
   GmlRenderDispatchMetrics dispatch_retired;
   GmlRenderDispatchFrames dispatch_frames;
   uint64_t dispatch_renderer_epochs;
