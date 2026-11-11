@@ -18,7 +18,7 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=31 };
+enum { GML_VM_STATE_SCHEMA=32 };
 enum { STATE_MAX_TILEMAPS=512, STATE_TILEMAP_RECORD_BYTES=56 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 /* IDs are assigned in canonical traversal order, never from addresses. Zero is the null array;
@@ -47,7 +47,7 @@ typedef struct {
   uint32_t id,length;
   unsigned char borrowed;
 } StateStringEntry;
-typedef struct { const uint8_t *text; uint32_t length; } StateStringRef;
+typedef struct { const uint8_t *text; uint32_t length; unsigned char owned; } StateStringRef;
 static uint64_t state_map_mix(uint64_t value);
 static uint64_t state_map_text_hash(const char *text);
 /* A path a run can build: mp_grid_path fills one cell per step of a route, so the grid's cell
@@ -263,9 +263,122 @@ static uint32_t state_string_encoding(StateW *s, const char *p){
   size_t n=strlen(p); if(n>UINT32_MAX) n=UINT32_MAX;
   return (uint32_t)n;
 }
+static uint32_t state_lz_word(const unsigned char *p){
+  uint32_t value=0;
+  memcpy(&value,p,sizeof value);
+  return value;
+}
+static int state_lz_length(unsigned char *out,size_t capacity,size_t *position,size_t length){
+  while(length>=255u){
+    if(*position>=capacity) return 0;
+    out[(*position)++]=255u;
+    length-=255u;
+  }
+  if(*position>=capacity) return 0;
+  out[(*position)++]=(unsigned char)length;
+  return 1;
+}
+/* A small LZ block is sufficient for state-owned JSON and map strings: the immutable owner keeps
+ * the result across snapshots, so compression is paid once while every later rewind push copies
+ * and checksums only the compact bytes. The wire block uses explicit lengths and a 64-KiB window;
+ * the reader never trusts either one when validating offsets and output bounds. */
+static unsigned char *state_lz_compress(const unsigned char *input,uint32_t length,
+                                        uint32_t *encoded_size){
+  if(encoded_size) *encoded_size=0;
+  if(!input || length<64u) return NULL;
+  size_t capacity=(size_t)length+(size_t)length/255u+32u;
+  unsigned char *output=malloc(capacity);
+  uint32_t *table=malloc(65536u*sizeof(*table));
+  if(!output || !table){ free(output);free(table);return NULL; }
+  for(size_t slot=0;slot<65536u;slot++) table[slot]=UINT32_MAX;
+  size_t position=0,anchor=0,at=0;
+  while(at+4u<=length){
+    uint32_t word=state_lz_word(input+at);
+    uint32_t slot=(word*UINT32_C(2654435761))>>16;
+    uint32_t reference=table[slot];
+    table[slot]=(uint32_t)at;
+    if(reference==UINT32_MAX || at-reference>65535u ||
+       state_lz_word(input+reference)!=word){ at++;continue; }
+    size_t match=4u;
+    while(at+match<length && input[reference+match]==input[at+match]) match++;
+    size_t literals=at-anchor,match_code=match-4u;
+    if(position>=capacity){ free(output);free(table);return NULL; }
+    size_t token_at=position++;
+    output[token_at]=(unsigned char)((literals<15u?literals:15u)<<4 |
+                                     (match_code<15u?match_code:15u));
+    if(literals>=15u && !state_lz_length(output,capacity,&position,literals-15u)){
+      free(output);free(table);return NULL;
+    }
+    if(literals>capacity-position){ free(output);free(table);return NULL; }
+    memcpy(output+position,input+anchor,literals);position+=literals;
+    uint32_t offset=(uint32_t)at-reference;
+    if(capacity-position<2u){ free(output);free(table);return NULL; }
+    output[position++]=(unsigned char)offset;
+    output[position++]=(unsigned char)(offset>>8);
+    if(match_code>=15u && !state_lz_length(output,capacity,&position,match_code-15u)){
+      free(output);free(table);return NULL;
+    }
+    at+=match;anchor=at;
+  }
+  size_t literals=(size_t)length-anchor;
+  if(position>=capacity){ free(output);free(table);return NULL; }
+  size_t token_at=position++;
+  output[token_at]=(unsigned char)((literals<15u?literals:15u)<<4);
+  if(literals>=15u && !state_lz_length(output,capacity,&position,literals-15u)){
+    free(output);free(table);return NULL;
+  }
+  if(literals>capacity-position){ free(output);free(table);return NULL; }
+  memcpy(output+position,input+anchor,literals);position+=literals;
+  free(table);
+  if(position+8u>length){ free(output);return NULL; }
+  unsigned char *tight=realloc(output,position);
+  if(tight) output=tight;
+  if(encoded_size) *encoded_size=(uint32_t)position;
+  return output;
+}
+static int state_lz_decompress(const unsigned char *input,size_t input_size,
+                               unsigned char *output,size_t output_size){
+  size_t ip=0,op=0;
+  while(ip<input_size){
+    unsigned token=input[ip++];
+    size_t literals=token>>4;
+    if(literals==15u){
+      unsigned extension=255u;
+      while(extension==255u){
+        if(ip>=input_size) return 0;
+        extension=input[ip++];
+        if(literals>SIZE_MAX-extension) return 0;
+        literals+=extension;
+      }
+    }
+    if(literals>input_size-ip || literals>output_size-op) return 0;
+    memcpy(output+op,input+ip,literals);ip+=literals;op+=literals;
+    if(ip==input_size) return op==output_size;
+    if(input_size-ip<2u) return 0;
+    size_t offset=(size_t)input[ip]|((size_t)input[ip+1u]<<8);ip+=2u;
+    if(!offset || offset>op) return 0;
+    size_t match=(token&15u)+4u;
+    if((token&15u)==15u){
+      unsigned extension=255u;
+      while(extension==255u){
+        if(ip>=input_size) return 0;
+        extension=input[ip++];
+        if(match>SIZE_MAX-extension) return 0;
+        match+=extension;
+      }
+    }
+    if(match>output_size-op) return 0;
+    for(size_t copied=0;copied<match;copied++) output[op+copied]=output[op+copied-offset];
+    op+=match;
+  }
+  return op==output_size;
+}
 static void sw_encoded_string(StateW *s,const char *p,uint32_t encoding,
                               uint64_t *cached_hash,
-                              unsigned char *cached_hash_valid){
+                              unsigned char *cached_hash_valid,
+                              unsigned char **cached_compressed,
+                              uint32_t *cached_compressed_size,
+                              unsigned char *cached_compressed_ready){
   if(!p) p="";
   if(s->compact_strings && (encoding&0x80000000u)){
     sw_u8(s,1); sw_varuint(s,encoding&0x7fffffffu); return;
@@ -323,10 +436,21 @@ static void sw_encoded_string(StateW *s,const char *p,uint32_t encoding,
     retained=owned;
   }
   s->strings[slot]=(StateStringEntry){retained,hash,s->string_count++,encoding,borrowed};
-  sw_u8(s,0);sw_varuint(s,encoding);sw_raw(s,p,encoding);
+  if(cached_compressed && cached_compressed_size && cached_compressed_ready &&
+     !*cached_compressed_ready){
+    *cached_compressed=state_lz_compress((const unsigned char *)p,encoding,
+                                         cached_compressed_size);
+    *cached_compressed_ready=1;
+  }
+  if(cached_compressed && cached_compressed_size && *cached_compressed){
+    sw_u8(s,3);sw_varuint(s,encoding);sw_varuint(s,*cached_compressed_size);
+    sw_raw(s,*cached_compressed,*cached_compressed_size);
+  } else {
+    sw_u8(s,0);sw_varuint(s,encoding);sw_raw(s,p,encoding);
+  }
 }
 static void sw_str(StateW *s,const char *p){
-  sw_encoded_string(s,p,state_string_encoding(s,p),NULL,NULL);
+  sw_encoded_string(s,p,state_string_encoding(s,p),NULL,NULL,NULL,NULL,NULL);
 }
 static char *sr_str_dup(StateR *s){
   unsigned tag=sr_u8(s);
@@ -340,12 +464,32 @@ static char *sr_str_dup(StateR *s){
     if(!p) s->ok=0;
     return p;
   }
+  if(tag==4 || tag==5){
+    n=code;
+    if(n>1024u*1024u || n>1024u*1024u*1024u-s->string_bytes ||
+       s->pos>s->cap){ s->ok=0;return NULL; }
+    char *p=malloc((size_t)n+1u);
+    if(!p){ s->ok=0;return NULL; }
+    if(tag==4){
+      if(n>s->cap-s->pos){ free(p);s->ok=0;return NULL; }
+      memcpy(p,s->data+s->pos,n);s->pos+=n;
+    }else{
+      uint32_t compressed=sr_varuint(s);
+      if(!s->ok || !compressed || compressed>=n || s->pos>s->cap ||
+         compressed>s->cap-s->pos ||
+         !state_lz_decompress(s->data+s->pos,compressed,(unsigned char *)p,n)){
+        free(p);s->ok=0;return NULL;
+      }
+      s->pos+=compressed;
+    }
+    p[n]=0;s->string_bytes+=n;return p;
+  }
   if(tag==2){
     if(code>=s->string_count){ s->ok=0;return NULL; }
     text=s->strings[code].text;n=s->strings[code].length;
-  } else if(!tag){
+  } else if(!tag || tag==3){
     n=code;
-    if(n>1024u*1024u || s->pos>s->cap || n>s->cap-s->pos ||
+    if(n>1024u*1024u || s->pos>s->cap || (!tag && n>s->cap-s->pos) ||
        s->string_count>=STATE_MAX_STRINGS){ s->ok=0;return NULL; }
     if(s->string_count==s->string_capacity){
       size_t capacity=s->string_capacity?s->string_capacity*2:64;
@@ -353,8 +497,20 @@ static char *sr_str_dup(StateR *s){
       if(!strings){ s->ok=0;return NULL; }
       s->strings=strings;s->string_capacity=capacity;
     }
-    text=s->data+s->pos;s->pos+=n;
-    s->strings[s->string_count++]=(StateStringRef){text,n};
+    unsigned char owned=0;
+    if(!tag){ text=s->data+s->pos;s->pos+=n; }
+    else {
+      uint32_t compressed=sr_varuint(s);
+      if(!s->ok || !compressed || compressed>=n || s->pos>s->cap ||
+         compressed>s->cap-s->pos){ s->ok=0;return NULL; }
+      unsigned char *decoded=malloc((size_t)n+1u);
+      if(!decoded){ s->ok=0;return NULL; }
+      if(!state_lz_decompress(s->data+s->pos,compressed,decoded,n)){
+        free(decoded);s->ok=0;return NULL;
+      }
+      s->pos+=compressed;decoded[n]=0;text=decoded;owned=1;
+    }
+    s->strings[s->string_count++]=(StateStringRef){text,n,owned};
   } else { s->ok=0;return NULL; }
   if(n>1024u*1024u*1024u-s->string_bytes){ s->ok=0;return NULL; }
   s->string_bytes+=n;
@@ -666,22 +822,98 @@ void gml_vm_state_write_value(GmlVmStateWriter *writer,GmlVal value){
 }
 void gml_vm_state_write_owned_string(GmlVmStateWriter *writer,const char *value,
                                      uint64_t *encoding,uint64_t *hash,
-                                     unsigned char *hash_valid){
+                                     unsigned char *hash_valid,
+                                     unsigned char **compressed,
+                                     uint32_t *compressed_size,
+                                     unsigned char *compressed_ready){
   uint32_t resolved=*encoding?(uint32_t)(*encoding-1u):
                     state_string_encoding(writer,value);
   GmlWin *win=writer->vm?writer->vm->win:NULL;
   /* A failed lazy table allocation is not a permanent proof that text is absent. */
   if(!*encoding && (!win || win->n_strs<=0 || win->str_hix))
     *encoding=(uint64_t)resolved+1u;
-  sw_encoded_string(writer,value,resolved,hash,hash_valid);
+  sw_encoded_string(writer,value,resolved,hash,hash_valid,
+                    compressed,compressed_size,compressed_ready);
 }
 void gml_vm_state_write_owned_value(GmlVmStateWriter *writer,GmlVal value,
                                     uint64_t *encoding,uint64_t *hash,
-                                    unsigned char *hash_valid){
+                                    unsigned char *hash_valid,
+                                    unsigned char **compressed,
+                                    uint32_t *compressed_size,
+                                    unsigned char *compressed_ready){
   if(value.t==V_STR){
     sw_u8(writer,V_STR);
-    gml_vm_state_write_owned_string(writer,value.s,encoding,hash,hash_valid);
+    gml_vm_state_write_owned_string(writer,value.s,encoding,hash,hash_valid,
+                                    compressed,compressed_size,compressed_ready);
   } else sw_val(writer,value,0);
+}
+static int state_scalar_value_supported(GmlVal value){
+  return value.t==V_REAL || value.t==V_OBJECT || value.t==V_STR || value.t==V_UNDEF;
+}
+static void sw_isolated_string(StateW *writer,const char *value,uint64_t *encoding,
+                               unsigned char **compressed,uint32_t *compressed_size,
+                               unsigned char *compressed_ready){
+  uint32_t resolved=*encoding?(uint32_t)(*encoding-1u):
+                    state_string_encoding(writer,value);
+  GmlWin *win=writer->vm?writer->vm->win:NULL;
+  if(!*encoding && (!win || win->n_strs<=0 || win->str_hix))
+    *encoding=(uint64_t)resolved+1u;
+  if(resolved&UINT32_C(0x80000000)){
+    sw_u8(writer,1);sw_varuint(writer,resolved&UINT32_C(0x7fffffff));return;
+  }
+  if(resolved>1024u*1024u){ writer->ok=0;return; }
+  if(!*compressed_ready){
+    *compressed=state_lz_compress((const unsigned char *)(value?value:""),resolved,
+                                  compressed_size);
+    *compressed_ready=1;
+  }
+  if(*compressed){
+    sw_u8(writer,5);sw_varuint(writer,resolved);sw_varuint(writer,*compressed_size);
+    sw_raw(writer,*compressed,*compressed_size);
+  }else{
+    sw_u8(writer,4);sw_varuint(writer,resolved);sw_raw(writer,value?value:"",resolved);
+  }
+}
+static void sw_isolated_value(StateW *writer,GmlVal value,uint64_t *encoding,
+                              unsigned char **compressed,uint32_t *compressed_size,
+                              unsigned char *compressed_ready){
+  if(value.t==V_STR){
+    sw_u8(writer,V_STR);
+    sw_isolated_string(writer,value.s,encoding,compressed,compressed_size,compressed_ready);
+  }else sw_val(writer,value,0);
+}
+static void sw_scalar_map_entries(StateW *writer,const GmlVmStateScalarMapEntry *entries,
+                                  uint32_t count){
+  for(uint32_t i=0;i<count && writer->ok;i++){
+    const GmlVmStateScalarMapEntry *entry=&entries[i];
+    sw_isolated_string(writer,entry->key,&entry->encoding[0],
+      &entry->compressed[0],&entry->compressed_size[0],&entry->compressed_ready[0]);
+    sw_isolated_value(writer,entry->key_value,&entry->encoding[1],
+      &entry->compressed[1],&entry->compressed_size[1],&entry->compressed_ready[1]);
+    sw_isolated_value(writer,entry->value,&entry->encoding[2],
+      &entry->compressed[2],&entry->compressed_size[2],&entry->compressed_ready[2]);
+    sw_i32(writer,entry->child_kind);
+  }
+}
+int gml_vm_state_build_scalar_map_blob(GmlVM *vm,
+                                       const GmlVmStateScalarMapEntry *entries,
+                                       uint32_t count,unsigned char **bytes,uint32_t *size){
+  if(!bytes || !size || (count && !entries)) return 0;
+  *bytes=NULL;*size=0;
+  for(uint32_t i=0;i<count;i++)
+    if(!state_scalar_value_supported(entries[i].key_value) ||
+       !state_scalar_value_supported(entries[i].value)) return 0;
+  StateW measure={0};measure.ok=1;measure.vm=vm;measure.compact_strings=1;
+  sw_scalar_map_entries(&measure,entries,count);
+  if(!measure.ok || measure.pos>UINT32_MAX){ sw_release(&measure);return 0; }
+  unsigned char *data=measure.pos?malloc(measure.pos):NULL;
+  size_t measured=measure.pos;sw_release(&measure);
+  if(measured && !data) return 0;
+  StateW write={0};write.data=data;write.cap=measured;write.ok=1;write.vm=vm;
+  write.compact_strings=1;
+  sw_scalar_map_entries(&write,entries,count);
+  if(!write.ok || write.pos!=measured){ free(data);sw_release(&write);return 0; }
+  sw_release(&write);*bytes=data;*size=(uint32_t)measured;return 1;
 }
 void gml_vm_state_read_raw(GmlVmStateReader *reader,
                            void *bytes,size_t size){
@@ -702,6 +934,12 @@ char *gml_vm_state_read_string(GmlVmStateReader *reader){
 GmlVal gml_vm_state_read_value(GmlVmStateReader *reader){
   return sr_val(reader->vm,reader,0);
 }
+char *gml_vm_state_read_isolated_string(GmlVmStateReader *reader){
+  return sr_str_dup(reader);
+}
+GmlVal gml_vm_state_read_isolated_value(GmlVmStateReader *reader){
+  return sr_val(reader->vm,reader,0);
+}
 int gml_vm_state_reader_ok(const GmlVmStateReader *reader){
   return reader && reader->ok;
 }
@@ -710,6 +948,19 @@ size_t gml_vm_state_reader_position(const GmlVmStateReader *reader){
 }
 size_t gml_vm_state_reader_remaining(const GmlVmStateReader *reader){
   return reader && reader->ok && reader->pos<=reader->cap ? reader->cap-reader->pos : 0;
+}
+int gml_vm_state_reader_copy_range(const GmlVmStateReader *reader,
+                                   size_t start,size_t end,
+                                   unsigned char **bytes,uint32_t *size){
+  if(!bytes || !size) return 0;
+  *bytes=NULL;*size=0;
+  if(!reader || !reader->ok || start>end || end>reader->cap ||
+     end-start>UINT32_MAX) return 0;
+  size_t length=end-start;
+  unsigned char *copy=length?malloc(length):NULL;
+  if(length && !copy) return 0;
+  if(length) memcpy(copy,reader->data+start,length);
+  *bytes=copy;*size=(uint32_t)length;return 1;
 }
 void gml_vm_state_reader_fail(GmlVmStateReader *reader,
                               const char *message,uint32_t detail){
@@ -925,7 +1176,7 @@ static void sw_varmap(StateW *s,GmlVarMap *m){
         if(text>1024u*1024u*1024u-keys->key_bytes){s->ok=0;return;}
         keys->key_bytes+=text;
       }
-      sw_encoded_string(s,slot->key,text,NULL,NULL);
+      sw_encoded_string(s,slot->key,text,NULL,NULL,NULL,NULL,NULL);
     }
     if(value->t==V_REAL) sw_real(s,value->d);
     else sw_val(s,*value,0);
@@ -1928,6 +2179,10 @@ static GmlTimeline *sr_timelines(StateR *s, GmlVM *vm, int *total){
 }
 
 static void sw_vm(StateW *s, GmlVM *vm){
+  int save_time=s->data && vm && vm->host &&
+    anygm_host_development_setting(vm->host,"GML_DBG_STATE_TIME")!=NULL &&
+    vm->diagnostics.state_save_time_log_count<16;
+  uint64_t save_t0=save_time?anygm_host_monotonic_time_ns(vm->host):0;
   s->vm=vm; s->compact_strings=1; s->array_meta=1;
   GmlBuiltinState *builtin_state=gml_builtin_state_ensure(vm);
   if(!builtin_state){ s->ok=0; return; }
@@ -1980,7 +2235,9 @@ static void sw_vm(StateW *s, GmlVM *vm){
   sw_i32(s,vm->n_tile_del_at); sw_raw(s,vm->tile_del_at,sizeof(vm->tile_del_at));
   sw_i32(s,vm->n_tilemaps); sw_i32(s,vm->next_tilemap_id);
   sw_tilemap_records(s,vm->tilemaps,vm->n_tilemaps,vm->next_tilemap_id);
+  uint64_t save_t1=save_time?anygm_host_monotonic_time_ns(vm->host):0;
   gml_builtin_state_write_ini_ds(builtin_state,s);
+  uint64_t save_t2=save_time?anygm_host_monotonic_time_ns(vm->host):0;
   sw_varmap(s,&vm->globals);
   for(int i=0;i<vm->inst_count;i++) sw_instance(s,&vm->inst[i]);
   sw_i32(s,vm->n_structs);
@@ -1993,6 +2250,7 @@ static void sw_vm(StateW *s, GmlVM *vm){
    * slot and handle produced by later allocations. Preserve that exact order in state. */
   sw_i32(s,vm->n_struct_free);
   for(int i=0;i<vm->n_struct_free;i++) sw_i32(s,vm->struct_free?vm->struct_free[i]:0);
+  uint64_t save_t3=save_time?anygm_host_monotonic_time_ns(vm->host):0;
   sw_d(s,vm->window_x); sw_d(s,vm->window_y);
   /* Shared field codecs keep active and dormant visual resources identical. */
   sw_i32(s,vm->rt_next_id);
@@ -2086,6 +2344,15 @@ static void sw_vm(StateW *s, GmlVM *vm){
   sw_instance_order(s,vm);
   sw_array_ownership(s,vm);
   vm_state_profile_globals(vm);
+  if(save_time){
+    uint64_t save_t4=anygm_host_monotonic_time_ns(vm->host);
+    anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,
+      "[vm-state-save-time] prefix=%.2fms ds=%.2fms vars=%.2fms tail=%.2fms bytes=%llu\n",
+      (double)(save_t1-save_t0)/1000000.0,(double)(save_t2-save_t1)/1000000.0,
+      (double)(save_t3-save_t2)/1000000.0,(double)(save_t4-save_t3)/1000000.0,
+      (unsigned long long)s->pos);
+    vm->diagnostics.state_save_time_log_count++;
+  }
 }
 size_t gml_vm_state_size(GmlVM *vm){
   
@@ -2497,6 +2764,8 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   for(uint32_t i=0;i<s.shape_count;i++)free(s.shapes[i].slots);
   free(s.shapes);
   for(uint32_t i=0;i<s.map_count;i++)free(s.maps[i].owner_slots);
-  free(s.arrays); free(s.maps); free(s.strings);
+  free(s.arrays); free(s.maps);
+  for(uint32_t i=0;i<s.string_count;i++) if(s.strings[i].owned) free((void*)s.strings[i].text);
+  free(s.strings);
   return ok;
 }

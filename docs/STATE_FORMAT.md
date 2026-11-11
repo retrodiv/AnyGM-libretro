@@ -20,9 +20,21 @@ failed partial reads leave the canonical image unpublished and invalid as a
 current resource. See R03-P9-INCREMENTAL-CHECKPOINT in
 [the renderer map](RENDERER_BACKENDS.md) for owners and controls.
 
-The current AnyGM save-state schema is `53`. It is the format transported by
+The current AnyGM save-state schema is `54`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `54` introduces VM schema `32`. Runtime string kind three stores the expanded
+length, compressed length and a bounded LZ block; malformed offsets, lengths and
+expansion fail before state publication. Kinds four and five are the raw and compressed
+forms used inside a scalar DS-map block. They do not enter the snapshot string dictionary,
+so a map's immutable encoded bytes can be reused without changing later dictionary IDs.
+The block retains the same exact real bits, object handles, strings, undefined values,
+entry order and child kinds as the general map encoding. A map containing an array or an
+unsupported value stays on the general identity-preserving path. The derived block is
+discarded on every map mutation. Restore retains a private copy of the validated block for
+the next snapshot; the cache itself is never runtime state. Older public and VM layouts reject
+transactionally. Audio schema `5` and graphics resource schema `2` are unchanged.
 
 Schema `53` uses VM schema `31`. The array ownership trailer also records argument
 register identities for the current call and each parked frame. Writable array

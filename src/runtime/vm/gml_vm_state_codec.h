@@ -19,6 +19,16 @@ typedef struct GmlVmStateWriter GmlVmStateWriter;
 typedef struct GmlVmStateReader GmlVmStateReader;
 struct GmlVM;
 
+typedef struct {
+  const char *key;
+  GmlVal key_value, value;
+  uint64_t *encoding;
+  unsigned char **compressed;
+  uint32_t *compressed_size;
+  unsigned char *compressed_ready;
+  int child_kind;
+} GmlVmStateScalarMapEntry;
+
 void gml_vm_state_write_raw(GmlVmStateWriter *writer,
                             const void *bytes, size_t size);
 void gml_vm_state_write_u32(GmlVmStateWriter *writer, uint32_t value);
@@ -29,11 +39,20 @@ void gml_vm_state_write_value(GmlVmStateWriter *writer, GmlVal value);
 /* A zero-initialized memo is owned by one immutable string in this VM's content lifetime. */
 void gml_vm_state_write_owned_string(GmlVmStateWriter *writer, const char *value,
                                      uint64_t *encoding, uint64_t *hash,
-                                     unsigned char *hash_valid);
+                                     unsigned char *hash_valid,
+                                     unsigned char **compressed,
+                                     uint32_t *compressed_size,
+                                     unsigned char *compressed_ready);
 void gml_vm_state_write_owned_value(GmlVmStateWriter *writer, GmlVal value,
                                     uint64_t *encoding, uint64_t *hash,
-                                    unsigned char *hash_valid);
-
+                                    unsigned char *hash_valid,
+                                    unsigned char **compressed,
+                                    uint32_t *compressed_size,
+                                    unsigned char *compressed_ready);
+int gml_vm_state_build_scalar_map_blob(struct GmlVM *vm,
+                                       const GmlVmStateScalarMapEntry *entries,
+                                       uint32_t count, unsigned char **bytes,
+                                       uint32_t *size);
 void gml_vm_state_read_raw(GmlVmStateReader *reader,
                            void *bytes, size_t size);
 uint32_t gml_vm_state_read_u32(GmlVmStateReader *reader);
@@ -41,10 +60,15 @@ int gml_vm_state_read_i32(GmlVmStateReader *reader);
 double gml_vm_state_read_real(GmlVmStateReader *reader);
 char *gml_vm_state_read_string(GmlVmStateReader *reader);
 GmlVal gml_vm_state_read_value(GmlVmStateReader *reader);
+char *gml_vm_state_read_isolated_string(GmlVmStateReader *reader);
+GmlVal gml_vm_state_read_isolated_value(GmlVmStateReader *reader);
 
 int gml_vm_state_reader_ok(const GmlVmStateReader *reader);
 size_t gml_vm_state_reader_position(const GmlVmStateReader *reader);
 size_t gml_vm_state_reader_remaining(const GmlVmStateReader *reader);
+int gml_vm_state_reader_copy_range(const GmlVmStateReader *reader,
+                                   size_t start, size_t end,
+                                   unsigned char **bytes, uint32_t *size);
 void gml_vm_state_reader_fail(GmlVmStateReader *reader,
                               const char *message, uint32_t detail);
 size_t gml_vm_state_measure_string(struct GmlVM *vm, const char *value);

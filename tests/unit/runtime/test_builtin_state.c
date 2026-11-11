@@ -85,6 +85,48 @@ static int expect_real(GmlVal value,double expected,const char *label){
   return 0;
 }
 
+static int test_varuint(const unsigned char *bytes,size_t size,size_t *position,uint32_t *value){
+  uint32_t result=0;
+  for(unsigned shift=0;shift<35 && *position<size;shift+=7){
+    unsigned byte=bytes[(*position)++];
+    if(shift==28 && (byte&0xf0u)) return 0;
+    result|=(uint32_t)(byte&127u)<<shift;
+    if(!(byte&128u)){ *value=result;return 1; }
+  }
+  return 0;
+}
+
+/* Find this fixture's first compressed string and invalidate its first match offset. The reader
+ * must reject a block that tries to copy from output which does not exist yet. */
+static int damage_compressed_string(unsigned char *bytes,size_t size,uint32_t raw_size){
+  for(size_t start=0;start<size;start++){
+    size_t position=start;
+    unsigned tag=bytes[position++];
+    if(tag!=3u && tag!=5u) continue;
+    uint32_t raw=0,compressed=0;
+    if(!test_varuint(bytes,size,&position,&raw) || raw!=raw_size ||
+       !test_varuint(bytes,size,&position,&compressed) || !compressed ||
+       compressed>=raw || compressed>size-position) continue;
+    size_t end=position+compressed;
+    while(position<end){
+      unsigned token=bytes[position++];
+      size_t literals=token>>4;
+      if(literals==15u){
+        unsigned extension=255u;
+        while(extension==255u && position<end){ extension=bytes[position++];literals+=extension; }
+        if(extension==255u) break;
+      }
+      if(literals>end-position) break;
+      position+=literals;
+      if(position==end) break;
+      if(end-position<2u) break;
+      bytes[position]=bytes[position+1u]=0;
+      return 1;
+    }
+  }
+  return 0;
+}
+
 /* Preserve a runtime grid and routed path when restoring state. The fixture
  * checks both the blocked cells and the ability to route again. */
 static int populate_planning(GmlVM *vm,GmlVal *mp,GmlVal *route){
@@ -321,10 +363,24 @@ static int ds_owned_string_memo_roundtrip(void){
   if(ok) call(&source,"ds_map_add",add,3);
   size_t cold_size=ok?gml_vm_state_size(&source):0,cold_written=0,warm_written=0;
   cold=malloc(cold_size?cold_size:1);warm=malloc(cold_size?cold_size:1);
-  ok=ok && cold_size && cold && warm &&
+  ok=ok && cold_size && cold_size<text_size/2u && cold && warm &&
     gml_vm_state_save(&source,cold,cold_size,&cold_written) && cold_written==cold_size &&
     gml_vm_state_save(&source,warm,cold_size,&warm_written) && warm_written==cold_written &&
     !memcmp(cold,warm,cold_written);
+  if(ok){
+    GmlVM malformed={0};
+    unsigned char *damaged=malloc(cold_written);
+    size_t rejected=0;
+    int initialized=!gml_vm_init(&malformed,&win,NULL);
+    ok=damaged && initialized;
+    if(ok){
+      memcpy(damaged,cold,cold_written);
+      ok=damage_compressed_string(damaged,cold_written,text_size) &&
+         !gml_vm_state_load(&malformed,damaged,cold_written,&rejected);
+    }
+    free(damaged);
+    if(initialized) gml_vm_free(&malformed);
+  }
   if(ok){
     GmlVal replace[3]={map,key,vstr(second)};
     call(&source,"ds_map_replace",replace,3);
@@ -344,7 +400,7 @@ static int ds_owned_string_memo_roundtrip(void){
     ok=value.t==V_STR && value.s && !strcmp(value.s,second);
     if(value.t==V_STR && value.d!=0) free((void*)value.s);
   }
-  if(!ok) fputs("owned DS string state memo changed bytes or survived replacement\n",stderr);
+  if(!ok) fputs("owned DS string state memo was not compact, changed bytes or survived replacement\n",stderr);
   free(cold);free(warm);free(changed);free(repeated);free(first);free(second);
   gml_vm_free(&source);gml_vm_free(&restored);
   return ok;

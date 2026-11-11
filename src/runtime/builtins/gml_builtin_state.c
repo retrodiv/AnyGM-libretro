@@ -5,6 +5,7 @@
 #include "gml_builtin_internal.h"
 #include "gml_vm_state_codec.h"
 #include "gml_audio.h"
+#include "anygm_host.h"
 
 #include <math.h>
 #include <limits.h>
@@ -366,7 +367,11 @@ static void builtin_state_ds_reset(GmlBuiltinState *state){
   state->ds_map_last=NULL;
   for(int i=0;i<state->ds_maps.used;i++){
     GmlDSMap *map=state->ds_maps.slot[i].value;
-    for(int j=0;j<map->len;j++) free(map->entry[j].key);
+    for(int j=0;j<map->len;j++){
+      for(int slot=0;slot<3;slot++) free(map->entry[j].state_string_compressed[slot]);
+      free(map->entry[j].key);
+    }
+    free(map->state_scalar_blob);
     free(map->entry);
     free(map->hidx);
     free(map);
@@ -579,6 +584,11 @@ void gml_builtin_state_profile_ds(const GmlBuiltinState *state,
 
 void gml_builtin_state_write_ini_ds(const GmlBuiltinState *state,
                                     GmlVmStateWriter *writer){
+  GmlVM *vm=state?state->vm:NULL;
+  int save_time=vm && vm->host &&
+    anygm_host_development_setting(vm->host,"GML_DBG_STATE_TIME")!=NULL &&
+    vm->diagnostics.state_save_time_log_count<16;
+  uint64_t save_t0=save_time?anygm_host_monotonic_time_ns(vm->host):0;
   /* Host file handles stay transient. Buffers are ordinary mutable runtime
    * memory: serialize live handles and logical bytes, not allocator reserves. */
   gml_vm_state_write_i32(writer,state->next_buffer_id);
@@ -608,25 +618,57 @@ void gml_builtin_state_write_ini_ds(const GmlBuiltinState *state,
    * retain identical bytes, including shared-array definition order. This
    * changes neither container entry order nor the existing keyed format. */
   int map_live=state->ds_maps.live_count;
+  long long map_entries=0;
+  uint64_t save_t1=save_time?anygm_host_monotonic_time_ns(vm->host):0;
   gml_vm_state_write_i32(writer,map_live);
   for(int i=0;i<map_live;i++){
-    const GmlDSMap *map=state->ds_maps.slot[state->ds_maps.order[i].slot].value;
+    GmlDSMap *map=state->ds_maps.slot[state->ds_maps.order[i].slot].value;
+    map_entries+=map->len;
     gml_vm_state_write_u32(writer,map->id);
     gml_vm_state_write_i32(writer,map->len);
+    if(!map->state_scalar_blob_checked){
+      GmlVmStateScalarMapEntry *view=map->len?
+        malloc((size_t)map->len*sizeof(*view)):NULL;
+      if(view || !map->len){
+        for(int j=0;j<map->len;j++){
+          GmlDSMapEntry *entry=&map->entry[j];
+          view[j]=(GmlVmStateScalarMapEntry){
+            entry->key,entry->key_val,entry->val,entry->state_string_encoding,
+            entry->state_string_compressed,entry->state_string_compressed_size,
+            entry->state_string_compressed_ready,entry->child_kind};
+        }
+        if(gml_vm_state_build_scalar_map_blob(vm,view,(uint32_t)map->len,
+                                               &map->state_scalar_blob,
+                                               &map->state_scalar_blob_size))
+          map->state_scalar_blob_checked=2;
+        else map->state_scalar_blob_checked=1;
+      }
+      free(view);
+    }
+    unsigned char scalar=map->state_scalar_blob_checked==2;
+    gml_vm_state_write_raw(writer,&scalar,1);
+    if(scalar){
+      gml_vm_state_write_raw(writer,map->state_scalar_blob,map->state_scalar_blob_size);
+      continue;
+    }
     for(int j=0;j<map->len;j++){
       GmlDSMapEntry *entry=&map->entry[j];
-      gml_vm_state_write_owned_string(writer,entry->key,
-        &entry->state_string_encoding[0],&entry->state_string_hash[0],
-        &entry->state_string_hash_valid[0]);
-      gml_vm_state_write_owned_value(writer,entry->key_val,
-        &entry->state_string_encoding[1],&entry->state_string_hash[1],
-        &entry->state_string_hash_valid[1]);
-      gml_vm_state_write_owned_value(writer,entry->val,
-        &entry->state_string_encoding[2],&entry->state_string_hash[2],
-        &entry->state_string_hash_valid[2]);
-      gml_vm_state_write_i32(writer,map->entry[j].child_kind);
+      gml_vm_state_write_owned_string(writer,entry->key,&entry->state_string_encoding[0],
+        &entry->state_string_hash[0],&entry->state_string_hash_valid[0],
+        &entry->state_string_compressed[0],&entry->state_string_compressed_size[0],
+        &entry->state_string_compressed_ready[0]);
+      gml_vm_state_write_owned_value(writer,entry->key_val,&entry->state_string_encoding[1],
+        &entry->state_string_hash[1],&entry->state_string_hash_valid[1],
+        &entry->state_string_compressed[1],&entry->state_string_compressed_size[1],
+        &entry->state_string_compressed_ready[1]);
+      gml_vm_state_write_owned_value(writer,entry->val,&entry->state_string_encoding[2],
+        &entry->state_string_hash[2],&entry->state_string_hash_valid[2],
+        &entry->state_string_compressed[2],&entry->state_string_compressed_size[2],
+        &entry->state_string_compressed_ready[2]);
+      gml_vm_state_write_i32(writer,entry->child_kind);
     }
   }
+  uint64_t save_t2=save_time?anygm_host_monotonic_time_ns(vm->host):0;
   int list_live=state->ds_lists.live_count;
   gml_vm_state_write_i32(writer,list_live);
   for(int i=0;i<list_live;i++){
@@ -638,6 +680,7 @@ void gml_builtin_state_write_ini_ds(const GmlBuiltinState *state,
       gml_vm_state_write_i32(writer,list->child_kind?list->child_kind[j]:0);
     }
   }
+  uint64_t save_t3=save_time?anygm_host_monotonic_time_ns(vm->host):0;
   int grid_live=state->ds_grids.live_count;
   gml_vm_state_write_i32(writer,grid_live);
   for(int i=0;i<grid_live;i++){
@@ -648,6 +691,14 @@ void gml_builtin_state_write_ini_ds(const GmlBuiltinState *state,
     long long cells=(long long)grid->w*grid->h;
     for(long long j=0;j<cells;j++)
       gml_vm_state_write_value(writer,grid->cell[j]);
+  }
+  if(save_time){
+    uint64_t save_t4=anygm_host_monotonic_time_ns(vm->host);
+    anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,
+      "[ds-state-save-time] prefix=%.2fms maps=%.2fms/%lld lists=%.2fms grids=%.2fms\n",
+      (double)(save_t1-save_t0)/1000000.0,(double)(save_t2-save_t1)/1000000.0,
+      map_entries,(double)(save_t3-save_t2)/1000000.0,
+      (double)(save_t4-save_t3)/1000000.0);
   }
 }
 
@@ -741,10 +792,20 @@ int gml_builtin_state_read_ini_ds(GmlBuiltinState *state,
       map->len=map->cap=0;
       break;
     }
+    unsigned char scalar=0;
+    gml_vm_state_read_raw(reader,&scalar,1);
+    if(scalar>1){
+      gml_vm_state_reader_fail(reader,"bad ds_map scalar form",scalar);
+      scalar=0;
+    }
+    size_t scalar_start=gml_vm_state_reader_position(reader);
     for(int j=0;j<map->len && gml_vm_state_reader_ok(reader);j++){
-      map->entry[j].key=gml_vm_state_read_string(reader);
-      map->entry[j].key_val=gml_vm_state_read_value(reader);
-      map->entry[j].val=gml_vm_state_read_value(reader);
+      map->entry[j].key=scalar?gml_vm_state_read_isolated_string(reader):
+                               gml_vm_state_read_string(reader);
+      map->entry[j].key_val=scalar?gml_vm_state_read_isolated_value(reader):
+                                   gml_vm_state_read_value(reader);
+      map->entry[j].val=scalar?gml_vm_state_read_isolated_value(reader):
+                               gml_vm_state_read_value(reader);
       int kind=gml_vm_state_read_i32(reader);
       if(kind<0 || kind>2){
         gml_vm_state_reader_fail(reader,"bad ds_map child kind",(uint32_t)kind);
@@ -754,6 +815,12 @@ int gml_builtin_state_read_ini_ds(GmlBuiltinState *state,
       gml_arr_mark_escaped(map->entry[j].key_val);
       gml_arr_mark_escaped(map->entry[j].val);
     }
+    if(scalar && gml_vm_state_reader_ok(reader) &&
+       gml_vm_state_reader_copy_range(reader,scalar_start,
+                                      gml_vm_state_reader_position(reader),
+                                      &map->state_scalar_blob,
+                                      &map->state_scalar_blob_size))
+      map->state_scalar_blob_checked=2;
   }
   if(!gml_vm_state_reader_ok(reader)) return 0;
   int list_live=gml_vm_state_read_i32(reader);

@@ -258,6 +258,7 @@ typedef struct {
   int state_variable_load_debug;
   size_t state_profile_last_total;
   int state_time_log_count;
+  int state_save_time_log_count;
   /* Count unset variables and non-array indexing without changing the existing
    * zero-valued fallback. Optional logging names each site once. */
   unsigned long unset_reads;

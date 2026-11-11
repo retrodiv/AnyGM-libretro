@@ -35,6 +35,9 @@ typedef struct {
   uint64_t state_string_encoding[3];
   uint64_t state_string_hash[3];
   unsigned char state_string_hash_valid[3];
+  unsigned char *state_string_compressed[3];
+  uint32_t state_string_compressed_size[3];
+  unsigned char state_string_compressed_ready[3];
 } GmlDSMapEntry;
 typedef struct {
   int live, destroying;
@@ -43,6 +46,9 @@ typedef struct {
   int len, cap;
   int *hidx;
   int hcap, hdirty, last_lookup;
+  unsigned char *state_scalar_blob;
+  uint32_t state_scalar_blob_size;
+  unsigned char state_scalar_blob_checked;
 } GmlDSMap;
 typedef struct {
   int live, destroying;

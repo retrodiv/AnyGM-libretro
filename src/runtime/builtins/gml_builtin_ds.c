@@ -78,12 +78,30 @@ static GmlVal ds_key_val_clone(GmlVal v){
   if(v.t==V_OBJECT) return v;
   return vreal(v.t==V_REAL?v.d:0.0);
 }
+static void ds_entry_state_memo_clear(GmlDSMapEntry *e,int slot){
+  if(!e || slot<0 || slot>=3) return;
+  free(e->state_string_compressed[slot]);
+  e->state_string_compressed[slot]=NULL;
+  e->state_string_compressed_size[slot]=0;
+  e->state_string_compressed_ready[slot]=0;
+  e->state_string_encoding[slot]=0;
+  e->state_string_hash[slot]=0;
+  e->state_string_hash_valid[slot]=0;
+}
 /* free one map entry: ONLY the lookup key. The owned key_val/val strings are deliberately
  * LEAKED: ds_ret hands them out as d=0 references that user code may retain in globals or
  * instance vars long after the entry (or the whole map) is destroyed — freeing them here
  * turns those retained references into use-after-free at the next state save. */
 static void ds_entry_free(GmlDSMapEntry *e){
+  for(int slot=0;slot<3;slot++) ds_entry_state_memo_clear(e,slot);
   free(e->key);
+}
+static void ds_map_state_cache_clear(GmlDSMap *map){
+  if(!map) return;
+  free(map->state_scalar_blob);
+  map->state_scalar_blob=NULL;
+  map->state_scalar_blob_size=0;
+  map->state_scalar_blob_checked=0;
 }
 /* Return a value stored in a ds structure. Strings are handed back as NON-owned references (d=0) so
  * the VM's OP_CALL result tracker does not adopt and free the structure's copy at scope exit. */
@@ -327,10 +345,9 @@ static int ds_map_store(GmlVM *vm, int id, GmlVal keyv, GmlVal val,
   int i=ds_map_find_entry(m,lookup);
   if(i>=0){
     if(overwrite){
+      ds_map_state_cache_clear(m);
       m->entry[i].val=ds_val_clone(val);   /* old val leaks: refs may have escaped via ds_ret */
-      m->entry[i].state_string_encoding[2]=0;
-      m->entry[i].state_string_hash[2]=0;
-      m->entry[i].state_string_hash_valid[2]=0;
+      ds_entry_state_memo_clear(&m->entry[i],2);
       m->entry[i].child_kind=0;
     }
     ds_key_temp_free(&kt);
@@ -341,6 +358,7 @@ static int ds_map_store(GmlVM *vm, int id, GmlVal keyv, GmlVal val,
   ds_key_temp_free(&kt);
   if(!key) return 0;
   if(!ds_map_reserve(m,m->len+1)){ free(key); return 0; }
+  ds_map_state_cache_clear(m);
   m->entry[m->len].key=key;
   m->entry[m->len].key_val=static_key?keyv:ds_key_val_clone(keyv);
   m->entry[m->len].val=ds_val_clone(val);
@@ -351,6 +369,12 @@ static int ds_map_store(GmlVM *vm, int id, GmlVal keyv, GmlVal val,
          sizeof m->entry[m->len].state_string_hash);
   memset(m->entry[m->len].state_string_hash_valid,0,
          sizeof m->entry[m->len].state_string_hash_valid);
+  memset(m->entry[m->len].state_string_compressed,0,
+         sizeof m->entry[m->len].state_string_compressed);
+  memset(m->entry[m->len].state_string_compressed_size,0,
+         sizeof m->entry[m->len].state_string_compressed_size);
+  memset(m->entry[m->len].state_string_compressed_ready,0,
+         sizeof m->entry[m->len].state_string_compressed_ready);
   m->len++;
   ds_map_index_add(m,m->len-1);
   return 1;
@@ -367,7 +391,11 @@ void ds_map_mark_child(GmlVM *vm, int id, GmlVal keyv, int kind){
   const char *key=ds_key_temp(keyv,&kt);
   int i=ds_map_find_entry(m,key);
   ds_key_temp_free(&kt);
-  if(i>=0) m->entry[i].child_kind=(unsigned char)((kind>=1 && kind<=2)?kind:0);
+  if(i>=0){
+    unsigned char next=(unsigned char)((kind>=1 && kind<=2)?kind:0);
+    if(m->entry[i].child_kind!=next) ds_map_state_cache_clear(m);
+    m->entry[i].child_kind=next;
+  }
 }
 GmlVal ds_map_lookup_s(GmlVM *vm, int id, const char *key, int *ok){
   if(ok) *ok=0;
@@ -382,6 +410,7 @@ GmlVal ds_map_lookup_s(GmlVM *vm, int id, const char *key, int *ok){
 }
 static void ds_map_clear_entries(GmlDSMap *m){
   if(!m) return;
+  ds_map_state_cache_clear(m);
   for(int i=0;i<m->len;i++) ds_entry_free(&m->entry[i]);
   m->len=0;
   m->hdirty=1;
@@ -1779,9 +1808,13 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
     const char *key=(n>=2)?ds_key_temp(a[1],&kt):NULL;
     int i=ds_map_find_entry(m,key);
     if(i>=0){
+      ds_map_state_cache_clear(m);
       ds_entry_free(&m->entry[i]);
       memmove(&m->entry[i],&m->entry[i+1],(size_t)(m->len-i-1)*sizeof(m->entry[0]));
       m->len--;
+      /* The shifted last record still aliases the live record before it. Clear that spare slot so
+       * a later insertion cannot overwrite or free the live record's derived compression memo. */
+      memset(&m->entry[m->len],0,sizeof(m->entry[0]));
       m->hdirty=1;   /* indices shifted: rebuild the hash index on next lookup */
       m->last_lookup=-1;
     }
