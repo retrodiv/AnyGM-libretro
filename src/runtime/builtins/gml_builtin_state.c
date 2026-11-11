@@ -180,6 +180,19 @@ void file_find_reset(GmlBuiltinState *state){
   state->file_find_index=0;
 }
 
+uint32_t builtin_state_ini_key_hash(const char *section,const char *key){
+  const char *parts[]={section?section:"",key?key:""};
+  uint32_t hash=UINT32_C(2166136261);
+  /* Include each terminator so distinct section/key boundaries remain distinct.
+   * Collisions only admit the existing exact string comparisons. */
+  for(unsigned part=0;part<2u;part++){
+    const unsigned char *cursor=(const unsigned char*)parts[part];
+    unsigned char byte;
+    do { byte=*cursor++; hash=(hash^byte)*UINT32_C(16777619); } while(byte);
+  }
+  return hash;
+}
+
 void builtin_state_ini_reset(GmlBuiltinState *state){
   if(!state) return;
   for(int i=0;i<state->ini_n;i++){
@@ -675,6 +688,8 @@ int gml_builtin_state_read_ini_ds(GmlBuiltinState *state,
     state->ini_kv[i].is_str=gml_vm_state_read_i32(reader);
     state->ini_kv[i].val=gml_vm_state_read_real(reader);
     state->ini_kv[i].sval=gml_vm_state_read_string(reader);
+    state->ini_kv[i].key_hash=builtin_state_ini_key_hash(
+      state->ini_kv[i].section,state->ini_kv[i].key);
     state->ini_n++;
   }
   if(!gml_vm_state_reader_ok(reader)) return 0;

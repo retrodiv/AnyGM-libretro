@@ -141,8 +141,29 @@ static void fixture_map(FixtureProjection *p){
 /* Only the current neutral fixture is projected, with each omitted playback field checked
  * against the live fixture. Direct state controls cover mutation/restoration of these fields. */
 static int project_fixture_playback(AnygmEngine *engine,uint8_t **data,size_t *written){
-  const uint8_t *bytes=*data;
-  if(*written<112 || (uint32_t)read_u64(bytes+4)!=44 || engine->render.n_spr<0)return 0;
+  uint8_t *bytes=*data;
+  if(*written<112 || (uint32_t)read_u64(bytes+4)!=47 || engine->render.n_spr<0)return 0;
+  /* Current audio adds only these default music fields to this fixture. Verify
+   * them before removing the trailer in scratch; active music is unsupported. */
+  size_t audio=112;
+  for(unsigned offset=64;offset<=80;offset+=8){
+    uint64_t part=read_u64(bytes+offset);
+    if(part>*written-audio)return 0;
+    audio+=(size_t)part;
+  }
+  size_t audio_size=(size_t)read_u64(bytes+88);
+  uint8_t music[24]={0};
+  write_u32(music,UINT32_MAX);
+  write_u64(music+4,UINT64_C(0x3ff0000000000000));
+  write_u64(music+12,UINT64_C(0x3ff0000000000000));
+  if(audio_size!=*written-audio || audio_size<32 ||
+     (uint32_t)read_u64(bytes+audio)!=UINT32_C(0x53554141) ||
+     (uint32_t)read_u64(bytes+audio+4)!=4 ||
+     memcmp(bytes+*written-sizeof music,music,sizeof music))return 0;
+  *written-=sizeof music;
+  write_u32(bytes+audio+4,3);write_u64(bytes+88,audio_size-sizeof music);
+  write_u64(bytes+16,*written);write_u64(bytes+96,*written-112);
+  write_u64(bytes+56,state_checksum(bytes+112,*written-112));
   size_t start=112+(size_t)read_u64(bytes+64),size=(size_t)read_u64(bytes+72);
   size_t count=(size_t)engine->render.n_spr;
   if(count>(SIZE_MAX-4)/12)return 0;
@@ -170,7 +191,8 @@ static int project_fixture_vm(AnygmEngine *engine,uint8_t **data,size_t *written
   const uint8_t *bytes=*data;
   if(*written<112 || (uint32_t)read_u64(bytes+4)!=43 || engine->vm.n_structs ||
      engine->vm.n_tilemaps || engine->vm.n_rtl || engine->vm.n_rte ||
-     engine->vm.room_visuals || engine->vm.wait.active)return 0;
+     engine->vm.room_visuals || engine->vm.wait.active || engine->vm.n_timelines ||
+     engine->vm.n_objects<0)return 0;
   size_t start=112+(size_t)read_u64(bytes+64)+(size_t)read_u64(bytes+72);
   size_t size=(size_t)read_u64(bytes+80);
   if(start>*written || size>*written-start || size<132)return 0;
@@ -179,12 +201,25 @@ static int project_fixture_vm(AnygmEngine *engine,uint8_t **data,size_t *written
    * empty order trailer; nonempty new behavior belongs to its direct continuation controls. */
   if(size<4 || memcmp(bytes+start+size-4,(const uint8_t[4]){0},4)){free(p);return 0;}
   p->input=bytes+start;p->size=size-4;p->ok=1;
+  if((size_t)engine->vm.n_objects>(SIZE_MAX-4u)/28u){free(p);return 0;}
+  size_t objects=4u+(size_t)engine->vm.n_objects*28u;
+  if(objects>p->size || p->size-objects<4u){free(p);return 0;}
+  size_t timeline_at=p->size-objects-4u;
+  if((uint32_t)read_u64(p->input+timeline_at)!=0 ||
+     (uint32_t)read_u64(p->input+timeline_at+4)!=(uint32_t)engine->vm.n_objects){free(p);return 0;}
   fixture_copy(p,132);
-  if((uint32_t)read_u64(p->output+4)!=25)p->ok=0;
+  if((uint32_t)read_u64(p->output+4)!=27)p->ok=0;
   write_u32(p->output+4,19);
   for(unsigned i=0;i<16;i++)(void)fixture_value(p,0);
   fixture_copy(p,76+26*4+616*8+10*4); /* RNG and unchanged software-3D scalars */
-  uint32_t models=fixture_copy_word(p);fixture_copy(p,models);
+  /* Empty model/vertex resources have an explicit current header and four
+   * empty vertex-builder/format/buffer words. Preserve the older model header. */
+  const uint8_t empty_resources[28]={'A','D','M','S',2};
+  uint32_t models=fixture_read_word(p);
+  if(models!=sizeof empty_resources || p->pos>p->size || models>p->size-p->pos ||
+     memcmp(p->input+p->pos,empty_resources,sizeof empty_resources))p->ok=0;
+  fixture_word(p,12);fixture_word(p,UINT32_C(0x534d4441));fixture_word(p,1);fixture_word(p,0);
+  if(p->ok)p->pos+=models;
   uint32_t rooms=fixture_copy_word(p);fixture_copy(p,rooms);
   fixture_copy(p,4+sizeof engine->vm.tile_mut);
   fixture_copy(p,4+sizeof engine->vm.tile_del_at);
@@ -212,7 +247,10 @@ static int project_fixture_vm(AnygmEngine *engine,uint8_t **data,size_t *written
   fixture_empty(p);fixture_empty(p);fixture_string(p);fixture_empty(p); /* external audio */
   fixture_empty(p); /* no live script statics */
   fixture_copy(p,8);fixture_empty(p); /* no scheduled language callbacks */
-  if(p->pos<=p->size)fixture_copy(p,p->size-p->pos);
+  /* The verified empty timeline count precedes the unchanged object-default
+   * table. A populated timeline must never be silently removed here. */
+  if(p->pos>timeline_at)p->ok=0;
+  if(p->ok){fixture_copy(p,timeline_at-p->pos);p->pos+=4;fixture_copy(p,p->size-p->pos);}
   if(!p->ok){fprintf(stderr,"fixture projection stopped at VM byte %zu/%zu\n",p->pos,size);free(p);return 0;}
   size_t total=*written-size+p->used;
   uint8_t *result=malloc(total);

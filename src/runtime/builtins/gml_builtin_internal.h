@@ -75,6 +75,8 @@ typedef struct {
   char *section, *key, *sval;
   double val;
   int is_str;
+  /* Derived lookup filter; canonical state stores only the ordered entry values. */
+  uint32_t key_hash;
 } GmlBuiltinIniEntry;
 typedef struct {
   unsigned char *data;
@@ -340,6 +342,7 @@ const char *builtin_setting(const GmlVM *vm, const char *name);
 void file_find_reset(GmlBuiltinState *state);
 void builtin_io_files_close(GmlBuiltinState *state);
 void builtin_state_ini_reset(GmlBuiltinState *state);
+uint32_t builtin_state_ini_key_hash(const char *section,const char *key);
 GmlSaudioEntry *builtin_state_saudio_find(GmlBuiltinState *state,const char *id);
 int builtin_state_saudio_store(GmlBuiltinState *state,const char *id,const char *path,
                                const uint8_t content_sha256[32],int sound,int recording);

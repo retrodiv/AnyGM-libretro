@@ -731,7 +731,8 @@ static void ini_add_kv(GmlVM *vm, const char *sec, const char *key, const char *
     .key=strdup(key),
     .sval=strdup(val?val:""),
     .val=ini_parse_real(val),
-    .is_str=1
+    .is_str=1,
+    .key_hash=builtin_state_ini_key_hash(sec,key)
   };
   vm->builtins->ini_n++;
 }
@@ -1237,20 +1238,24 @@ GmlVal gml_builtin_try_io_ini(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"ini_write_real")||!strcmp(nm,"FS_ini_write_real")){
     if(!vm->builtins->ini_open||vm->builtins->ini_n>=GML_INI_MAX) return vreal(0);
     const char *sec=S(vm,a,n,0), *key=S(vm,a,n,1); double val=N(a,n,2);
+    uint32_t hash=builtin_state_ini_key_hash(sec,key);
     /* replace existing key under the same section, or append */
     for(int i=0;i<vm->builtins->ini_n;i++)
-      if(!strcmp(vm->builtins->ini_kv[i].section,sec) && !strcmp(vm->builtins->ini_kv[i].key,key)){
+      if(vm->builtins->ini_kv[i].key_hash==hash &&
+         !strcmp(vm->builtins->ini_kv[i].section,sec) && !strcmp(vm->builtins->ini_kv[i].key,key)){
         free(vm->builtins->ini_kv[i].sval); vm->builtins->ini_kv[i].sval=NULL; vm->builtins->ini_kv[i].val=val; vm->builtins->ini_kv[i].is_str=0; return vreal(0); }
-    vm->builtins->ini_kv[vm->builtins->ini_n++]=(typeof(vm->builtins->ini_kv[0])){.section=strdup(sec),.key=strdup(key),.val=val,.is_str=0};
+    vm->builtins->ini_kv[vm->builtins->ini_n++]=(typeof(vm->builtins->ini_kv[0])){.section=strdup(sec),.key=strdup(key),.val=val,.is_str=0,.key_hash=hash};
     return vreal(0);
   }
   if(!strcmp(nm,"ini_write_string")||!strcmp(nm,"FS_ini_write_string")){
     if(!vm->builtins->ini_open||vm->builtins->ini_n>=GML_INI_MAX) return vreal(0);
     const char *sec=S(vm,a,n,0), *key=S(vm,a,n,1), *val=S(vm,a,n,2);
+    uint32_t hash=builtin_state_ini_key_hash(sec,key);
     for(int i=0;i<vm->builtins->ini_n;i++)
-      if(!strcmp(vm->builtins->ini_kv[i].section,sec) && !strcmp(vm->builtins->ini_kv[i].key,key)){
+      if(vm->builtins->ini_kv[i].key_hash==hash &&
+         !strcmp(vm->builtins->ini_kv[i].section,sec) && !strcmp(vm->builtins->ini_kv[i].key,key)){
         free(vm->builtins->ini_kv[i].sval); vm->builtins->ini_kv[i].sval=strdup(val); vm->builtins->ini_kv[i].val=ini_parse_real(val); vm->builtins->ini_kv[i].is_str=1; return vreal(0); }
-    vm->builtins->ini_kv[vm->builtins->ini_n++]=(typeof(vm->builtins->ini_kv[0])){.section=strdup(sec),.key=strdup(key),.sval=strdup(val),.val=ini_parse_real(val),.is_str=1};
+    vm->builtins->ini_kv[vm->builtins->ini_n++]=(typeof(vm->builtins->ini_kv[0])){.section=strdup(sec),.key=strdup(key),.sval=strdup(val),.val=ini_parse_real(val),.is_str=1,.key_hash=hash};
     return vreal(0);
   }
   if(!strcmp(nm,"ini_read_real")||!strcmp(nm,"FS_ini_read_real")){
@@ -1260,16 +1265,20 @@ GmlVal gml_builtin_try_io_ini(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     if(!vm->builtins->ini_open) return vreal(def);  /* default */
     const char *sec=S(vm,a,n,0), *key=S(vm,a,n,1);
+    uint32_t hash=builtin_state_ini_key_hash(sec,key);
     /* search the key-value table backwards so later writes override */
     for(int i=vm->builtins->ini_n-1;i>=0;i--)
-      if(!strcmp(vm->builtins->ini_kv[i].section,sec) && !strcmp(vm->builtins->ini_kv[i].key,key))
+      if(vm->builtins->ini_kv[i].key_hash==hash &&
+         !strcmp(vm->builtins->ini_kv[i].section,sec) && !strcmp(vm->builtins->ini_kv[i].key,key))
         return vreal(vm->builtins->ini_kv[i].val);
     return vreal(def);
   }
   if(!strcmp(nm,"ini_read_string")||!strcmp(nm,"FS_ini_read_string")){
     if(!vm->builtins->ini_open) return ini_default_string(vm,a,n);
     const char *sec=S(vm,a,n,0), *key=S(vm,a,n,1);
-    for(int i=vm->builtins->ini_n-1;i>=0;i--) if(!strcmp(vm->builtins->ini_kv[i].section,sec) && !strcmp(vm->builtins->ini_kv[i].key,key)){
+    uint32_t hash=builtin_state_ini_key_hash(sec,key);
+    for(int i=vm->builtins->ini_n-1;i>=0;i--) if(vm->builtins->ini_kv[i].key_hash==hash &&
+        !strcmp(vm->builtins->ini_kv[i].section,sec) && !strcmp(vm->builtins->ini_kv[i].key,key)){
       /* Return an OWNED copy, not a pointer into ini_kv[].sval: a later ini_close()/ini_open() frees
        * that storage, and GML code routinely keeps the read value across such calls (use-after-free). */
       if(vm->builtins->ini_kv[i].is_str){ const char *s=vm->builtins->ini_kv[i].sval?vm->builtins->ini_kv[i].sval:""; char *c=strdup(s); return c?vstr_owned(c):vstr(""); }
@@ -1285,16 +1294,20 @@ GmlVal gml_builtin_try_io_ini(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"ini_key_exists")||!strcmp(nm,"FS_ini_key_exists")){
     if(!vm->builtins->ini_open) return vreal(0);
     const char *sec=S(vm,a,n,0), *key=S(vm,a,n,1);
+    uint32_t hash=builtin_state_ini_key_hash(sec,key);
     for(int i=vm->builtins->ini_n-1;i>=0;i--)
-      if(!strcmp(vm->builtins->ini_kv[i].section,sec) && !strcmp(vm->builtins->ini_kv[i].key,key))
+      if(vm->builtins->ini_kv[i].key_hash==hash &&
+         !strcmp(vm->builtins->ini_kv[i].section,sec) && !strcmp(vm->builtins->ini_kv[i].key,key))
         return vreal(1);
     return vreal(0);
   }
   if(!strcmp(nm,"ini_key_delete")||!strcmp(nm,"FS_ini_key_delete")){
     if(!vm->builtins->ini_open) return vreal(0);
     const char *sec=S(vm,a,n,0), *key=S(vm,a,n,1);
+    uint32_t hash=builtin_state_ini_key_hash(sec,key);
     for(int i=0;i<vm->builtins->ini_n;i++){
-      if(strcmp(vm->builtins->ini_kv[i].section,sec) || strcmp(vm->builtins->ini_kv[i].key,key)) continue;
+      if(vm->builtins->ini_kv[i].key_hash!=hash ||
+         strcmp(vm->builtins->ini_kv[i].section,sec) || strcmp(vm->builtins->ini_kv[i].key,key)) continue;
       free(vm->builtins->ini_kv[i].section);
       free(vm->builtins->ini_kv[i].key);
       free(vm->builtins->ini_kv[i].sval);

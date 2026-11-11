@@ -7,6 +7,7 @@
 #include "gml_builtin_internal.h"
 #include "anygm_vfs.h"
 #include "gml_image_codec.h"
+#include "gml_particle.h"
 #include "stdio_vfs.h"
 
 #include <stdio.h>
@@ -19,6 +20,100 @@
 #include <errno.h>
 #include <limits.h>
 #endif
+
+static int ini_number_matches(GmlVM *vm,const char *section,const char *key,double expected){
+  GmlVal args[]={vstr(section),vstr(key),vreal(-17)};
+  GmlVal value=gml_builtin_call(vm,"ini_read_real",args,3);
+  return value.t==V_REAL && value.d==expected;
+}
+
+static void ini_write_number(GmlVM *vm,const char *section,const char *key,double value){
+  GmlVal args[]={vstr(section),vstr(key),vreal(value)};
+  (void)gml_builtin_call(vm,"ini_write_real",args,3);
+}
+
+int expect_ini_key_lookup_case(void){
+  static const char first_collision[]="section-619323c6";
+  static const char second_collision[]="section-110c83b1";
+  static const char text[]="[duplicate]\nvalue=1\nvalue=9\n"
+    "[section-619323c6]\nvalue=21\n[section-110c83b1]\nvalue=42\n"
+    "[Case]\nkey=7\n[case]\nkey=8\n";
+  GmlWin win={0}; GmlVM vm={0}; vm.win=&win;
+  vm.particles=gml_particle_state_create(&vm);
+  gml_vm_software3d_reset(&vm);
+  GmlVal source=vstr(text);
+  (void)gml_builtin_call(&vm,"ini_open_from_string",&source,1);
+  if(!vm.particles || !vm.builtins){ gml_vm_free(&vm); return 0; }
+  /* These authored names collide in the tuple filter. Exact names must still
+   * select the correct entry, including the forward write and reverse read. */
+  int ok=vm.builtins->ini_n==6 &&
+    builtin_state_ini_key_hash(first_collision,"value")==
+      builtin_state_ini_key_hash(second_collision,"value") &&
+    vm.builtins->ini_kv[2].key_hash==vm.builtins->ini_kv[3].key_hash &&
+    ini_number_matches(&vm,first_collision,"value",21) &&
+    ini_number_matches(&vm,second_collision,"value",42) &&
+    ini_number_matches(&vm,"Case","key",7) && ini_number_matches(&vm,"case","key",8);
+  ini_write_number(&vm,second_collision,"value",84);
+  ini_write_number(&vm,"duplicate","value",4);
+  ok=ok && ini_number_matches(&vm,first_collision,"value",21) &&
+    ini_number_matches(&vm,second_collision,"value",84) &&
+    vm.builtins->ini_kv[0].val==4 && ini_number_matches(&vm,"duplicate","value",9);
+  GmlVal strings[]={vstr(first_collision),vstr("value"),vstr("written")};
+  (void)gml_builtin_call(&vm,"ini_write_string",strings,3);
+  GmlVal copied=gml_builtin_call(&vm,"ini_read_string",strings,3);
+  ok=ok && copied.t==V_STR && copied.s && !strcmp(copied.s,"written") &&
+    ini_number_matches(&vm,second_collision,"value",84);
+  if(copied.t==V_STR && copied.d!=0) free((void*)copied.s);
+  GmlVal duplicate[]={vstr("duplicate"),vstr("value")};
+  (void)gml_builtin_call(&vm,"ini_key_delete",duplicate,2);
+  ok=ok && vm.builtins->ini_n==5 && ini_number_matches(&vm,"duplicate","value",9);
+  (void)gml_builtin_call(&vm,"ini_section_delete",duplicate,1);
+  GmlVal exists=gml_builtin_call(&vm,"ini_key_exists",duplicate,2);
+  ok=ok && vm.builtins->ini_n==4 && exists.t==V_REAL && exists.d==0 &&
+    ini_number_matches(&vm,"duplicate","value",-17);
+  /* Different tuple boundaries and a sizeable table exercise append, update
+   * and missing-key lookup without a platform-dependent timing expectation. */
+  ini_write_number(&vm,"a","bc",11);
+  ini_write_number(&vm,"ab","c",22);
+  for(unsigned i=0;i<3000u;i++){
+    char section[32],key[32];
+    snprintf(section,sizeof section,"chunk%u",i/7u);
+    snprintf(key,sizeof key,"item%u",i);
+    ini_write_number(&vm,section,key,(double)i+1.0);
+  }
+  ini_write_number(&vm,"chunk0","item0",41);
+  ok=ok && vm.builtins->ini_n==3006 && ini_number_matches(&vm,"a","bc",11) &&
+    ini_number_matches(&vm,"ab","c",22) && ini_number_matches(&vm,"chunk0","item0",41) &&
+    ini_number_matches(&vm,"chunk428","item2999",3000);
+  size_t size=gml_vm_state_size(&vm),written=0,used=0;
+  void *before=malloc(size?size:1),*after=malloc(size?size:1);
+  ok=ok && size && before && after &&
+    gml_vm_state_save(&vm,before,size,&written) && written==size;
+  if(ok){
+    /* Derived lookup data must never become state bytes. A restore rebuilds it
+     * from the ordered values before any read, update or delete can consume it. */
+    for(int i=0;i<vm.builtins->ini_n;i++) vm.builtins->ini_kv[i].key_hash^=UINT32_C(0x01010101);
+    ok=gml_vm_state_save(&vm,after,size,&written) && written==size &&
+       !memcmp(before,after,size) && gml_vm_state_load(&vm,before,size,&used) && used==size;
+  }
+  if(ok){
+    for(int i=0;i<vm.builtins->ini_n;i++){
+      const GmlBuiltinIniEntry *entry=&vm.builtins->ini_kv[i];
+      ok=ok && entry->key_hash==builtin_state_ini_key_hash(entry->section,entry->key);
+    }
+    ok=ok && ini_number_matches(&vm,"chunk428","item2999",3000) &&
+      ini_number_matches(&vm,second_collision,"value",84) &&
+      gml_vm_state_size(&vm)==size && gml_vm_state_save(&vm,after,size,&written) &&
+      written==size && !memcmp(before,after,size);
+    ini_write_number(&vm,second_collision,"value",168);
+    ok=ok && ini_number_matches(&vm,second_collision,"value",168);
+    (void)gml_builtin_call(&vm,"ini_key_delete",strings,2);
+    ok=ok && ini_number_matches(&vm,second_collision,"value",168);
+  }
+  if(!ok) fprintf(stderr,"INI tuple lookup, duplicate order or derived-state rebuild changed\n");
+  free(before); free(after); gml_vm_free(&vm);
+  return ok;
+}
 
 
 int expect_file_sandbox(GmlVM *vm,const char *save_dir){
