@@ -31,11 +31,12 @@ enum { STATE_MAX_MAPS=2000000, STATE_MAX_MAP_ENTRIES=16000000,
        STATE_REAL_ZERO=6, STATE_REAL_INTEGER=7, STATE_REAL_I8=8, STATE_REAL_I16=9,
        STATE_MAX_STRINGS=1000000 };
 typedef struct { const GmlVarMap *map; uint32_t hash,id,count,key_bytes; } StateMapEntry;
-/* Dense records keep traversal IDs stable while the sparse buckets hold only one-based indices.
- * Rehashing visits only definitions while preserving their original traversal order. */
+/* Dense records keep traversal IDs stable. Sparse buckets retain each hash beside its one-based
+ * index so collided hashes can be rejected before reading the record.
+ * Rehashing visits definitions in their original traversal order. */
 typedef struct {
   StateMapEntry *entries;
-  uint32_t *index;
+  uint64_t *index;
   size_t capacity;
 } StateMapTable;
 typedef struct { GmlVarSlot **slots; uint32_t count,key_bytes; } StateKeyShape;
@@ -775,7 +776,7 @@ static StateMapEntry *state_map_entry(StateW *s,StateMapTable *table,
   if(!s->ok) return NULL;
   if(!table->capacity || (definitions>=table->capacity/2 && definitions<STATE_MAX_MAPS)){
     size_t next=table->capacity?table->capacity*2:64;
-    uint32_t *index=calloc(next,sizeof(*index));
+    uint64_t *index=calloc(next,sizeof(*index));
     if(!index){ s->ok=0; return NULL; }
     StateMapEntry *entries=realloc(table->entries,next/2*sizeof(*entries));
     if(!entries){ free(index); s->ok=0; return NULL; }
@@ -783,21 +784,24 @@ static StateMapEntry *state_map_entry(StateW *s,StateMapTable *table,
       StateMapEntry entry=entries[i];
       size_t slot=(size_t)entry.hash&(next-1);
       while(index[slot]) slot=(slot+1)&(next-1);
-      index[slot]=i+1;
+      index[slot]=((uint64_t)entry.hash<<32)|(i+1u);
     }
     free(table->index);
     table->entries=entries;table->index=index;table->capacity=next;
   }
   size_t slot=(size_t)hash&(table->capacity-1);
   while(table->index[slot]){
-    StateMapEntry *entry=&table->entries[table->index[slot]-1];
-    if(entry->hash==hash && entry->count==count &&
-       (keys_only?state_shape_matches(s,map,entry):state_maps_equal(map,entry->map)))
-      return entry;
+    uint64_t bucket=table->index[slot];
+    if((uint32_t)(bucket>>32)==hash){
+      StateMapEntry *entry=&table->entries[(uint32_t)bucket-1];
+      if(entry->count==count &&
+         (keys_only?state_shape_matches(s,map,entry):state_maps_equal(map,entry->map)))
+        return entry;
+    }
     slot=(slot+1)&(table->capacity-1);
   }
   if(definitions>=STATE_MAX_MAPS){ s->ok=0; return NULL; }
-  table->index[slot]=definitions+1;
+  table->index[slot]=((uint64_t)hash<<32)|(definitions+1u);
   StateMapEntry *entry=&table->entries[definitions];
   *entry=(StateMapEntry){0};
   return entry;
