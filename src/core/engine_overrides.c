@@ -976,9 +976,10 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
             return 0;
           }
         } else if(!strncmp(slot->code,"gamepad|",8)){
-          if(strcmp(slot->code+8,"keyboard") && strcmp(slot->code+8,"auto")){
+          if(strcmp(slot->code+8,"keyboard") && strcmp(slot->code+8,"single") &&
+             strcmp(slot->code+8,"auto")){
             snprintf(error,error_capacity,
-                     "directive %d: gamepad| takes keyboard or auto",line_number);
+                     "directive %d: gamepad| takes keyboard, single or auto",line_number);
             return 0;
           }
         } else if(!strncmp(slot->code,"keybind|",8)){
@@ -1774,6 +1775,13 @@ int engine_overrides_keyboard_emulation(AnygmEngine *engine){
     if(engine->boot_cheats[i].enabled &&
        !strcmp(engine->boot_cheats[i].code,"gamepad|keyboard")) return 1;
   return 0;
+}
+unsigned engine_overrides_gamepad_limit(AnygmEngine *engine){
+  int active=engine_boot_cheats_active(engine);
+  for(int i=0;i<active;i++)
+    if(engine->boot_cheats[i].enabled &&
+       !strcmp(engine->boot_cheats[i].code,"gamepad|single")) return 1u;
+  return ANYGM_MAX_GAMEPADS;
 }
 /* Binding declarations never select input ownership or alter physical keyboard state. */
 int engine_overrides_key_binding(AnygmEngine *engine,int virtual_key,unsigned *port){

@@ -486,6 +486,7 @@ void introskip_hook(AnygmEngine *engine);
 int  engine_overrides_declared_os_type(AnygmEngine *engine);
 uint32_t engine_overrides_declared_renderer(AnygmEngine *engine);
 int  engine_overrides_keyboard_emulation(AnygmEngine *engine);
+unsigned engine_overrides_gamepad_limit(AnygmEngine *engine);
 int  engine_overrides_key_binding(AnygmEngine *engine,int virtual_key,unsigned *port);
 unsigned engine_overrides_keyboard_bindings(AnygmEngine *engine,
                                             unsigned buttons[ANYGM_MAX_GAMEPADS]);

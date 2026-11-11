@@ -3231,6 +3231,44 @@ static int input_binding_ownership_policy(void){
          &engine->boot_cheat_count,error,sizeof error);
   }
 
+  /* A content-local single-pad policy retains native first-pad buttons and both sticks,
+   * while hiding other slots consistently. Disabling or withdrawing it restores the host. */
+  for(unsigned i=0;ok && i<sizeof declared/sizeof declared[0];i++){
+    AnygmEngine *engine=declared[i];
+    char error[256];
+    engine->config.content_overrides=1;
+    engine->config.gamepad_connected=ANYGM_GAMEPAD_AUTO;
+    engine->input.connected_gamepads=ANYGM_MAX_GAMEPADS;
+    for(unsigned port=0;port<ANYGM_MAX_GAMEPADS;port++){
+      engine->pad_current[port][ANYGM_PAD_FACE_BOTTOM]=1;
+      engine->axis_current[port][0]=0.75;
+      engine->axis_current[port][2]=-0.5;
+    }
+    ok=engine_boot_overrides_parse("gamepad|single\n",engine->boot_cheats,
+         &engine->boot_cheat_count,error,sizeof error) &&
+       !engine->vm.input.key(engine->vm.input.userdata,'Z',0) &&
+       engine->vm.input.gamepad_connected(engine->vm.input.userdata,0) &&
+       engine->vm.input.gamepad(engine->vm.input.userdata,0,32769,0) &&
+       engine->vm.input.gamepad_axis(engine->vm.input.userdata,0,32785)==0.75 &&
+       engine->vm.input.gamepad_axis(engine->vm.input.userdata,0,32787)==-0.5;
+    for(unsigned port=1;ok && port<ANYGM_MAX_GAMEPADS;port++){
+      ok=!engine->vm.input.gamepad_connected(engine->vm.input.userdata,(int)port) &&
+         !engine->vm.input.gamepad(engine->vm.input.userdata,(int)port,32769,0) &&
+         engine->vm.input.gamepad_axis(engine->vm.input.userdata,(int)port,32785)==0.0;
+    }
+    engine->config.content_overrides=0;
+    ok=ok && engine->vm.input.gamepad_connected(engine->vm.input.userdata,1) &&
+       engine->vm.input.gamepad(engine->vm.input.userdata,1,32769,0) &&
+       engine->vm.input.gamepad_axis(engine->vm.input.userdata,1,32785)==0.75;
+    engine->config.content_overrides=1;
+    ok=ok && engine_boot_overrides_parse("gamepad|single\ngamepad|auto\n",
+         engine->boot_cheats,&engine->boot_cheat_count,error,sizeof error) &&
+       engine->boot_cheat_count==1 &&
+       engine->vm.input.gamepad_connected(engine->vm.input.userdata,1);
+    engine->config.gamepad_connected=0;
+    ok=ok && !engine->vm.input.gamepad_connected(engine->vm.input.userdata,0);
+  }
+
   if(!ok)
     fputs("RetroPad ownership did not follow what the content can hear\n",stderr);
   return ok;

@@ -324,7 +324,7 @@ static int gp_to_pad(AnygmEngine *engine,int gp){
 static int engine_input_gamepad(void *userdata,int device,int button, int edge){
   AnygmEngine *engine=userdata;
   if(engine_input_keyboard_emulation_selected(engine)) return 0;
-  if(device < 0 || device >= (int)ANYGM_MAX_GAMEPADS) return 0;
+  if(device < 0 || device >= (int)engine_overrides_gamepad_limit(engine)) return 0;
   int b = gp_to_pad(engine,button); if(b < 0) return 0;
   int cur = engine->pad_current[device][b], prev = engine->pad_previous[device][b];
   if(anygm_host_development_setting(&engine->host,"GML_DBG_GP_STATE")){
@@ -346,7 +346,7 @@ static double engine_input_gamepad_axis(void *userdata,int device, int axis){
   AnygmEngine *engine=userdata;
   if(engine_input_keyboard_emulation_selected(engine)) return 0.0;
   int slot = gp_axis_slot(axis);
-  if(device < 0 || device >= (int)ANYGM_MAX_GAMEPADS || slot < 0) return 0.0;
+  if(device < 0 || device >= (int)engine_overrides_gamepad_limit(engine) || slot < 0) return 0.0;
   return engine->axis_current[device][slot];
 }
 
@@ -523,7 +523,7 @@ static int core_opt_gamepad_connected(AnygmEngine *engine) {
  * devices. Port zero remains available when an older host reports no count. */
 static int engine_input_gamepad_connected(void *userdata,int device) {
   AnygmEngine *engine=userdata;
-  if(device < 0 || device >= (int)ANYGM_MAX_GAMEPADS) return 0;
+  if(device < 0 || device >= (int)engine_overrides_gamepad_limit(engine)) return 0;
   if(!core_opt_gamepad_connected(engine)) return 0;
   return device == 0 || (unsigned)device < engine->input.connected_gamepads;
 }

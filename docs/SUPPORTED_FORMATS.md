@@ -86,6 +86,10 @@ It affects allocation only, so changing it does not invalidate a state's simulat
 joystick or gamepad functions. RetroPad directions and action buttons use the existing keyboard
 mapping; native pad connection, button and axis reads return inactive values. This is useful for
 content whose default or menu controls require a keyboard despite containing pad references.
+`gamepad|single` exposes only native pad index zero. Other indices report disconnected,
+with inactive button and axis reads; the device-count query retains its slot capacity. Both
+sticks and native buttons on the first pad remain intact. The frontend ownership option still
+applies. This supports single-player content that otherwise retains the last exposed device.
 `gamepad|auto` withdraws an earlier declaration and leaves the frontend's RetroPad behavior option
 in charge. These singleton declarations follow ordinary content-override layering, disabling and
 save-state identity. They do not edit the frontend option or the content's own controller settings.
