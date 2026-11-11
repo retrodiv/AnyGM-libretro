@@ -3232,6 +3232,12 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
     state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
     if((additive || inverse) && r->target_sp>0) state.coverage_policy=0u;
   }
+  if(fast_white && !replace && r->alphablend &&
+     gml_render_target_is_first_generation_application_surface(r)){
+    /* The application-target unit writer retains squared source coverage in alpha. */
+    state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.coverage_policy=0u;
+  }
   if(full_presets && (r->blendmode==3 || r->blendmode==4 || r->blendmode==8 || destination_blend)){
     int preserve=r->blendmode==3 || r->blendmode==4?r->target_sp>0:
       gml_render_target_preserves_alpha(r);
@@ -3529,6 +3535,12 @@ static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,do
     state.rgb_source_factor=state.rgb_destination_factor=0u;
     state.alpha_source_factor=state.alpha_destination_factor=0u;
     state.rgb_equation=state.alpha_equation=0u;
+  }
+  if(unit && !r->blendmode && r->alphablend && alpha>=1.0 &&
+     (blend&0xFFFFFFu)==0xFFFFFFu &&
+     gml_render_target_is_first_generation_application_surface(r)){
+    state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.coverage_policy=0u;
   }
   if(destination_blend){
     state.rgb_source_factor=state.alpha_source_factor=

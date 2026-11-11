@@ -12740,6 +12740,63 @@ static int resident_filtered_gui_real_font(void){
   return 1;
 }
 
+static int resident_surface_application_coverage(void){
+  const int bytecodes[]={15,17};
+  for(unsigned generation=0;generation<2u;generation++)
+  for(unsigned application=0;application<2u;application++)
+  for(unsigned interpolation=0;interpolation<2u;interpolation++)
+  for(unsigned clipped=0;clipped<2u;clipped++)
+  for(unsigned part=0;part<2u;part++){
+    GmlWin content={.bytecode=bytecodes[generation]};
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    GmlRender *render=calloc(1,sizeof *render);
+    uint32_t screen[64],source_pixels[16];
+    CHECK(render && !gml_render_init(render,NULL));
+    render->win=&content;
+    for(unsigned pixel=0;pixel<64u;pixel++) screen[pixel]=0xFF213243u;
+    for(unsigned pixel=0;pixel<16u;pixel++) source_pixels[pixel]=0x01FFFFFFu;
+    int source=gml_surface_create(render,4,4);
+    CHECK(source>0);
+    GmlSurface *surface=&render->surface[surface_slot(source)];
+    memcpy(surface->px,source_pixels,sizeof source_pixels);
+    surface->opaque_known=surface->all_opaque=surface->all_transparent=0;
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(render,&device);
+    if(application){
+      CHECK(gml_render_application_surface_ensure_owned(render,8,8));
+      CHECK(gml_render_begin_resident_owned_application(render,0,0,0));
+    }else CHECK(gml_render_begin_resident_base(render,screen,8,8,0,0));
+    render->interp=(int)interpolation;
+    gml_render_set_pending_fill(render,0xFF213243u);
+    gml_render_flush_pending_fill(render);
+    CHECK(gml_render_scene_submit_pending(render));
+    int submits=fake.submits;
+    if(part) gml_draw_surface_part_ext(render,source,0,0,4,4,-(double)clipped,0,1,1,0xFFFFFFu,1);
+    else gml_draw_surface_ext(render,source,-(double)clipped,0,1,1,0,0xFFFFFFu,1);
+    CHECK(render->resident_application_pass && fake.submits==submits && !fake.readbacks);
+    CHECK(gml_render_scene_submit_pending(render) && fake.submits==submits+1);
+    int preserve=application && bytecodes[generation]==15;
+    if(fake.last_quad_state.alpha_source_factor!=(preserve?
+       GML_RENDER_BLEND_SOURCE_ALPHA:GML_RENDER_BLEND_ONE) ||
+       fake.last_quad_state.coverage_policy!=(preserve?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA))
+      fprintf(stderr,"surface coverage: bytecode=%d application=%u interpolation=%u clipped=%u part=%u "
+        "alpha_source=%u coverage=%u quantisation=%u target_is_application=%d\n",
+        bytecodes[generation],application,interpolation,clipped,part,
+        fake.last_quad_state.alpha_source_factor,fake.last_quad_state.coverage_policy,
+        fake.last_quantisation,gml_render_target_is_first_generation_application_surface(render));
+    CHECK(fake.last_quad_state.rgb_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
+      fake.last_quad_state.rgb_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA &&
+      fake.last_quad_state.alpha_source_factor==(preserve?
+        GML_RENDER_BLEND_SOURCE_ALPHA:GML_RENDER_BLEND_ONE) &&
+      fake.last_quad_state.alpha_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA &&
+      fake.last_quad_state.coverage_policy==(preserve?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA));
+    CHECK(!memcmp(source_pixels,render->surface[surface_slot(source)].px,sizeof source_pixels));
+    gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int surface_pending_source_lifetime(int nearest,int destination_mode){
   for(unsigned interpolation=0;interpolation<(nearest?2u:1u);interpolation++)
   for(unsigned scale=0;scale<(destination_mode?3u:1u);scale++)
@@ -20919,6 +20976,7 @@ int main(void){
   passed+=resident_filtered_font_magnification(0,0,1);
   passed+=resident_packaged_sprite_font_glyph();
   passed+=resident_filtered_gui_real_font();
+  passed+=resident_surface_application_coverage();
   passed+=surface_pending_source_lifetime(0,0);
   passed+=surface_pending_source_lifetime(1,0);
   passed+=surface_pending_source_lifetime(1,9);
@@ -21062,6 +21120,6 @@ int main(void){
   passed+=resident_lazy_native_atlas();
   passed+=resident_unit_texel_magnification();
   passed+=opaque_rectangle_clear_complement();
-  printf("render resource cases: passed=%d failed=%d\n",passed,330-passed);
-  return passed==330?EXIT_SUCCESS:EXIT_FAILURE;
+  printf("render resource cases: passed=%d failed=%d\n",passed,331-passed);
+  return passed==331?EXIT_SUCCESS:EXIT_FAILURE;
 }
