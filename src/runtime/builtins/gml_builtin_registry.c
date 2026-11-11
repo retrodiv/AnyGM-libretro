@@ -5,6 +5,7 @@
 #include "gml_builtin_internal.h"
 #include "gml_builtin_registry.h"
 #include "gml_builtin_registry_index.h"
+#include "anygm_compatibility.h"
 #include "anygm_host.h"
 #include "gml_particle.h"
 
@@ -105,13 +106,9 @@ static const GmlBuiltinRegistryEntry *gml_builtin_exact_entry(
   return NULL;
 }
 
-/* A payload's own script shadows a builtin of the same name. The reference runner binds a call to
- * the content's own script first and consults an extension or a builtin only when the payload has
- * no such script, so a builtin that answers in its place silently replaces the content's logic
- * with the core's: a payload script that asks every voice to stop was measured never running,
- * because a same-named core feature claimed the name and did something else entirely. The answer
- * is per payload and per name, so one code-table probe is paid once for each builtin the payload
- * actually redefines. */
+/* A standalone payload script can own a bare builtin name. Modern embedded functions use an
+ * explicit code reference or a callable value, so their names do not rebind bare builtin calls.
+ * Cache the result per payload and per name. */
 static int gml_builtin_shadowed_by_payload(GmlVM *vm,const GmlBuiltinRegistryEntry *entry){
   if(!vm || !vm->win || !entry) return 0;
   size_t index=(size_t)(entry-gml_builtin_exact_registry);
@@ -121,8 +118,11 @@ static int gml_builtin_shadowed_by_payload(GmlVM *vm,const GmlBuiltinRegistryEnt
   if(cache && cache[index]) return cache[index]==2;
   char code_name[192];
   int written=snprintf(code_name,sizeof code_name,"gml_Script_%s",entry->name);
-  int shadowed=written>0 && written<(int)sizeof code_name &&
-               gml_code_index_by_name(vm->win,code_name)>=0;
+  int script=written>0 && written<(int)sizeof code_name
+    ?gml_code_index_by_name(vm->win,code_name):-1;
+  int shadowed=script>=0 &&
+    (!anygm_policy_has_modern_function_values(vm->win) ||
+     !vm->win->code[script].embedded_function);
   if(cache) cache[index]=shadowed?2:1;
   return shadowed;
 }

@@ -209,6 +209,24 @@ static int payload_shadow_cache_lifetime(GmlWin *win,GmlVM *vm,
   return ok;
 }
 
+static int embedded_function_binding(GmlWin *win,GmlVM *vm,
+                                     AnygmHostServices *host,LogFixture *log_fixture){
+  if(!setup_fixture(win,vm,host,log_fixture,"gml_Script_abs")) return 0;
+  win->code[0].embedded_function=1;
+  GmlVal argument=vreal(-9);
+  GmlVal bare=gml_builtin_call(vm,"abs",&argument,1);
+  GmlVal qualified=gml_builtin_call(vm,"gml_Script_abs",&argument,1);
+  int ok=expect_real("bare name selects the builtin beside a modern embedded function",bare,9);
+  ok=expect_real("qualified name selects the embedded function",qualified,73) && ok;
+  if(gml_builtin_fast_id(vm,"abs")!=BID_ABS){
+    fprintf(stderr,"bare name beside an embedded function must retain its builtin ID\n");
+    ok=0;
+  }
+  gml_vm_free(vm);
+  gml_win_free(win);
+  return ok;
+}
+
 static int room_dimension_mutation(GmlVM *vm){
   GmlRoom room={0};
   if(gml_vm_room_get(vm,0,&room)!=0 || room.width!=320 || room.height!=240){
@@ -1349,7 +1367,10 @@ int main(int argc,char **argv){
          rounded_contextual_precedence(&vm);
   gml_vm_free(&vm);
   gml_win_free(&win);
-  if(!guid_only) ok=payload_shadow_cache_lifetime(&win,&vm,&host,&log_fixture) && ok;
+  if(!guid_only){
+    ok=payload_shadow_cache_lifetime(&win,&vm,&host,&log_fixture) && ok;
+    ok=embedded_function_binding(&win,&vm,&host,&log_fixture) && ok;
+  }
   if(!ok) return 1;
   puts(guid_only ? "gamepad identity capability contract: ok" :
                   "builtin dispatch precedence fixtures: ok");

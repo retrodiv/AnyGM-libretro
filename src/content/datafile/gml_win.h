@@ -88,6 +88,8 @@ typedef struct {
   int32_t *branch_index;
   uint32_t n_insn;
   uint8_t cache_bad;
+  /* Nonzero CODE-v2 offset within the shared bytecode span. */
+  uint8_t embedded_function;
   /* Derived room-audio condition classification: 0 unknown, 1 absent, 2 present. */
   uint8_t audio_room_condition;
   /* VM-only micro-specialization for tiny wrapper scripts. Not serialized. */
