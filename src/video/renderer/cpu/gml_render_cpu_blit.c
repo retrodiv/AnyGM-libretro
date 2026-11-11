@@ -1212,13 +1212,15 @@ static inline void blend_argb_src_over_double(GmlRender *r,uint32_t *dp,const ui
   if(run<=0 || !aa) return;
   if(aa>=255u){ memcpy(dp,sp,(size_t)run*sizeof(uint32_t)); return; }
   double sa=aa/255.0, ia=1.0-sa;
+  double bias=(gml_blend_family(r)==GML_BLEND_STUDIO2 ||
+               gml_render_target_is_first_generation_application_surface(r))?0.5:0.0;
   for(int k=0; k<run; k++){
     uint32_t src=sp[k], dst=dp[k];
     int sr=(src>>16)&0xFF, sg=(src>>8)&0xFF, sb=src&0xFF;
     int dr=(dst>>16)&0xFF, dg=(dst>>8)&0xFF, db=dst&0xFF;
-    int or_=(int)(sr*sa+dr*ia); if(or_>255) or_=255; else if(or_<0) or_=0;
-    int og=(int)(sg*sa+dg*ia); if(og>255) og=255; else if(og<0) og=0;
-    int ob=(int)(sb*sa+db*ia); if(ob>255) ob=255; else if(ob<0) ob=0;
+    int or_=(int)(sr*sa+dr*ia+bias); if(or_>255) or_=255; else if(or_<0) or_=0;
+    int og=(int)(sg*sa+dg*ia+bias); if(og>255) og=255; else if(og<0) og=0;
+    int ob=(int)(sb*sa+db*ia+bias); if(ob>255) ob=255; else if(ob<0) ob=0;
     dp[k]=gml_sprite_target_alpha(r,dst,aa)|((uint32_t)or_<<16)|
           ((uint32_t)og<<8)|(uint32_t)ob;
   }
@@ -1228,13 +1230,15 @@ static inline void blend_argb_src_over_double_reverse(GmlRender *r,uint32_t *dp,
   if(run<=0 || !aa) return;
   if(aa>=255u){ for(int k=0; k<run; k++) dp[-k]=sp[k]; return; }
   double sa=aa/255.0, ia=1.0-sa;
+  double bias=(gml_blend_family(r)==GML_BLEND_STUDIO2 ||
+               gml_render_target_is_first_generation_application_surface(r))?0.5:0.0;
   for(int k=0; k<run; k++){
     uint32_t src=sp[k], dst=dp[-k];
     int sr=(src>>16)&0xFF, sg=(src>>8)&0xFF, sb=src&0xFF;
     int dr=(dst>>16)&0xFF, dg=(dst>>8)&0xFF, db=dst&0xFF;
-    int or_=(int)(sr*sa+dr*ia); if(or_>255) or_=255; else if(or_<0) or_=0;
-    int og=(int)(sg*sa+dg*ia); if(og>255) og=255; else if(og<0) og=0;
-    int ob=(int)(sb*sa+db*ia); if(ob>255) ob=255; else if(ob<0) ob=0;
+    int or_=(int)(sr*sa+dr*ia+bias); if(or_>255) or_=255; else if(or_<0) or_=0;
+    int og=(int)(sg*sa+dg*ia+bias); if(og>255) og=255; else if(og<0) og=0;
+    int ob=(int)(sb*sa+db*ia+bias); if(ob>255) ob=255; else if(ob<0) ob=0;
     dp[-k]=gml_sprite_target_alpha(r,dst,aa)|((uint32_t)or_<<16)|
            ((uint32_t)og<<8)|(uint32_t)ob;
   }

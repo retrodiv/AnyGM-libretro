@@ -1018,6 +1018,61 @@ static int source_colour_source_alpha_case(void){
   return ok;
 }
 
+static int mirrored_source_over_target_policy_case(void){
+  static const unsigned alphas[]={1u,64u,128u,254u};
+  static const uint32_t colours[]={0xFFFFFFu,0x5B93CBu};
+  int ok=1;
+  for(int modern=0;modern<2;modern++) for(int application=0;application<2;application++)
+    for(unsigned colour=0;colour<2u;colour++) for(unsigned alpha=0;alpha<4u;alpha++){
+      GmlWin win={.bytecode=modern?17:15};
+      GmlRender render;
+      uint32_t pixels[16],reference=0;
+      if(gml_render_init(&render,&win)) return 0;
+      render.atlas=calloc(1,sizeof *render.atlas);
+      render.tpag=calloc(1,sizeof *render.tpag);
+      render.spr=calloc(1,sizeof *render.spr);
+      render.n_atlas=render.n_tpag=render.n_spr=render.spr_cap=render.base_n_spr=1;
+      if(!render.atlas || !render.tpag || !render.spr) return 0;
+      render.atlas[0].px=malloc(4);
+      render.spr[0].frame=malloc(sizeof(int));
+      if(!render.atlas[0].px || !render.spr[0].frame) return 0;
+      render.atlas[0].w=render.atlas[0].h=1;
+      render.atlas[0].px[0]=(uint8_t)(colours[colour]>>16);
+      render.atlas[0].px[1]=(uint8_t)(colours[colour]>>8);
+      render.atlas[0].px[2]=(uint8_t)colours[colour];
+      render.atlas[0].px[3]=(uint8_t)alphas[alpha];
+      render.tpag[0]=(GmlTpag){.sw=1,.sh=1,.tw=1,.th=1,.bw=1,.bh=1,.atlas=0};
+      render.spr[0].frame[0]=0;
+      render.spr[0].w=render.spr[0].h=render.spr[0].n_frames=1;
+      if(application){
+        render.app_surface=pixels;render.app_w=render.app_h=4;
+        render.app_surface_opaque=1;
+      }
+      gml_render_begin(&render,pixels,4,4,0,0);
+      for(int mirror=0;mirror<4;mirror++){
+        for(int pixel=0;pixel<16;pixel++) pixels[pixel]=0xFF15161Eu;
+        int flip_x=mirror&1,flip_y=(mirror>>1)&1;
+        gml_draw_sprite_ext(&render,0,0,flip_x,flip_y,
+                            flip_x?-1:1,flip_y?-1:1,0,0xFFFFFFu,1);
+        gml_render_prepare_draw(&render);
+        if(!mirror) reference=pixels[0];
+        if(pixels[0]!=reference){
+          fprintf(stderr,"mirrored source-over policy: modern=%d application=%d colour=%06x alpha=%u mirror=%d actual=%08x ordinary=%08x\n",
+                  modern,application,colours[colour],alphas[alpha],mirror,pixels[0],reference);
+          ok=0;
+        }
+        if(!modern && !application && !colour && !alpha &&
+           (pixels[0]&0xFFFFFFu)!=0x15161Eu){
+          fprintf(stderr,"first-generation off-target truncation changed: %08x\n",pixels[0]);
+          ok=0;
+        }
+      }
+      render.app_surface=NULL;
+      gml_render_free(&render);
+    }
+  return ok;
+}
+
 static int color_query_roundtrip_case(void){
   const char *setters[]={"draw_set_color","draw_set_colour"};
   const char *getters[]={"draw_get_color","draw_get_colour"};
@@ -1354,6 +1409,7 @@ int main(int argc,char **argv){
     {"source_colour_source_alpha",source_colour_source_alpha_case},
     {"extended_blend_queries",extended_blend_queries_case},
     {"extended_blend_factor_matrix",extended_blend_factor_matrix_case},
+    {"mirrored_source_over_target_policy",mirrored_source_over_target_policy_case},
     {"color_query_roundtrip",color_query_roundtrip_case},
     {"camera_capacity",camera_capacity_case}};
   const AnygmTestGroup group={"draw_queries",cases,sizeof cases/sizeof cases[0]};
