@@ -718,6 +718,16 @@ snapshot; the live ledger and rule table here describe current support.
 
 ## Experimental scene fidelity contract
 
+The shared external-program handoff for uniform filled rectangles supplies a white
+texture and the authored vertex RGBA before program evaluation. The result is
+composed without applying that input alpha again. Optional colour presence is
+explicit in both the request and plan: omission selects white, while transparent
+black remains zero. Both scene policies use this existing handoff; it adds no
+resident primitive variant or GPU-coverage credit. Without an applicable executor,
+the existing CPU approximation remains. The neutral `shaded_rectangle_vertex_colour`,
+`content_program_vertex_colour` and graphics sampler-lifetime controls cover delivery
+and the protected default. They do not establish original-runner picture fidelity.
+
 Ordinary scene submission packs each quad's existing four corner positions,
 UVs, colours and shared sampling operands into52 floats rather than six expanded
 28-float vertices. An instanced vertex shader reconstructs the identical triangle

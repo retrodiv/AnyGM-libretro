@@ -679,7 +679,8 @@ typedef struct {
   int target_width,target_height,dest_x,dest_y;
   GmlRenderShaderGeometry geometry;
   int linear;
-  /* The colour the drawing carried, for the program to multiply by. All ones for none. */
+  /* The colour the drawing carried. An absent value means white; zero RGBA is valid. */
+  int vertex_colour_valid;
   float vertex_colour[4];
   uint32_t *output;
 } GmlRenderShaderRequest;

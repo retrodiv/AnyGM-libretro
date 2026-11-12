@@ -456,7 +456,12 @@ static int deferred_content_shader_case(void){
 /* A surface drawn through a content program somewhere other than the terminal presentation is
  * handed to the host's executor at the destination's size, and its answer is composed like any
  * surface. Without an executor, or when it declines, the draw proceeds unshaded. */
-static struct { int calls; int width,height,shader,linear; int source_width,source_height; } executor_seen;
+static struct {
+  int calls; int width,height,shader,linear; int source_width,source_height;
+  int vertex_colour_valid;
+  float vertex_colour[4];
+  uint32_t source_pixel;
+} executor_seen;
 static int green_executor(void *context,const GmlRenderShaderRequest *request){
   (void)context;
   executor_seen.calls++;
@@ -466,6 +471,9 @@ static int green_executor(void *context,const GmlRenderShaderRequest *request){
   executor_seen.linear=request->linear;
   executor_seen.source_width=request->source_width;
   executor_seen.source_height=request->source_height;
+  executor_seen.vertex_colour_valid=request->vertex_colour_valid;
+  memcpy(executor_seen.vertex_colour,request->vertex_colour,sizeof executor_seen.vertex_colour);
+  executor_seen.source_pixel=request->source[0];
   for(int index=0;index<request->width*request->height;index++) request->output[index]=0xFF00FF00u;
   return 1;
 }
@@ -1669,10 +1677,13 @@ static int shader_draw_validation_case(void){
   memset(&shader,0,sizeof shader);
   shader.vertex_es="attribute vec3 in_Position; void main(){ gl_Position=vec4(in_Position,1.0); }";
   shader.fragment_es="void main(){ gl_FragColor=vec4(1.0); }";
+  shader.vertex_colour_valid=1;
 
   gml_render_plan_reset(&plan,GML_PLAN_TARGET_HOST_FRAMEBUFFER,8,8);
   index=gml_render_plan_add_image(&plan,&image);
   REQUIRE(gml_render_plan_add_shader_draw(&plan,index,whole,&shader,0u),"a shader draw is recorded");
+  REQUIRE(!memcmp(plan.shader.vertex_colour,shader.vertex_colour,sizeof shader.vertex_colour),
+          "recording a program preserves explicit transparent-black vertex colour");
   REQUIRE(gml_render_plan_validate(&plan),"a shader draw with both sources validates");
   REQUIRE(plan.has_shader && plan.operation_count==1 && plan.operations[0].opcode==GML_PLAN_OP_SHADER_DRAW,
           "the plan carries the program and the operation");
@@ -1780,6 +1791,58 @@ static int shaded_primitive_and_device_case(void){
   return 1;
 }
 
+static int shaded_rectangle_vertex_colour_case(void){
+  enum { W=16,H=12 };
+  const double alphas[]={0.0,0.5,1.0};
+  const uint32_t colours[]={0u,0x204080u,0xFFFFFFu};
+  GmlWin content={0};
+  GmlRender render;
+  uint32_t source[16]={0},target[W*H];
+  struct GmlShaderPal program={0};
+  content.bytecode=17;
+  program.source_vertex_es="attribute vec3 in_Position; void main(){ gl_Position=vec4(in_Position,1.0); }";
+  program.source_fragment_es="void main(){ gl_FragColor=vec4(0.0,1.0,0.0,1.0); }";
+  program.procedural=1;
+  for(unsigned variant=0;variant<2;variant++)
+    for(unsigned colour=0;colour<3;colour++)
+      for(unsigned alpha=0;alpha<3;alpha++){
+        for(unsigned pixel=0;pixel<W*H;pixel++) target[pixel]=0xFF202020u;
+        render_reset(&render,&content,source,4,4,target,W,H,0);
+        render.shader_pal=&program;render.n_shader_pal=1;
+        gml_render_set_shader_device_expected(&render,1);
+        gml_render_set_shader_device(&render,1);
+        gml_render_set_shader_executor(&render,green_executor,NULL);
+        gml_render_shader_set_current(&render,0);
+        render.alpha=alphas[alpha];
+        const float saved_colour[4]={0.2f,0.3f,0.4f,0.6f};
+        render.shade_vertex_colour_valid=(int)variant;
+        memcpy(render.shade_vertex_colour,saved_colour,sizeof saved_colour);
+        memset(&executor_seen,0,sizeof executor_seen);
+        if(variant) gml_render_primitive_rectangle_color(&render,2,3,10,9,
+          colours[colour],colours[colour],colours[colour],colours[colour],0);
+        else gml_render_primitive_rectangle(&render,2,3,10,9,colours[colour],0);
+        REQUIRE(executor_seen.calls==1,"every filled rectangle reaches its content program");
+        REQUIRE(executor_seen.source_pixel==0xFFFFFFFFu,
+                "an untextured primitive samples the white texture independently of its colour");
+        REQUIRE(executor_seen.vertex_colour_valid,"transparent black is an explicit vertex colour");
+        REQUIRE(executor_seen.vertex_colour[0]==(float)(colours[colour]&255u)/255.0f &&
+                executor_seen.vertex_colour[1]==(float)((colours[colour]>>8)&255u)/255.0f &&
+                executor_seen.vertex_colour[2]==(float)((colours[colour]>>16)&255u)/255.0f &&
+                executor_seen.vertex_colour[3]==(float)alphas[alpha],
+                "the program receives authored vertex RGBA including transparent black");
+        REQUIRE(target[3*W+2]==0xFF00FF00u,
+                "a program that ignores vertex alpha keeps its opaque result");
+        REQUIRE(target[0]==0xFF202020u,"the program preserves pixels outside its rectangle");
+        REQUIRE(render.shade_vertex_colour_valid==(int)variant &&
+                !memcmp(render.shade_vertex_colour,saved_colour,sizeof saved_colour),
+                "the rectangle restores its caller's shader capture colour");
+        render.shader_pal=NULL;render.n_shader_pal=0;
+        gml_render_set_shader_executor(&render,NULL,NULL);
+        gml_render_free(&render);
+      }
+  return 1;
+}
+
 static int sharp_bilinear_case(void){
   /* A fractional 3 -> 5 enlargement distinguishes sharp bilinear from both nearest and ordinary
    * bilinear. Use padded rows and an inset destination to expose stride and border mistakes. */
@@ -1858,6 +1921,7 @@ int main(int argc,char **argv){
     {"deferred_content_shader",deferred_content_shader_case},
     {"mid_frame_content_shader",mid_frame_content_shader_case},
     {"shaded_primitive_and_device",shaded_primitive_and_device_case},
+    {"shaded_rectangle_vertex_colour",shaded_rectangle_vertex_colour_case},
     {"deferred_underlay",deferred_underlay_case},
     {"dispatch_deferred_fill",dispatch_deferred_fill_case},
     {"pre_draw_clear_handoff",pre_draw_clear_handoff_case},

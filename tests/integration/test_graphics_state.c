@@ -6001,6 +6001,7 @@ static int content_sampler_upload_lifetime_case(void){
         request.width=request.height=request.region_width=request.region_height=2;
         request.target_width=request.target_height=2;
         request.source_identity=17; request.serial=++serial;
+        request.vertex_colour_valid=1;
         for(unsigned i=0;i<4;i++) request.vertex_colour[i]=1.0f;
         if(!engine_execute_content_shader(session.engine,&request)){ ok=0; break; }
         if(memcmp(source,primary,sizeof primary) ||
@@ -6081,6 +6082,26 @@ static int content_sampler_upload_lifetime_case(void){
     gml_render_gui_end(render);
     gml_render_application_surface_bind(render,session.engine->fb,
                                         session.engine->width,session.engine->height,1);
+  }
+  if(ok){
+    /* Absence and explicit transparent black have distinct shader inputs. */
+    for(unsigned explicit_colour=0;explicit_colour<2 && ok;explicit_colour++){
+      GmlRenderShaderRequest request={0};
+      uint32_t output[4]={0};
+      request.shader=0;request.source=primary;request.output=output;
+      request.source_width=request.source_height=request.source_pitch=2;
+      request.width=request.height=request.region_width=request.region_height=2;
+      request.target_width=request.target_height=2;
+      request.source_identity=17;request.serial=++serial;
+      request.vertex_colour_valid=(int)explicit_colour;
+      ok=engine_execute_content_shader(session.engine,&request);
+      for(unsigned corner=0;corner<4 && ok;corner++){
+        float rgba[4]={-1.0f,-1.0f,-1.0f,-1.0f};
+        ok=anygm_test_graphics_quad_colour((int)corner,rgba);
+        for(unsigned component=0;component<4 && ok;component++)
+          ok=rgba[component]==(explicit_colour?0.0f:1.0f);
+      }
+    }
   }
   if(ok){
     /* Refuse after one owned auxiliary has been prepared. The software fallback must still

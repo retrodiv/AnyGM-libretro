@@ -243,12 +243,8 @@ int gml_render_plan_add_shader_draw_part(GmlRenderPlan *plan,uint32_t source,Gml
   op->linear=linear?1u:0u;
   op->source_rect=source_rect;
   plan->shader=*shader;
-  /* A caller with nothing to say about colour leaves the quad white, so a program that multiplies
-   * its answer by the quad's colour is unchanged by it. */
-  if(plan->shader.vertex_colour[0]<=0.0f && plan->shader.vertex_colour[1]<=0.0f &&
-     plan->shader.vertex_colour[2]<=0.0f && plan->shader.vertex_colour[3]<=0.0f)
-    plan->shader.vertex_colour[0]=plan->shader.vertex_colour[1]=
-      plan->shader.vertex_colour[2]=plan->shader.vertex_colour[3]=1.0f;
+  if(!plan->shader.vertex_colour_valid)
+    for(unsigned component=0;component<4;component++) plan->shader.vertex_colour[component]=1.0f;
   plan->has_shader=1;
   return 1;
 }

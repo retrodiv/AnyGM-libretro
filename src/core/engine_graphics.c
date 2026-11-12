@@ -509,8 +509,7 @@ int engine_execute_content_shader(void *context,const GmlRenderShaderRequest *re
       region.height=(uint32_t)request->region_height;
     }
     static const float white[4]={1.0f,1.0f,1.0f,1.0f};
-    const float *colour=(request->vertex_colour[3]>0.0f||request->vertex_colour[0]>0.0f)
-                        ?request->vertex_colour:white;
+    const float *colour=request->vertex_colour_valid?request->vertex_colour:white;
     if(!engine_plan_content_program_part(engine,&plan,image,whole,region,request->shader,
                                          request->serial,request->linear,colour,&owned)){
       engine_content_program_pixels_release(&plan,&owned);

@@ -75,7 +75,8 @@ static int shade_source_to_target(GmlRender *r,const uint32_t *source,int sw,int
   request.geometry=geometry?*geometry:gml_render_shader_geometry(r,dx,dy,dw,dh,1);
   if(!request.geometry.valid) return 0;
   request.linear=r->interp?1:0;
-  if(r->shade_vertex_colour_valid)
+  request.vertex_colour_valid=r->shade_vertex_colour_valid;
+  if(request.vertex_colour_valid)
     memcpy(request.vertex_colour,r->shade_vertex_colour,sizeof request.vertex_colour);
   request.output=r->shaded_plane;
   if(!r->shader_executor(r->shader_executor_context,&request)) return 0;
@@ -102,18 +103,29 @@ int gml_render_cpu_shader_pass_surface(GmlRender *r,int surf,const uint32_t *spx
 }
 
 int gml_render_shade_target_rect(GmlRender *r,int x1,int y1,int x2,int y2,uint32_t colour,double alpha){
-  uint32_t source;
+  const uint32_t source=UINT32_C(0xFFFFFFFF);
+  float saved_colour[4];
+  int saved_colour_valid,result;
   if(!r || r->active_shader<0 || !r->shader_executor ||
      !gml_render_shader_content_candidate(r,r->active_shader)) return 0;
   if(x1>x2){ int t=x1; x1=x2; x2=t; }
   if(y1>y2){ int t=y1; y1=y2; y2=t; }
   if(x2<=x1 || y2<=y1) return 0;
-  /* A one-texel source of the primitive's colour: a program that samples gm_BaseTexture reads the
-   * flat colour a rectangle carries, and a procedural one ignores it. */
-  source=gml_render_cpu_backend_color_to_xrgb(colour)|0xFF000000u;
-  return shade_source_to_target(r,&source,1,1,0,0,1,1,0xFFFFFFFFu,
-                                (double)x1+r->cam_x,(double)y1+r->cam_y,
-                                (double)(x2-x1),(double)(y2-y1),0xFFFFFFu,alpha,NULL);
+  /* An untextured primitive samples white and carries its authored RGBA as vertex colour.
+   * The program decides whether to consume it; its result must not receive alpha again. */
+  saved_colour_valid=r->shade_vertex_colour_valid;
+  memcpy(saved_colour,r->shade_vertex_colour,sizeof saved_colour);
+  r->shade_vertex_colour_valid=1;
+  r->shade_vertex_colour[0]=(float)(colour&255u)/255.0f;
+  r->shade_vertex_colour[1]=(float)((colour>>8)&255u)/255.0f;
+  r->shade_vertex_colour[2]=(float)((colour>>16)&255u)/255.0f;
+  r->shade_vertex_colour[3]=(float)fmax(0.0,fmin(1.0,alpha));
+  result=shade_source_to_target(r,&source,1,1,0,0,1,1,0xFFFFFFFFu,
+                              (double)x1+r->cam_x,(double)y1+r->cam_y,
+                              (double)(x2-x1),(double)(y2-y1),0xFFFFFFu,1.0,NULL);
+  r->shade_vertex_colour_valid=saved_colour_valid;
+  memcpy(r->shade_vertex_colour,saved_colour,sizeof saved_colour);
+  return result;
 }
 
 /* The program's answer for one atlas rectangle, evaluated on the device once and kept. A sprite

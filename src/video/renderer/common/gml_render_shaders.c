@@ -668,6 +668,7 @@ int gml_render_shader_plan_snapshot(const GmlRender *r,int shader_id,
   memset(out,0,sizeof *out);
   out->identity=(uint32_t)shader_id;
   out->content_generation=content_generation;
+  out->vertex_colour_valid=colour!=NULL;
   if(colour) memcpy(out->vertex_colour,colour,sizeof out->vertex_colour);
   else for(int component=0;component<4;component++) out->vertex_colour[component]=1.0f;
   out->vertex_es=sources.vertex_es;
