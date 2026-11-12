@@ -96,6 +96,107 @@ ostype|0
 
 Use metadata from the actual payload; a size alone is never a selector.
 
+### Obtain a selector without additional tools
+
+The following standalone recipe requires only Python 3 and its standard library.
+Save it as `content_selector.py`. It reads the selected input and prints a complete
+`[...overrides]` section header; it does not modify the input or `AnyGM.ini`.
+
+```python
+import argparse
+import hashlib
+import struct
+import zipfile
+from pathlib import Path
+
+
+def make_key(path, member):
+    if member is not None:
+        with zipfile.ZipFile(path) as archive:
+            entries = [item for item in archive.infolist()
+                       if item.filename == member]
+            if len(entries) != 1 or entries[0].is_dir() or not entries[0].file_size:
+                raise ValueError("select exactly one nonempty payload member")
+            item = entries[0]
+            return f"zip:{item.file_size}:{item.CRC:08x}"
+    if zipfile.is_zipfile(path):
+        raise ValueError("use --member to select the payload inside this archive")
+    with path.open("rb") as source:
+        size = source.seek(0, 2)
+        if not size:
+            raise ValueError("payload is empty")
+        count = min(size, 65536)
+        digest = hashlib.sha256(b"anygm-sample-v1" + struct.pack("<Q", size))
+        for offset in (0, (size - count) // 2, size - count):
+            source.seek(offset)
+            sample = source.read(count)
+            if len(sample) != count:
+                raise ValueError("could not read a complete sample")
+            digest.update(sample)
+        if source.seek(0, 2) != size:
+            raise ValueError("payload size changed while reading")
+    return f"sample-v1:{size}:{digest.hexdigest()}"
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Print a fast payload INI section")
+    parser.add_argument("path", type=Path)
+    parser.add_argument("--member", help="Exact payload member path inside a ZIP")
+    args = parser.parse_args()
+    try:
+        print(f"[{make_key(args.path, args.member)}.overrides]")
+    except (OSError, ValueError, zipfile.BadZipFile) as error:
+        parser.error(str(error))
+```
+
+For ZIP-compatible content, first list the member paths and then name the actual
+payload, preserving its spelling and any directory prefix:
+
+```sh
+python3 -m zipfile -l "Content.zip"
+python3 content_selector.py "Content.zip" --member "data.win"
+python3 content_selector.py "Content.apk" --member "assets/game.droid"
+```
+
+This mode reads ZIP directory metadata without reading or decompressing the member.
+For nested archives, run it on the innermost archive that contains the selected
+payload. Do not use the outer archive's size or the CRC of an executable that
+merely launches a Studio data image.
+
+For loose content, select the actual Studio data image or the original Classic
+project/executable:
+
+```sh
+python3 content_selector.py "data.win"
+python3 content_selector.py "game.unx"
+python3 content_selector.py "game.droid"
+python3 content_selector.py "Project.gm81"
+python3 content_selector.py "Classic.exe"
+```
+
+On Windows, replace `python3` with `py -3` if using the Python launcher. When a
+Studio executable delegates to adjacent data, pass that data file. For an embedded
+Studio image, use the extracted data image identified by the core's cache/load
+logs. A Classic executable is sampled directly. An ordinary whole-file SHA-256
+command does not produce a `sample-v1` key.
+
+Copy the printed header into the frontend system directory's `AnyGM.ini`, then add
+the desired directives below it. For example, an illustrative output and directive:
+
+```ini
+[zip:123456:89abcdef.overrides]
+ostype|0
+```
+
+Use the header printed for your own payload, rather than these illustrative
+numbers. A loose-file sample key also works for that same payload after the core
+extracts it from a ZIP, unless a matching ZIP key takes precedence. Recompute the
+key when updating the content. With a matching rule present, load diagnostics show
+`configuration: recognition ... (matched)` and the selected payload path. These
+keys retain the recognition limitations described above.
+
+### Source preparation
+
 An explicitly selected `input` function or pipeline can normalize the source before routing.
 An optional `input.probe` enumerates bounded candidate ranges in that same original source;
 the complete structural reader must select exactly one valid normalized result. An optional
