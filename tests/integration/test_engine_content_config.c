@@ -130,6 +130,33 @@ static void state_reserve_declarations(void){
   assert(!remove(anchor));anygm_synthetic_content_destroy(&fixture);
 }
 
+static void introskip_destination(void){
+  CheatSlot slots[GML_MAX_CHEATS];int count=0;char error[256];
+  assert(engine_boot_overrides_parse("introskip|0,2-4|1\n",slots,&count,error,sizeof error));
+  const char *invalid[]={"introskip|0|\n","introskip|0|-1\n",
+    "introskip|0|1024\n","introskip|0|1|2\n","introauto|0|1\n","introskip||1\n"};
+  for(size_t i=0;i<sizeof invalid/sizeof invalid[0];i++)
+    assert(!engine_boot_overrides_parse(invalid[i],slots,&count,error,sizeof error));
+  AnygmSyntheticContent fixture;assert(anygm_synthetic_tilemap_content_create(&fixture));
+  char anchor[256];snprintf(anchor,sizeof anchor,"%s/skip.anygm",fixture.directory);
+  write_text(anchor,"[anygm]\npayload=data.win\n[overrides]\nintroskip|0|0\n");
+  AnygmHostServices services={0};services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL;assert(anygm_create(&services,&engine)==ANYGM_OK);
+  AnygmContentSource source={0};source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;source.path=anchor;
+  source.system_directory=fixture.directory;source.cache_directory=fixture.directory;
+  assert(anygm_load(engine,&source,NULL)==ANYGM_OK);frame(engine);
+  engine->pad_current[0][ANYGM_PAD_FACE_RIGHT]=1;
+  introskip_hook(engine);assert(engine->vm.room_index==0);
+  anygm_unload(engine);
+  write_text(anchor,"[anygm]\npayload=data.win\n[overrides]\nintroskip|0\n");
+  assert(anygm_load(engine,&source,NULL)==ANYGM_OK);frame(engine);
+  engine->pad_current[0][ANYGM_PAD_FACE_RIGHT]=1;
+  introskip_hook(engine);assert(engine->vm.room_index==1);
+  anygm_destroy(engine);assert(!remove(anchor));anygm_synthetic_content_destroy(&fixture);
+}
+
 static void introstep_declaration(void){
   CheatSlot slots[GML_MAX_CHEATS];int count=0;char error[256];
   assert(engine_boot_overrides_parse("introstep|0|obj_fixture|0\n",slots,&count,error,sizeof error));
@@ -684,6 +711,7 @@ int main(void){
   crt_setting_callback();
   crt_setting_layout();
   state_reserve_declarations();
+  introskip_destination();
   introstep_declaration();
   candidate_inputs();
   memory_pipeline();

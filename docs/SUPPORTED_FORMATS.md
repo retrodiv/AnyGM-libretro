@@ -51,6 +51,12 @@ destination and condition before execution; `CONTENT_CONFIGURATION.md`
 defines their syntax, precedence and original-byte identity. An
 `introskip|1,3-5` directive lists room indices where A, B, or Start advances
 to the next room in play order; the `GML_INTROSKIP` development setting, when
+present, may also use `1,3-5|8` to select room index 8 explicitly. The anchor
+form is `introskip|1,3-5|8`; the destination must exist in the payload.
+An explicit destination stops current audio before entering the target room.
+An unavailable destination leaves the current room and audio unchanged. This is
+a room transition and does not execute the content's own skip handler.
+The `GML_INTROSKIP` development setting, when
 present, takes precedence over it. `introauto|1,3-5` takes the same room list
 and advances the moment such a room is entered, with no button at all. Both forms
 advance the same way; a room listed by `introauto|` advances before

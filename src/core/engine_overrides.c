@@ -1017,7 +1017,16 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
         } else if(!strncmp(slot->code,"introskip|",10) || !strncmp(slot->code,"introauto|",10)){
           const char *list=slot->code+10;
           int digits=0,list_ok=list[0]!=0;
-          for(const char *scan=list;*scan && list_ok;scan++){
+          const char *destination=strchr(list,'|');
+          if(destination){
+            const char *cursor=destination+1;int target;
+            if(strncmp(slot->code,"introskip|",10) ||
+               !parse_nonnegative_index(&cursor,&target) || *cursor || target>=1024){
+              snprintf(error,error_capacity,"directive %d: invalid intro destination",line_number);
+              return 0;
+            }
+          }
+          for(const char *scan=list;*scan && scan!=destination && list_ok;scan++){
             if(*scan>='0' && *scan<='9') digits=1;
             else if(*scan!=',' && *scan!='-' && *scan!=' ' && *scan!='\t') list_ok=0;
           }
@@ -1761,12 +1770,13 @@ static void introskip_parse(AnygmEngine *engine,const char *s){
   memset(engine->introskip_set, 0, sizeof engine->introskip_set);
   engine->introskip_enabled = (s && *s) ? 1 : 0;
   if(!engine->introskip_enabled) return;
-  while(*s){
+  while(*s && *s!='|'){
     while(*s==' '||*s==',') s++;
+    if(*s=='|') break;
     if(!*s) break;
-    int a=atoi(s); while(*s && *s!=',' && *s!='-' && *s!=' ') s++;
+    int a=atoi(s); while(*s && *s!=',' && *s!='-' && *s!=' ' && *s!='|') s++;
     int b=a;
-    if(*s=='-'){ s++; b=atoi(s); while(*s && *s!=',' && *s!=' ') s++; }
+    if(*s=='-'){ s++; b=atoi(s); while(*s && *s!=',' && *s!=' ' && *s!='|') s++; }
     if(a>b){ int t=a; a=b; b=t; }
     for(int r=a; r<=b && r<1024; r++) if(r>=0) engine->introskip_set[r>>3] |= (uint8_t)(1u<<(r&7));
   }
@@ -1837,8 +1847,7 @@ unsigned engine_overrides_keyboard_bindings(AnygmEngine *engine,
   }
   return ports;
 }
-void introskip_hook(AnygmEngine *engine){
-  if(engine->introskip_enabled < 0){
+static const char *introskip_setting(AnygmEngine *engine){
     const char *setting=anygm_host_development_setting(&engine->host,"GML_INTROSKIP");
     if(!setting || !setting[0]){
       int active=engine_boot_cheats_active(engine);
@@ -1847,7 +1856,11 @@ void introskip_hook(AnygmEngine *engine){
            !strncmp(engine->boot_cheats[i].code,"introskip|",10))
           setting=engine->boot_cheats[i].code+10;
     }
-    introskip_parse(engine,setting);
+    return setting;
+}
+void introskip_hook(AnygmEngine *engine){
+  if(engine->introskip_enabled < 0){
+    introskip_parse(engine,introskip_setting(engine));
     { const char *automatic=NULL;
       int active=engine_boot_cheats_active(engine);
       for(int i=0;i<active && !automatic;i++)
@@ -1872,6 +1885,17 @@ void introskip_hook(AnygmEngine *engine){
   int b = engine->pad_current[0][ANYGM_PAD_FACE_BOTTOM] && !engine->pad_previous[0][ANYGM_PAD_FACE_BOTTOM];
   int start = engine->pad_current[0][ANYGM_PAD_START] && !engine->pad_previous[0][ANYGM_PAD_START];
   if((a||b||start) && engine->vm.pending_room < 0){
+    const char *setting=introskip_setting(engine);
+    const char *destination=setting?strchr(setting,'|'):NULL;
+    if(destination){
+      const char *cursor=destination+1;int target;
+      if(parse_nonnegative_index(&cursor,&target) && !*cursor &&
+         target<gml_room_count(&engine->win)){
+        gml_audio_stop_all(engine->audio);
+        gml_room_enter(&engine->vm,target);
+      }
+      return;
+    }
     int ord=-1; for(int i=0;i<engine->win.n_room_order;i++) if((int)engine->win.room_order[i]==room){ ord=i; break; }
     if(ord>=0 && ord+1<engine->win.n_room_order) gml_vm_goto_room_order(&engine->vm, ord+1);
   }
