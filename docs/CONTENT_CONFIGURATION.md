@@ -114,6 +114,7 @@ payload=data.win
 ostype|6
 $counter=3
 introskip|1,3-5
+introstep|78|obj_intro|0
 ```
 
 The operating-system declaration is 6. The global is held at 5 when the hash

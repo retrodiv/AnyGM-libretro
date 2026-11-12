@@ -261,6 +261,14 @@ static inline void gml_render_blend_mode_factors(int mode,int factors[4]){
   }
 }
 
+static inline int gml_render_blend_factor_pair(int mode,int source,int destination){
+  int factors[4]={0};
+  if(!gml_render_blend_is_extended(mode)) return 0;
+  gml_render_blend_mode_factors(mode,factors);
+  return factors[0]==source && factors[1]==destination &&
+         factors[2]==source && factors[3]==destination;
+}
+
 static inline int gml_render_blend_pack_factors(const int factors[4]){
   unsigned mode=65536u;
   for(unsigned i=0;i<4u;i++){

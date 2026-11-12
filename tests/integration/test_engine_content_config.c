@@ -130,6 +130,42 @@ static void state_reserve_declarations(void){
   assert(!remove(anchor));anygm_synthetic_content_destroy(&fixture);
 }
 
+static void introstep_declaration(void){
+  CheatSlot slots[GML_MAX_CHEATS];int count=0;char error[256];
+  assert(engine_boot_overrides_parse("introstep|0|obj_fixture|0\n",slots,&count,error,sizeof error));
+  assert(count==1);
+  const char *invalid[]={"introstep||obj_fixture|0\n","introstep|0||0\n",
+                         "introstep|0|obj_fixture|12\n","introstep|1024|obj_fixture|0\n",
+                         "introstep|0|obj-fixture|0\n"};
+  for(size_t index=0;index<sizeof invalid/sizeof invalid[0];index++)
+    assert(!engine_boot_overrides_parse(invalid[index],slots,&count,error,sizeof error));
+
+  AnygmSyntheticContent fixture;assert(anygm_synthetic_content_create(&fixture));
+  char anchor[256],text[512];
+  snprintf(anchor,sizeof anchor,"%s/introstep.anygm",fixture.directory);
+  const char *name=strrchr(fixture.path,'/');name=name?name+1:fixture.path;
+  snprintf(text,sizeof text,"[anygm]\npayload=%s\n[overrides]\n"
+    "introstep|0|obj_fixture|0\n",name);write_text(anchor,text);
+  AnygmHostServices services={0};services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL;assert(anygm_create(&services,&engine)==ANYGM_OK);
+  AnygmContentSource source={0};source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;source.path=anchor;
+  source.system_directory=fixture.directory;source.cache_directory=fixture.directory;
+  assert(anygm_load(engine,&source,NULL)==ANYGM_OK);frame(engine);
+  int object=gml_object_index_by_name(&engine->vm,"obj_fixture");assert(object>=0);
+  GmlInstance *instance=gml_find_instance(&engine->vm,object);assert(instance);
+  instance->alarm[0]=50.0;
+  engine->pad_current[0][ANYGM_PAD_FACE_RIGHT]=1;
+  engine->pad_previous[0][ANYGM_PAD_FACE_RIGHT]=0;
+  introstep_hook(engine);assert(instance->alarm[0]==1.0);
+  AnygmConfigDelta delta={0};delta.struct_size=sizeof delta;
+  delta.values.struct_size=sizeof delta.values;delta.fields=ANYGM_CONFIG_CONTENT_OVERRIDES;
+  delta.values.content_overrides=0;assert(anygm_set_config(engine,&delta)==ANYGM_OK);
+  instance->alarm[0]=50.0;introstep_hook(engine);assert(instance->alarm[0]==50.0);
+  anygm_destroy(engine);assert(!remove(anchor));anygm_synthetic_content_destroy(&fixture);
+}
+
 static void config_text(char *out,size_t capacity,const char *digest,int base,int selected){
   int length=snprintf(out,capacity,
     "[overrides]\nostype|0\n$anygm_probe=%d\n$retained=7\n"
@@ -648,6 +684,7 @@ int main(void){
   crt_setting_callback();
   crt_setting_layout();
   state_reserve_declarations();
+  introstep_declaration();
   candidate_inputs();
   memory_pipeline();
   merge_destinations(); lifecycle(); replacement();

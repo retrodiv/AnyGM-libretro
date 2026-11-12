@@ -46,7 +46,10 @@ static int sprite_state_cache_prepare(GmlSprite *sprite,size_t bytes){
 }
 static void cw_raw(CoreW *s, const void *p, size_t n){
   if(n>SIZE_MAX-s->pos){ s->ok=0; s->pos=SIZE_MAX; return; }
-  if(s->data){ if(s->pos<=s->cap && n<=s->cap-s->pos) memcpy(s->data+s->pos,p,n); else s->ok=0; }
+  if(s->data){
+    if(s->pos<=s->cap && n<=s->cap-s->pos && (!n || p)) memcpy(s->data+s->pos,p,n);
+    else s->ok=0;
+  }
   s->pos+=n;
 }
 static void cr_raw(CoreR *s, void *p, size_t n){

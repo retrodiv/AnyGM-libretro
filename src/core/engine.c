@@ -1376,6 +1376,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     menu_run(engine);              /* generic pause-menu editor (inject entries + handle input) */
     room_skip_hook(engine);        /* generic room-skip button (Select/Start, any room) */
     introskip_hook(engine);        /* A/B skip, only in a user-supplied intro-room list (GML_INTROSKIP) */
+    introstep_hook(engine);        /* A/B/Start advances a declared content-owned intro alarm */
   }
   /* While a prior wait remains active, skip Step and Draw while mixing audio and updating input history. */
   if(wait_held_frame && engine->vm.wait.active){
@@ -2870,6 +2871,7 @@ void anygm_destroy(AnygmEngine *engine){
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD) return;
   if(engine->lifecycle!=ENGINE_EMPTY) anygm_unload(engine);
   free(engine->state_reapply);
+  free(engine->state_frame_capture);
   free(engine->classic_phase_mem);
   free(engine->fb);
   free(engine->screen);

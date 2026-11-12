@@ -381,10 +381,30 @@ bool libretro_content_start(void){
   g_libretro.frame_profile_userdata=profile_services.userdata;
   const char *profile_setting=profile_services.development_setting?
     profile_services.development_setting(profile_services.userdata,"GML_PROFILE_LIBRETRO_FRAME"):NULL;
+  const char *summary_setting=profile_services.development_setting?
+    profile_services.development_setting(profile_services.userdata,
+                                         "GML_PROFILE_LIBRETRO_FRAME_SUMMARY"):NULL;
+  char *summary_end=NULL;
+  unsigned long long summary_start=summary_setting && summary_setting[0]?
+    strtoull(summary_setting,&summary_end,10):0;
+  bool summary_enabled=summary_setting && summary_setting[0] &&
+    strcmp(summary_setting,"0") && summary_end && !summary_end[0];
+  g_libretro.frame_profile_detailed=g_libretro.log && profile_setting &&
+    profile_setting[0] && strcmp(profile_setting,"0");
   g_libretro.frame_profile_enabled=g_libretro.log && g_libretro.frame_profile_clock &&
-    profile_setting && profile_setting[0] && strcmp(profile_setting,"0");
+    (g_libretro.frame_profile_detailed || summary_enabled);
   g_libretro.frame_profile_tick=0;
   g_libretro.frame_profile_previous_valid=false;
+  g_libretro.frame_profile_summary_start=(uint64_t)summary_start;
+  g_libretro.frame_profile_summary_samples=0;
+  g_libretro.frame_profile_summary_period_ns=0;
+  g_libretro.frame_profile_summary_max_ns=0;
+  g_libretro.frame_profile_summary_max_tick=0;
+  g_libretro.frame_profile_summary_invalid=0;
+  g_libretro.frame_profile_summary_over_16667=0;
+  g_libretro.frame_profile_summary_over_20000=0;
+  g_libretro.frame_profile_summary_over_25000=0;
+  g_libretro.frame_profile_summary_over_33333=0;
   libretro_options_publish_rooms();
   libretro_update_av();
   g_libretro.startup_av_notification_pending=provisional_av_exposed;
@@ -476,6 +496,25 @@ bool retro_load_game_special(unsigned type,const struct retro_game_info *info,si
 
 void retro_unload_game(void){
   if(!g_libretro.loaded && !g_libretro.prepared) return;
+  if(g_libretro.frame_profile_enabled && !g_libretro.frame_profile_detailed &&
+     g_libretro.frame_profile_summary_samples){
+    libretro_log(RETRO_LOG_INFO,
+      "[libretro-frame-summary] start_tick=%llu end_tick=%llu samples=%llu "
+      "mean_period_ns=%llu max_period_ns=%llu max_period_tick=%llu invalid=%llu "
+      "over_16_667_ms=%llu over_20_ms=%llu over_25_ms=%llu over_33_333_ms=%llu\n",
+      (unsigned long long)g_libretro.frame_profile_summary_start,
+      (unsigned long long)g_libretro.frame_profile_tick,
+      (unsigned long long)g_libretro.frame_profile_summary_samples,
+      (unsigned long long)(g_libretro.frame_profile_summary_period_ns/
+                           g_libretro.frame_profile_summary_samples),
+      (unsigned long long)g_libretro.frame_profile_summary_max_ns,
+      (unsigned long long)g_libretro.frame_profile_summary_max_tick,
+      (unsigned long long)g_libretro.frame_profile_summary_invalid,
+      (unsigned long long)g_libretro.frame_profile_summary_over_16667,
+      (unsigned long long)g_libretro.frame_profile_summary_over_20000,
+      (unsigned long long)g_libretro.frame_profile_summary_over_25000,
+      (unsigned long long)g_libretro.frame_profile_summary_over_33333);
+  }
   libretro_hw_render_release();
   anygm_unload(g_libretro.engine);
   libretro_display_release();
@@ -495,6 +534,7 @@ void retro_unload_game(void){
   g_libretro.state_snapshot_failure_reported=false;
   g_libretro.frame_failure_reports=0;
   g_libretro.frame_profile_enabled=false;
+  g_libretro.frame_profile_detailed=false;
   g_libretro.frame_profile_previous_valid=false;
   memset(g_libretro.override_used,0,sizeof g_libretro.override_used);
   memset(&g_libretro.frame,0,sizeof g_libretro.frame);
@@ -591,12 +631,31 @@ static void frame_profile_report(LibretroFrameTiming *timing,AnygmResult result,
   uint64_t period=period_valid?timing->begin_ns-g_libretro.frame_profile_previous_begin:0;
   g_libretro.frame_profile_previous_begin=timing->begin_ns;
   g_libretro.frame_profile_previous_valid=valid;
+  uint64_t tick=++g_libretro.frame_profile_tick;
+  if(!g_libretro.frame_profile_detailed && tick>=g_libretro.frame_profile_summary_start){
+    if(!period_valid) g_libretro.frame_profile_summary_invalid++;
+    else{
+      g_libretro.frame_profile_summary_samples++;
+      if(UINT64_MAX-g_libretro.frame_profile_summary_period_ns<period)
+        g_libretro.frame_profile_summary_period_ns=UINT64_MAX;
+      else g_libretro.frame_profile_summary_period_ns+=period;
+      if(period>g_libretro.frame_profile_summary_max_ns){
+        g_libretro.frame_profile_summary_max_ns=period;
+        g_libretro.frame_profile_summary_max_tick=tick;
+      }
+      if(period>16666667u) g_libretro.frame_profile_summary_over_16667++;
+      if(period>20000000u) g_libretro.frame_profile_summary_over_20000++;
+      if(period>25000000u) g_libretro.frame_profile_summary_over_25000++;
+      if(period>33333333u) g_libretro.frame_profile_summary_over_33333++;
+    }
+  }
   /* These are CPU-visible boundaries, not a promise that another graphics queue has completed.
    * This log's own cost is excluded from total and included in the following entry period. */
+  if(!g_libretro.frame_profile_detailed) return;
   libretro_log(RETRO_LOG_INFO,
     "[libretro-frame] tick=%llu valid=%u total_ns=%llu video_ns=%llu audio_ns=%llu "
     "period_valid=%u period_ns=%llu logical_steps=%u result=%d\n",
-    (unsigned long long)++g_libretro.frame_profile_tick,valid?1u:0u,
+    (unsigned long long)tick,valid?1u:0u,
     (unsigned long long)(valid?end-timing->begin_ns:0),
     (unsigned long long)(valid?timing->video_ns:0),
     (unsigned long long)(valid?timing->audio_ns:0),period_valid?1u:0u,
@@ -605,7 +664,7 @@ static void frame_profile_report(LibretroFrameTiming *timing,AnygmResult result,
 
 static LibretroFrameTiming state_profile_begin(void){
   LibretroFrameTiming timing={0};
-  timing.active=g_libretro.frame_profile_enabled;
+  timing.active=g_libretro.frame_profile_enabled && g_libretro.frame_profile_detailed;
   timing.valid=true;
   timing.begin_ns=timing.active?frame_profile_now(&timing):0;
   return timing;

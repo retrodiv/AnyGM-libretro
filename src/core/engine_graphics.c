@@ -659,6 +659,50 @@ static int engine_present_indirect_gui_host(AnygmEngine *engine,
 static int engine_present_hardware_canvas_plan(AnygmEngine *engine,
                                                 unsigned *width,unsigned *height,int resident_crt);
 
+/* Deliver a canonical completed image that was produced in the private presentation target.
+ * The device cache remains the logical frame; this host-sized sharp fit is transient. */
+static int engine_present_completed_device_canvas(AnygmEngine *engine,
+                                                   unsigned *width,unsigned *height,
+                                                   uint64_t generation){
+  unsigned host_width=0,host_height=0;
+  if(!engine || !engine->host_canvas_active) return 0;
+  engine_host_extent(engine,&host_width,&host_height);
+  if(!host_width || !host_height ||
+     !engine_build_host_plan(engine,&engine->host_plan,GML_PLAN_TARGET_HOST_FRAMEBUFFER,
+                             host_width,host_height,1)) return 0;
+  GmlPlanImage *source=&engine->host_plan.images[0];
+  source->cpu_pixels=NULL;
+  memset(&source->resident_image,0,sizeof source->resident_image);
+  source->image_class=GML_PLAN_IMAGE_COMPLETED_FRAME;
+  source->identity=0u;
+  source->content_generation=source->pixel_generation=(uint32_t)generation;
+  source->device_completed=1u;
+  engine->host_plan.operations[1].alpha_write=0xFFu;
+  if(!gml_render_plan_validate(&engine->host_plan) ||
+     !engine_execute_host_plan(engine,&engine->host_plan,host_width,host_height)) return 0;
+  engine->host_plan_valid=1;
+  engine->host_clear_valid=0;
+  engine->canvas_pass_frames++;
+  if(width) *width=host_width;
+  if(height) *height=host_height;
+  return 1;
+}
+
+/* Finish an authored presentation at its logical extent, retain that exact device result as the
+ * completed image, then let the host CRT plan consume it without observing it on the CPU. */
+static int engine_present_plan_device_canvas(AnygmEngine *engine,GmlRenderPlan *plan,
+                                              unsigned *width,unsigned *height){
+  if(!engine || !plan) return 0;
+  plan->target=GML_PLAN_TARGET_DEVICE_PRESENTATION;
+  if(!engine_execute_graphics_plan(engine,plan) ||
+     !gml_gpu_capture_device_presentation(engine->gpu,engine->output_width,
+                                           engine->output_height,
+                                           engine->host_frame_generation) ||
+     !engine_present_completed_device_canvas(engine,width,height,
+                                              engine->host_frame_generation)) return 0;
+  return 1;
+}
+
 int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned *height){
   GmlRenderDeferredPresentation record;
   GmlRenderPlan *plan;
@@ -788,15 +832,24 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
         geometry->extent_y*=record.destination_height/record.extent_y;
       }
       if(crt_readback){
-        /* Preserve the content's terminal program at its authored extent before the CPU CRT
-         * filter. A terminal frame must be current even when mid-frame readbacks are pipelined. */
-        plan->target=GML_PLAN_TARGET_READBACK;
-        plan->readback_pixels=engine->screen;
-        plan->readback_pitch_pixels=engine->output_width;
+        /* Preserve the terminal program at its authored extent. Prefer a private device target,
+         * promote it to the canonical completed-frame cache and apply the CRT fit there; if any
+         * stage refuses, retain the established synchronous CPU fallback transaction. */
+        GmlRenderPlan terminal_plan=*plan;
+        int fitted=engine_present_plan_device_canvas(engine,&terminal_plan,width,height);
+        if(fitted){
+          engine_content_program_pixels_release(&terminal_plan,&owned);
+          gml_render_discard_deferred_presentation(&engine->render);
+          engine->frame_authority=ENGINE_FRAME_GPU_PRESENTED_DEVICE_RESIDENT;
+          return 1;
+        }
+        terminal_plan.target=GML_PLAN_TARGET_READBACK;
+        terminal_plan.readback_pixels=engine->screen;
+        terminal_plan.readback_pitch_pixels=engine->output_width;
         gml_gpu_set_readback_pipelined(engine->gpu,0);
-        int executed=engine_execute_graphics_plan(engine,plan);
+        int executed=engine_execute_graphics_plan(engine,&terminal_plan);
         gml_gpu_set_readback_pipelined(engine->gpu,engine->readback_is_pipelined);
-        engine_content_program_pixels_release(plan,&owned);
+        engine_content_program_pixels_release(&terminal_plan,&owned);
         if(executed){
           gml_render_discard_deferred_presentation(&engine->render);
           engine->frame_authority=ENGINE_FRAME_CPU_MATERIALIZED;
@@ -804,6 +857,7 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
           engine->host_clear_valid=0;
           return 0; /* The caller still has to fit and present these pixels. */
         }
+        plan->fallback_reason=terminal_plan.fallback_reason;
       } else {
         int executed=engine_execute_graphics_plan(engine,plan);
         engine_content_program_pixels_release(plan,&owned);
@@ -819,7 +873,6 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
     image=gml_render_plan_add_image(plan,&source);
     if(image==GML_PLAN_NO_IMAGE) return 0;
   }
-  if(crt_readback) return 0;
   /* A resident scene may present its final image without selecting unrelated hybrid passes.
    * With only content GLSL enabled, an ineligible program still returns to software. */
   if(!hybrid && !scene) return 0;
@@ -827,6 +880,12 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
   if(record.sampling_rule==GML_RENDER_PRESENTATION_BOX){
     if(!gml_render_plan_add_blit_box(plan,image,destination,0xFFu)) return 0;
   } else if(!gml_render_plan_add_blit_nearest(plan,image,destination,axis_x,axis_y,0xFFu)) return 0;
+  if(crt_readback){
+    if(!engine_present_plan_device_canvas(engine,plan,width,height)) return 0;
+    gml_render_discard_deferred_presentation(&engine->render);
+    engine->frame_authority=ENGINE_FRAME_GPU_PRESENTED_DEVICE_RESIDENT;
+    return 1;
+  }
   if(!engine_execute_graphics_plan(engine,plan)) return 0;
 presented:
   if(scene && engine_graphics_is_current(engine)){

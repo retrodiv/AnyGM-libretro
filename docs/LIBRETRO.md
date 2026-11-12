@@ -68,6 +68,15 @@ invalid clock has no valid period. `total_ns` ends immediately before the
 trace log, so its own logging cost is excluded there. Profiling perturbs the
 run; retain this qualification in measurements.
 
+`GML_PROFILE_LIBRETRO_FRAME_SUMMARY=<first-tick>` uses the same entry clock
+without emitting per-frame or per-state timing lines. At content unload it
+reports one `[libretro-frame-summary]` record for valid periods at or after the
+selected tick: sample count, integer mean, maximum and its tick, invalid count,
+and counts above 16.667, 20, 25 and 33.333 milliseconds. This mode measures
+frontend rewind work without making synchronous trace output part of every
+following period. It is mutually compatible with the detailed setting, but
+the detailed setting takes precedence and suppresses the summary.
+
 These are CPU-visible boundaries. Returning from a video callback does not
 promise completion of another graphics context or queue. Completed-GPU-work
 measurements need a separately verified host/frontend completion boundary;

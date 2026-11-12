@@ -152,6 +152,20 @@ int gml_gpu_opengl_capture_completed_frame(GmlGpuBackend *backend,uintptr_t fram
   return 1;
 }
 
+int gml_gpu_opengl_capture_device_presentation(GmlGpuBackend *backend,uintptr_t framebuffer,
+                                                uint32_t width,uint32_t height,
+                                                uint64_t generation){
+  if(!backend) return 0;
+  int captured=backend->readback_present_valid && backend->readback_width==width &&
+    backend->readback_height==height &&
+    gml_gpu_opengl_capture_completed_frame(backend,backend->readback_framebuffer,
+                                            width,height,generation);
+  if(backend->loaded && backend->gl.BindFramebuffer)
+    backend->gl.BindFramebuffer(GL_FRAMEBUFFER,(GLuint)framebuffer);
+  if(captured) backend->readback_present_valid=0;
+  return captured;
+}
+
 int gml_gpu_opengl_read_completed_frame(GmlGpuBackend *backend,uintptr_t framebuffer,
                                          uint32_t *pixels,uint32_t pitch_pixels,
                                          uint32_t width,uint32_t height,uint64_t generation,

@@ -44,6 +44,9 @@ typedef struct GmlPlanImage {
   uint32_t pitch_pixels;
   uint32_t pixel_format;
   uint32_t opaque;
+  /* A context-local completed-frame cache may be the source of a delivery-only host plan.
+   * It has no CPU borrow and is valid only for the matching dimensions and generation. */
+  uint32_t device_completed;
   /* A borrow that is valid for the frame in which the plan was built, and for as long afterwards
    * as the owner keeps the plan retained. NULL when the owner did not lend the pixels. */
   const uint32_t *cpu_pixels;

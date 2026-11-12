@@ -705,6 +705,19 @@ int gml_render_draw_state_get(const GmlRender *r,GmlRenderDrawState *state){
 void gml_render_draw_state_update(GmlRender *r,const GmlRenderDrawState *state,
                                   unsigned fields){
   if(!r || !state) return;
+  const unsigned composition_fields=GML_RENDER_DRAW_STATE_ALPHA_BLEND|
+    GML_RENDER_DRAW_STATE_INTERPOLATION|GML_RENDER_DRAW_STATE_BLEND_MODE|
+    GML_RENDER_DRAW_STATE_BLEND_EQUATION|GML_RENDER_DRAW_STATE_BLEND_EQUATION_ALPHA|
+    GML_RENDER_DRAW_STATE_ALPHA_TEST_ENABLE|GML_RENDER_DRAW_STATE_ALPHA_TEST_REFERENCE|
+    GML_RENDER_DRAW_STATE_COLOR_WRITE_MASK;
+  /* Automatic application-surface presentation precedes content draw-state
+   * changes. Resolve its resident underlay while the state that qualified it
+   * is still current; a later draw must not inherit the presentation work or
+   * force it through a CPU suffix merely because content selected a mask,
+   * test, filter or blend factor. A failed attempt leaves the existing
+   * pending record intact for the established fallback. */
+  if(r->pending_underlay && (fields&composition_fields))
+    (void)gml_render_compose_resident_underlay(r);
   if(fields&GML_RENDER_DRAW_STATE_COLOR) r->color=state->color;
   if(fields&GML_RENDER_DRAW_STATE_ALPHA) r->alpha=state->alpha;
   if(fields&GML_RENDER_DRAW_STATE_FONT) r->font=state->font;
@@ -1361,6 +1374,16 @@ int gml_render_completed_screen_read(GmlRender *r,uint32_t *pixels,int width,int
   r->completed_screen_cpu_reads++;
   if(metrics.cpu_version!=metrics.logical_version) r->completed_screen_cpu_materializations++;
   return 1;
+}
+int gml_render_completed_screen_copy_device(GmlRender *r,const uint32_t *screen,
+                                             int width,int height,uint32_t *destination,
+                                             size_t pixel_capacity){
+  GmlRenderResource *resource;
+  if(!r || !screen || !destination || width<=0 || height<=0 ||
+     !gml_render_application_scene_flush(r) ||
+     !(resource=completed_screen_resource(r,screen,width,height))) return 0;
+  return gml_render_resource_copy_device(resource,gml_render_device(r),destination,
+                                         pixel_capacity);
 }
 static int completed_screen_suffix_allowed(GmlRender *r,uint32_t *pixels,
                                             int width,int height){

@@ -432,6 +432,8 @@ int gml_render_rectangle_valid(const GmlRenderDrawOp *operation){
   if((p->rectangle_flags&GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA) &&
      p->rectangle_flags!=(GML_RENDER_RECTANGLE_TARGET_ALPHA|
                           GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA)) return 0;
+  unsigned blend=(p->rectangle_flags&GML_RENDER_RECTANGLE_BLEND_MASK)>>
+                 GML_RENDER_RECTANGLE_BLEND_SHIFT;
   if(p->rectangle_flags&GML_RENDER_RECTANGLE_PIXEL_SPAN){
     if(p->pixel_write_mask>15u || !(p->rectangle_flags&GML_RENDER_RECTANGLE_OUTLINE) ||
        ((p->rectangle_flags&GML_RENDER_RECTANGLE_GRADIENT) &&
@@ -442,7 +444,10 @@ int gml_render_rectangle_valid(const GmlRenderDrawOp *operation){
        (!(p->rectangle_flags&GML_RENDER_RECTANGLE_CIRCLE_FAN) &&
         (p->corner_colour[0]!=p->corner_colour[1] || p->corner_colour[0]!=p->corner_colour[2] ||
          p->corner_colour[0]!=p->corner_colour[3]))) return 0;
-  }else if(p->pixel_write_mask) return 0;
+  }else if(p->pixel_write_mask &&
+           (p->pixel_write_mask!=8u || p->alpha_blend || blend ||
+            (p->rectangle_flags&(GML_RENDER_RECTANGLE_OUTLINE|
+                                 GML_RENDER_RECTANGLE_GRADIENT)))) return 0;
   if(p->rectangle_flags&GML_RENDER_RECTANGLE_VERTEX_SPAN){
     if(!(p->rectangle_flags&GML_RENDER_RECTANGLE_PIXEL_SPAN) || p->region.height!=1u ||
        p->alpha!=1.0 || p->colour!=0xFFFFFFFFu) return 0;
@@ -454,8 +459,6 @@ int gml_render_rectangle_valid(const GmlRenderDrawOp *operation){
          last<-1e-5 || last>maximum+1e-5) return 0;
     }
   }
-  unsigned blend=(p->rectangle_flags&GML_RENDER_RECTANGLE_BLEND_MASK)>>
-                 GML_RENDER_RECTANGLE_BLEND_SHIFT;
   int fan=(p->rectangle_flags&GML_RENDER_RECTANGLE_CIRCLE_FAN)!=0u;
   if(fan){
     if(!(p->rectangle_flags&GML_RENDER_RECTANGLE_OUTLINE) ||
@@ -472,7 +475,9 @@ int gml_render_rectangle_valid(const GmlRenderDrawOp *operation){
       return 0;
   }
   if(blend>GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR || blend==3u || blend==6u ||
-     (p->alpha==0.0 && (!p->alpha_blend || !gml_render_blend_uses_destination_colour((int)blend)))) return 0;
+     (p->alpha==0.0 &&
+      !(p->pixel_write_mask==8u && !p->alpha_blend && !blend) &&
+      (!p->alpha_blend || !gml_render_blend_uses_destination_colour((int)blend)))) return 0;
   if((p->rectangle_flags&GML_RENDER_RECTANGLE_PIXEL_SPAN) && p->pixel_write_mask!=15u &&
      (!p->alpha_blend || (blend!=4u && blend!=7u && blend!=8u &&
                          !gml_render_blend_uses_destination_colour((int)blend)))) return 0;

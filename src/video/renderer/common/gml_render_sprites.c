@@ -522,7 +522,8 @@ static int resident_integer_sprite(GmlRender *r,GmlSprite *sprite,int subimg,
   int normal_integer=r && (!r->interp || r->classic) && !r->fog_flat && !gml_d3_is_active(r) &&
     isfinite(xs) && isfinite(ys) && fabs(xs)>=1.0 && fabs(xs)<=8.0 &&
     fabs(ys)>=1.0 && fabs(ys)<=8.0 && xs==floor(xs) && ys==floor(ys) &&
-    rotation==0.0 && (!r->blendmode || r->blendmode==2) &&
+    rotation==0.0 && (!r->blendmode || r->blendmode==2 ||
+      gml_render_blend_factor_pair(r->blendmode,7,8)) &&
     r->device.context && r->device.observe_on_demand &&
     r->device.observe_on_demand(r->device.context);
   if(!r || !r->resident_application_pass || !sprite || sprite->runtime_rgba ||
@@ -818,9 +819,13 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     (r->blendmode==6 || (r->blendmode==3 && native_geometry)) &&
     rotated_sprite_function && family==GML_RENDER_SCENE_SPRITE;
   int scaled_sprite=physical_sprite_page==15 || physical_sprite_page==22 || rotated_sprite_function || runtime_function || sprite_part_function || tiled_sprite_function || replacement_sprite;
-  int destination_factor_sprite=r && scaled_sprite && !runtime_function &&
+  int destination_alpha_mask_sprite=r && (scaled_sprite || physical_sprite_page==7) &&
+    !runtime_function &&
     !tiled_sprite_function && !r->fog_flat && family==GML_RENDER_SCENE_SPRITE &&
-    (r->blendmode==7 || r->blendmode==8);
+    gml_render_blend_factor_pair(r->blendmode,7,8);
+  int destination_factor_sprite=r && (scaled_sprite || destination_alpha_mask_sprite) && !runtime_function &&
+    !tiled_sprite_function && !r->fog_flat && family==GML_RENDER_SCENE_SPRITE &&
+    (r->blendmode==7 || r->blendmode==8 || destination_alpha_mask_sprite);
   int integer_sprite=physical_sprite_page==7 || scaled_sprite;
   int single_texel_sprite=family==GML_RENDER_SCENE_SPRITE &&
     (physical_sprite_page==15 || physical_sprite_page==16 || sprite_part_function || replacement_sprite) &&
@@ -1575,11 +1580,17 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
       ?GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA:GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA;
   if(destination_factor_sprite && r->alphablend){
     int preserve=gml_render_target_preserves_alpha(r);
-    state.rgb_source_factor=r->blendmode==7?GML_RENDER_BLEND_ONE_MINUS_DESTINATION_ALPHA:
+    state.rgb_source_factor=destination_alpha_mask_sprite?GML_RENDER_BLEND_DESTINATION_ALPHA:
+      r->blendmode==7?GML_RENDER_BLEND_ONE_MINUS_DESTINATION_ALPHA:
       GML_RENDER_BLEND_ONE_MINUS_DESTINATION_COLOUR;
-    state.rgb_destination_factor=r->blendmode==7?GML_RENDER_BLEND_DESTINATION_ALPHA:GML_RENDER_BLEND_ZERO;
-    state.alpha_source_factor=preserve?GML_RENDER_BLEND_ONE_MINUS_DESTINATION_ALPHA:GML_RENDER_BLEND_ONE;
-    state.alpha_destination_factor=preserve && r->blendmode==7?GML_RENDER_BLEND_DESTINATION_ALPHA:GML_RENDER_BLEND_ZERO;
+    state.rgb_destination_factor=destination_alpha_mask_sprite?GML_RENDER_BLEND_ONE_MINUS_DESTINATION_ALPHA:
+      r->blendmode==7?GML_RENDER_BLEND_DESTINATION_ALPHA:GML_RENDER_BLEND_ZERO;
+    state.alpha_source_factor=destination_alpha_mask_sprite?(preserve?
+      GML_RENDER_BLEND_DESTINATION_ALPHA:GML_RENDER_BLEND_ONE):
+      preserve?GML_RENDER_BLEND_ONE_MINUS_DESTINATION_ALPHA:GML_RENDER_BLEND_ONE;
+    state.alpha_destination_factor=destination_alpha_mask_sprite?(preserve?
+      GML_RENDER_BLEND_ONE_MINUS_DESTINATION_ALPHA:GML_RENDER_BLEND_ZERO):
+      preserve && r->blendmode==7?GML_RENDER_BLEND_DESTINATION_ALPHA:GML_RENDER_BLEND_ZERO;
     state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
     state.coverage_policy=preserve?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
   }
@@ -2765,8 +2776,11 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   int hardware_physical_tile=family==GML_RENDER_SCENE_TILE &&
     (hardware_physical_background || hardware_physical_rotation);
   int selected_physical_atlas=selected_physical_background || hardware_physical_part || hardware_axis_sprite || hardware_physical_font || hardware_physical_tile;
-  int selected_preset=selected_physical_atlas && r->blendmode>=0 && r->blendmode<=11 &&
-    r->blendmode!=0 && (r->blendmode!=2 ||
+  int selected_destination_alpha_mask=hardware_axis_sprite &&
+    gml_render_blend_factor_pair(r->blendmode,7,8);
+  int selected_preset=selected_physical_atlas &&
+    ((r->blendmode>=0 && r->blendmode<=11 && r->blendmode!=0) ||
+     selected_destination_alpha_mask) && (r->blendmode!=2 ||
       (hardware_physical_font && anygm_policy_has_modern_layer_semantics(r->win))) &&
     /* Keep the established full-axis additive packet where it already owns
      * sampling. Prepared source increments are needed only for new support

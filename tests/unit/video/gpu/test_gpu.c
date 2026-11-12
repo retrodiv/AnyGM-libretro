@@ -688,6 +688,45 @@ static int completed_frame_snapshot_case(void){
   REQUIRE(counters.completed_frame_copies==1u && counters.completed_frame_copy_bytes==128u &&
           counters.completed_frame_reads==3u && counters.completed_frame_read_bytes==384u,
           "completed copy and attempted read traffic have separate counters");
+  {
+    GmlGpuCounters before_device={0},after_device={0};
+    unsigned reads_before=anygm_test_graphics_read_pixels();
+    REQUIRE(build_canvas_plan(&plan,source,4u,4u,8u,4u,0,0,8u,4u),
+            "private presentation plan builds");
+    plan.target=GML_PLAN_TARGET_DEVICE_PRESENTATION;
+    plan.operations[1].alpha_write=0xFFu;
+    gml_gpu_counters(gpu,&before_device);
+    REQUIRE(gml_gpu_execute_plan(gpu,&plan),"private presentation executes");
+    REQUIRE(!gml_gpu_capture_device_presentation(gpu,7u,4u,13u) &&
+            anygm_test_graphics_bound_framebuffer()==7u,
+            "refused device promotion restores the frontend framebuffer");
+    REQUIRE(
+            gml_gpu_capture_device_presentation(gpu,8u,4u,13u),
+            "private presentation promotes to the completed device cache");
+    REQUIRE(build_canvas_plan(&plan,source,8u,4u,9u,8u,0,2,9u,4u),
+            "completed device delivery plan builds");
+    plan.images[0].cpu_pixels=NULL;
+    plan.images[0].content_generation=plan.images[0].pixel_generation=13u;
+    plan.images[0].device_completed=1u;
+    plan.operations[1].alpha_write=0xFFu;
+    REQUIRE(gml_gpu_execute_plan(gpu,&plan),
+            "matching completed device generation and extent deliver without an upload");
+    plan.images[0].content_generation=plan.images[0].pixel_generation=14u;
+    REQUIRE(!gml_gpu_execute_plan(gpu,&plan),"stale completed device generation is refused");
+    REQUIRE(build_canvas_plan(&plan,source,7u,4u,9u,8u,1,2,7u,4u),
+            "mismatched completed device extent plan builds");
+    plan.images[0].cpu_pixels=NULL;
+    plan.images[0].content_generation=plan.images[0].pixel_generation=13u;
+    plan.images[0].device_completed=1u;
+    plan.operations[1].alpha_write=0xFFu;
+    REQUIRE(!gml_gpu_execute_plan(gpu,&plan),"mismatched completed device extent is refused");
+    gml_gpu_counters(gpu,&after_device);
+    REQUIRE(after_device.completed_frame_copies==before_device.completed_frame_copies+1u &&
+            after_device.cpu_upload_frames==before_device.cpu_upload_frames &&
+            after_device.completed_frame_reads==before_device.completed_frame_reads &&
+            anygm_test_graphics_read_pixels()==reads_before,
+            "device promotion and delivery perform no CPU frame transport or observation");
+  }
   anygm_test_graphics_forbid_calls();
   REQUIRE(!gml_gpu_read_completed_frame(gpu,pixels,10u,8u,4u,12u) &&
           !gml_gpu_read_completed_frame(gpu,pixels,7u,8u,4u,11u) &&
@@ -3268,6 +3307,44 @@ static int scene_rectangle_function_batch_case(void){
   return 1;
 }
 
+static int scene_alpha_mask_rectangle_case(void){
+  for(unsigned api=0;api<2u;api++){
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    GmlRenderDeviceServices device={0};
+    GmlRenderDrawOp ops[2]={0};
+    anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"alpha-mask rectangle context adopted");
+    gml_gpu_device_services(gpu,&device);
+    ops[0].opcode=GML_RENDER_OP_CLEAR;
+    ops[0].target=(GmlRenderTargetRef){
+      .image={GML_RENDER_RESOURCE_APPLICATION,142u,1u,2u},
+      .storage_version=1u,.width=96u,.height=48u,
+      .pixel_format=GML_RENDER_PIXEL_ARGB8888,.region={0,0,96u,48u}};
+    ops[0].payload.clear_colour=0u;
+    ops[1]=ops[0];ops[1].opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;
+    ops[1].scene_family=GML_RENDER_SCENE_PRIMITIVE;
+    ops[1].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    ops[1].target.image.content_version++;
+    ops[1].payload.primitive=(GmlRenderPrimitiveRect){
+      .kind=GML_RENDER_PRIMITIVE_RECTANGLE,.region={8,6,80u,36u},
+      .authored_region={8,6,80u,36u},.colour=0xFFFFFFFFu,
+      .corner_colour={0xFFFFFFFFu,0xFFFFFFFFu,0xFFFFFFFFu,0xFFFFFFFFu},
+      .alpha=0.0,.alpha_blend=0u,.pixel_write_mask=8u,
+      .rectangle_flags=GML_RENDER_RECTANGLE_TARGET_ALPHA};
+    GmlRenderDrawBatch batch={ops,2u,NULL,0u};
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==2u &&
+      anygm_test_graphics_scene_draw_calls()==1u &&
+      anygm_test_graphics_scene_mask_draws(8u)==1u &&
+      !anygm_test_graphics_blend_enabled() &&
+      !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
+      "zero-alpha rectangle writes only destination alpha without target observation");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_hardware_additive_batch_case(void){
   return scene_hardware_filtered_batch_case(1);
 }
@@ -5281,7 +5358,7 @@ static int scene_integer_function_sprite_case(void){
   for(unsigned background=0;background<3u;background++)
   for(unsigned alpha_test=0;alpha_test<2u;alpha_test++)
   for(unsigned api=0;api<2u;api++) for(unsigned rounded=0;rounded<3u;rounded++)
-  for(unsigned target_kind=0;target_kind<4u;target_kind++) for(unsigned blend=0;blend<12u;blend++){
+  for(unsigned target_kind=0;target_kind<4u;target_kind++) for(unsigned blend=0;blend<13u;blend++){
     if(blend>=7u && !background && rounded==2u) continue;
     uint8_t pixels[16]={208,32,16,128,16,208,32,255,32,16,208,0,192,176,160,64};
     GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,31u,1u,1u};
@@ -5338,6 +5415,13 @@ static int scene_integer_function_sprite_case(void){
           GML_RENDER_BLEND_SOURCE_COLOUR:GML_RENDER_BLEND_DESTINATION_COLOUR;
         state.coverage_policy=target_kind==2u?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
       }
+      if(blend==12u){
+        state.rgb_source_factor=GML_RENDER_BLEND_DESTINATION_ALPHA;
+        state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_DESTINATION_ALPHA;
+        state.alpha_source_factor=target_kind==2u?GML_RENDER_BLEND_DESTINATION_ALPHA:GML_RENDER_BLEND_ONE;
+        state.alpha_destination_factor=target_kind==2u?GML_RENDER_BLEND_ONE_MINUS_DESTINATION_ALPHA:GML_RENDER_BLEND_ZERO;
+        state.coverage_policy=target_kind==2u?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+      }
     }
     state.sampler_count=1u;
     state.samplers[0]=(GmlRenderSamplingPolicy){.filter=GML_RENDER_FILTER_NEAREST,
@@ -5378,6 +5462,13 @@ static int scene_integer_function_sprite_case(void){
       anygm_test_graphics_scene_draw_calls()==draws && anygm_test_graphics_scene_copies()==0u &&
       anygm_test_graphics_read_pixels()==0u,
       "integer tint and fixed blend group two reflected sprites without a snapshot");
+    if(blend==12u){
+      unsigned factors[4]={0};anygm_test_graphics_blend_factors(factors);
+      REQUIRE(factors[0]==GL_DST_ALPHA && factors[1]==GL_ONE_MINUS_DST_ALPHA &&
+        factors[2]==(target_kind==2u?GL_DST_ALPHA:GL_ONE) &&
+        factors[3]==(target_kind==2u?GL_ONE_MINUS_DST_ALPHA:GL_ZERO),
+        "destination-alpha sprite mask programs every separate blend factor");
+    }
     if(background){
       GmlRenderDrawStateSnapshot original=state;
       for(unsigned extension=0;extension<2u;extension++){
@@ -8313,6 +8404,7 @@ int main(int argc,char **argv){
     {"scene_classic_alpha_rect_batch",scene_classic_alpha_rect_batch_case},
     {"scene_studio_alpha_rect_batch",scene_studio_alpha_rect_batch_case},
     {"scene_rectangle_function_batch",scene_rectangle_function_batch_case},
+    {"scene_alpha_mask_rectangle",scene_alpha_mask_rectangle_case},
     {"scene_full_opaque_rectangle_clear",scene_full_opaque_rectangle_clear_case},
     {"scene_classic_inverse_rect_batch",scene_classic_inverse_rect_batch_case},
     {"scene_hardware_additive_batch",scene_hardware_additive_batch_case},

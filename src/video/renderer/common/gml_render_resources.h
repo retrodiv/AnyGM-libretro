@@ -125,6 +125,11 @@ int gml_render_resource_checkpoint(GmlRenderResource *resource,
  * or publish partially read pixels. Already current CPU pixels need no device call. */
 int gml_render_resource_observe_device(GmlRenderResource *resource,
                                         const GmlRenderDeviceServices *device);
+/* Copy one current device version for an external observer without publishing it as the
+ * resource's CPU authority. The full image is written transactionally or not at all. */
+int gml_render_resource_copy_device(const GmlRenderResource *resource,
+                                    const GmlRenderDeviceServices *device,
+                                    uint32_t *pixels,size_t pixel_capacity);
 
 /* CPU access materialises first: legacy recipes need no graphics context, while device-only
  * pixels need their owning current context. The caller commits a new logical version after

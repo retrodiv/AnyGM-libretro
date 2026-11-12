@@ -626,6 +626,9 @@ static int scene_state_preserves_completed_device_case(void){
           written>0u && written<=capacity &&
           anygm_state_load(restored.engine,saved,written)==ANYGM_OK,
           "completed-device pixels save and restore without a target");
+  REQUIRE(selected.engine->frame_authority==ENGINE_FRAME_GPU_PRESENTED_DEVICE_RESIDENT &&
+          selected.engine->frame_materializations==0u,
+          "state observation does not replace the resident renderer authority");
   REQUIRE(restored.engine->state_frame_available &&
           restored.engine->state_frame_width==width &&
           restored.engine->state_frame_height==height,
@@ -655,6 +658,12 @@ static int scene_state_preserves_completed_device_case(void){
   REQUIRE(advance(selected.engine,1,&flags) && (flags&ANYGM_FRAME_HARDWARE_TARGET),
           "controlled destruction starts with another resident completed frame");
   anygm_test_graphics_readback_alpha(0x45u);
+  selected.engine->frame_authority=ENGINE_FRAME_GPU_PRESENTED_CPU_RECONSTRUCTIBLE;
+  REQUIRE(anygm_state_save(selected.engine,again,capacity,&again_written)==ANYGM_OK &&
+          selected.engine->frame_authority==ENGINE_FRAME_GPU_PRESENTED_CPU_RECONSTRUCTIBLE &&
+          selected.engine->frame_materializations==0u,
+          "reconstructible completed state copies device pixels without changing authority");
+  selected.engine->frame_authority=ENGINE_FRAME_GPU_PRESENTED_DEVICE_RESIDENT;
   reads=anygm_test_graphics_read_pixels();
   unsigned materializations=selected.engine->frame_materializations;
   memset(&release_report,0,sizeof release_report);
@@ -668,7 +677,7 @@ static int scene_state_preserves_completed_device_case(void){
   REQUIRE(release_report.render_reports==1u && release_report.release_reports==1u &&
           release_report.reads_at_render==reads &&
           release_report.reads_at_release==anygm_test_graphics_read_pixels() &&
-          release_report.render_materializations==materializations && materializations>0u &&
+          release_report.render_materializations==materializations && materializations==0u &&
           selected.engine->frame_materializations==materializations+1u &&
           strstr(release_report.release,"context_current=1 access_witness=1 attempts=1 observed=1") &&
           strstr(release_report.release," materializations=1 ") &&
@@ -5572,15 +5581,18 @@ static int completed_frame_capacity_case(void){
 }
 
 /* A terminal content program must finish at its authored raster before CRT filtering. The fake
- * proves synchronous readback, ownership and transport; the software plan cases own filter pixels. */
+ * proves device-only completion, ownership and transport; the software plan cases own pixels. */
 static int crt_terminal_program_extent(unsigned source_w,unsigned source_h,
                                        unsigned host_w,unsigned host_h,int native_padding){
   Session session;
+  CurrentContextWitness witness={1u,0u};
+  AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
   uint32_t source[16];
   struct GmlShaderPal pal[1]={0};
   anygm_test_graphics_reset();
   REQUIRE(session_open(&session),"CRT graphics session loads");
-  REQUIRE(graphics_adopt(session.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,"CRT context adopted");
+  context.userdata=&witness;context.is_current=graphics_context_is_current;
+  REQUIRE(anygm_graphics_context_reset(session.engine,&context)==ANYGM_OK,"CRT context adopted");
   AnygmEngine *engine=session.engine;
   GmlRender *render=&engine->render;
   REQUIRE(render->n_shader_pal==0,"fixture has no content programs");
@@ -5609,28 +5621,80 @@ static int crt_terminal_program_extent(unsigned source_w,unsigned source_h,
   gml_draw_surface_stretched(render,0,0,0,source_w,source_h,0xFFFFFFu,1.0);
   gml_render_shader_set_current(render,-1);
   int ok=gml_render_deferred_presentation(render,NULL) &&
-         !engine_present_hardware_screen(engine,NULL,NULL) &&
+         engine_present_hardware_screen(engine,NULL,NULL) &&
          anygm_test_graphics_quad_draw_calls()==1 &&
-         anygm_test_graphics_read_pixels()==1 && !anygm_test_graphics_async_read_pixels() &&
+         anygm_test_graphics_read_pixels()==0 && !anygm_test_graphics_async_read_pixels() &&
          !gml_render_deferred_presentation(render,NULL) &&
-         engine->frame_authority==ENGINE_FRAME_CPU_MATERIALIZED;
-  const uint32_t *pixels=NULL; unsigned width=0,height=0;
-  ok=ok && resolve_host_frame(engine,&pixels,&width,&height) && width==host_w && height==host_h &&
-           engine_present_hardware_frame(engine,pixels,width,height);
+         engine->frame_authority==ENGINE_FRAME_GPU_PRESENTED_DEVICE_RESIDENT &&
+         engine->frame_materializations==0;
+  GmlGpuCounters counters={0};
+  gml_gpu_counters(engine->gpu,&counters);
+  ok=ok && counters.completed_frame_copies==1u && counters.scene_readbacks==0u;
   int x=0,y=0,w=0,h=0;
   anygm_test_graphics_viewport(&x,&y,&w,&h);
-  ok=ok && w==(int)host_w && h==(int)host_h && engine->readback_is_pipelined==1;
+  ok=ok && x==engine->host_canvas_x &&
+           y==(int)host_h-engine->host_canvas_y-engine->host_canvas_height &&
+           w==engine->host_canvas_width && h==engine->host_canvas_height &&
+           engine->readback_is_pipelined==1;
   gml_render_gui_end(render);
   render->shader_pal=saved_pal; render->n_shader_pal=0;
   gml_render_application_surface_bind(render,engine->fb,engine->width,engine->height,1);
   session_close(&session);
-  REQUIRE(ok,"terminal shader readback precedes CRT fit and hardware transport");
+  REQUIRE(ok,"terminal shader stays device-resident through CRT fit and hardware transport");
   return 1;
 }
 static int crt_terminal_program_case(void){
   return crt_terminal_program_extent(400,300,640,480,0) &&
          crt_terminal_program_extent(320,180,320,240,1) &&
          crt_terminal_program_extent(240,240,320,240,1);
+}
+
+/* An ordinary deferred final draw has to finish at the logical raster before CRT fitting too.
+ * Neither stage needs to expose the completed image to the processor. */
+static int crt_deferred_presentation_case(void){
+  Session session;
+  CurrentContextWitness witness={1u,0u};
+  AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
+  uint32_t source[16];
+  anygm_test_graphics_reset();
+  REQUIRE(session_open(&session),"deferred CRT graphics session loads");
+  context.userdata=&witness;context.is_current=graphics_context_is_current;
+  REQUIRE(anygm_graphics_context_reset(session.engine,&context)==ANYGM_OK,
+          "deferred CRT context adopted");
+  AnygmEngine *engine=session.engine;
+  GmlRender *render=&engine->render;
+  engine->output_width=400u; engine->output_height=300u;
+  engine->host_output_width=640u; engine->host_output_height=480u;
+  engine->host_crt_active=engine->host_canvas_active=1;
+  engine->host_canvas_width=640; engine->host_canvas_height=480;
+  engine->host_canvas_x=engine->host_canvas_y=0;
+  for(unsigned i=0;i<16;i++) source[i]=0xFF336699u;
+  gml_render_application_surface_bind(render,source,4,4,1);
+  gml_render_application_surface_set_draw_enabled(render,0);
+  gml_render_set_deferred_presentation(render,1);
+  gml_render_begin(render,engine->screen,400,300,0,0);
+  gml_render_gui_begin(render,400,300);
+  gml_render_gui_set_size(render,400,300);
+  gml_draw_surface_stretched(render,0,0,0,400,300,0xFFFFFFu,1.0);
+  GmlRenderDeferredPresentation record={0};
+  int ok=gml_render_deferred_presentation(render,&record) && record.shader<0 &&
+         engine_present_hardware_screen(engine,NULL,NULL) &&
+         !gml_render_deferred_presentation(render,NULL) &&
+         !anygm_test_graphics_read_pixels() && !anygm_test_graphics_async_read_pixels() &&
+         engine->frame_authority==ENGINE_FRAME_GPU_PRESENTED_DEVICE_RESIDENT &&
+         engine->frame_materializations==0 && engine->canvas_pass_frames==1u &&
+         engine->host_plan.images[0].device_completed==1u &&
+         !engine->host_plan.images[0].cpu_pixels &&
+         engine->host_plan.operations[1].opcode==GML_PLAN_OP_BLIT_OPAQUE_SHARP_BILINEAR;
+  GmlGpuCounters counters={0};
+  gml_gpu_counters(engine->gpu,&counters);
+  ok=ok && counters.completed_frame_copies==1u && counters.scene_readbacks==0u &&
+           counters.cpu_upload_frames==0u && counters.passes_replayed==0u;
+  gml_render_gui_end(render);
+  gml_render_application_surface_bind(render,engine->fb,engine->width,engine->height,1);
+  session_close(&session);
+  REQUIRE(ok,"deferred final draw and CRT fit stay device-resident");
+  return 1;
 }
 
 /* A surface's vertex coordinates belong to the draw's authored space, not a local shader tile. */
@@ -6270,6 +6334,7 @@ int main(void){
     {"raw and repeated-row completed frames roundtrip",completed_frame_encodings_case},
     {"completed frame capacity retains exact fitting bytes",completed_frame_capacity_case},
     {"CRT preserves terminal content programs",crt_terminal_program_case},
+    {"CRT preserves ordinary deferred presentations",crt_deferred_presentation_case},
   };
   int failed=0;size_t executed=0;
   const char *selected=getenv("ANYGM_GRAPHICS_STATE_CASE");

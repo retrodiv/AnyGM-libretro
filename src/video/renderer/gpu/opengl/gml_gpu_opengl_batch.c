@@ -16,6 +16,7 @@
 #endif
 
 enum { GL_SCENE_MAX_EXACT_REPETITIONS=64, GL_SCENE_BLEND_INVERSE_RECT=12,
+       GL_SCENE_BLEND_DEST_ALPHA_MASK=26,GL_SCENE_BLEND_DEST_ALPHA_MASK_OPAQUE=27,
        GL_SCENE_BLEND_RECTANGLE_BASE=32, GL_SCENE_BLEND_RECTANGLE_LIMIT=55,
        GL_SCENE_BLEND_RECTANGLE_ADD_BYTES=56,
        GL_SCENE_BLEND_SURFACE_DEST_BASE=64,GL_SCENE_BLEND_SURFACE_DEST_LIMIT=213 };
@@ -63,6 +64,17 @@ static int cleared_earlier(const GmlRenderImageRef *cleared,uint32_t count,
 }
 
 static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
+  int destination_alpha_mask=state->rgb_source_factor==GML_RENDER_BLEND_DESTINATION_ALPHA &&
+     state->rgb_destination_factor==GML_RENDER_BLEND_ONE_MINUS_DESTINATION_ALPHA &&
+     state->rgb_equation==GML_RENDER_BLEND_ADD &&
+     state->alpha_equation==GML_RENDER_BLEND_ADD;
+  if(destination_alpha_mask && state->alpha_source_factor==GML_RENDER_BLEND_DESTINATION_ALPHA &&
+     state->alpha_destination_factor==GML_RENDER_BLEND_ONE_MINUS_DESTINATION_ALPHA &&
+     !state->coverage_policy) return GL_SCENE_BLEND_DEST_ALPHA_MASK;
+  if(destination_alpha_mask && state->alpha_source_factor==GML_RENDER_BLEND_ONE &&
+     state->alpha_destination_factor==GML_RENDER_BLEND_ZERO &&
+     state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA)
+    return GL_SCENE_BLEND_DEST_ALPHA_MASK_OPAQUE;
   if(state->rgb_equation==GML_RENDER_BLEND_ADD && state->alpha_equation==GML_RENDER_BLEND_ADD){
     int opaque=state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
     if((!state->coverage_policy || opaque) &&
@@ -725,7 +737,9 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
     region.width==1u && region.height==1u && q->filtered_draw_alpha==0.0 &&
     !q->corner_colour[0] && !q->corner_colour[1] &&
     !q->corner_colour[2] && !q->corner_colour[3] && state->write_mask==15u;
-  int background_blend=(background || (op->scene_family==GML_RENDER_SCENE_SPRITE && !row && !flat)) && (blend==24 || blend==25 ||
+  int background_blend=(background || (op->scene_family==GML_RENDER_SCENE_SPRITE && !row && !flat)) &&
+    (blend==24 || blend==25 || blend==GL_SCENE_BLEND_DEST_ALPHA_MASK ||
+     blend==GL_SCENE_BLEND_DEST_ALPHA_MASK_OPAQUE ||
     (blend>=GL_SCENE_BLEND_SURFACE_DEST_BASE && blend<=GL_SCENE_BLEND_SURFACE_DEST_LIMIT &&
      state->rgb_equation==GML_RENDER_BLEND_ADD && state->alpha_equation==GML_RENDER_BLEND_ADD));
   if(!source || (op->scene_family!=GML_RENDER_SCENE_SPRITE &&
@@ -2860,6 +2874,11 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
       backend->gl.BlendFuncSeparate(GL_SRC_ALPHA,GL_ONE,GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
     else if(blend==17)
       backend->gl.BlendFuncSeparate(GL_ONE,GL_ZERO,GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+    else if(blend==GL_SCENE_BLEND_DEST_ALPHA_MASK)
+      backend->gl.BlendFuncSeparate(GL_DST_ALPHA,GL_ONE_MINUS_DST_ALPHA,
+                                    GL_DST_ALPHA,GL_ONE_MINUS_DST_ALPHA);
+    else if(blend==GL_SCENE_BLEND_DEST_ALPHA_MASK_OPAQUE)
+      backend->gl.BlendFuncSeparate(GL_DST_ALPHA,GL_ONE_MINUS_DST_ALPHA,GL_ONE,GL_ZERO);
     else if(blend==13)
       backend->gl.BlendFuncSeparate(GL_ZERO,GL_ONE_MINUS_SRC_COLOR,GL_ZERO,GL_ONE_MINUS_SRC_ALPHA);
     else if(blend==14)
@@ -3619,8 +3638,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       (!(op->payload.primitive.rectangle_flags&
          (GML_RENDER_RECTANGLE_OUTLINE|GML_RENDER_RECTANGLE_GRADIENT)) ||
        (op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_PIXEL_SPAN));
-    uint32_t primitive_write_mask=rectangle &&
-      (op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_PIXEL_SPAN)?
+    uint32_t primitive_write_mask=rectangle && op->payload.primitive.pixel_write_mask?
       op->payload.primitive.pixel_write_mask:15u;
     int alpha_rect=inverse_rect || studio_alpha_rect || (op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT);
@@ -3726,7 +3744,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       /* A plain complete opaque rectangle is the existing resolved region fill. Drain earlier
        * commands before it, retain all special rectangles, and let that owner certify RGBA. */
       if(solid->kind==GML_RENDER_PRIMITIVE_RECTANGLE && primitive_blend==0 &&
-         solid->alpha==1.0 &&
+         solid->alpha==1.0 && !solid->pixel_write_mask &&
          !(solid->rectangle_flags&~GML_RENDER_RECTANGLE_TARGET_ALPHA) &&
          full_region(solid->region,target->width,target->height)){
         if(pending_count){

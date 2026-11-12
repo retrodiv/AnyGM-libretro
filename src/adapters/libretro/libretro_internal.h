@@ -63,8 +63,14 @@ typedef struct LibretroAdapter {
   AnygmMonotonicTimeFn frame_profile_clock;
   void *frame_profile_userdata;
   bool frame_profile_enabled;
+  bool frame_profile_detailed;
   bool frame_profile_previous_valid;
   uint64_t frame_profile_tick,frame_profile_previous_begin;
+  uint64_t frame_profile_summary_start,frame_profile_summary_samples;
+  uint64_t frame_profile_summary_period_ns,frame_profile_summary_max_ns;
+  uint64_t frame_profile_summary_max_tick,frame_profile_summary_invalid;
+  uint64_t frame_profile_summary_over_16667,frame_profile_summary_over_20000;
+  uint64_t frame_profile_summary_over_25000,frame_profile_summary_over_33333;
   char save_directory[1024];
   char cache_directory[1024];
   char **cache_paths;

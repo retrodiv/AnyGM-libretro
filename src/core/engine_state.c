@@ -7,13 +7,29 @@
 #include "anygm_host.h"
 #include "anygm_vfs.h"
 #include "gml_render_state.h"
+#include "gml_thread.h"
 
 
 typedef struct { uint8_t *data; size_t cap, pos; int ok; } CoreW;
 typedef struct { const uint8_t *data; size_t cap, pos; int ok; } CoreR;
+typedef struct {
+  GmlVM *vm;
+  uint8_t *data;
+  size_t capacity,written;
+  int ok;
+} VmStateWriteTask;
+
+static void *vm_state_write_worker(void *opaque){
+  VmStateWriteTask *task=(VmStateWriteTask*)opaque;
+  task->ok=gml_vm_state_save(task->vm,task->data,task->capacity,&task->written);
+  return NULL;
+}
 static void cw_raw(CoreW *s, const void *p, size_t n){
   if(n>SIZE_MAX-s->pos){ s->ok=0; s->pos=SIZE_MAX; return; }
-  if(s->data){ if(s->pos<=s->cap && n<=s->cap-s->pos) memcpy(s->data+s->pos,p,n); else s->ok=0; }
+  if(s->data){
+    if(s->pos<=s->cap && n<=s->cap-s->pos && (!n || p)) memcpy(s->data+s->pos,p,n);
+    else s->ok=0;
+  }
   s->pos+=n;
 }
 static void cr_raw(CoreR *s, void *p, size_t n){
@@ -77,6 +93,13 @@ static int state_size_is_metadata_only(const AnygmEngine *engine){
          engine_graphics_active(engine);
 }
 
+static int state_has_current_frame_capture(const AnygmEngine *engine){
+  return engine->state_frame_capture_valid &&
+    engine->state_frame_capture_generation==engine->host_frame_generation &&
+    engine->state_frame_capture_width==engine->output_width &&
+    engine->state_frame_capture_height==engine->output_height;
+}
+
 size_t engine_state_frame_capacity(const AnygmEngine *engine){
   /* Ceiling of state_write_completed_frame under the geometry this session is already known to
    * reach: width, height and encoding cost 12 bytes, then raw RGBA costs four bytes per pixel. The
@@ -98,14 +121,12 @@ size_t engine_state_frame_capacity(const AnygmEngine *engine){
 static void state_write_completed_frame(AnygmEngine *engine,CoreW *state,
                                         int *frame_exceeds_capacity){
   unsigned width=0,height=0;
+  const uint32_t *frame_pixels=engine->screen;
   int metadata_only=!state->data && state_size_is_metadata_only(engine);
   /* The state carries the exact completed frame. A frame that was produced somewhere other than
    * the processor has to be produced here first: serializing the buffer as it stands would write
    * whatever the previous frame left in it. */
   if(!engine->state_omit_frame){
-    if(!metadata_only && !engine_materialize_completed_frame(engine)){
-      state->ok=0; return;
-    }
     if(engine->have_presented_frame && engine->screen && engine->output_width && engine->output_height){
       width=engine->output_width;
       height=engine->output_height;
@@ -118,6 +139,57 @@ static void state_write_completed_frame(AnygmEngine *engine,CoreW *state,
      (width && (height==0 || (size_t)width>SIZE_MAX/(size_t)height))){
     state->ok=0;
     width=height=0;
+  }
+  if(!metadata_only && width && height){
+#if ANYGM_HARDWARE_RENDER
+    if(engine->frame_authority==ENGINE_FRAME_GPU_PRESENTED_DEVICE_RESIDENT){
+      size_t pixels=(size_t)width*height;
+      if(engine->state_frame_capture_capacity<pixels){
+        uint32_t *next=realloc(engine->state_frame_capture,pixels*sizeof(*next));
+        if(!next){ state->ok=0; return; }
+        engine->state_frame_capture=next;
+        engine->state_frame_capture_capacity=pixels;
+      }
+      if(!state_has_current_frame_capture(engine)){
+        if(!gml_gpu_read_completed_frame(engine->gpu,engine->state_frame_capture,width,
+                                         width,height,engine->host_frame_generation)){
+          state->ok=0; return;
+        }
+        engine->state_frame_capture_generation=engine->host_frame_generation;
+        engine->state_frame_capture_width=width;
+        engine->state_frame_capture_height=height;
+        engine->state_frame_capture_valid=1;
+      }
+      frame_pixels=engine->state_frame_capture;
+    } else if(engine->frame_authority==ENGINE_FRAME_GPU_PRESENTED_CPU_RECONSTRUCTIBLE){
+      size_t pixels=(size_t)width*height;
+      int copied=state_has_current_frame_capture(engine);
+      if(!copied && engine_graphics_is_current(engine)){
+        if(engine->state_frame_capture_capacity<pixels){
+          uint32_t *next=realloc(engine->state_frame_capture,pixels*sizeof(*next));
+          if(next){
+            engine->state_frame_capture=next;
+            engine->state_frame_capture_capacity=pixels;
+          }
+        }
+        if(engine->state_frame_capture_capacity>=pixels)
+          copied=gml_render_completed_screen_copy_device(
+            &engine->render,engine->screen,(int)width,(int)height,
+            engine->state_frame_capture,pixels);
+        if(copied){
+          engine->state_frame_capture_generation=engine->host_frame_generation;
+          engine->state_frame_capture_width=width;
+          engine->state_frame_capture_height=height;
+          engine->state_frame_capture_valid=1;
+        }
+      }
+      if(copied) frame_pixels=engine->state_frame_capture;
+      else if(!engine_materialize_completed_frame(engine)){ state->ok=0; return; }
+    } else
+#endif
+    if(!engine_materialize_completed_frame(engine)){
+      state->ok=0; return;
+    }
   }
   cw_u32(state,width);
   cw_u32(state,height);
@@ -138,7 +210,7 @@ static void state_write_completed_frame(AnygmEngine *engine,CoreW *state,
      * only that useful match avoids hashing every pixel and scanning all earlier row hashes for a
      * detailed native frame which will be stored raw anyway. */
     uint32_t match=y;
-    const uint32_t *row=engine->screen+(size_t)y*width;
+    const uint32_t *row=frame_pixels+(size_t)y*width;
     if(y && !memcmp(row-width,row,(size_t)width*sizeof(uint32_t))) match=rows[y-1];
     rows[y]=match;
     if(rows[y]==y) literal_rows++;
@@ -165,7 +237,7 @@ static void state_write_completed_frame(AnygmEngine *engine,CoreW *state,
   for(uint32_t y=0;y<height && state->ok;y++){
     if(use_raw) break;
     if(rows[y]!=y) continue;
-    const uint32_t *row=engine->screen+(size_t)y*width;
+    const uint32_t *row=frame_pixels+(size_t)y*width;
     for(unsigned at=0;at<width;){
       uint32_t value=row[at]; unsigned rend=at+1;
       while(rend<width && row[rend]==value) rend++;
@@ -183,7 +255,7 @@ static void state_write_completed_frame(AnygmEngine *engine,CoreW *state,
   }
   if(use_raw || raw_bytes<=rle_base+(size_t)runs*8u){
     cw_u32(state,ANYGM_FRAME_ENCODING_RAW);
-    cw_u32_array(state,engine->screen,pixels);
+    cw_u32_array(state,frame_pixels,pixels);
     free(rows);
     return;
   }
@@ -194,7 +266,7 @@ static void state_write_completed_frame(AnygmEngine *engine,CoreW *state,
   cw_u32(state,runs);
   for(uint32_t y=0;y<height && state->ok;y++){
     if(rows[y]!=y) continue;
-    const uint32_t *row=engine->screen+(size_t)y*width;
+    const uint32_t *row=frame_pixels+(size_t)y*width;
     for(unsigned at=0;at<width;){
       uint32_t value=row[at]; unsigned rend=at+1;
       while(rend<width && row[rend]==value) rend++;
@@ -491,16 +563,21 @@ static void state_write(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity
   int save_time=s->data &&
     anygm_host_development_setting(&engine->host,"GML_DBG_STATE_TIME")!=NULL;
   if(save_time) save_t0=anygm_host_monotonic_time_ns(&engine->host);
+  uint32_t save_frame_authority=engine->frame_authority;
   /* A proven current context lets a writer preserve the actual resident pixels,
    * rather than substituting their CPU recipe. Metadata queries do neither, and
    * hosts without this proof retain the established context-free state path. */
+  int derived_view_surface=(int)gml_global_arr(&engine->vm,"view_surface_id",0);
   if(s->data && engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
      engine_graphics_has_access_proof(engine)){
     int current=engine_graphics_is_current(engine);
-    if((current && !gml_render_observe_device_resources(&engine->render)) ||
-       (!current && (gml_render_device_observation_pending(&engine->render) ||
+    if((current && !gml_render_observe_state_resources(
+                    &engine->render,derived_view_surface)) ||
+       (!current && (gml_render_state_observation_pending(
+                       &engine->render,derived_view_surface) ||
                     (!engine->state_omit_frame &&
-                     engine->frame_authority==ENGINE_FRAME_GPU_PRESENTED_DEVICE_RESIDENT)))){
+                     engine->frame_authority==ENGINE_FRAME_GPU_PRESENTED_DEVICE_RESIDENT &&
+                     !state_has_current_frame_capture(engine))))){
       /* Reject before a renderer writer can turn replayable GPU authority into CPU bytes.
        * Already observed CPU images remain serializable while the host is unbound. */
       s->ok=0;
@@ -523,8 +600,28 @@ static void state_write(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity
   cw_raw(s,engine->key_press_carry,sizeof engine->key_press_carry);
   cw_raw(s,engine->key_release_defer,sizeof engine->key_release_defer);
   cw_u32(s,engine->mouse_button_cleared);
+  VmStateWriteTask vm_task={0};
+  gml_thread_t vm_thread;
+  int vm_thread_started=0;
+  if(s->data && s->ok && engine->state_vm_size_hint>=32768u){
+    size_t growth=engine->state_vm_size_hint/2u;
+    if(growth<65536u) growth=65536u;
+    vm_task.capacity=engine->state_vm_size_hint;
+    if(growth<=SIZE_MAX-vm_task.capacity) vm_task.capacity+=growth;
+    if(vm_task.capacity>s->cap) vm_task.capacity=s->cap;
+    if((vm_task.data=malloc(vm_task.capacity))!=NULL){
+      vm_task.vm=&engine->vm;
+      if(gml_thread_create(&vm_thread,vm_state_write_worker,&vm_task)==0)
+        vm_thread_started=1;
+      else { free(vm_task.data); vm_task.data=NULL; }
+    }
+  }
   state_write_completed_frame(engine,s,frame_exceeds_capacity);
-  if(frame_exceeds_capacity && *frame_exceeds_capacity) return;
+  if(frame_exceeds_capacity && *frame_exceeds_capacity){
+    if(vm_thread_started) gml_thread_join(vm_thread);
+    free(vm_task.data);
+    return;
+  }
   if(save_time) save_t1=anygm_host_monotonic_time_ns(&engine->host);
   size_t coren=s->pos-core_start;
   size_t render_start=s->pos;
@@ -548,15 +645,32 @@ static void state_write(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity
   size_t rendern=s->pos-render_start;
   if(save_time) save_t2=anygm_host_monotonic_time_ns(&engine->host);
   size_t vmn=0, audn=0;
-  if(s->data){
+  if(vm_thread_started){
+    gml_thread_join(vm_thread);
+    if(vm_task.ok && vm_task.written && vm_task.written<=vm_task.capacity){
+      vmn=vm_task.written;
+      cw_raw(s,vm_task.data,vmn);
+      engine->state_vm_size_hint=vmn;
+    } else {
+      size_t wr=0,avail=s->pos<=s->cap?s->cap-s->pos:0;
+      uint8_t *dst=s->data+(s->pos<=s->cap?s->pos:s->cap);
+      if(!gml_vm_state_save(&engine->vm,dst,avail,&wr)) s->ok=0;
+      vmn=wr;
+      s->pos+=wr;
+      if(wr) engine->state_vm_size_hint=wr;
+    }
+    free(vm_task.data);
+  } else if(s->data){
     size_t wr=0, avail=s->pos<=s->cap? s->cap-s->pos : 0;
     uint8_t *dst=s->data+(s->pos<=s->cap? s->pos : s->cap);
     if(!gml_vm_state_save(&engine->vm,dst,avail,&wr)) s->ok=0;
     vmn=wr;
     s->pos+=wr;
+    if(wr) engine->state_vm_size_hint=wr;
   } else {
     vmn = gml_vm_state_size(&engine->vm);
     if(!vmn) s->ok=0;
+    else engine->state_vm_size_hint=vmn;
     s->pos+=vmn;
   }
   if(save_time) save_t3=anygm_host_monotonic_time_ns(&engine->host);
@@ -592,10 +706,10 @@ static void state_write(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity
       #define SAVE_MS(a,b) ((double)((b)-(a))/1000000.0)
       engine_logf(engine,ANYGM_LOG_DEBUG,
         "[state-save-time] core=%.2fms frame=%.2fms render=%.2fms vm=%.2fms "
-        "audio=%.2fms checksum=%.2fms bytes=%llu\n",
+        "audio=%.2fms checksum=%.2fms bytes=%llu authority=%u\n",
         SAVE_MS(save_t0,save_t5),SAVE_MS(save_t0,save_t1),SAVE_MS(save_t1,save_t2),
         SAVE_MS(save_t2,save_t3),SAVE_MS(save_t3,save_t4),SAVE_MS(save_t4,save_t5),
-        (unsigned long long)s->pos);
+        (unsigned long long)s->pos,save_frame_authority);
       #undef SAVE_MS
     }
   }

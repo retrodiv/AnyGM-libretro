@@ -497,7 +497,8 @@ static int resident_rectangle_state_eligible(GmlRender *r,int cpu_passthrough){
   /* Rectangle CPU writers ignore a selected program only when the existing
    * classifier proves that neither a software effect nor an external executor
    * applies. Lines keep their separate, unqualified program boundary. */
-  return resident_primitive_state_eligible_rule(r,cpu_passthrough) && r->color_write_mask==15u;
+  return resident_primitive_state_eligible_rule(r,cpu_passthrough) &&
+    (r->color_write_mask==15u || (!r->alphablend && r->color_write_mask==8u));
 }
 
 int gml_render_cpu_backend_native_triangles(GmlRender *r,
@@ -795,6 +796,7 @@ static void resident_rectangle_payload(GmlRender *r,GmlRenderPrimitiveRect *p,
   int destination=r->alphablend && gml_render_blend_uses_destination_colour(r->blendmode);
   p->region=visible;p->authored_region=authored;p->kind=GML_RENDER_PRIMITIVE_RECTANGLE;
   p->alpha=alpha;p->alpha_blend=r->alphablend?1u:0u;
+  p->pixel_write_mask=r->color_write_mask==8u && !r->alphablend?8u:0u;
   int pixel_alpha=outline || (!gradient && r->blendmode!=0) || destination;
   int target_alpha=(r->alphablend && (blend==4u || (blend==1u && !outline)))?
     r->target_sp>0:pixel_alpha?gml_render_target_preserves_alpha(r):r->target_sp>0;
@@ -814,7 +816,8 @@ static int resident_rectangle_function(GmlRender *r,int x1,int y1,int x2,int y2,
   if(!resident_rectangle_state_eligible(r,1)) return 0;
   double alpha=fmax(0.0,fmin(1.0,r->alpha));
   int destination=r->alphablend && gml_render_blend_uses_destination_colour(r->blendmode);
-  if(alpha<=0.0 && !destination) return 1;
+  if(alpha<=0.0 && !destination &&
+     !(r->color_write_mask==8u && !r->alphablend)) return 1;
   if(x1>x2){int swap=x1;x1=x2;x2=swap;}
   if(y1>y2){int swap=y1;y1=y2;y2=swap;}
   if(x2<0 || y2<0 || x1>=r->fbw || y1>=r->fbh) return 1;

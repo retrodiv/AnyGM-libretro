@@ -485,6 +485,10 @@ int gml_render_resource_metrics(const GmlRender *r,
  * current context. Does not replay pixel recipes. This is an explicit observer,
  * never an ordinary frame-end maintenance operation or a size query. */
 int gml_render_observe_device_resources(GmlRender *r);
+/* State encoding carries numbered surfaces, while application/base/view resources are derived and
+ * retired on load. Observe only the persistent pixel owners that the renderer payload writes. */
+int gml_render_observe_state_resources(GmlRender *r,int derived_view_surface);
+int gml_render_state_observation_pending(const GmlRender *r,int derived_view_surface);
 /* Metadata-only: whether queued work or persistent resources still need device observation.
  * This never flushes, replays, invokes a device callback or reads a pixel plane. */
 int gml_render_device_observation_pending(const GmlRender *r);
@@ -764,6 +768,9 @@ int gml_render_scene_submit_pending(GmlRender *r);
 /* Completed SCREEN ownership is independent of the current borrowed Draw target. Readers retain
  * its device version; an actual CPU writer invalidates that version before modifying pixels. */
 int gml_render_completed_screen_read(GmlRender *r,uint32_t *pixels,int width,int height);
+int gml_render_completed_screen_copy_device(GmlRender *r,const uint32_t *screen,
+                                             int width,int height,uint32_t *destination,
+                                             size_t pixel_capacity);
 int gml_render_completed_screen_write(GmlRender *r,uint32_t *pixels,int width,int height);
 /* Opaque outside bands belong to this borrowed allocation, not necessarily to the
  * current application/numbered target. A successful device write leaves its CPU shadow stale. */

@@ -226,6 +226,17 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
         }
         source_name=scene->texture;
         resident_source=1;
+      } else if(image->device_completed){
+        if(image->device_completed!=1u || !backend->completed_valid ||
+           backend->completed_width!=image->width || backend->completed_height!=image->height ||
+           backend->completed_generation!=image->content_generation){
+          gml_gpu_opengl_record_error(error,error_capacity,
+                                      "completed graphics source unavailable");
+          failed=1;
+          break;
+        }
+        source_name=backend->completed_texture;
+        resident_source=1;
       } else if(!gml_gpu_opengl_upload_source(backend,image,counters,&source_name,op->linear?1:0)){
         gml_gpu_opengl_record_error(error,error_capacity,"graphics source upload failed");
         failed=1;

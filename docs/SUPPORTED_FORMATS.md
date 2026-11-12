@@ -63,6 +63,14 @@ join the save-state identity, so a state saved with them loads only while
 they are active; content without directives keeps its state identity
 unchanged.
 
+An intro implemented as several timed panels in one room can instead declare
+`introstep|78|obj_intro|0`. On a new A, B, or Start press in room 78, AnyGM shortens alarm 0 on
+each live `obj_intro` instance (including descendants) to one step. The content's own alarm event
+therefore performs the advance; the directive does not call game code by name, change rooms, or
+invent panel state. It is inactive with Content override directives disabled. Use it only when the
+named alarm is the measured authored transition between panels; `introskip|` remains the declaration
+for whole-room introductions.
+
 `ostype|N` declares which operating system this content is told it is running on, using the same
 numbering used by `os_type` (0 Windows, 1 macOS, 6 Linux, and so on). Without it content is
 answered `os_windows`, which is the desktop path most content is written for. It is read once the

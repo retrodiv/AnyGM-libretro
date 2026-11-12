@@ -86,6 +86,7 @@ int core_opt_redirect_room_order(AnygmEngine *engine) {
  *   surface|obj|var|W|H         resize surfaces named by an instance variable
  *   surface_canvas|obj|var|W|H  centred native HUD and full-width application composition
  *   monitorview|H|MIN|MAX       declare a monitor-derived logical view (ratios use W:H)
+ *   introstep|room|obj|alarm    A/B/Start advances one content-owned intro alarm
  *   @field=V                    engine state and data-declared aspect behavior
  *   obj@suffix->mode            event route: full_view | visible_view | backdrop | default
  *
@@ -824,6 +825,22 @@ static int state_reserve_parse(const char *code,size_t *bytes){
   return 1;
 }
 
+static int introstep_parse(const char *code,int *room,char *object,size_t object_capacity,
+                           int *alarm){
+  if(strncmp(code,"introstep|",10)) return 0;
+  const char *scan=code+10;
+  int parsed_room=-1,parsed_alarm=-1;
+  if(!parse_nonnegative_index(&scan,&parsed_room) || parsed_room>=1024 || *scan++!='|') return 0;
+  const char *name=scan;
+  while(*scan && CHEAT_NAMECH(*scan)) scan++;
+  size_t length=(size_t)(scan-name);
+  if(!length || length>=object_capacity || *scan++!='|' ||
+     !parse_nonnegative_index(&scan,&parsed_alarm) || *scan || parsed_alarm>=GML_ALARMS) return 0;
+  memcpy(object,name,length);object[length]=0;
+  *room=parsed_room;*alarm=parsed_alarm;
+  return 1;
+}
+
 /* Content keyboard bindings use pad button names and Win32 virtual-key numbers.
  * Auto removes only this key's declaration, retaining the ordinary keyboard mapping. */
 static int keyboard_binding_parse(const char *code,int *virtual_key,int *button,unsigned *port){
@@ -988,6 +1005,13 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
             snprintf(error,error_capacity,
                      "directive %d: keybind| takes a RetroPad port from 1 to %u, a virtual key from 2 to 255 and a button or auto",
                      line_number,(unsigned)ANYGM_MAX_GAMEPADS);
+            return 0;
+          }
+        } else if(!strncmp(slot->code,"introstep|",10)){
+          int room,alarm;char object[64];
+          if(!introstep_parse(slot->code,&room,object,sizeof object,&alarm)){
+            snprintf(error,error_capacity,
+                     "directive %d: introstep| takes room|object|alarm",line_number);
             return 0;
           }
         } else if(!strncmp(slot->code,"introskip|",10) || !strncmp(slot->code,"introauto|",10)){
@@ -1850,5 +1874,32 @@ void introskip_hook(AnygmEngine *engine){
   if((a||b||start) && engine->vm.pending_room < 0){
     int ord=-1; for(int i=0;i<engine->win.n_room_order;i++) if((int)engine->win.room_order[i]==room){ ord=i; break; }
     if(ord>=0 && ord+1<engine->win.n_room_order) gml_vm_goto_room_order(&engine->vm, ord+1);
+  }
+}
+
+/* A content-local intro may already own the exact event that advances one panel. An anchor can
+ * expose that event to ordinary pad input without replacing its code or guessing a room order:
+ * one button edge shortens the declared alarm to one step on matching live instances. */
+void introstep_hook(AnygmEngine *engine){
+  int pressed=(engine->pad_current[0][ANYGM_PAD_FACE_RIGHT] &&
+               !engine->pad_previous[0][ANYGM_PAD_FACE_RIGHT]) ||
+              (engine->pad_current[0][ANYGM_PAD_FACE_BOTTOM] &&
+               !engine->pad_previous[0][ANYGM_PAD_FACE_BOTTOM]) ||
+              (engine->pad_current[0][ANYGM_PAD_START] &&
+               !engine->pad_previous[0][ANYGM_PAD_START]);
+  if(!pressed || engine->vm.pending_room>=0) return;
+  int active=engine_boot_cheats_active(engine);
+  for(int slot_index=0;slot_index<active;slot_index++){
+    const CheatSlot *slot=&engine->boot_cheats[slot_index];
+    int room,alarm;char object[64];
+    if(!slot->enabled || !introstep_parse(slot->code,&room,object,sizeof object,&alarm) ||
+       room!=engine->vm.room_index) continue;
+    int target=gml_object_index_by_name(&engine->vm,object);
+    if(target<0) continue;
+    for(int instance_index=0;instance_index<engine->vm.inst_count;instance_index++){
+      GmlInstance *instance=&engine->vm.inst[instance_index];
+      if(instance->active && !instance->marked &&
+         gml_object_is(&engine->vm,instance->obj,target)) instance->alarm[alarm]=1.0;
+    }
   }
 }

@@ -78,9 +78,11 @@ static uint32_t scheduled_steps;
 static unsigned audio_calls;
 static uint64_t simulated_ns;
 static unsigned clock_calls,trace_calls;
+static unsigned summary_trace_calls;
 static unsigned clock_fail_at;
 static uint64_t clock_fail_value;
 static char trace_message[768];
+static char summary_trace_message[768];
 static int simulate_cost;
 static unsigned state_trace_calls;
 static char state_trace_message[768];
@@ -113,6 +115,10 @@ static void log_callback(enum retro_log_level level,const char *format,...){
     state_trace_calls++;
     if(simulate_state_cost) simulated_ns+=5000000u;
   }
+  if(!strncmp(message,"[libretro-frame-summary] ",25)){
+    snprintf(summary_trace_message,sizeof summary_trace_message,"%s",message);
+    summary_trace_calls++;
+  }
 }
 
 static void poll_callback(void){ if(simulate_cost) simulated_ns+=1000000u; }
@@ -134,6 +140,15 @@ static int profile_setting(const char *value){
 #else
   return value?setenv("GML_PROFILE_LIBRETRO_FRAME",value,1)==0:
                unsetenv("GML_PROFILE_LIBRETRO_FRAME")==0;
+#endif
+}
+
+static int summary_profile_setting(const char *value){
+#ifdef _WIN32
+  return _putenv_s("GML_PROFILE_LIBRETRO_FRAME_SUMMARY",value?value:"")==0;
+#else
+  return value?setenv("GML_PROFILE_LIBRETRO_FRAME_SUMMARY",value,1)==0:
+               unsetenv("GML_PROFILE_LIBRETRO_FRAME_SUMMARY")==0;
 #endif
 }
 
@@ -801,7 +816,8 @@ static int unload_releases_without_a_current_context(void){
 }
 
 static int whole_call_profile_contract(void){
-  REQUIRE(profile_setting(NULL),"clear optional frame profiling");
+  REQUIRE(profile_setting(NULL) && summary_profile_setting(NULL),
+          "clear optional frame profiling");
   begin(NULL,0,0,1,1);
   REQUIRE(load(),"default profile content loads");
   g_libretro.frame_profile_clock=profile_clock;
@@ -906,8 +922,32 @@ static int whole_call_profile_contract(void){
   retro_unload_game();
   REQUIRE(profile_setting("0"),"explicitly disable optional profile");
   REQUIRE(load() && !g_libretro.frame_profile_enabled,"zero is disabled on a fresh load");
+  retro_unload_game();
+  REQUIRE(profile_setting(NULL) && summary_profile_setting("2"),
+          "enable aggregate-only frame profiling after the first tick");
+  trace_calls=summary_trace_calls=0;simulated_ns=1000000u;simulate_cost=1;
+  REQUIRE(load() && g_libretro.frame_profile_enabled && !g_libretro.frame_profile_detailed,
+          "summary mode samples without enabling per-call logs");
+  g_libretro.frame_profile_clock=profile_clock;
+  g_libretro.frame_profile_userdata=&simulated_ns;
+  retro_run();
+  simulated_ns+=17000000u;
+  retro_run();
+  simulated_ns+=7000000u;
+  retro_run();
+  REQUIRE(!trace_calls && !state_trace_calls,
+          "aggregate mode emits no per-frame or state timing lines");
+  retro_unload_game();
+  REQUIRE(summary_trace_calls==1 &&
+          strstr(summary_trace_message,"start_tick=2 end_tick=3 samples=2 ") &&
+          strstr(summary_trace_message,"mean_period_ns=25000000 max_period_ns=30000000 ") &&
+          strstr(summary_trace_message,"max_period_tick=2 invalid=0 ") &&
+          strstr(summary_trace_message,"over_16_667_ms=2 over_20_ms=1 over_25_ms=1 ") &&
+          strstr(summary_trace_message,"over_33_333_ms=0"),
+          "aggregate mode reports exact mean, maximum and drop counts once at unload");
   finish();
-  REQUIRE(profile_setting(NULL),"restore optional profile environment");
+  REQUIRE(profile_setting(NULL) && summary_profile_setting(NULL),
+          "restore optional profile environment");
   return 0;
 }
 

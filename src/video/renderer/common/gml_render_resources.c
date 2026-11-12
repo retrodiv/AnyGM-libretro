@@ -862,6 +862,35 @@ int gml_render_resource_observe_device(GmlRenderResource *resource,
   return resource_checkpoint(resource,device,1);
 }
 
+int gml_render_resource_copy_device(const GmlRenderResource *resource,
+                                    const GmlRenderDeviceServices *device,
+                                    uint32_t *pixels,size_t pixel_capacity){
+  GmlRenderImageReadback readback={0};
+  GmlRenderImageReadbackResult result={0};
+  size_t count;
+  if(!resource || !device || !device->readback || !device->context || !pixels ||
+     resource->cpu_write_acquired || device->context!=resource->device_identity ||
+     resource->gpu_version!=resource->image.content_version ||
+     resource->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+     !resource->width || !resource->height ||
+     resource->width>SIZE_MAX/resource->height) return 0;
+  count=(size_t)resource->width*resource->height;
+  if(pixel_capacity<count) return 0;
+  readback.image=resource->image;
+  readback.storage_width=resource->width;
+  readback.storage_height=resource->height;
+  readback.region=(GmlRenderRect){0,0,resource->width,resource->height};
+  readback.pixel_format=resource->pixel_format;
+  readback.stride_bytes=resource->width*4u;
+  readback.byte_capacity=count*4u;
+  readback.bytes=pixels;
+  readback.result=&result;
+  return device->readback(device->context,&readback) &&
+    result.updated_region.x==0 && result.updated_region.y==0 &&
+    result.updated_region.width==resource->width &&
+    result.updated_region.height==resource->height;
+}
+
 static GmlRenderResourceExecution resource_submit(
   GmlRenderResource *resource,const GmlRenderDeviceServices *device,
   const GmlRenderDrawBatch *batch,const GmlRenderResourceSource *sources,

@@ -119,6 +119,8 @@ int gml_gpu_execute_plan(GmlGpu *gpu,GmlRenderPlan *plan);
  * Other readback plans cannot overwrite this image. Context loss forgets it without a call. */
 int gml_gpu_capture_completed_frame(GmlGpu *gpu,uint32_t width,uint32_t height,
                                    uint64_t generation);
+int gml_gpu_capture_device_presentation(GmlGpu *gpu,uint32_t width,uint32_t height,
+                                        uint64_t generation);
 int gml_gpu_read_completed_frame(GmlGpu *gpu,uint32_t *pixels,uint32_t pitch_pixels,
                                 uint32_t width,uint32_t height,uint64_t generation);
 /* Redisplay the unchanged completed image, or the immediately preceding device-only

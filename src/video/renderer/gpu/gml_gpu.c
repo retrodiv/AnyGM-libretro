@@ -100,6 +100,17 @@ int gml_gpu_capture_completed_frame(GmlGpu *gpu,uint32_t width,uint32_t height,
   return 1;
 }
 
+int gml_gpu_capture_device_presentation(GmlGpu *gpu,uint32_t width,uint32_t height,
+                                        uint64_t generation){
+  if(!gml_gpu_context_is_current(gpu) ||
+     !gml_gpu_opengl_capture_device_presentation(gpu->backend,
+       gpu->context.get_current_framebuffer(gpu->context.userdata),width,height,generation))
+    return 0;
+  gpu->counters.completed_frame_copies++;
+  gpu->counters.completed_frame_copy_bytes+=(uint64_t)width*height*4u;
+  return 1;
+}
+
 int gml_gpu_read_completed_frame(GmlGpu *gpu,uint32_t *pixels,uint32_t pitch_pixels,
                                 uint32_t width,uint32_t height,uint64_t generation){
   return gml_gpu_context_is_current(gpu) &&

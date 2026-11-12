@@ -1357,6 +1357,291 @@ static int blit_tpag_scale1_white_exact(GmlRender *r, GmlTpag *t, GmlAtlas *a,
   }
   return 1;
 }
+
+/* Room-tile subrectangles borrow atlas storage but deliberately detach every page cache.  The
+ * cached exact kernel above would therefore scan the source to build alpha bounds, fail to obtain
+ * an ARGB cache, and leave blit_one to scan the same pixels again.  Keep the established fallback
+ * compositor available as a single-pass kernel for that narrowly qualified transient view. */
+static void GML_HOT_RENDER blit_tpag_scale1_white_direct(GmlRender *r, const GmlTpag *t,
+                                          const GmlAtlas *a, int x0, int y0,
+                                          int cx0, int cy0, int cx1, int cy1,
+                                          int quantize_alpha){
+  int cw=cx1-cx0, ch=cy1-cy0;
+  int family=quantize_alpha?GML_BLEND_CLASSIC:gml_blend_family(r);
+  int sx0=t->sx+(cx0-x0), sy0=t->sy+(cy0-y0);
+  for(int yy=0; yy<ch; yy++){
+    const uint8_t *sp=a->px+((size_t)(sy0+yy)*a->w+sx0)*4;
+    uint32_t *dp=r->fb+(size_t)(cy0+yy)*r->fbw+cx0;
+    for(int xx=0; xx<cw; xx++,sp+=4){
+      int aa=sp[3];
+      if(aa<=0) continue;
+      gml_render_dispatch_cpu_scope_write(r);
+      int sr=sp[0],sg=sp[1],sb=sp[2];
+      if(!r->alphablend || aa>=255) dp[xx]=0xFF000000u|(sr<<16)|(sg<<8)|sb;
+      else {
+        uint32_t dv=dp[xx];
+        int ia=255-aa;
+        int dr=(dv>>16)&0xFF,dg=(dv>>8)&0xFF,db=dv&0xFF;
+        if(family==GML_BLEND_CLASSIC){
+          int rr=(sr*aa+127)/255+(dr*ia+127)/255;
+          int rg=(sg*aa+127)/255+(dg*ia+127)/255;
+          int rb=(sb*aa+127)/255+(db*ia+127)/255;
+          if(rr>255) rr=255;
+          if(rg>255) rg=255;
+          if(rb>255) rb=255;
+          dp[xx]=gml_sprite_target_alpha(r,dv,(unsigned)aa)|
+                   ((uint32_t)rr<<16)|((uint32_t)rg<<8)|(uint32_t)rb;
+        } else if(family==GML_BLEND_STUDIO2 ||
+                  (family==GML_BLEND_STUDIO1 &&
+                   gml_render_target_is_first_generation_application_surface(r))){
+          dp[xx]=gml_sprite_target_alpha(r,dv,(unsigned)aa)|
+                   (((sr*aa+dr*ia+127)/255)<<16)|
+                   (((sg*aa+dg*ia+127)/255)<<8)|((sb*aa+db*ia+127)/255);
+        } else {
+          dp[xx]=gml_sprite_target_alpha(r,dv,(unsigned)aa)|
+                   (((sr*aa+dr*ia)/255)<<16)|
+                   (((sg*aa+dg*ia)/255)<<8)|((sb*aa+db*ia)/255);
+        }
+      }
+    }
+  }
+}
+
+/* Integer nearest magnification repeats each source texel in a rectangular destination block.
+ * Room-tile views are transient, so the general per-destination inverse map repeats the same
+ * source lookup and blend decision scale_x*scale_y times without ever gaining a reusable page
+ * cache. This kernel preserves the established Studio blend equations while walking each source
+ * texel once. It is selected only for ordinary modern, unfiltered, unflipped room tiles. */
+static void GML_HOT_RENDER blit_tpag_integer_white_tile(GmlRender *r,const GmlTpag *t,const GmlAtlas *a,
+                                         int x0,int y0,int scale_x,int scale_y){
+  int family=gml_blend_family(r);
+  int dispatch_marked=0;
+  for(int source_y=0;source_y<t->sh;source_y++){
+    int destination_y0=y0+source_y*scale_y;
+    int destination_y1=destination_y0+scale_y;
+    if(destination_y0<0) destination_y0=0;
+    if(destination_y1>r->fbh) destination_y1=r->fbh;
+    if(destination_y1<=destination_y0) continue;
+    const uint8_t *source_row=a->px+((size_t)(t->sy+source_y)*a->w+t->sx)*4u;
+    for(int source_x=0;source_x<t->sw;source_x++){
+      const uint8_t *source=source_row+(size_t)source_x*4u;
+      unsigned source_alpha=source[3];
+      if(!source_alpha) continue;
+      int destination_x0=x0+source_x*scale_x;
+      int destination_x1=destination_x0+scale_x;
+      if(destination_x0<0) destination_x0=0;
+      if(destination_x1>r->fbw) destination_x1=r->fbw;
+      if(destination_x1<=destination_x0) continue;
+      if(!dispatch_marked){
+        gml_render_dispatch_cpu_scope_write(r);
+        dispatch_marked=1;
+      }
+      uint32_t opaque=0xFF000000u|((uint32_t)source[0]<<16)|
+        ((uint32_t)source[1]<<8)|(uint32_t)source[2];
+      for(int destination_y=destination_y0;destination_y<destination_y1;destination_y++){
+        uint32_t *destination=r->fb+(size_t)destination_y*r->fbw+destination_x0;
+        if(!r->alphablend || source_alpha==255u){
+          for(int destination_x=destination_x0;destination_x<destination_x1;destination_x++)
+            *destination++=opaque;
+          continue;
+        }
+        unsigned inverse=255u-source_alpha;
+        for(int destination_x=destination_x0;destination_x<destination_x1;
+            destination_x++,destination++){
+          uint32_t value=*destination;
+          unsigned destination_red=(value>>16)&255u;
+          unsigned destination_green=(value>>8)&255u;
+          unsigned destination_blue=value&255u;
+          unsigned red,green,blue;
+          if(family==GML_BLEND_STUDIO2){
+            red=(source[0]*source_alpha+destination_red*inverse+127u)/255u;
+            green=(source[1]*source_alpha+destination_green*inverse+127u)/255u;
+            blue=(source[2]*source_alpha+destination_blue*inverse+127u)/255u;
+          }else{
+            red=(source[0]*source_alpha+destination_red*inverse)/255u;
+            green=(source[1]*source_alpha+destination_green*inverse)/255u;
+            blue=(source[2]*source_alpha+destination_blue*inverse)/255u;
+          }
+          *destination=0xFF000000u|(red<<16)|(green<<8)|blue;
+        }
+      }
+    }
+  }
+}
+
+typedef struct GmlScale2WhiteBand {
+  GmlRender *render;
+  const GmlTpag *tpag;
+  const uint32_t *source;
+  const GmlTpagAlphaRun *runs;
+  int run_count;
+  const int *source_x;
+  const int *source_x_first,*source_x_end;
+  const int *source_y_first,*source_y_end;
+  int destination_x,destination_y;
+  int output_x0,output_x1,output_y0,output_y1;
+} GmlScale2WhiteBand;
+
+static inline void copy_argb_repeat2(uint32_t *destination,const uint32_t *source,int count){
+#if defined(__SSE2__)
+  while(count>=4){
+    __m128i value=_mm_loadu_si128((const __m128i*)source);
+    _mm_storeu_si128((__m128i*)destination,_mm_unpacklo_epi32(value,value));
+    _mm_storeu_si128((__m128i*)(destination+4),_mm_unpackhi_epi32(value,value));
+    source+=4; destination+=8; count-=4;
+  }
+#elif defined(__ARM_NEON) || defined(__ARM_NEON__)
+  while(count>=4){
+    uint32x4_t value=vld1q_u32(source);
+    uint32x4x2_t repeated=vzipq_u32(value,value);
+    vst1q_u32(destination,repeated.val[0]);
+    vst1q_u32(destination+4,repeated.val[1]);
+    source+=4; destination+=8; count-=4;
+  }
+#endif
+  while(count-->0){
+    uint32_t value=*source++;
+    destination[0]=value;
+    destination[1]=value;
+    destination+=2;
+  }
+}
+
+static void GML_HOT_RENDER scale2_white_band_rows(void *context,int row_start,int row_end,int slot){
+  GmlScale2WhiteBand *band=(GmlScale2WhiteBand*)context;
+  GmlRender *render=band->render;
+  const GmlTpag *tpag=band->tpag;
+  int wrote=0;
+  (void)slot;
+  int run=0;
+  while(run<band->run_count && band->runs[run].y<row_start) run++;
+  for(;run<band->run_count && band->runs[run].y<row_end;run++){
+    const GmlTpagAlphaRun *source_run=&band->runs[run];
+    int source_y=(int)source_run->y;
+    int output_y0=band->source_y_first[source_y];
+    int output_y1=band->source_y_end[source_y];
+    if(output_y0<0 || output_y1<=output_y0) continue;
+    int source_x0=(int)source_run->x;
+    int source_x1=source_x0+(int)source_run->len;
+    while(source_x0<source_x1 && band->source_x_first[source_x0]<0) source_x0++;
+    while(source_x1>source_x0 && band->source_x_end[source_x1-1]<0) source_x1--;
+    if(source_x1<=source_x0) continue;
+    int output_x0=band->source_x_first[source_x0];
+    int output_x1=band->source_x_end[source_x1-1];
+    const uint32_t *source_row=band->source+(size_t)source_y*tpag->sw;
+    uint32_t *first_destination=NULL;
+    for(int output_y=output_y0;output_y<output_y1;output_y++){
+      uint32_t *destination=render->fb+
+        (size_t)(band->destination_y+output_y)*render->fbw+
+        band->destination_x+output_x0;
+      if(source_run->alpha==255u && first_destination){
+        memcpy(destination,first_destination,(size_t)(output_x1-output_x0)*sizeof *destination);
+        wrote=1;
+        continue;
+      }
+      if(source_run->alpha==255u){
+        first_destination=destination;
+        int source_count=source_x1-source_x0;
+        if(source_count>0 && band->source_x_end[source_x0]==output_x0+2 &&
+           band->source_x_first[source_x1-1]+2==output_x1 &&
+           output_x1-output_x0==source_count*2){
+          copy_argb_repeat2(destination,source_row+source_x0,source_count);
+          wrote=1;
+          continue;
+        }
+        /* Exact 2x point sampling repeats a source texel once or twice after clipping. Walk the
+         * immutable source run instead of consulting the inverse map for both copies. This keeps
+         * the working set at source size and leaves the second destination row as one memcpy. */
+        for(int source_x=source_x0;source_x<source_x1;source_x++){
+          int first=band->source_x_first[source_x];
+          int end=band->source_x_end[source_x];
+          if(first<output_x0) first=output_x0;
+          if(end>output_x1) end=output_x1;
+          if(first>=end) continue;
+          uint32_t value=source_row[source_x];
+          uint32_t *span=render->fb+
+            (size_t)(band->destination_y+output_y)*render->fbw+
+            band->destination_x+first;
+          span[0]=value;
+          if(end-first>1) span[1]=value;
+        }
+        wrote=1;
+        continue;
+      }
+      double source_weight=source_run->alpha/255.0;
+      double destination_weight=1.0-source_weight;
+      for(int output_x=output_x0;output_x<output_x1;output_x++,destination++){
+        int source_x=band->source_x[output_x-band->output_x0];
+        uint32_t source=source_row[source_x];
+        if(source_run->alpha==255u) *destination=source;
+        else{
+          uint32_t previous=*destination;
+          unsigned red=(unsigned)(((source>>16)&255u)*source_weight+
+                                  ((previous>>16)&255u)*destination_weight+0.5);
+          unsigned green=(unsigned)(((source>>8)&255u)*source_weight+
+                                    ((previous>>8)&255u)*destination_weight+0.5);
+          unsigned blue=(unsigned)((source&255u)*source_weight+
+                                   (previous&255u)*destination_weight+0.5);
+          *destination=UINT32_C(0xff000000)|(red<<16)|(green<<8)|blue;
+        }
+        wrote=1;
+      }
+    }
+  }
+  if(wrote) gml_render_dispatch_cpu_scope_write(render);
+}
+
+static int GML_HOT_RENDER blit_tpag_scale2_white_exact(GmlRender *render,GmlTpag *tpag,GmlAtlas *atlas,
+                                        int destination_x,int destination_y,
+                                        int output_x0,int output_x1,
+                                        int output_y0,int output_y1,
+                                        const int *source_x,double sample_y){
+  const GmlTpagAlphaRun *runs=NULL;
+  int run_count=0;
+  uint32_t *source=tpag_argb_cache(render,tpag,atlas);
+  if(!source || !source_x ||
+     !tpag_alpha_runs(render,tpag,atlas,&runs,&run_count)) return 0;
+  size_t x_count=(size_t)tpag->sw,y_count=(size_t)tpag->sh;
+  if(!x_count || !y_count || x_count>SIZE_MAX/sizeof(int)/2u ||
+     y_count>SIZE_MAX/sizeof(int)/2u) return 0;
+  int *x_map=malloc(x_count*2u*sizeof *x_map);
+  int *y_map=malloc(y_count*2u*sizeof *y_map);
+  if(!x_map || !y_map){ free(x_map); free(y_map); return 0; }
+  int *x_first=x_map,*x_end=x_map+tpag->sw;
+  int *y_first=y_map,*y_end=y_map+tpag->sh;
+  for(int index=0;index<tpag->sw;index++) x_first[index]=x_end[index]=-1;
+  for(int index=0;index<tpag->sh;index++) y_first[index]=y_end[index]=-1;
+  for(int output_x=output_x0;output_x<output_x1;output_x++){
+    int mapped=source_x[output_x-output_x0];
+    if(mapped<0 || mapped>=tpag->sw) continue;
+    if(x_first[mapped]<0) x_first[mapped]=output_x;
+    x_end[mapped]=output_x+1;
+  }
+  for(int output_y=output_y0;output_y<output_y1;output_y++){
+    int mapped=gml_render_point_axis_index(output_y,sample_y,2.0);
+    if(mapped<0 || mapped>=tpag->sh) continue;
+    if(y_first[mapped]<0) y_first[mapped]=output_y;
+    y_end[mapped]=output_y+1;
+  }
+  GmlScale2WhiteBand band={
+    .render=render,.tpag=tpag,.source=source,.runs=runs,.run_count=run_count,
+    .source_x=source_x,.source_x_first=x_first,.source_x_end=x_end,
+    .source_y_first=y_first,.source_y_end=y_end,
+    .destination_x=destination_x,.destination_y=destination_y,
+    .output_x0=output_x0,.output_x1=output_x1,
+    .output_y0=output_y0,.output_y1=output_y1
+  };
+  unsigned long long pixels=(unsigned long long)(output_x1-output_x0)*
+    (unsigned long long)(output_y1-output_y0);
+  if(gml_render_row_bands_profitable(render,pixels))
+    gml_run_row_bands(render,tpag->sh,scale2_white_band_rows,&band);
+  else
+    scale2_white_band_rows(&band,0,tpag->sh,0);
+  free(y_map);
+  free(x_map);
+  return 1;
+}
+
 static int blit_tpag_scale1_white_draw_alpha(GmlRender *r, GmlTpag *t, GmlAtlas *a,
                                              int x0, int y0, int xx0, int xx1, int yy0, int yy1,
                                              double alpha,int quantize_alpha){
@@ -2804,6 +3089,7 @@ static void blit_one_band_rows(void *context,int row_start,int row_end,int slot)
   const double axs=b->axs,ays=b->ays;
   const double alpha=b->alpha;
   const int bR=b->bR,bG=b->bG,bB=b->bB;
+  int dispatch_marked=0;
   (void)slot;
   for(int row=row_start; row<row_end; row++){
     int yy=yy0+row;
@@ -2831,7 +3117,10 @@ static void blit_one_band_rows(void *context,int row_start,int row_end,int slot)
         if(sx<0) sx=0; else if(sx>sx_max) sx=sx_max;
         const uint8_t *sp=srow + (size_t)sx*4u;
         int aa=sp[3]; if(!aa) continue;
-        gml_render_dispatch_cpu_scope_write(r);
+        if(!dispatch_marked){
+          gml_render_dispatch_cpu_scope_write(r);
+          dispatch_marked=1;
+        }
         int px = flipx ? (x0-xx) : (x0+xx);
         uint32_t *dp=&drow[px];
         if(aa==255){ *dp=0xFF000000u|((uint32_t)sp[0]<<16)|((uint32_t)sp[1]<<8)|sp[2]; continue; }
@@ -3220,6 +3509,27 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
   int mapped_shader=mapped_texture_active(r) || solid_blur_alpha ||
                     shader_alpha_test_requires_filter(r) || wave!=NULL || uvwave!=NULL ||
                     r->fog_flat;
+  /* A room tile is a transient crop of a persistent atlas page.  On the ordinary modern world
+   * target, this exact unit-scale white draw needs neither page alpha metadata nor a pixel cache:
+   * the established direct compositor already handles opaque, transparent and partial texels.
+   * Restrict the bypass to a non-alpha target so skipping alpha-bound certification cannot alter
+   * later surface decisions. */
+  int transient_direct_tile=
+    rprof_tpag_id(r,t)<0 && t->project_authored_edges && modern_world_target &&
+    !gml_render_target_preserves_alpha(r) && !quantize_alpha &&
+    !r->font_sdf_active && fabs(axs-1.0)<0.001 && fabs(ays-1.0)<0.001 &&
+    (!r->interp || (fabs(dx-nearbyint(dx))<1e-9 && fabs(dy-nearbyint(dy))<1e-9)) &&
+    alpha>=1.0 && (blend&0xFFFFFFu)==0xFFFFFFu &&
+    r->blendmode==0 && !mapped_shader && !destination_colour_blend_active(r);
+  if(transient_direct_tile){
+    int cx0=x0<0?0:x0,cy0=y0<0?0:y0;
+    int cx1=x0+t->sw;if(cx1>r->fbw) cx1=r->fbw;
+    int cy1=y0+t->sh;if(cy1>r->fbh) cy1=r->fbh;
+    if(cx1<=cx0 || cy1<=cy0) return;
+    gml_render_maybe_prepare_draw(r);
+    blit_tpag_scale1_white_direct(r,t,a,x0,y0,cx0,cy0,cx1,cy1,0);
+    return;
+  }
   if(!t->alpha_scanned) (void)tpag_alpha_bounds(r,t,a,NULL,NULL,NULL,NULL);
   gml_render_maybe_prepare_draw(r);
   if(destination_colour_blend_active(r)) r->fb_opaque_known=0;
@@ -3271,47 +3581,7 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
     int cw=cx1-cx0, ch=cy1-cy0;
     if(cw<=0 || ch<=0) return;
     if(!blit_tpag_scale1_white_exact(r,t,a,x0,y0,cx0-x0,cx1-x0,cy0-y0,cy1-y0,quantize_alpha)){
-      int family=quantize_alpha?GML_BLEND_CLASSIC:gml_blend_family(r);
-      int sx0=t->sx + (cx0-x0), sy0=t->sy + (cy0-y0);
-      for(int yy=0; yy<ch; yy++){
-        const uint8_t *sp=a->px+((size_t)(sy0+yy)*a->w+sx0)*4;
-        uint32_t *dp=r->fb+(size_t)(cy0+yy)*r->fbw+cx0;
-        for(int xx=0; xx<cw; xx++, sp+=4){
-          int aa=sp[3];
-          if(aa<=0) continue;
-          gml_render_dispatch_cpu_scope_write(r);
-          int sr=sp[0], sg=sp[1], sb=sp[2];
-          if(!r->alphablend || aa>=255) dp[xx]=0xFF000000u|(sr<<16)|(sg<<8)|sb;
-          else {
-            uint32_t dv=dp[xx];
-            int ia=255-aa;
-            int dr=(dv>>16)&0xFF, dg=(dv>>8)&0xFF, db=dv&0xFF;
-            if(family==GML_BLEND_CLASSIC){
-              /* Fixed-function GM8 blending rounds the source and destination
-               * products independently before adding them.  Rounding only the
-               * combined numerator loses a channel at nearly-opaque texels. */
-              int rr=(sr*aa+127)/255 + (dr*ia+127)/255;
-              int rg=(sg*aa+127)/255 + (dg*ia+127)/255;
-              int rb=(sb*aa+127)/255 + (db*ia+127)/255;
-              if(rr>255) rr=255;
-              if(rg>255) rg=255;
-              if(rb>255) rb=255;
-              dp[xx]=gml_sprite_target_alpha(r,dv,(unsigned)aa)|
-                     ((uint32_t)rr<<16)|((uint32_t)rg<<8)|(uint32_t)rb;
-            } else if(family==GML_BLEND_STUDIO2 ||
-                      (family==GML_BLEND_STUDIO1 &&
-                       gml_render_target_is_first_generation_application_surface(r))) {
-              dp[xx]=gml_sprite_target_alpha(r,dv,(unsigned)aa)|
-                     (((sr*aa+dr*ia+127)/255)<<16)|
-                     (((sg*aa+dg*ia+127)/255)<<8)|((sb*aa+db*ia+127)/255);
-            } else {
-              dp[xx]=gml_sprite_target_alpha(r,dv,(unsigned)aa)|
-                     (((sr*aa+dr*ia)/255)<<16)|
-                     (((sg*aa+dg*ia)/255)<<8)|((sb*aa+db*ia)/255);
-            }
-          }
-        }
-      }
+      blit_tpag_scale1_white_direct(r,t,a,x0,y0,cx0,cy0,cx1,cy1,quantize_alpha);
     }
     return;
   }
@@ -3329,6 +3599,19 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
      alpha>=1.0 && (blend & 0xFFFFFF)==0xFFFFFF && r->blendmode==0 && !mapped_shader){
     if(blit_tpag_scale1_white_exact_flipped(
          r,t,a,x0,y0,xx0,xx1,yy0,yy1,flipx,flipy)) return;
+  }
+  int integer_tile_scale_x=(int)nearbyint(axs);
+  int integer_tile_scale_y=(int)nearbyint(ays);
+  if(rprof_tpag_id(r,t)<0 && t->project_authored_edges && modern_world_target &&
+     !gml_render_target_preserves_alpha(r) && !quantize_alpha && !r->interp &&
+     !flipx && !flipy && integer_tile_scale_x>=2 && integer_tile_scale_x<=8 &&
+     integer_tile_scale_y>=2 && integer_tile_scale_y<=8 &&
+     fabs(axs-integer_tile_scale_x)<1e-9 && fabs(ays-integer_tile_scale_y)<1e-9 &&
+     fabs(dx-nearbyint(dx))<1e-9 && fabs(dy-nearbyint(dy))<1e-9 &&
+     alpha>=1.0 && (blend&0xFFFFFFu)==0xFFFFFFu && r->blendmode==0 &&
+     !mapped_shader && !destination_colour_blend_active(r)){
+    blit_tpag_integer_white_tile(r,t,a,x0,y0,integer_tile_scale_x,integer_tile_scale_y);
+    return;
   }
   /* per-column source-x table: hoists the per-pixel division out of the row loop
    * (same expression, so the sampled columns are bit-identical) */
@@ -3376,6 +3659,17 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
       else if(source_x>=t->sw) source_x=t->sw-1;
     }
     lxtab[xx-xx0]=source_x;
+  }
+  if(lxtab && rprof_tpag_id(r,t)>=0 && !t->project_authored_edges &&
+     modern_world_target && !gml_render_target_preserves_alpha(r) &&
+     !quantize_alpha && !r->interp && !flipx && !flipy &&
+     fabs(axs-2.0)<1e-9 && fabs(ays-2.0)<1e-9 && alpha>=1.0 &&
+     (blend&0xFFFFFFu)==0xFFFFFFu && r->blendmode==0 && r->active_shader<0 &&
+     !r->alpha_test_enable && r->color_write_mask==0x0Fu && !mapped_shader &&
+     !destination_colour_blend_active(r) && gml_blend_family(r)==GML_BLEND_STUDIO2 &&
+     blit_tpag_scale2_white_exact(r,t,a,x0,y0,xx0,xx1,yy0,yy1,lxtab,sample_y)){
+    if(lxtab!=lxbuf) free(lxtab);
+    return;
   }
   /* The displacement is evaluated in texture coordinates, not output coordinates. Scaled pixel
    * art repeats each source texel many times, so precompute one warped atlas index per logical

@@ -293,6 +293,15 @@ struct AnygmEngine {
   int input_continuity_pending;
   int state_frame_available;
   unsigned state_frame_width,state_frame_height;
+  /* A state writer may observe a device-resident completed frame without making that CPU copy the
+   * renderer's new authority. Keeping this buffer separate avoids a readback/upload round trip on
+   * the frame after every rewind snapshot. It is transient and never part of state identity. */
+  uint32_t *state_frame_capture;
+  size_t state_frame_capture_capacity;
+  uint32_t state_frame_capture_generation;
+  unsigned state_frame_capture_width,state_frame_capture_height;
+  int state_frame_capture_valid;
+  size_t state_vm_size_hint;
   /* Set only while a save is being retried without its completed frame, because the buffer the
    * host offered cannot hold one. Never set while a state is measured: the answer a frontend sizes
    * itself from has to describe the whole state. */
@@ -484,6 +493,7 @@ void aspect_apply_program(AnygmEngine *engine);
 void menu_run(AnygmEngine *engine);
 void room_skip_hook(AnygmEngine *engine);
 void introskip_hook(AnygmEngine *engine);
+void introstep_hook(AnygmEngine *engine);
 int  engine_overrides_declared_os_type(AnygmEngine *engine);
 uint32_t engine_overrides_declared_renderer(AnygmEngine *engine);
 int  engine_overrides_keyboard_emulation(AnygmEngine *engine);
