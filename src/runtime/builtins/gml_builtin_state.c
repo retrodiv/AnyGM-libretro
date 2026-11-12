@@ -137,7 +137,16 @@ void gml_builtin_delayed_call_release(GmlVM *vm,uint32_t id){
   }
 }
 
+static void builtin_state_particle_physics_defaults(GmlBuiltinState *state){
+  state->phys_particle_radius_m=1;
+  state->phys_particle_density=1;
+  state->phys_particle_damping=1;
+  state->phys_particle_gravity_scale=1;
+  state->phys_particle_max_count=0;
+}
+
 static void builtin_state_resource_defaults(GmlBuiltinState *state){
+  builtin_state_particle_physics_defaults(state);
   state->next_buffer_id=1;
   state->async_group_status=1;
   state->next_ds_id=1;
@@ -467,6 +476,7 @@ static void builtin_state_physics_reset(GmlBuiltinState *state){
   state->phys_update_iterations=0;
   state->phys_paused=0;
   state->phys_debug_draw=0;
+  builtin_state_particle_physics_defaults(state);
 }
 
 void gml_builtin_physics_room_reset(GmlVM *vm){
@@ -1013,6 +1023,11 @@ void gml_builtin_state_write_physics(const GmlBuiltinState *state,
   gml_vm_state_write_i32(writer,state->phys_update_iterations);
   gml_vm_state_write_i32(writer,state->phys_paused);
   gml_vm_state_write_i32(writer,state->phys_debug_draw);
+  gml_vm_state_write_real(writer,state->phys_particle_radius_m);
+  gml_vm_state_write_real(writer,state->phys_particle_density);
+  gml_vm_state_write_real(writer,state->phys_particle_damping);
+  gml_vm_state_write_real(writer,state->phys_particle_gravity_scale);
+  gml_vm_state_write_i32(writer,state->phys_particle_max_count);
   int fixture_live=0;
   for(int i=0;i<GML_PHYS_FIXTURE_MAX;i++)
     if(state->phys_fixture[i].live) fixture_live++;
@@ -1090,6 +1105,19 @@ int gml_builtin_state_read_physics(GmlBuiltinState *state,
   state->phys_update_iterations=gml_vm_state_read_i32(reader);
   state->phys_paused=gml_vm_state_read_i32(reader);
   state->phys_debug_draw=gml_vm_state_read_i32(reader);
+  state->phys_particle_radius_m=gml_vm_state_read_real(reader);
+  state->phys_particle_density=gml_vm_state_read_real(reader);
+  state->phys_particle_damping=gml_vm_state_read_real(reader);
+  state->phys_particle_gravity_scale=gml_vm_state_read_real(reader);
+  state->phys_particle_max_count=gml_vm_state_read_i32(reader);
+  if(!isfinite(state->phys_particle_radius_m) || state->phys_particle_radius_m<=0 ||
+     !isfinite(state->phys_particle_density) || state->phys_particle_density<=0 ||
+     !isfinite(state->phys_particle_damping) || state->phys_particle_damping<0 ||
+     !isfinite(state->phys_particle_gravity_scale) || state->phys_particle_max_count<0 ||
+     (state->phys_particle_max_count>0 && state->phys_particle_max_count<128)){
+    gml_vm_state_reader_fail(reader,"bad physics particle configuration",0);
+    return 0;
+  }
   int fixture_live=gml_vm_state_read_i32(reader);
   if(fixture_live<0 || fixture_live>GML_PHYS_FIXTURE_MAX){
     gml_vm_state_reader_fail(reader,"bad physics fixture count",

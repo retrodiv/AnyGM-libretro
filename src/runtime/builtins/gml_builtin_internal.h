@@ -175,6 +175,9 @@ struct GmlBuiltinState {
   uint32_t phys_next_id;
   double phys_gravity_x, phys_gravity_y, phys_update_speed;
   int phys_update_iterations, phys_paused, phys_debug_draw;
+  double phys_particle_radius_m, phys_particle_density;
+  double phys_particle_damping, phys_particle_gravity_scale;
+  int phys_particle_max_count;
   char *file_find_name[GML_FF_MAX];
   int file_find_count;
   int file_find_index;

@@ -81,7 +81,7 @@ static size_t neutral_vm_body_end(const AnygmEngine *engine,const uint8_t *bytes
     start+=(size_t)part;
   }
   uint64_t length=read_u64(bytes+80);
-  if(length<37 || length>size-start || (uint32_t)read_u64(bytes+start+4)!=38)
+  if(length<37 || length>size-start || (uint32_t)read_u64(bytes+start+4)!=39)
     return SIZE_MAX;
   size_t end=start+(size_t)length;
   if(memcmp(bytes+end-4,(const uint8_t[4]){0},4)) return SIZE_MAX;
@@ -100,7 +100,7 @@ static int neutral_vm_body_end_controls(const AnygmEngine *engine,
     return fail("current neutral VM trailer was not located");
   uint8_t *candidate=malloc(size);
   if(!candidate) return fail("neutral trailer control allocation");
-  const uint32_t roots[]={53,54,55,56,57,58,59,60,61,62,64},vms[]={31,32,33,34,35,36,37,39};
+  const uint32_t roots[]={53,54,55,56,57,58,59,60,61,62,63,65},vms[]={31,32,33,34,35,36,37,38,40};
   size_t vm_start=STATE_HEADER_SIZE+(size_t)read_u64(bytes+64)+
                   (size_t)read_u64(bytes+72);
   int ok=1;
@@ -1643,6 +1643,67 @@ static int registered_member_state_cases(const AnygmHostServices *services,
   return ok?1:fail("registered member state, rejection or Reset");
 }
 
+static int particle_configuration_state_cases(const AnygmHostServices *services,
+                                               const AnygmContentSource *source){
+  AnygmEngine *engine=NULL;
+  int ok=anygm_create(services,&engine)==ANYGM_OK && anygm_load(engine,source,NULL)==ANYGM_OK;
+  const char *const setters[]={"physics_particle_set_radius","physics_particle_set_density",
+    "physics_particle_set_damping","physics_particle_set_gravity_scale","physics_particle_set_max_count"};
+  const char *const getters[]={"physics_particle_get_radius","physics_particle_get_density",
+    "physics_particle_get_damping","physics_particle_get_gravity_scale","physics_particle_get_max_count"};
+  const double values[]={7.25,0.375,2.5,-0.5,512};
+  uint8_t pattern[36];
+  for(int i=0;i<4;i++) write_double(pattern+i*8,i==0?values[0]*0.125:values[i]);
+  write_u32(pattern+32,512);
+  if(ok){
+    gml_builtin_call(&engine->vm,"physics_world_create",(GmlVal[]){vreal(0.125)},1);
+    for(int i=0;i<5;i++) gml_builtin_call(&engine->vm,setters[i],(GmlVal[]){vreal(values[i])},1);
+  }
+  uint8_t *baseline=NULL,*candidate=NULL; size_t size=0;
+  ok=ok && save_state(engine,&baseline,&size);
+  candidate=ok?malloc(size):NULL;ok=ok && candidate;
+  size_t start=ok?STATE_HEADER_SIZE+(size_t)read_u64(baseline+64)+(size_t)read_u64(baseline+72):0;
+  size_t length=ok?(size_t)read_u64(baseline+80):0,at=0;int matches=0;
+  for(size_t i=start;ok && i+sizeof pattern<=start+length;i++)
+    if(!memcmp(baseline+i,pattern,sizeof pattern)){at=i;matches++;}
+  ok=ok && matches==1;
+  if(ok){
+    for(int i=0;i<5;i++) gml_builtin_call(&engine->vm,setters[i],(GmlVal[]){vreal(2048)},1);
+    ok=anygm_state_load(engine,baseline,size)==ANYGM_OK && engine_matches(engine,baseline,size);
+    for(int i=0;i<5 && ok;i++){
+      GmlVal value=gml_builtin_call(&engine->vm,getters[i],NULL,0);
+      ok=value.t==V_REAL && value.d==values[i];
+    }
+  }
+  const double invalid[]={NAN,INFINITY,-INFINITY};
+  for(unsigned field=0;field<4 && ok;field++) for(unsigned j=0;j<3 && ok;j++){
+    memcpy(candidate,baseline,size);write_double(candidate+at+field*8,invalid[j]);refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,size,baseline,size,"nonfinite physics particle configuration");
+  }
+  for(unsigned field=0;field<3 && ok;field++){
+    memcpy(candidate,baseline,size);write_double(candidate+at+field*8,-1);refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,size,baseline,size,"negative physics particle configuration");
+  }
+  for(unsigned field=0;field<2 && ok;field++){
+    memcpy(candidate,baseline,size);write_double(candidate+at+field*8,0);refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,size,baseline,size,"zero physics particle radius or density");
+  }
+  const uint32_t invalid_counts[]={UINT32_MAX,1,127};
+  for(unsigned i=0;i<3 && ok;i++)
+    ok=reject_payload_u32(engine,candidate,size,baseline,size,at+32,invalid_counts[i],"invalid physics particle cap");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,4,63,"previous particle-configuration-free public schema");
+  if(ok) ok=reject_payload_u32(engine,candidate,size,baseline,size,start+4,38,"previous particle-configuration-free VM schema");
+  if(ok) ok=anygm_reset(engine)==ANYGM_OK;
+  if(ok){
+    gml_builtin_call(&engine->vm,"physics_world_create",(GmlVal[]){vreal(0.125)},1);
+    const double defaults[]={8,1,1,1,0};
+    for(int i=0;i<5 && ok;i++) ok=gml_builtin_call(&engine->vm,getters[i],NULL,0).d==defaults[i];
+  }
+  free(candidate);free(baseline);anygm_destroy(engine);
+  if(ok)puts("physics particle state: five settings, exact restore, 22 transactional rejections and Reset passed");
+  return ok?1:fail("physics particle configuration state");
+}
+
 static int date_timezone_state_cases(const AnygmHostServices *services,
                                      const AnygmContentSource *source){
   AnygmEngine *engine=NULL;
@@ -1743,7 +1804,8 @@ int main(void){
   source.size=content_size;
   if(anygm_load(engine,&source,NULL)!=ANYGM_OK) return fail("content load failed")?0:1;
 
-  if(!sprite_playback_state_cases(&services,&source) ||
+  if(!particle_configuration_state_cases(&services,&source) ||
+     !sprite_playback_state_cases(&services,&source) ||
      !deferred_game_load_state_cases(&services,&source) ||
      !sprite_information_state_cases(&services,&source) ||
      !registered_member_state_cases(&services,&source) ||

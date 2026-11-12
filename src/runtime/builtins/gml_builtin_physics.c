@@ -390,7 +390,55 @@ static GmlVal physics_draw_debug(GmlVM *vm){
   return vundef();
 }
 
+static GmlVal particle_configuration(GmlVM *vm,int property,int write,
+                                    GmlVal *arguments,int count){
+  double scale=gml_physics_world_scale(vm);
+  if(scale<=0) return write?vundef():vreal(-1);
+  GmlBuiltinState *state=vm->builtins;
+  double *properties[]={&state->phys_particle_radius_m,&state->phys_particle_density,
+                        &state->phys_particle_damping,&state->phys_particle_gravity_scale};
+  if(!write){
+    double value=property==4?state->phys_particle_max_count:*properties[property];
+    return vreal(property==0?value/scale:value);
+  }
+  double value=N(arguments,count,0);
+  if(count<1 || !isfinite(value)) return vundef();
+  if(property==4){
+    if(value<0 || value>INT_MAX || (value>0 && value<128)) return vundef();
+    state->phys_particle_max_count=(int)value;
+  }else{
+    if(property<2 && value<=0) return vundef();
+    if(property==0){
+      value*=scale;
+      if(!isfinite(value) || value<=0 || !isfinite(value/scale)) return vundef();
+    }
+    if(property==2 && value<0) value=0;
+    *properties[property]=value;
+  }
+  return vundef();
+}
+
 GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
+  if(!strcmp(nm,"physics_particle_get_radius"))
+    return particle_configuration(vm,0,0,a,n);
+  if(!strcmp(nm,"physics_particle_set_radius"))
+    return particle_configuration(vm,0,1,a,n);
+  if(!strcmp(nm,"physics_particle_get_density"))
+    return particle_configuration(vm,1,0,a,n);
+  if(!strcmp(nm,"physics_particle_set_density"))
+    return particle_configuration(vm,1,1,a,n);
+  if(!strcmp(nm,"physics_particle_get_damping"))
+    return particle_configuration(vm,2,0,a,n);
+  if(!strcmp(nm,"physics_particle_set_damping"))
+    return particle_configuration(vm,2,1,a,n);
+  if(!strcmp(nm,"physics_particle_get_gravity_scale"))
+    return particle_configuration(vm,3,0,a,n);
+  if(!strcmp(nm,"physics_particle_set_gravity_scale"))
+    return particle_configuration(vm,3,1,a,n);
+  if(!strcmp(nm,"physics_particle_get_max_count"))
+    return particle_configuration(vm,4,0,a,n);
+  if(!strcmp(nm,"physics_particle_set_max_count"))
+    return particle_configuration(vm,4,1,a,n);
   if(!strcmp(nm,"physics_debug")){
     double enabled=N(a,n,0);
     if(n>0 && isfinite(enabled)) vm->diagnostics.physics_error_output=enabled>=0.5;

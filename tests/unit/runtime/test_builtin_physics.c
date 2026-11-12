@@ -1129,7 +1129,93 @@ static void instance_debug_drawing(void){
   puts("physics debug: named/cached 2D/3D outlines, color, opacity, ownership and deletion passed");
 }
 
+static int particle_configuration(void){
+  const char *const getters[]={
+    "physics_particle_get_radius","physics_particle_get_density",
+    "physics_particle_get_damping","physics_particle_get_gravity_scale",
+    "physics_particle_get_max_count"
+  };
+  const char *const setters[]={
+    "physics_particle_set_radius","physics_particle_set_density",
+    "physics_particle_set_damping","physics_particle_set_gravity_scale",
+    "physics_particle_set_max_count"
+  };
+  const double values[]={7.25,0.375,2.5,-0.5,512};
+  GmlVM vm,peer; GmlWin win,peer_win; setup(&vm,&win); setup(&peer,&peer_win);
+  double peer_values[5];
+  for(int i=0;i<5;i++) peer_values[i]=call(&peer,getters[i],NULL,0).d;
+  for(int i=0;i<5;i++){
+    GmlVal result=call(&vm,setters[i],values+i,1);
+    GmlVal actual=call(&vm,getters[i],NULL,0);
+    if(result.t!=V_UNDEF || actual.t!=V_REAL || fabs(actual.d-values[i])>1e-12){
+      fprintf(stderr,"particle configuration: %s did not retain the authored value\n",setters[i]);
+      gml_vm_free(&vm); gml_vm_free(&peer); return 0;
+    }
+    assert(call(&peer,getters[i],NULL,0).d==peer_values[i]);
+    call(&vm,setters[i],NULL,0);
+    double invalid[]={NAN,INFINITY,-INFINITY};
+    for(int j=0;j<3;j++) call(&vm,setters[i],invalid+j,1);
+    assert(fabs(call(&vm,getters[i],NULL,0).d-values[i])<1e-12);
+  }
+  for(int i=0;i<5;i++){
+    int setter=gml_builtin_fast_id(&vm,setters[i]),getter=gml_builtin_fast_id(&vm,getters[i]);
+    assert(setter>0 && getter>0);
+    GmlVal argument=vreal(values[i]*2);
+    assert(gml_builtin_call_fast_id(&vm,setter,setters[i],&argument,1).t==V_UNDEF);
+    assert(fabs(gml_builtin_call_fast_id(&vm,getter,getters[i],NULL,0).d-values[i]*2)<1e-12);
+    call(&vm,setters[i],values+i,1);
+  }
+  CALL(&peer,"physics_world_create",0.25);
+  CALL(&peer,setters[0],values[0]);
+  assert(call(&peer,getters[0],NULL,0).d==values[0]);
+  assert(fabs(vm.builtins->phys_particle_radius_m-values[0]*0.1)<1e-14);
+  assert(peer.builtins->phys_particle_radius_m==values[0]*0.25);
+  for(int i=0;i<2;i++){
+    CALL(&vm,setters[i],-1);
+    assert(fabs(call(&vm,getters[i],NULL,0).d-values[i])<1e-12);
+  }
+  CALL(&vm,setters[0],0); CALL(&vm,setters[1],0);
+  assert(fabs(call(&vm,getters[0],NULL,0).d-values[0])<1e-12);
+  assert(call(&vm,getters[1],NULL,0).d==values[1]);
+  CALL(&vm,setters[2],-1); assert(call(&vm,getters[2],NULL,0).d==0);
+  CALL(&vm,setters[2],0); assert(call(&vm,getters[2],NULL,0).d==0);
+  CALL(&vm,setters[2],values[2]);
+  const double ignored_counts[]={-1,0.5,1,127,127.9,2147483648.0};
+  for(unsigned i=0;i<sizeof ignored_counts/sizeof *ignored_counts;i++){
+    call(&vm,setters[4],ignored_counts+i,1);
+    assert(call(&vm,getters[4],NULL,0).d==512);
+  }
+  CALL(&vm,setters[4],128.75); assert(call(&vm,getters[4],NULL,0).d==128);
+  CALL(&vm,setters[4],0); assert(call(&vm,getters[4],NULL,0).d==0);
+  CALL(&vm,setters[4],values[4]);
+  size_t size=gml_vm_state_size(&vm),written=0,used=0,repeated=0;
+  unsigned char *snapshot=malloc(size),*again=malloc(size),*bad=malloc(size);
+  assert(snapshot && again && bad && gml_vm_state_save(&vm,snapshot,size,&written));
+  for(int i=0;i<5;i++) CALL(&vm,setters[i],1024);
+  assert(gml_vm_state_load(&vm,snapshot,written,&used) && used==written);
+  for(int i=0;i<5;i++) assert(fabs(call(&vm,getters[i],NULL,0).d-values[i])<1e-12);
+  assert(gml_vm_state_save(&vm,again,size,&repeated));
+  assert(repeated==written && !memcmp(snapshot,again,written));
+  memcpy(bad,snapshot,written); bad[4]^=1;
+  assert(!gml_vm_state_load(&vm,bad,written,&used));
+  for(int i=0;i<5;i++) assert(fabs(call(&vm,getters[i],NULL,0).d-values[i])<1e-12);
+  CALL(&peer,"physics_world_create",0.1);
+  gml_builtin_physics_room_reset(&vm);
+  for(int i=0;i<5;i++) assert(call(&vm,getters[i],NULL,0).d==peer_values[i]);
+  vm.room_index=91;
+  for(int i=0;i<5;i++){
+    assert(call(&vm,getters[i],NULL,0).d==-1);
+    assert(CALL(&vm,setters[i],2048).t==V_UNDEF);
+  }
+  vm.room_index=-1;
+  for(int i=0;i<5;i++) assert(call(&vm,getters[i],NULL,0).d==peer_values[i]);
+  free(snapshot); free(again); free(bad); gml_vm_free(&vm); gml_vm_free(&peer);
+  puts("physics: particle configuration, isolation, units, reset and exact state passed");
+  return 1;
+}
+
 int main(void){
+  if(!particle_configuration()) return EXIT_FAILURE;
   error_output_control();
   units_and_ownership(); offset_and_rotation(); binding_origin_and_phase(); floor_joints_and_restore(); filtering_and_sensors(); malformed_geometry_and_mass();
   if(!bound_fixture_properties()) return EXIT_FAILURE;
