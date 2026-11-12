@@ -4,6 +4,8 @@
 /* Test scratch only: expand the current neutral fixture's value/text encodings to its preceding
  * layout. No state is loaded through this helper. Unsupported fixture features fail closed, and
  * the caller retains every historical size/hash pin as well as current-format roundtrip checks. */
+#include "gml_value_internal.h"
+
 typedef struct FixtureProjection {
   const uint8_t *input;
   size_t size,pos,used;
@@ -142,7 +144,7 @@ static void fixture_map(FixtureProjection *p){
  * against the live fixture. Direct state controls cover mutation/restoration of these fields. */
 static int project_fixture_playback(AnygmEngine *engine,uint8_t **data,size_t *written){
   uint8_t *bytes=*data;
-  if(*written<112 || (uint32_t)read_u64(bytes+4)!=59 || engine->render.n_spr<0)return 0;
+  if(*written<112 || (uint32_t)read_u64(bytes+4)!=60 || engine->render.n_spr<0)return 0;
   /* Only a neutral current blend may disappear from this historical scratch pin. */
   size_t render=112+(size_t)read_u64(bytes+64),render_size=(size_t)read_u64(bytes+72);
   const uint8_t neutral_blend[12]={0,0,0,0,1,0,0,0,1,0,0,0};
@@ -227,7 +229,7 @@ static int project_fixture_vm(AnygmEngine *engine,uint8_t **data,size_t *written
   if(*written<112 || (uint32_t)read_u64(bytes+4)!=43 || engine->vm.n_structs ||
      engine->vm.n_tilemaps || engine->vm.n_rtl || engine->vm.n_rte ||
      engine->vm.room_visuals || engine->vm.wait.active || engine->vm.n_timelines ||
-     engine->vm.next_array_owner ||
+     engine->vm.next_array_owner || engine->vm.member_names.len ||
      engine->vm.n_objects<0)return 0;
   size_t start=112+(size_t)read_u64(bytes+64)+(size_t)read_u64(bytes+72);
   size_t size=(size_t)read_u64(bytes+80);
@@ -236,10 +238,11 @@ static int project_fixture_vm(AnygmEngine *engine,uint8_t **data,size_t *written
   /* This bounded fixture has no recycled/relinked object groups. Strip only the verified
    * empty order trailer; nonempty new behavior belongs to its direct continuation controls. */
   /* Only the neutral ownership trailer may be omitted from this old payload pin. */
-  if(size<25 || bytes[start+size-1]!=0 ||
+  if(size<29 || bytes[start+size-1]!=0 ||
      memcmp(bytes+start+size-21,(const uint8_t[20]){0},20)){free(p);return 0;}
   if(memcmp(bytes+start+size-25,(const uint8_t[4]){0},4)){free(p);return 0;}
-  p->input=bytes+start;p->size=size-25;p->ok=1;
+  if(memcmp(bytes+start+size-29,(const uint8_t[4]){0},4)){free(p);return 0;}
+  p->input=bytes+start;p->size=size-29;p->ok=1;
   if((size_t)engine->vm.n_objects>(SIZE_MAX-4u)/28u){free(p);return 0;}
   size_t objects=4u+(size_t)engine->vm.n_objects*28u;
   if(objects>p->size || p->size-objects<4u){free(p);return 0;}
@@ -247,7 +250,7 @@ static int project_fixture_vm(AnygmEngine *engine,uint8_t **data,size_t *written
   if((uint32_t)read_u64(p->input+timeline_at)!=0 ||
      (uint32_t)read_u64(p->input+timeline_at+4)!=(uint32_t)engine->vm.n_objects){free(p);return 0;}
   fixture_copy(p,132);
-  if((uint32_t)read_u64(p->output+4)!=35)p->ok=0;
+  if((uint32_t)read_u64(p->output+4)!=36)p->ok=0;
   write_u32(p->output+4,19);
   for(unsigned i=0;i<16;i++)(void)fixture_value(p,0);
   fixture_copy(p,76+26*4+616*8+10*4); /* RNG and unchanged software-3D scalars */
@@ -368,7 +371,7 @@ static int fixture_projection_controls(AnygmEngine *engine,const uint8_t *baseli
     free(bytes);engine->vm.script_args[0]=original;gml_values_release_owned(&array,1);
   }
   engine->vm.script_args[0]=original;
-  const uint32_t unknown_roots[]={50,51,52,53,54,55,56,57,58,60};
+  const uint32_t unknown_roots[]={50,51,52,53,54,55,56,57,58,59,61};
   for(unsigned i=0;i<sizeof unknown_roots/sizeof unknown_roots[0] && ok;i++){
     uint8_t *bytes=NULL;size_t count=0;
     ok=save_state(engine,&bytes,&count);
@@ -383,6 +386,13 @@ static int fixture_projection_controls(AnygmEngine *engine,const uint8_t *baseli
     engine->vm.date_timezone=1;
     ok=save_state(engine,&bytes,&count) && !project_fixture_vm(engine,&bytes,&count);
     engine->vm.date_timezone=0;
+    free(bytes);
+  }
+  if(ok){
+    uint8_t *bytes=NULL;size_t count=0;
+    gml_builtin_call(&engine->vm,"variable_get_hash",(GmlVal[]){vstr("hidden_member")},1);
+    ok=save_state(engine,&bytes,&count) && !project_fixture_vm(engine,&bytes,&count);
+    gml_varmap_free_ex(&engine->vm.member_names,0);
     free(bytes);
   }
   if(ok){

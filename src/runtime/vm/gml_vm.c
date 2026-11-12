@@ -37,6 +37,9 @@ int gml_real_compare_epsilon(double lhs, double rhs, int cmp, double epsilon){
 int gml_real_compare(double lhs, double rhs, int cmp, int classic){
   return gml_real_compare_epsilon(lhs,rhs,cmp,classic?1e-13:1e-5);
 }
+uint32_t gml_vm_member_hash(const char *name){
+  return gml_value_name_hash(name);
+}
 
 int gml_input_text_variable(const char *name){
   return name && (!strcmp(name,"keyboard_string") || !strcmp(name,"keyboard_lastchar"));
@@ -540,6 +543,7 @@ void gml_vm_free(GmlVM *vm){
   GmlValueFreeContext free_context={0};
   gml_value_free_context_begin(&free_context);
   gml_varmap_free_with_context(&vm->globals,0,&free_context);
+  gml_varmap_free_with_context(&vm->member_names,0,&free_context);
   for(int i=0;i<vm->code_static_count;i++) gml_varmap_free_with_context(&vm->code_static[i],0,&free_context);
   for(int i=0;i<vm->inst_count;i++) gml_varmap_free_with_context(&vm->inst[i].vars,0,&free_context);
   for(int i=0;i<vm->n_structs;i++) if(vm->structs[i]) gml_varmap_free_with_context(&vm->structs[i]->vars,0,&free_context);

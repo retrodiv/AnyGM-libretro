@@ -327,6 +327,7 @@ typedef struct GmlVM {
   GmlSoftware3D *software3d;
   GmlVmDiagnostics diagnostics;
   GmlVarMap globals;
+  GmlVarMap member_names; /* registered dynamic member spellings; values are undefined */
   /* The two current host-text allocations. Language reads receive independent
    * values; the ordinary globals codec stores their contents, not these pointers. */
   char *input_text_owned[2];
@@ -750,6 +751,8 @@ void         gml_vm_draw_gui(GmlVM *vm);                     /* Draw GUI (Draw_6
 
 /* read a global scalar / global array element by name (0 if absent). Names are matched by
  * content (not interned ptr) so the host can query e.g. "view_xview". */
+/* Normalized bytecode/member token; the value owner retains its sole algorithm. */
+uint32_t gml_vm_member_hash(const char *name);
 double  gml_global_num(GmlVM *vm, const char *name);
 double  gml_global_arr(GmlVM *vm, const char *name, int idx);
 double  gml_room_speed(GmlVM *vm);

@@ -833,6 +833,29 @@ static GmlVarMap *struct_public_map(GmlVM *vm, GmlVal ref, GmlInstance **owner){
   if(owner) *owner=st;
   return st?&st->vars:NULL;
 }
+static GmlVarSlot *struct_hash_slot(GmlVarMap *map,uint32_t hash){
+  if(!map) return NULL;
+  for(int i=0;i<map->cap;i++)
+    if(map->slots[i].key && map->slots[i].hash==hash) return &map->slots[i];
+  return NULL;
+}
+static int struct_hash_argument(GmlVal value,uint32_t *hash){
+  if(value.t!=V_REAL || !isfinite(value.d) || floor(value.d)!=value.d ||
+     value.d<INT32_MIN || value.d>UINT32_MAX) return 0;
+  *hash=value.d<0?(uint32_t)(int32_t)value.d:(uint32_t)value.d;
+  return 1;
+}
+static const char *struct_registered_hash_name(GmlVM *vm,uint32_t hash){
+  GmlVarSlot *slot=struct_hash_slot(&vm->member_names,hash);
+  if(slot) return slot->key;
+  /* Compiled member references retain their immutable STRG spelling even when
+   * the bytecode carries only a normalized token at the call site. */
+  if(vm->win) for(int i=0;i<vm->win->n_strs;i++){
+    const char *name=vm->win->strs[i];
+    if(name && gml_vm_member_hash(name)==hash) return name;
+  }
+  return NULL;
+}
 static int struct_internal_name(const char *name){
   /* Runtime-private struct fields include __ctor and __name just as bound methods use __fn and
    * __self. Public field enumeration must hide all four, matching the JSON encoder. */
@@ -1270,13 +1293,44 @@ GmlVal gml_builtin_try_values_variables(GmlVM *vm, const char *nm, GmlVal *a, in
         if(p) *p=var_store_clone(a[2]);
         else {
           char *owned=strdup(key?key:"");
-          if(owned) *gml_varmap_put(map,owned)=var_store_clone(a[2]);
+          if(owned) *gml_varmap_put_owned(map,owned)=var_store_clone(a[2]);
         }
       }
       return vreal(0);
     }
     if(st && key && (!strcmp(key,"__fn") || !strcmp(key,"__self"))) st->method_bound=0;
     return vreal(varmap_delete_key(map,key));
+  }
+  if(!strcmp(nm,"variable_get_hash")){
+    if(n<1 || a[0].t!=V_STR) return vundef();
+    const char *name=a[0].s?a[0].s:"";
+    if(!gml_varmap_get(&vm->member_names,name)){
+      /* Use the same bounded map domain as its canonical state codec. */
+      if(vm->member_names.len>=100000) return vundef();
+      char *owned=strdup(name);
+      if(!owned) return vundef();
+      *gml_varmap_put_owned(&vm->member_names,owned)=vundef();
+    }
+    return vreal((double)gml_vm_member_hash(name));
+  }
+  if(!strcmp(nm,"struct_exists_from_hash") || !strcmp(nm,"struct_set_from_hash")){
+    int exists=!strcmp(nm,"struct_exists_from_hash");
+    uint32_t hash=0;
+    if(n<(exists?2:3) || !struct_hash_argument(a[1],&hash)) return vreal(0);
+    if(!gml_val_is_number_or_object(a[0]) || !GML_IS_STRUCT_ID(a[0].d) ||
+       floor(a[0].d)!=a[0].d) return vreal(0);
+    GmlVarMap *map=struct_public_map(vm,a[0],NULL);
+    if(!map) return vreal(0);
+    GmlVarSlot *slot=struct_hash_slot(map,hash);
+    if(exists) return vreal(slot!=NULL);
+    const char *key=slot?slot->key:struct_registered_hash_name(vm,hash);
+    if(key){
+      GmlVal named[]={a[0],vstr(key),a[2]};
+      /* Keep cloning, key ownership and bound-method invalidation in the
+       * established named assignment body. */
+      return gml_builtin_try_values_variables(vm,"variable_struct_set",named,3);
+    }
+    return vreal(0);
   }
   if(!strcmp(nm,"struct_get_from_hash")){
     GmlInstance *st=(n>0 && gml_val_is_number_or_object(a[0]) && GML_IS_STRUCT_ID(a[0].d))?gml_struct_find(vm,(unsigned)a[0].d):NULL;

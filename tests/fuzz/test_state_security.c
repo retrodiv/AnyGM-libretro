@@ -43,7 +43,7 @@ static void write_u64(uint8_t *data,uint64_t value){
 /* Locate older table controls only after proving this fixture has no semantic
  * array-owner records. Never skip a populated or unknown trailer. */
 static size_t neutral_vm_body_end(const AnygmEngine *engine,const uint8_t *bytes,size_t size){
-  if(engine->vm.next_array_owner) return SIZE_MAX;
+  if(engine->vm.next_array_owner || engine->vm.member_names.len) return SIZE_MAX;
   if(size<STATE_HEADER_SIZE || (uint32_t)read_u64(bytes+4)!=ANYGM_STATE_SCHEMA) return SIZE_MAX;
   size_t start=STATE_HEADER_SIZE;
   for(unsigned offset=64;offset<=72;offset+=8){
@@ -52,13 +52,15 @@ static size_t neutral_vm_body_end(const AnygmEngine *engine,const uint8_t *bytes
     start+=(size_t)part;
   }
   uint64_t length=read_u64(bytes+80);
-  if(length<29 || length>size-start || (uint32_t)read_u64(bytes+start+4)!=35)
+  if(length<33 || length>size-start || (uint32_t)read_u64(bytes+start+4)!=36)
     return SIZE_MAX;
   size_t end=start+(size_t)length;
   if(bytes[end-1]!=0) return SIZE_MAX;
   end--;
   if(memcmp(bytes+end-20,(const uint8_t[20]){0},20)) return SIZE_MAX;
-  return end-20;
+  end-=20;
+  if(memcmp(bytes+end-4,(const uint8_t[4]){0},4)) return SIZE_MAX;
+  return end-4;
 }
 
 static int neutral_vm_body_end_controls(const AnygmEngine *engine,
@@ -67,7 +69,7 @@ static int neutral_vm_body_end_controls(const AnygmEngine *engine,
     return fail("current neutral VM trailer was not located");
   uint8_t *candidate=malloc(size);
   if(!candidate) return fail("neutral trailer control allocation");
-  const uint32_t roots[]={53,54,55,56,57,58,60},vms[]={31,32,33,34,36};
+  const uint32_t roots[]={53,54,55,56,57,58,59,61},vms[]={31,32,33,34,35,37};
   size_t vm_start=STATE_HEADER_SIZE+(size_t)read_u64(bytes+64)+
                   (size_t)read_u64(bytes+72);
   int ok=1;
@@ -1493,6 +1495,67 @@ static int blend_state_cases(AnygmEngine *engine){
   return ok?1:fail("blend tuple/equation validation and rollback failed");
 }
 
+static int registered_member_state_cases(const AnygmHostServices *services,
+                                          const AnygmContentSource *source){
+  AnygmEngine *engine=NULL;
+  uint8_t *state=NULL,*candidate=NULL;size_t size=0;
+  int ok=anygm_create(services,&engine)==ANYGM_OK &&
+         anygm_load(engine,source,NULL)==ANYGM_OK;
+  if(ok) ok=engine->vm.member_names.len==0 && save_state(engine,&state,&size);
+  if(ok){
+    candidate=malloc(size);ok=candidate!=NULL;
+    size_t end=STATE_HEADER_SIZE+(size_t)read_u64(state+64)+(size_t)read_u64(state+72)+
+               (size_t)read_u64(state+80);
+    ok=ok && end<=size && end>=29 &&
+       !memcmp(state+end-25,(const uint8_t[25]){0},25);
+    if(ok) ok=reject_payload_u32(engine,candidate,size,state,size,end-25,UINT32_MAX,
+                                 "invalid member registry count");
+  }
+  free(candidate);candidate=NULL;free(state);state=NULL;
+  if(ok){
+    GmlVal arg=vstr("state_orphan_member");
+    GmlVal hash=gml_builtin_call(&engine->vm,"variable_get_hash",&arg,1);
+    ok=hash.t==V_REAL && engine->vm.member_names.len==1 && save_state(engine,&state,&size);
+  }
+  if(ok){
+    candidate=malloc(size);ok=candidate!=NULL;
+    size_t start=STATE_HEADER_SIZE+(size_t)read_u64(state+64)+(size_t)read_u64(state+72);
+    size_t end=start+(size_t)read_u64(state+80);
+    ok=ok && end<=size && end>=start+22 &&
+       !memcmp(state+end-21,(const uint8_t[21]){0},21) && state[end-22]==V_UNDEF;
+    if(ok){
+      memcpy(candidate,state,size);
+      candidate[end-22]=6; /* valid compact real zero, invalid registry marker */
+      refresh_checksum(candidate);
+      ok=reject_unchanged(engine,candidate,size,state,size,"non-undefined member registry marker");
+    }
+    if(ok) ok=reject_payload_u32(engine,candidate,size,state,size,start+4,35,
+                                 "previous member-registry-free VM schema");
+    if(ok) ok=reject_payload_u32(engine,candidate,size,state,size,4,59,
+                                 "previous member-registry-free public schema");
+  }
+  if(ok){
+    GmlVal *marker=gml_varmap_get(&engine->vm.member_names,"state_orphan_member");
+    ok=marker!=NULL;
+    if(ok){
+      *marker=vreal(0);ok=gml_vm_state_size(&engine->vm)==0;*marker=vundef();
+      *gml_varmap_value_owner(marker)=1;
+      ok=ok && gml_vm_state_size(&engine->vm)==0;
+      *gml_varmap_value_owner(marker)=0;
+    }
+  }
+  if(ok){
+    GmlVal arg=vstr("future_member");
+    gml_builtin_call(&engine->vm,"variable_get_hash",&arg,1);
+    ok=engine->vm.member_names.len==2 && anygm_state_load(engine,state,size)==ANYGM_OK &&
+       engine->vm.member_names.len==1 &&
+       !gml_varmap_get(&engine->vm.member_names,"future_member") && engine_matches(engine,state,size);
+  }
+  if(ok) ok=anygm_reset(engine)==ANYGM_OK && engine->vm.member_names.len==0;
+  free(candidate);free(state);anygm_destroy(engine);
+  return ok?1:fail("registered member state, rejection or Reset");
+}
+
 static int date_timezone_state_cases(const AnygmHostServices *services,
                                      const AnygmContentSource *source){
   AnygmEngine *engine=NULL;
@@ -1558,6 +1621,7 @@ int main(void){
   if(anygm_load(engine,&source,NULL)!=ANYGM_OK) return fail("content load failed")?0:1;
 
   if(!sprite_playback_state_cases(&services,&source) ||
+     !registered_member_state_cases(&services,&source) ||
      !date_timezone_state_cases(&services,&source) ||
      !instance_order_state_cases(&services,&source) ||
      !map_reference_state_cases(&services,&source) ||

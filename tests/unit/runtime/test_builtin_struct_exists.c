@@ -2,14 +2,121 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 /* Struct key presence and ownership across construction, cloning and removal. */
-#include "gml_vm.h"
+#include "gml_builtin.h"
 #include "gml_value_internal.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
-GmlVal gml_builtin_call(GmlVM *vm, const char *name, GmlVal *args, int count);
+static GmlVal hash_call(GmlVM *vm,const char *name,GmlVal *args,int count,int cached){
+  if(!cached) return gml_builtin_call(vm,name,args,count);
+  int id=gml_builtin_fast_id(vm,name);
+  return id>=0?gml_builtin_call_fast_id(vm,id,name,args,count):vundef();
+}
+
+static int hashed_struct_members(void){
+  int all=1;
+  for(int cached=0;cached<2;cached++){
+    int ok=1; unsigned char *state=NULL,*again=NULL;
+    char content_key[]="compiled_member"; char *strings[]={content_key};
+    GmlWin win={.bytecode=17,.strs=strings,.n_strs=1};
+    GmlVM vm={0},other={0};
+    if(gml_vm_init(&vm,&win,NULL) || gml_vm_init(&other,&win,NULL)) return 0;
+#define HASH_REQUIRE(expr) do { if(!(expr)){fprintf(stderr,"hashed struct: %s at %d\n",#expr,__LINE__);ok=0;goto done;} } while(0)
+    GmlInstance *target=gml_struct_new(&vm),*isolated=gml_struct_new(&other);
+    HASH_REQUIRE(target && isolated);
+    GmlVal ref=vobject(target->id),other_ref=vobject(isolated->id);
+    *gml_varmap_put(&vm.globals,"root")=ref;
+    char dynamic_key[40];snprintf(dynamic_key,sizeof dynamic_key,"runtime_%u",17u);
+    GmlVal name=vstr(dynamic_key);
+    GmlVal token=hash_call(&vm,"variable_get_hash",&name,1,cached);
+    HASH_REQUIRE(token.t==V_REAL && token.d==gml_value_name_hash("runtime_17"));
+    int registered=vm.member_names.len;
+    HASH_REQUIRE(hash_call(&vm,"variable_get_hash",&name,1,cached).d==token.d &&
+                 vm.member_names.len==registered);
+    memset(dynamic_key,'x',strlen(dynamic_key));
+    GmlVal args[]={ref,token,vint64(INT64_C(9007199254740993))};
+    hash_call(&vm,"struct_set_from_hash",args,3,cached);
+    GmlVal named[]={ref,vstr("runtime_17")};
+    GmlVal value=gml_builtin_call(&vm,"struct_get",named,2);
+    HASH_REQUIRE(value.t==V_REAL && value.number_kind==GML_NUM_INT64 &&
+                 value.integer==INT64_C(9007199254740993));
+    int owns_key=0;
+    for(int i=0;i<target->vars.cap;i++)
+      if(target->vars.slots[i].key && !strcmp(target->vars.slots[i].key,"runtime_17"))
+        owns_key=target->vars.slots[i].key_owned;
+    HASH_REQUIRE(owns_key);
+    HASH_REQUIRE(hash_call(&vm,"struct_exists_from_hash",args,2,cached).d==1);
+    HASH_REQUIRE(gml_builtin_call(&vm,"struct_get_from_hash",args,2).integer==value.integer);
+    /* The same numeric token cannot leak a dynamic spelling into another VM. */
+    GmlVal other_args[]={other_ref,token,vreal(1)};
+    hash_call(&other,"struct_set_from_hash",other_args,3,cached);
+    HASH_REQUIRE(other.member_names.len==0 && isolated->vars.len==0);
+    args[2]=vundef();hash_call(&vm,"struct_set_from_hash",args,3,cached);
+    HASH_REQUIRE(hash_call(&vm,"struct_exists_from_hash",args,2,cached).d==1 &&
+                 gml_builtin_call(&vm,"struct_get_from_hash",args,2).t==V_UNDEF);
+    args[1]=vreal(gml_int32_from_bits((uint32_t)token.d));args[2]=vreal(29);
+    hash_call(&vm,"struct_set_from_hash",args,3,cached);
+    HASH_REQUIRE(gml_builtin_call(&vm,"struct_get",named,2).d==29);
+    args[1]=vreal(gml_value_name_hash(content_key));args[2]=vreal(37);
+    hash_call(&vm,"struct_set_from_hash",args,3,cached);
+    GmlVal *compiled=gml_varmap_get(&target->vars,content_key);
+    HASH_REQUIRE(compiled && compiled->d==37);
+    name=vstr("array_member");GmlVal array_token=hash_call(&vm,"variable_get_hash",&name,1,cached);
+    GmlVal array=gml_arr_new(1,vint64(INT64_C(9007199254740993)));
+    args[1]=array_token;args[2]=array;hash_call(&vm,"struct_set_from_hash",args,3,cached);
+    value=gml_builtin_call(&vm,"struct_get_from_hash",args,2);
+    HASH_REQUIRE(value.t==V_ARR && gml_arr_get(value,0).integer==INT64_C(9007199254740993));
+    name=vstr("__fn");args[1]=hash_call(&vm,"variable_get_hash",&name,1,cached);args[2]=vreal(0);
+    target->method_bound=1;hash_call(&vm,"struct_set_from_hash",args,3,cached);
+    HASH_REQUIRE(!target->method_bound);
+    const double invalid[]={NAN,INFINITY,0.5,-2147483649.0,4294967296.0};
+    int fields=target->vars.len;
+    for(unsigned i=0;i<sizeof invalid/sizeof invalid[0];i++){
+      args[1]=vreal(invalid[i]);hash_call(&vm,"struct_set_from_hash",args,3,cached);
+      HASH_REQUIRE(hash_call(&vm,"struct_exists_from_hash",args,2,cached).d==0 && target->vars.len==fields);
+    }
+    const GmlVal bad_targets[]={vreal(NAN),vreal(INFINITY),vreal(1e300),vreal(IT_GLOBAL),
+                                vreal(GML_STRUCT_ID_BASE+0.5),vstr("not a struct")};
+    int globals=vm.globals.len;args[1]=token;
+    for(unsigned i=0;i<sizeof bad_targets/sizeof bad_targets[0];i++){
+      args[0]=bad_targets[i];hash_call(&vm,"struct_set_from_hash",args,3,cached);
+      HASH_REQUIRE(hash_call(&vm,"struct_exists_from_hash",args,2,cached).d==0 &&
+                   target->vars.len==fields && vm.globals.len==globals);
+    }
+    args[0]=ref;
+    HASH_REQUIRE(hash_call(&vm,"variable_get_hash",NULL,0,cached).t==V_UNDEF);
+    HASH_REQUIRE(hash_call(&vm,"struct_exists_from_hash",NULL,0,cached).d==0);
+    hash_call(&vm,"struct_set_from_hash",NULL,0,cached);
+    HASH_REQUIRE(target->vars.len==fields);
+    /* Save the name before any member can supply it back to the reader. */
+    name=vstr("orphan_member");GmlVal orphan=hash_call(&vm,"variable_get_hash",&name,1,cached);
+    HASH_REQUIRE(!gml_varmap_get(&target->vars,"orphan_member"));
+    registered=vm.member_names.len;
+    size_t capacity=gml_vm_state_size(&vm),written=0,used=0,repeated=0;
+    state=malloc(capacity);again=malloc(capacity);
+    HASH_REQUIRE(state && again && gml_vm_state_save(&vm,state,capacity,&written));
+    HASH_REQUIRE(gml_vm_state_save(&vm,again,capacity,&repeated) &&
+                 repeated==written && !memcmp(state,again,written));
+    name=vstr("future_member");hash_call(&vm,"variable_get_hash",&name,1,cached);
+    HASH_REQUIRE(vm.member_names.len==registered+1);
+    HASH_REQUIRE(gml_vm_state_load(&vm,state,written,&used) && used==written);
+    HASH_REQUIRE(vm.member_names.len==registered && !gml_varmap_get(&vm.member_names,"future_member"));
+    HASH_REQUIRE(gml_vm_state_save(&vm,again,capacity,&repeated) &&
+                 repeated==written && !memcmp(state,again,written));
+    args[0]=ref;args[1]=orphan;args[2]=vreal(41);
+    hash_call(&vm,"struct_set_from_hash",args,3,cached);
+    named[1]=vstr("orphan_member");
+    HASH_REQUIRE(gml_builtin_call(&vm,"struct_get",named,2).d==41);
+done:
+    free(state);free(again);gml_vm_free(&vm);gml_vm_free(&other);free(win.str_hix);
+    all &= ok;
+#undef HASH_REQUIRE
+  }
+  return all;
+}
 
 static int says(const char *label, GmlVal v, int want){
   int got = (v.t==V_REAL && v.d!=0.0) ? 1 : 0;
@@ -71,7 +178,7 @@ static int json_struct_key_lifetimes(void){
 int main(void){
   GmlVM vm;
   memset(&vm,0,sizeof vm);
-  int ok=json_struct_key_lifetimes();
+  int ok=json_struct_key_lifetimes() && hashed_struct_members();
 
   GmlInstance *made=gml_struct_new(&vm);
   if(!made){

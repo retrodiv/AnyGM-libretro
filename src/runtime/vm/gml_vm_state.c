@@ -18,7 +18,7 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=35 };
+enum { GML_VM_STATE_SCHEMA=36 };
 enum { STATE_MAX_TILEMAPS=512, STATE_TILEMAP_RECORD_BYTES=56 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 /* IDs are assigned in canonical traversal order, never from addresses. Zero is the null array;
@@ -1650,6 +1650,7 @@ static void runtime_clear(GmlVM *vm,GmlArr **partial_arrays,uint32_t partial_cou
   GmlValueFreeContext free_context={0};
   gml_value_free_context_begin(&free_context);
   gml_varmap_free_with_context(&vm->globals,0,&free_context);
+  gml_varmap_free_with_context(&vm->member_names,0,&free_context);
   for(int i=0;i<vm->code_static_count;i++) gml_varmap_free_with_context(&vm->code_static[i],0,&free_context);
   for(int i=0;i<vm->inst_count;i++) gml_varmap_free_with_context(&vm->inst[i].vars,0,&free_context);
   for(int i=0;i<vm->n_structs;i++) if(vm->structs[i]) gml_varmap_free_with_context(&vm->structs[i]->vars,0,&free_context);
@@ -2307,8 +2308,18 @@ static GmlTimeline *sr_timelines(StateR *s, GmlVM *vm, int *total){
   *total=count; return table;
 }
 
+static int member_names_valid(const GmlVarMap *names){
+  int count=0;
+  if(names->cap<0 || names->len<0 || (names->cap && !names->slots)) return 0;
+  for(int i=0;i<names->cap;i++) if(names->slots[i].key){
+    if(names->slots[i].val.t!=V_UNDEF || names->slots[i].array_owner) return 0;
+    count++;
+  }
+  return count==names->len;
+}
 static void sw_vm(StateW *s, GmlVM *vm){
   if(!vm || (vm->date_timezone!=0 && vm->date_timezone!=1)){ s->ok=0; return; }
+  if(!member_names_valid(&vm->member_names)){ s->ok=0; return; }
   int save_time=s->data && vm && vm->host &&
     anygm_host_development_setting(vm->host,"GML_DBG_STATE_TIME")!=NULL &&
     vm->diagnostics.state_save_time_log_count<16;
@@ -2472,6 +2483,7 @@ static void sw_vm(StateW *s, GmlVM *vm){
   sw_timelines(s,vm);
   sw_object_properties(s,vm);
   sw_instance_order(s,vm);
+  sw_varmap(s,&vm->member_names);
   sw_array_ownership(s,vm);
   sw_u8(s,(unsigned)vm->date_timezone);
   vm_state_profile_globals(vm);
@@ -2858,7 +2870,11 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   vm->render=render; vm->audio=audio;
   gml_obj_alive_recount(vm);   /* family live counts rebuilt from the restored pool */
   if(s.ok)sr_instance_order(&s,vm);
+  if(s.ok)sr_varmap(vm,&s,&vm->member_names);
   if(s.ok)sr_array_ownership(&s,vm);
+  if(s.ok && !member_names_valid(&vm->member_names)){
+    state_debug(vm,"bad registered member names",s.pos,0); s.ok=0;
+  }
   if(s.ok){
     unsigned mode=sr_u8(&s);
     if(mode>1){ state_debug(vm,"bad date timezone",s.pos,0); s.ok=0; }

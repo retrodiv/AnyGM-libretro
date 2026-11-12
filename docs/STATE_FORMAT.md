@@ -20,9 +20,17 @@ failed partial reads leave the canonical image unpublished and invalid as a
 current resource. See R03-P9-INCREMENTAL-CHECKPOINT in
 [the renderer map](RENDERER_BACKENDS.md) for owners and controls.
 
-The current AnyGM save-state schema is `59`. It is the format transported by
+The current AnyGM save-state schema is `60`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `60` introduces VM schema `36`. Registered dynamic member spellings use
+the existing canonical variable-map codec, with undefined marker values and no
+array-owner identities. The registry precedes array ownership and the final date
+mode byte. Immutable content names remain available through their content owner.
+Restoration preserves names registered before their first member insertion;
+invalid registry values, duplicate keys and ownership are rejected. Earlier
+public and VM schemas reject transactionally; other embedded schemas are unchanged.
 
 Schema `59` introduces VM schema `35`. A fixed one-byte VM trailer retains the
 date timezone selector: local is zero and UTC is one. Other values are rejected
