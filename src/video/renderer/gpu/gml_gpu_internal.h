@@ -43,6 +43,8 @@ int gml_gpu_opengl_capture_completed_frame(GmlGpuBackend *backend,uintptr_t fram
 int gml_gpu_opengl_capture_device_presentation(GmlGpuBackend *backend,uintptr_t framebuffer,
                                                 uint32_t width,uint32_t height,
                                                 uint64_t generation);
+int gml_gpu_opengl_capture_scene_image(GmlGpuBackend *backend,GmlRenderImageRef image,
+                                        uint32_t width,uint32_t height,uint64_t generation);
 int gml_gpu_opengl_read_completed_frame(GmlGpuBackend *backend,uintptr_t framebuffer,
                                          uint32_t *pixels,uint32_t pitch_pixels,
                                          uint32_t width,uint32_t height,uint64_t generation,

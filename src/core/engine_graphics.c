@@ -635,6 +635,12 @@ static int engine_present_indirect_gui_host(AnygmEngine *engine,
     source->identity=record.identity;
     source->content_generation=source->pixel_generation=record.generation;
   }
+  if(engine->state_gpu_frame_capture &&
+     record.source_width==(int)engine->output_width &&
+     record.source_height==(int)engine->output_height &&
+     !gml_gpu_capture_scene_image(engine->gpu,record.resident_image,engine->output_width,
+                                  engine->output_height,engine->host_frame_generation))
+    return 0;
   if(crt_identity) blit->alpha_write=0xFFu;
   else {
     blit->axis_x.rule=blit->axis_y.rule=application
@@ -1009,6 +1015,10 @@ static int engine_present_hardware_canvas_plan(AnygmEngine *engine,
     GmlPlanImage *source=&engine->host_plan.images[0];
     source->cpu_pixels=NULL;
     source->resident_image=completed;
+    if(engine->state_gpu_frame_capture &&
+       !gml_gpu_capture_scene_image(engine->gpu,completed,engine->output_width,
+                                    engine->output_height,engine->host_frame_generation))
+      return 0;
     if(resident_crt) engine->host_plan.operations[1].alpha_write=0xFFu;
     if(identity_crop){
       /* Keep the actual texture extent. Identity pixel-centre axes select

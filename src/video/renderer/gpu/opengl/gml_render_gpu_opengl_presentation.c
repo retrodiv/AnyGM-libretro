@@ -166,6 +166,13 @@ int gml_gpu_opengl_capture_device_presentation(GmlGpuBackend *backend,uintptr_t 
   return captured;
 }
 
+int gml_gpu_opengl_capture_scene_image(GmlGpuBackend *backend,GmlRenderImageRef ref,
+                                        uint32_t width,uint32_t height,uint64_t generation){
+  GlSceneImage *image=backend?gml_gpu_opengl_scene_image(backend,ref):NULL;
+  return image && image->framebuffer && image->width==width && image->height==height &&
+    gml_gpu_opengl_capture_completed_frame(backend,image->framebuffer,width,height,generation);
+}
+
 int gml_gpu_opengl_read_completed_frame(GmlGpuBackend *backend,uintptr_t framebuffer,
                                          uint32_t *pixels,uint32_t pitch_pixels,
                                          uint32_t width,uint32_t height,uint64_t generation,

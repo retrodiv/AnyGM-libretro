@@ -151,6 +151,7 @@ static void state_write_completed_frame(AnygmEngine *engine,CoreW *state,
         engine->state_frame_capture_capacity=pixels;
       }
       if(!state_has_current_frame_capture(engine)){
+        engine->state_gpu_frame_capture=1;
         if(!gml_gpu_read_completed_frame(engine->gpu,engine->state_frame_capture,width,
                                          width,height,engine->host_frame_generation)){
           state->ok=0; return;
@@ -165,6 +166,7 @@ static void state_write_completed_frame(AnygmEngine *engine,CoreW *state,
       size_t pixels=(size_t)width*height;
       int copied=state_has_current_frame_capture(engine);
       if(!copied && engine_graphics_is_current(engine)){
+        engine->state_gpu_frame_capture=1;
         if(engine->state_frame_capture_capacity<pixels){
           uint32_t *next=realloc(engine->state_frame_capture,pixels*sizeof(*next));
           if(next){

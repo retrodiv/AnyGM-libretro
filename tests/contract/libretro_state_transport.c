@@ -25,6 +25,7 @@ static size_t stub_capacity_reserve;
 static unsigned snapshot_failure_messages;
 static size_t last_load_bytes;
 static unsigned complete_saves;
+static unsigned complete_save_attempts;
 static unsigned resume_saves;
 static unsigned resume_size_queries;
 static unsigned complete_hint_queries;
@@ -126,6 +127,7 @@ size_t anygm_state_capacity_reserve(const AnygmEngine *engine){
 }
 AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written){
   (void)engine;
+  complete_save_attempts++;
   if(written) *written=0;
   if(!data || !written || capacity<stub_state_bytes) return ANYGM_ERROR_INVALID_ARGUMENT;
   memset(data,0x4D,stub_state_bytes);
@@ -210,6 +212,7 @@ static int begin_frontend(int variable_support){
   snapshot_failure_messages=0;
   stub_resume_state_bytes=0;
   complete_saves=0;
+  complete_save_attempts=0;
   resume_saves=0;
   resume_size_queries=0;
   complete_hint_queries=0;
@@ -492,8 +495,12 @@ static int variable_frontend_keeps_compact_ring_and_complete_save(void){
   if(save_capacity<=ring_capacity || save_capacity<stub_hint_bytes) return 0;
   uint8_t *ring=malloc(ring_capacity),*save=malloc(save_capacity);
   if(!ring || !save){ free(ring); free(save); return 0; }
-  int ok=retro_serialize(ring,ring_capacity) && resume_saves==1u && complete_saves==0u;
-  if(ok) ok=retro_serialize(save,save_capacity) && complete_saves==1u && resume_saves==1u;
+  int ok=retro_serialize(ring,ring_capacity) && resume_saves==1u && complete_saves==0u &&
+         complete_save_attempts==1u && g_libretro.startup_complete_frame_refused;
+  if(ok) ok=retro_serialize(ring,ring_capacity) && resume_saves==2u &&
+            complete_save_attempts==1u;
+  if(ok) ok=retro_serialize(save,save_capacity) && complete_saves==1u && resume_saves==2u &&
+            complete_save_attempts==2u;
   free(ring);
   free(save);
   retro_unload_game();

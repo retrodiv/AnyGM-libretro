@@ -121,6 +121,9 @@ int gml_gpu_capture_completed_frame(GmlGpu *gpu,uint32_t width,uint32_t height,
                                    uint64_t generation);
 int gml_gpu_capture_device_presentation(GmlGpu *gpu,uint32_t width,uint32_t height,
                                         uint64_t generation);
+/* Copy an exact resident scene image into the device-local completed-frame observer. */
+int gml_gpu_capture_scene_image(GmlGpu *gpu,GmlRenderImageRef image,uint32_t width,
+                                uint32_t height,uint64_t generation);
 int gml_gpu_read_completed_frame(GmlGpu *gpu,uint32_t *pixels,uint32_t pitch_pixels,
                                 uint32_t width,uint32_t height,uint64_t generation);
 /* Redisplay the unchanged completed image, or the immediately preceding device-only

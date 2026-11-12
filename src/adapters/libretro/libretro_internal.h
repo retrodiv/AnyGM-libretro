@@ -48,6 +48,10 @@ typedef struct LibretroAdapter {
   bool reset_pending_frame;
   bool reset_ring_rejection_reported;
   bool startup_ring_compact;
+  /* Once a compact fixed slot has proved unable to hold the optional completed picture, later
+   * rewind pushes use the canonical frame-free form directly. The slot cannot grow, and retrying
+   * the same expensive picture observation every frame cannot make it fit. */
+  bool startup_complete_frame_refused;
   size_t fixed_state_capacity;
   size_t startup_resume_capacity;
   bool state_capacity_growth_reported;

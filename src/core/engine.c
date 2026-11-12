@@ -1130,6 +1130,7 @@ static void engine_unload(AnygmEngine *engine){
   engine->have_presented_frame=0; engine->audio_accumulator=0.0; engine->fps=60.0; engine->fps_room=-1;
   engine->state_just_loaded=0; engine->state_reapply_size=0;
   engine->state_frame_available=0; engine->input_continuity_pending=0;
+  engine->state_gpu_frame_capture=0;
   engine->state_frame_width=engine->state_frame_height=0;
   engine->content_fingerprint=0; engine->compatibility_fingerprint=0;
   engine->runtime_ended=0; engine->shutdown_sent=0; engine->loaded=0;

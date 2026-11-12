@@ -367,6 +367,7 @@ bool libretro_content_start(void){
   g_libretro.reset_pending_frame=false;
   g_libretro.reset_ring_rejection_reported=false;
   g_libretro.startup_ring_compact=false;
+  g_libretro.startup_complete_frame_refused=false;
   g_libretro.fixed_state_capacity=0;
   g_libretro.startup_resume_capacity=0;
   g_libretro.state_capacity_growth_reported=false;
@@ -528,6 +529,7 @@ void retro_unload_game(void){
   g_libretro.reset_pending_frame=false;
   g_libretro.reset_ring_rejection_reported=false;
   g_libretro.startup_ring_compact=false;
+  g_libretro.startup_complete_frame_refused=false;
   g_libretro.fixed_state_capacity=0;
   g_libretro.startup_resume_capacity=0;
   g_libretro.state_capacity_growth_reported=false;
@@ -924,13 +926,16 @@ bool retro_serialize(void *data,size_t size){
                     g_libretro.startup_resume_capacity &&
                     size<=g_libretro.startup_resume_capacity;
   AnygmResult result;
-  if(startup_slot){
+  if(startup_slot && g_libretro.startup_complete_frame_refused){
+    result=anygm_state_save_for_resume(g_libretro.engine,data,size,&written);
+  } else if(startup_slot){
     /* The conservative completed-frame ceiling chose this compact ring, but the encoded frame can
      * still fit: repeated rows and runs often reduce a large raster below that ceiling. Preserve
      * exact rewind whenever the real complete state fits the frontend's slot. Only fall back to
      * the explicit frame-free form when the complete writer actually refuses the offered bytes. */
     result=anygm_state_save(g_libretro.engine,data,size,&written);
     if(result!=ANYGM_OK || written>size){
+      g_libretro.startup_complete_frame_refused=true;
       written=0;
       result=anygm_state_save_for_resume(g_libretro.engine,data,size,&written);
     }

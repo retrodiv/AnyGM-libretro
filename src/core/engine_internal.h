@@ -301,6 +301,9 @@ struct AnygmEngine {
   uint32_t state_frame_capture_generation;
   unsigned state_frame_capture_width,state_frame_capture_height;
   int state_frame_capture_valid;
+  /* Enabled after resident-frame state observation. A device-local copy at presentation completes
+   * scene dependencies before the next observation without transferring pixels to the CPU. */
+  int state_gpu_frame_capture;
   size_t state_vm_size_hint;
   /* Set only while a save is being retried without its completed frame, because the buffer the
    * host offered cannot hold one. Never set while a state is measured: the answer a frontend sizes
