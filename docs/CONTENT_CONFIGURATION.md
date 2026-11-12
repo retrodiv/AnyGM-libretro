@@ -82,7 +82,24 @@ See [provenance and licenses](PROVENANCE.md#imohash-recognition).
 These are recognition hints, not proof of complete-file equality. Different
 payloads can share them. Duplicate equivalent sections reject the INI, and every
 section is validated even when unmatched. No content database is bundled.
-Archive, patch and derived-cache integrity checks remain mandatory and independent.
+Archive extraction CRC checks and exact patch source/result SHA-256 validation
+remain independent of recognition.
+
+The archive-extraction, embedded Studio-image, Classic conversion and source-project
+caches use the same default imohash for source and cached-payload identity. Cache
+names and schema-2 markers retain all 128 bits. Sizes, producer identity and the
+applicable transformation/dependency signatures also participate in reuse. Loose
+source projects are rebuilt because their external dependencies can change.
+Prepared input-adapter images likewise use imohash identities after preparation
+and patch validation have completed. Small metadata and dependency signatures
+retain their existing algorithms; this does not replace every hash in the loader.
+
+These disposable caches use sampled checks, not complete-byte integrity proofs:
+a same-size modification outside the sampled regions may go undetected. Clear the
+content cache if its contents are suspect. Older cache formats are regenerated on
+the first load. Cabinet installation manifests retain their separate verification
+contract. Reading or converting content may still require the complete input even
+though computing its cache identity takes only the samples described above.
 
 Payload selectors cannot declare pre-routing `input`, `input.probe` or `input.final`
 adapters: those must be available before payload selection and belong in defaults

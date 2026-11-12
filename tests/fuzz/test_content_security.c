@@ -2277,11 +2277,11 @@ static int cache_producer_change_case(const AnygmHostServices *services,const ch
   FILE *stream=fopen(marker,"r+b");
   uint8_t original[8],changed[8];
   if(!stream) return fail("producer marker was not published");
-  ok=fseek(stream,0,SEEK_END)==0 && ftell(stream)>=72 &&
-     fseek(stream,64,SEEK_SET)==0 && fread(original,1,sizeof original,stream)==sizeof original;
+  ok=fseek(stream,0,SEEK_END)==0 && ftell(stream)>=96 &&
+     fseek(stream,80,SEEK_SET)==0 && fread(original,1,sizeof original,stream)==sizeof original;
   if(ok){
     for(size_t i=0;i<sizeof changed;i++) changed[i]=original[i]^0xA5u;
-    ok=fseek(stream,64,SEEK_SET)==0 &&
+    ok=fseek(stream,80,SEEK_SET)==0 &&
        fwrite(changed,1,sizeof changed,stream)==sizeof changed;
   }
   if(fclose(stream)!=0) ok=0;
@@ -2291,11 +2291,73 @@ static int cache_producer_change_case(const AnygmHostServices *services,const ch
     return fail("another producer marker was not regenerated");
   stream=fopen(marker,"rb");
   if(!stream) return fail("regenerated producer marker is missing");
-  ok=fseek(stream,64,SEEK_SET)==0 &&
+  ok=fseek(stream,80,SEEK_SET)==0 &&
      fread(changed,1,sizeof changed,stream)==sizeof changed &&
      memcmp(changed,original,sizeof original)==0;
   if(fclose(stream)!=0) ok=0;
   return ok?1:fail("regenerated marker did not restore this producer");
+}
+
+static AnygmHostServices cache_observed_vfs;
+static const char *cache_observed_paths[2];
+static void *cache_observed_files[16];
+static unsigned cache_observed_kinds[16];
+static size_t cache_observed_bytes[2];
+
+static void *cache_observe_open(void *userdata,const char *path,AnygmFileMode mode){
+  void *file=cache_observed_vfs.file_open(userdata,path,mode);
+  for(unsigned kind=0;file && kind<2;kind++){
+    if(strcmp(path,cache_observed_paths[kind])) continue;
+    unsigned index=0;while(index<16 && cache_observed_files[index]) index++;
+    if(index==16){ cache_observed_vfs.file_close(userdata,file);return NULL; }
+    cache_observed_files[index]=file;cache_observed_kinds[index]=kind;
+    break;
+  }
+  return file;
+}
+
+static size_t cache_observe_read(void *userdata,void *file,void *data,size_t size){
+  size_t got=cache_observed_vfs.file_read(userdata,file,data,size);
+  for(unsigned index=0;index<16;index++) if(cache_observed_files[index]==file){
+    cache_observed_bytes[cache_observed_kinds[index]]+=got;break;
+  }
+  return got;
+}
+
+static void cache_observe_close(void *userdata,void *file){
+  for(unsigned index=0;index<16;index++)
+    if(cache_observed_files[index]==file) cache_observed_files[index]=NULL;
+  cache_observed_vfs.file_close(userdata,file);
+}
+
+/* Warm resolution must sample both large files rather than scan or extract them. */
+static int cache_sample_read_case(const AnygmHostServices *services,const char *root){
+  size_t size=1024u*1024u;
+  uint8_t *form=calloc(1,size);
+  if(!form) return 0;
+  memcpy(form,"FORM",4);
+  ZipEntry entry={(const uint8_t *)"data.win",8,form,(uint32_t)size,(uint32_t)size,0,0,0,0};
+  Buffer archive={0};char path[512],resolved[1024],warm[1024];
+  int ok=build_zip(&entry,1,&archive) &&
+    snprintf(path,sizeof path,"%s/sampled-cache.zip",root)<(int)sizeof path &&
+    write_file(path,archive.data,archive.size);
+  free(form);free(archive.data);
+  AnygmContentRouter router={0};router.host=services;router.cache_directory=root;
+  if(!ok || !anygm_content_resolve_path(&router,path,resolved,sizeof resolved,NULL,0,NULL,0))
+    return fail("sampled cache fixture did not resolve");
+  cache_observed_vfs=*services;
+  cache_observed_paths[0]=path;cache_observed_paths[1]=resolved;
+  memset(cache_observed_files,0,sizeof cache_observed_files);
+  memset(cache_observed_bytes,0,sizeof cache_observed_bytes);
+  AnygmHostServices observed=*services;
+  observed.file_open=cache_observe_open;observed.file_read=cache_observe_read;
+  observed.file_close=cache_observe_close;router.host=&observed;
+  if(!anygm_content_resolve_path(&router,path,warm,sizeof warm,NULL,0,NULL,0) || strcmp(warm,resolved))
+    return fail("warm sampled cache did not reuse its payload");
+  for(unsigned kind=0;kind<2;kind++)
+    if(cache_observed_bytes[kind]<49152u || cache_observed_bytes[kind]>49152u+64u)
+      return fail("warm cache exceeded its sampled source or payload read budget");
+  return 1;
 }
 
 
@@ -2652,6 +2714,7 @@ int main(void){
 
   int ok=lzx_stored_block_alignment_cases() &&
          cache_producer_change_case(&services,root) &&
+         cache_sample_read_case(&services,root) &&
          embedded_cabinet_cases(&services,root) &&
          embedded_lzx_cabinet_cases(&services,root) &&
          embedded_nsis_cases(&services,root) &&
@@ -2712,8 +2775,10 @@ int main(void){
   if(ok){
     char outdir[1024],marker[1100],payload[1100],archive_path[512];
     snprintf(archive_path,sizeof archive_path,"%s/safe.zip",root);
-    snprintf(outdir,sizeof outdir,"%s/safe-%016llx-anygm-archive",root,
-             (unsigned long long)hash64_bytes(safe_archive.data,safe_archive.size));
+    uint8_t digest[16];char hex[33];
+    ok=gml_imohash(safe_archive.data,safe_archive.size,digest);
+    for(unsigned i=0;i<16;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
+    snprintf(outdir,sizeof outdir,"%s/safe-%s-anygm-archive",root,hex);
     snprintf(marker,sizeof marker,"%s/.anygm_cache",outdir);
     snprintf(payload,sizeof payload,"%s/data.win",outdir);
     ok=write_file(marker,"broken",6)&&write_file(payload,"FAIL",4)&&
@@ -2721,6 +2786,32 @@ int main(void){
     uint8_t restored[4];
     if(!ok||!read_prefix(payload,restored,sizeof restored)||memcmp(restored,"FORM",4))
       ok=fail("corrupt cache was not regenerated");
+
+    uint8_t *record=NULL,payload_digest[16];size_t record_size=0;
+    if(ok) ok=read_file(marker,&record,&record_size) && record_size>=96 &&
+      !memcmp(record,"AGCH\002\0\0\0\140\0\0\0",12) &&
+      gml_imohash(form,sizeof form-1,payload_digest) &&
+      !memcmp(record+24,digest,16) && !memcmp(record+48,payload_digest,16);
+    if(!ok) fail("cache marker did not retain complete imohash identities");
+    const unsigned offsets[]={39,63};
+    for(unsigned i=0;ok && i<2;i++){
+      record[offsets[i]]^=0x80;
+      ok=write_file(marker,record,record_size) &&
+        resolve_archive(&services,root,"safe.zip",&safe_archive,1);
+      free(record);record=NULL;
+      if(ok) ok=read_file(marker,&record,&record_size) && record_size>=96 &&
+        !memcmp(record+24,digest,16) && !memcmp(record+48,payload_digest,16);
+      if(!ok) fail("cache ignored the upper half of an imohash identity");
+    }
+    if(ok){
+      record[4]=1;
+      ok=write_file(marker,record,72) &&
+        resolve_archive(&services,root,"safe.zip",&safe_archive,1);
+      free(record);record=NULL;
+      if(ok) ok=read_file(marker,&record,&record_size) && record_size>=96 && record[4]==2;
+      if(!ok) fail("old cache marker was not regenerated");
+    }
+    free(record);
 
     AnygmHostServices no_publish=services;
     no_publish.path_rename=reject_rename;

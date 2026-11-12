@@ -39,7 +39,7 @@ typedef struct AnygmContentRouter {
   /* Private configuration transaction; never retained by a caller. */
   struct ContentConfigResolution *configuration;
   /* Launch-anchor directives inherited during an internal content replacement.
-   * Defaults and SHA-256 selections are always taken from the new source. */
+   * Defaults and payload selections are always taken from the new source. */
   const char *inherited_overrides;
   char *anchor_overrides;
   size_t anchor_overrides_size;

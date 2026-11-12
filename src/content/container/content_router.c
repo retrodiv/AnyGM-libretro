@@ -217,51 +217,51 @@ static uint64_t cache_hash_bytes(const void *data,size_t size){
   return hash;
 }
 
-/* Every cached payload is identified by hashing the bytes it came from, so this reads whole
- * content files: a large archive is hundreds of megabytes and is read on every load.
- *
- * The arithmetic is not what costs; the reads are. Asking a host for sixteen kilobytes at a time
- * spends most of the wall clock crossing into it, and hosts that reach a Windows filesystem or a
- * network share pay that crossing dearly. Asking for a quarter of a megabyte instead moves the
- * same bytes in a fraction of the time and yields the same hash, since the result cannot depend
- * on how the stream was divided. */
+typedef struct { uint8_t bytes[16]; } CacheFingerprint;
 #define FILE_STREAM_BUFFER_BYTES (256u*1024u)
+typedef struct {
+  const AnygmContentRouter *router;
+  void *file;
+  uint64_t size;
+} ContentHashReader;
 
-static int file_hash64(const AnygmContentRouter *router,const char *path,uint64_t *hash_out) {
-  if(!router || !anygm_vfs_can_read(router->host)) return 0;
+static int file_size64(const AnygmContentRouter *router,const char *path,uint64_t *size_out);
+static int router_read_at(const AnygmContentRouter *router,void *file,uint64_t source_size,
+                          uint64_t offset,void *data,size_t size);
+static int content_hash_read(void *context,uint64_t offset,void *data,size_t size){
+  ContentHashReader *reader=context;
+  return router_read_at(reader->router,reader->file,reader->size,offset,data,size);
+}
+static int cache_fingerprint_equal(CacheFingerprint a,CacheFingerprint b){
+  return !memcmp(a.bytes,b.bytes,sizeof a.bytes);
+}
+static void cache_fingerprint_hex(CacheFingerprint fingerprint,char hex[33]){
+  for(unsigned i=0;i<sizeof fingerprint.bytes;i++)
+    snprintf(hex+i*2,3,"%02x",fingerprint.bytes[i]);
+}
+
+/* Cache identity is sampled recognition, not complete-byte integrity proof. */
+static int file_imohash(const AnygmContentRouter *router,const char *path,CacheFingerprint *out){
+  uint64_t size=0,verified_size=0;
+  if(!out || !router || !anygm_vfs_can_read(router->host) || !file_size64(router,path,&size)) return 0;
   void *file=router->host->file_open(router->host->userdata,path,ANYGM_FILE_READ);
   if(!file) return 0;
-  uint64_t h = UINT64_C(1469598103934665603);
-  uint8_t fallback[16384];
-  size_t capacity=FILE_STREAM_BUFFER_BYTES;
-  uint8_t *buf=malloc(capacity);
-  if(!buf){ buf=fallback; capacity=sizeof fallback; }
-  size_t n;
-  while ((n=router->host->file_read(router->host->userdata,file,buf,capacity))>0) {
-    if(n>capacity){
-      if(buf!=fallback) free(buf);
-      router->host->file_close(router->host->userdata,file);
-      return 0;
-    }
-    for (size_t i = 0; i < n; i++) {
-      h ^= (uint64_t)buf[i];
-      h *= 1099511628211ull;
-    }
-  }
-  if(buf!=fallback) free(buf);
+  ContentHashReader reader={router,file,size};CacheFingerprint result;
+  int ok=gml_imohash_read(content_hash_read,&reader,size,result.bytes);
   router->host->file_close(router->host->userdata,file);
-  if (hash_out) *hash_out = h;
+  if(!ok || !file_size64(router,path,&verified_size) || verified_size!=size) return 0;
+  *out=result;
   return 1;
 }
 
 enum {
-  ANYGM_CACHE_SCHEMA=1,
-  ANYGM_CACHE_PRODUCER_REVISION=2,
+  ANYGM_CACHE_SCHEMA=2,
+  ANYGM_CACHE_PRODUCER_REVISION=3,
   ANYGM_CACHE_ARCHIVE=1,
   ANYGM_CACHE_SOURCE_PROJECT=2,
   ANYGM_CACHE_CLASSIC_PROJECT=3,
   ANYGM_CACHE_STUDIO_EXECUTABLE=4,
-  ANYGM_CACHE_HEADER_SIZE=72
+  ANYGM_CACHE_HEADER_SIZE=96
 };
 /* The cache producer combines the structural recipe with a fingerprint of the
  * first-party sources. A changed producer invalidates prior cached payloads. */
@@ -283,8 +283,8 @@ static uint64_t cache_get_u64(const uint8_t *p){
   return (uint64_t)cache_get_u32(p)|((uint64_t)cache_get_u32(p+4)<<32);
 }
 static int cache_marker_read(const AnygmContentRouter *router,const char *path,uint32_t kind,
-                             uint64_t source_fingerprint,uint64_t source_size,
-                             uint64_t *payload_fingerprint,uint64_t *payload_size,
+                             CacheFingerprint source_fingerprint,uint64_t source_size,uint64_t source_context,
+                             CacheFingerprint *payload_fingerprint,uint64_t *payload_size,
                              char *data,size_t data_cap){
   uint8_t *contents=NULL;
   size_t contents_size=0;
@@ -296,14 +296,16 @@ static int cache_marker_read(const AnygmContentRouter *router,const char *path,u
   if(!ok || memcmp(header,"AGCH",4) || cache_get_u32(header+4)!=ANYGM_CACHE_SCHEMA ||
      cache_get_u32(header+8)!=ANYGM_CACHE_HEADER_SIZE || cache_get_u32(header+12)!=kind ||
      cache_get_u32(header+16)!=ANYGM_CACHE_PRODUCER_REVISION ||
-     cache_get_u64(header+24)!=source_fingerprint || cache_get_u64(header+32)!=source_size ||
-     cache_get_u64(header+64)!=cache_producer_fingerprint() || data_len>=data_cap){
+     memcmp(header+24,source_fingerprint.bytes,16) || cache_get_u64(header+40)!=source_size ||
+     cache_get_u64(header+80)!=cache_producer_fingerprint() ||
+     cache_get_u64(header+88)!=source_context || data_len>=data_cap){
     free(contents); return 0;
   }
   if(contents_size!=ANYGM_CACHE_HEADER_SIZE+data_len) ok=0;
-  uint64_t stored_data_hash=ok?cache_get_u64(header+56):0;
-  uint64_t stored_payload_fingerprint=ok?cache_get_u64(header+40):0;
-  uint64_t stored_payload_size=ok?cache_get_u64(header+48):0;
+  uint64_t stored_data_hash=ok?cache_get_u64(header+72):0;
+  CacheFingerprint stored_payload_fingerprint={{0}};
+  if(ok) memcpy(stored_payload_fingerprint.bytes,header+48,16);
+  uint64_t stored_payload_size=ok?cache_get_u64(header+64):0;
   if(ok&&data_len) memcpy(data,contents+ANYGM_CACHE_HEADER_SIZE,data_len);
   free(contents);
   if(ok && cache_hash_bytes(data,data_len)!=stored_data_hash) ok=0;
@@ -314,8 +316,8 @@ static int cache_marker_read(const AnygmContentRouter *router,const char *path,u
   return 1;
 }
 static int cache_marker_write(const AnygmContentRouter *router,const char *path,uint32_t kind,
-                              uint64_t source_fingerprint,uint64_t source_size,
-                              uint64_t payload_fingerprint,uint64_t payload_size,
+                              CacheFingerprint source_fingerprint,uint64_t source_size,uint64_t source_context,
+                              CacheFingerprint payload_fingerprint,uint64_t payload_size,
                               const char *data){
   size_t data_len=data?strlen(data):0;
   if(data_len>UINT32_MAX) return 0;
@@ -326,12 +328,13 @@ static int cache_marker_write(const AnygmContentRouter *router,const char *path,
   cache_put_u32(header+12,kind);
   cache_put_u32(header+16,ANYGM_CACHE_PRODUCER_REVISION);
   cache_put_u32(header+20,(uint32_t)data_len);
-  cache_put_u64(header+24,source_fingerprint);
-  cache_put_u64(header+32,source_size);
-  cache_put_u64(header+40,payload_fingerprint);
-  cache_put_u64(header+48,payload_size);
-  cache_put_u64(header+56,cache_hash_bytes(data,data_len));
-  cache_put_u64(header+64,cache_producer_fingerprint());
+  memcpy(header+24,source_fingerprint.bytes,16);
+  cache_put_u64(header+40,source_size);
+  memcpy(header+48,payload_fingerprint.bytes,16);
+  cache_put_u64(header+64,payload_size);
+  cache_put_u64(header+72,cache_hash_bytes(data,data_len));
+  cache_put_u64(header+80,cache_producer_fingerprint());
+  cache_put_u64(header+88,source_context);
   char temporary[1024];
   if(snprintf(temporary,sizeof temporary,"%s.tmp",path)>=(int)sizeof temporary) return 0;
   if(!router || SIZE_MAX-sizeof header<data_len) return 0;
@@ -485,17 +488,6 @@ static int router_read_at(const AnygmContentRouter *router,void *file,uint64_t s
   return 1;
 }
 
-typedef struct {
-  const AnygmContentRouter *router;
-  void *file;
-  uint64_t size;
-} RecognitionReader;
-
-static int recognition_read(void *context,uint64_t offset,void *data,size_t size){
-  RecognitionReader *reader=context;
-  return router_read_at(reader->router,reader->file,reader->size,offset,data,size);
-}
-
 /* Standard imohash is a bounded recognition hint.
  * This intentionally does not certify unsampled bytes or replace integrity checks. */
 static int select_fast_configuration(const AnygmContentRouter *router,const char *path){
@@ -509,8 +501,8 @@ static int select_fast_configuration(const AnygmContentRouter *router,const char
     void *file=router->host->file_open(router->host->userdata,path,ANYGM_FILE_READ);
     if(!file) return 0;
     uint8_t digest[16];
-    RecognitionReader reader={router,file,size};
-    int ok=gml_imohash_read(recognition_read,&reader,size,digest);
+    ContentHashReader reader={router,file,size};
+    int ok=gml_imohash_read(content_hash_read,&reader,size,digest);
     router->host->file_close(router->host->userdata,file);
     if(!ok) return 0;
     char hex[33];
@@ -584,7 +576,7 @@ done:
 
 static int load_studio_executable_content(const AnygmContentRouter *router,const char *srcpath,
                                           char *content_path,size_t content_path_size){
-  uint64_t source_size=0,source_hash=0;
+  uint64_t source_size=0;CacheFingerprint source_hash;
   if(!router || !file_size64(router,srcpath,&source_size) ||
      source_size>ANYGM_CONTENT_MAX_EXECUTABLE_BYTES){
     if(source_size>ANYGM_CONTENT_MAX_EXECUTABLE_BYTES)
@@ -592,22 +584,23 @@ static int load_studio_executable_content(const AnygmContentRouter *router,const
                   "executable: input exceeds the bounded executable size");
     return source_size>ANYGM_CONTENT_MAX_EXECUTABLE_BYTES?-1:0;
   }
-  if(!file_hash64(router,srcpath,&source_hash)) return 0;
+  if(!file_imohash(router,srcpath,&source_hash)) return 0;
 
   const char *base=router->cache_directory?router->cache_directory:"tmp";
-  char stem[256],outdir[768],outwin[900],marker[900];
+  char stem[256],outdir[768],outwin[900],marker[900],source_hex[33];
+  cache_fingerprint_hex(source_hash,source_hex);
   anygm_content_path_stem(srcpath,stem,sizeof stem);
-  snprintf(outdir,sizeof outdir,"%s/%s-%016llx-anygm-studio-executable",base,stem,
-           (unsigned long long)source_hash);
+  if(snprintf(outdir,sizeof outdir,"%s/%s-%s-anygm-studio-executable",base,stem,
+           source_hex)>=(int)sizeof outdir) return -1;
   snprintf(outwin,sizeof outwin,"%s/data.win",outdir);
   snprintf(marker,sizeof marker,"%s/.anygm_cache",outdir);
 
   char marker_data[1];
-  uint64_t stored_hash=0,stored_size=0,actual_hash=0,actual_size=0;
-  if(cache_marker_read(router,marker,ANYGM_CACHE_STUDIO_EXECUTABLE,source_hash,source_size,
+  CacheFingerprint stored_hash,actual_hash;uint64_t stored_size=0,actual_size=0;
+  if(cache_marker_read(router,marker,ANYGM_CACHE_STUDIO_EXECUTABLE,source_hash,source_size,0,
                        &stored_hash,&stored_size,marker_data,sizeof marker_data) &&
      file_size64(router,outwin,&actual_size) && actual_size==stored_size &&
-     file_hash64(router,outwin,&actual_hash) && actual_hash==stored_hash){
+     file_imohash(router,outwin,&actual_hash) && cache_fingerprint_equal(actual_hash,stored_hash)){
     snprintf(content_path,content_path_size,"%s",outwin);
     content_log(router,ANYGM_CONTENT_LOG_INFO,
                 "executable: reusing extracted Studio payload at %s",outwin);
@@ -631,20 +624,20 @@ static int load_studio_executable_content(const AnygmContentRouter *router,const
     return -1;
   }
   free(form);
-  uint64_t verified_source_hash=0;
-  if(!file_hash64(router,srcpath,&verified_source_hash) || verified_source_hash!=source_hash){
+  CacheFingerprint verified_source_hash;
+  if(!file_imohash(router,srcpath,&verified_source_hash) || !cache_fingerprint_equal(verified_source_hash,source_hash)){
     anygm_vfs_remove(router->host,outwin);
     content_log(router,ANYGM_CONTENT_LOG_ERROR,
                 "executable: input changed while it was being inspected");
     return -1;
   }
   if(!file_size64(router,outwin,&actual_size) || actual_size!=form_size ||
-     !file_hash64(router,outwin,&actual_hash)){
+     !file_imohash(router,outwin,&actual_hash)){
     content_log(router,ANYGM_CONTENT_LOG_ERROR,
                 "executable: extracted Studio payload failed verification");
     return -1;
   }
-  if(!cache_marker_write(router,marker,ANYGM_CACHE_STUDIO_EXECUTABLE,source_hash,source_size,
+  if(!cache_marker_write(router,marker,ANYGM_CACHE_STUDIO_EXECUTABLE,source_hash,source_size,0,
                          actual_hash,actual_size,NULL))
     content_log(router,ANYGM_CONTENT_LOG_WARN,
                 "executable: could not publish cache marker");
@@ -1444,15 +1437,15 @@ static int load_archive_content_depth(const AnygmContentRouter *router,const cha
   if(slash){ size_t dl=(size_t)(slash-zbuf); if(dl>=sizeof zdir) dl=sizeof zdir-1;
     memcpy(zdir,zbuf,dl); zdir[dl]=0; } else snprintf(zdir,sizeof zdir,".");
   if(!base) base=zdir;
-  uint64_t zsz=0,zhash=0;
-  if(!file_size64(router,zpath,&zsz) || !file_hash64(router,zpath,&zhash)) return 0;
-  char outdir[1400];
-  snprintf(outdir,sizeof outdir,"%s/%s-%016llx-anygm-archive",base,stem,
-           (unsigned long long)zhash);
+  uint64_t zsz=0;CacheFingerprint zhash;
+  if(!file_size64(router,zpath,&zsz) || !file_imohash(router,zpath,&zhash)) return 0;
+  char outdir[1400],source_hex[33];cache_fingerprint_hex(zhash,source_hex);
+  if(snprintf(outdir,sizeof outdir,"%s/%s-%s-anygm-archive",base,stem,
+           source_hex)>=(int)sizeof outdir) return 0;
   char marker[1536]; snprintf(marker,sizeof marker,"%s/.anygm_cache",outdir);
   char kind=0,rel[512]="",marker_data[516]="",existing[2048];
-  uint64_t marker_payload_hash=0,marker_payload_size=0;
-  int cache_ok=cache_marker_read(router,marker,ANYGM_CACHE_ARCHIVE,zhash,zsz,
+  CacheFingerprint marker_payload_hash;uint64_t marker_payload_size=0;
+  int cache_ok=cache_marker_read(router,marker,ANYGM_CACHE_ARCHIVE,zhash,zsz,0,
                                  &marker_payload_hash,&marker_payload_size,
                                  marker_data,sizeof marker_data);
   if(cache_ok && marker_data[1]=='\n' && marker_data[2]){
@@ -1463,10 +1456,10 @@ static int load_archive_content_depth(const AnygmContentRouter *router,const cha
   } else cache_ok=0;
   if(cache_ok){
     snprintf(existing,sizeof existing,"%s/%s",outdir,rel);
-    uint64_t existing_size=0,existing_hash=0;
+    uint64_t existing_size=0;CacheFingerprint existing_hash;
     cache_ok=(kind=='C' || kind=='N' || kind=='S') && file_size64(router,existing,&existing_size) &&
-             existing_size==marker_payload_size && file_hash64(router,existing,&existing_hash) &&
-             existing_hash==marker_payload_hash;
+             existing_size==marker_payload_size && file_imohash(router,existing,&existing_hash) &&
+             cache_fingerprint_equal(existing_hash,marker_payload_hash);
   }
   char anchor_copy[1536];
   if(!path_join_bounded(anchor_copy,sizeof anchor_copy,outdir,
@@ -1488,10 +1481,10 @@ static int load_archive_content_depth(const AnygmContentRouter *router,const cha
     if(rel[0]) kind=classic_payload?'S':'C'; else { kind='N'; snprintf(rel,sizeof rel,"%s",nested); }
     snprintf(marker_data,sizeof marker_data,"%c\n%s",kind,rel);
     char selected[2048];
-    uint64_t selected_size=0,selected_hash=0;
+    uint64_t selected_size=0;CacheFingerprint selected_hash;
     snprintf(selected,sizeof selected,"%s/%s",outdir,rel);
-    if(!file_size64(router,selected,&selected_size) || !file_hash64(router,selected,&selected_hash) ||
-       !cache_marker_write(router,marker,ANYGM_CACHE_ARCHIVE,zhash,zsz,
+    if(!file_size64(router,selected,&selected_size) || !file_imohash(router,selected,&selected_hash) ||
+       !cache_marker_write(router,marker,ANYGM_CACHE_ARCHIVE,zhash,zsz,0,
                            selected_hash,selected_size,marker_data))
       content_log(router,ANYGM_CONTENT_LOG_WARN,"archive: could not publish cache marker");
     content_log(router,ANYGM_CONTENT_LOG_INFO,"archive: extracted %d files to %s (%c: %s)",n,outdir,kind,rel);
@@ -1580,42 +1573,17 @@ static int validate_source_candidate(void *context,const void *data,size_t size,
   return gmlc_classic_validate_image(context,data,size,error,error_size);
 }
 
-/* Adapted-image cache reuse still verifies every byte; this is independent of
- * the removed per-content system configuration selectors. */
-static int cached_file_digest(const AnygmContentRouter *router,const char *path,uint8_t digest[32]){
-  uint64_t size=0;
-  if(!file_size64(router,path,&size) || size>UINT64_C(2147483648)) return 0;
-  void *file=router->host->file_open(router->host->userdata,path,ANYGM_FILE_READ);
-  if(!file) return 0;
-  GmlSha256 hash;
-  gml_sha256_init(&hash);
-  uint8_t buffer[65536];
-  uint64_t remaining=size;
-  int ok=1;
-  while(remaining){
-    size_t take=remaining<sizeof buffer?(size_t)remaining:sizeof buffer;
-    size_t got=router->host->file_read(router->host->userdata,file,buffer,take);
-    if(!got || got>take){ ok=0; break; }
-    gml_sha256_update(&hash,buffer,got); remaining-=got;
-  }
-  if(ok && router->host->file_read(router->host->userdata,file,buffer,1)!=0) ok=0;
-  router->host->file_close(router->host->userdata,file);
-  if(!ok){ content_log(router,ANYGM_CONTENT_LOG_ERROR,"cache: incomplete hash read of %s",path); return 0; }
-  gml_sha256_final(&hash,digest);
-  return 1;
-}
-
 static int publish_input_image(const AnygmContentRouter *router,const char *path,
-                                const uint8_t *image,size_t size,const uint8_t digest[32],
+                                const uint8_t *image,size_t size,CacheFingerprint fingerprint,
                                 char *error,size_t error_size){
-  AnygmFileInfo info={0}; uint8_t cached_digest[32];
+  AnygmFileInfo info={0};CacheFingerprint cached_fingerprint;
   int exists=anygm_vfs_stat(router->host,path,&info) &&
              (info.flags&ANYGM_FILE_INFO_EXISTS);
-  /* Preparation and dependency validation already ran. The cached file is only
-   * reusable when its complete bytes match that newly computed result. Avoid
-   * republishing an identical file: a host rename need not replace its target. */
+  /* Preparation and patch validation already ran. Reuse uses the result's
+   * size and sampled identity; it does not certify its unsampled bytes. */
   if(exists && (info.flags&ANYGM_FILE_INFO_REGULAR) && info.size==size &&
-     cached_file_digest(router,path,cached_digest) && !memcmp(cached_digest,digest,32)) return 1;
+     file_imohash(router,path,&cached_fingerprint) &&
+     cache_fingerprint_equal(cached_fingerprint,fingerprint)) return 1;
   if(exists && !(info.flags&ANYGM_FILE_INFO_REGULAR)){
     snprintf(error,error_size,"prepared cache destination is not a regular file"); return 0;
   }
@@ -1654,7 +1622,7 @@ static int load_input_pipeline(const AnygmContentRouter *router,const char *path
      (!anygm_content_source_configured(router->transforms) &&
       !anygm_content_config_has_input(config->ini))) return 0;
   AnygmContentTransforms *selected=anygm_content_transforms_create();
-  uint8_t *original=NULL,*image=NULL,digest[32];
+  uint8_t *original=NULL,*image=NULL;
   size_t original_size=0,image_size=0;
   char error[256]={0};
   int result=-1;
@@ -1675,13 +1643,18 @@ static int load_input_pipeline(const AnygmContentRouter *router,const char *path
   if(!kind){ snprintf(error,sizeof error,"result is not a supported input representation"); goto done; }
   if(!anygm_content_transforms_copy(router->transforms,selected)) goto done;
   config->input_adapted=1;
-  /* Only an actual adaptation needs an original-byte cache identity. A global
-   * probe that declines ordinary content must not hash the complete input. */
-  gml_sha256(original,original_size,digest);
-  uint8_t identity[96],key[32]; char hex[65];
-  memcpy(identity,digest,32); anygm_content_transforms_hash(selected,identity+32);
-  gml_sha256(image,image_size,identity+64); gml_sha256(identity,sizeof identity,key);
-  for(size_t i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",key[i]);
+  /* Only actual adaptation needs this cache identity. Include both complete
+   * imohash values and the independent transformation/dependency signature. */
+  CacheFingerprint original_fingerprint,image_fingerprint,key;
+  uint8_t identity[72];char hex[33];
+  if(!gml_imohash(original,original_size,original_fingerprint.bytes) ||
+     !gml_imohash(image,image_size,image_fingerprint.bytes)) goto done;
+  memcpy(identity,original_fingerprint.bytes,16);
+  anygm_content_transforms_hash(selected,identity+16);
+  memcpy(identity+48,image_fingerprint.bytes,16);
+  cache_put_u64(identity+64,cache_producer_fingerprint());
+  if(!gml_imohash(identity,sizeof identity,key.bytes)) goto done;
+  cache_fingerprint_hex(key,hex);
   char directory[1400],output[1536];
   const char *cache=router->cache_directory?router->cache_directory:"tmp";
   if(snprintf(directory,sizeof directory,"%s/input-%s",cache,hex)>=(int)sizeof directory ||
@@ -1696,7 +1669,7 @@ static int load_input_pipeline(const AnygmContentRouter *router,const char *path
     int ok=gmlc_package_write_structural(&project,output,error,sizeof error);
     gmlc_project_free(&project);
     if(!ok) goto done;
-  } else if(!publish_input_image(router,output,image,image_size,identity+64,error,sizeof error))
+  } else if(!publish_input_image(router,output,image,image_size,image_fingerprint,error,sizeof error))
     goto done;
   if(kind==2){
     if(!load_archive_content_depth(router,output,content_path,content_size,asset_root,asset_root_size,
@@ -1708,8 +1681,8 @@ static int load_input_pipeline(const AnygmContentRouter *router,const char *path
     if(asset_root && asset_root_size)
       anygm_content_path_parent(path,asset_root,asset_root_size);
   }
-  for(size_t i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
-  content_log(router,ANYGM_CONTENT_LOG_INFO,"input pipeline: normalized %s SHA-256 %s",path,hex);
+  cache_fingerprint_hex(original_fingerprint,hex);
+  content_log(router,ANYGM_CONTENT_LOG_INFO,"input pipeline: normalized %s imohash %s",path,hex);
   result=1;
 done:
   anygm_content_transforms_destroy(selected); free(original); free(image);
@@ -1728,32 +1701,30 @@ static int load_classic_project_content(const AnygmContentRouter *router,const c
   if(!base) base="tmp";
   char stem[256];
   anygm_content_path_stem(srcpath,stem,sizeof stem);
-  uint64_t src_hash=0;
-  if(!file_hash64(router,srcpath,&src_hash)) return 0;
+  CacheFingerprint src_hash;
+  if(!file_imohash(router,srcpath,&src_hash)) return 0;
   uint64_t src_size=0;
   if(!file_size64(router,srcpath,&src_size)) return 0;
   uint8_t transform_hash[32];
   anygm_content_transforms_hash(router->transforms,transform_hash);
-  for(size_t i=0;i<sizeof transform_hash;i++){
-    src_hash^=transform_hash[i]; src_hash*=UINT64_C(1099511628211);
-  }
+  uint64_t source_context=cache_hash_bytes(transform_hash,sizeof transform_hash);
   char source_dir[4096];
   anygm_content_path_parent(srcpath,source_dir,sizeof(source_dir));
-  if(!gmlc_classic_extension_dependency_hash(router->host,source_dir,src_hash,&src_hash)) return 0;
-  if(!gmlc_classic_fidelity_dependency_hash(router->host,srcpath,src_hash,&src_hash)) return 0;
-  if(!gmlc_classic_included_dependency_hash(router->transforms,router->host,srcpath,src_hash,&src_hash)) return 0;
-  char outdir[768];
-  snprintf(outdir,sizeof outdir,"%s/%s-%016llx-anygm-classic",base,stem,
-           (unsigned long long)src_hash);
+  if(!gmlc_classic_extension_dependency_hash(router->host,source_dir,source_context,&source_context)) return 0;
+  if(!gmlc_classic_fidelity_dependency_hash(router->host,srcpath,source_context,&source_context)) return 0;
+  if(!gmlc_classic_included_dependency_hash(router->transforms,router->host,srcpath,source_context,&source_context)) return 0;
+  char outdir[768],source_hex[33];cache_fingerprint_hex(src_hash,source_hex);
+  if(snprintf(outdir,sizeof outdir,"%s/%s-%s-%016llx-anygm-classic",base,stem,
+           source_hex,(unsigned long long)source_context)>=(int)sizeof outdir) return 0;
   char outwin[900], marker[900];
   snprintf(outwin,sizeof outwin,"%s/data.win",outdir);
   snprintf(marker,sizeof marker,"%s/.anygm_cache",outdir);
   char marker_data[1];
-  uint64_t stored_hash=0,stored_size=0,actual_hash=0,actual_size=0;
-  if(cache_marker_read(router,marker,ANYGM_CACHE_CLASSIC_PROJECT,src_hash,src_size,
+  CacheFingerprint stored_hash,actual_hash;uint64_t stored_size=0,actual_size=0;
+  if(cache_marker_read(router,marker,ANYGM_CACHE_CLASSIC_PROJECT,src_hash,src_size,source_context,
                        &stored_hash,&stored_size,marker_data,sizeof marker_data) &&
      file_size64(router,outwin,&actual_size) && actual_size==stored_size &&
-     file_hash64(router,outwin,&actual_hash) && actual_hash==stored_hash){
+     file_imohash(router,outwin,&actual_hash) && cache_fingerprint_equal(actual_hash,stored_hash)){
     snprintf(content_path,cpsz,"%s",outwin);
     snprintf(router->configuration->identity_path,sizeof router->configuration->identity_path,"%s",srcpath);
     content_log(router,ANYGM_CONTENT_LOG_INFO,"classic: reusing cached package at %s",outwin);
@@ -1772,8 +1743,8 @@ static int load_classic_project_content(const AnygmContentRouter *router,const c
     content_log(router,ANYGM_CONTENT_LOG_ERROR,"classic: %s",err[0]?err:"package write failed");
     return 0;
   }
-  if(file_size64(router,outwin,&actual_size) && file_hash64(router,outwin,&actual_hash) &&
-     !cache_marker_write(router,marker,ANYGM_CACHE_CLASSIC_PROJECT,src_hash,src_size,
+  if(file_size64(router,outwin,&actual_size) && file_imohash(router,outwin,&actual_hash) &&
+     !cache_marker_write(router,marker,ANYGM_CACHE_CLASSIC_PROJECT,src_hash,src_size,source_context,
                          actual_hash,actual_size,NULL))
     content_log(router,ANYGM_CONTENT_LOG_WARN,"classic: could not publish cache marker");
   snprintf(content_path,cpsz,"%s",outwin);
@@ -1789,24 +1760,24 @@ static int load_source_project_content(const AnygmContentRouter *router,const ch
   char stem[256];
   anygm_content_path_stem(srcpath,stem,sizeof stem);
   int archive_input=path_ext_is(srcpath,".yyz");
-  uint64_t src_hash=0;
-  if(!file_hash64(router,srcpath,&src_hash)) return 0;
+  CacheFingerprint src_hash;
+  if(!file_imohash(router,srcpath,&src_hash)) return 0;
   uint64_t src_size=0;
   if(!file_size64(router,srcpath,&src_size)) return 0;
-  char outdir[768];
-  snprintf(outdir,sizeof outdir,"%s/%s-%016llx-anygm-source",base,stem,
-           (unsigned long long)src_hash);
+  char outdir[768],source_hex[33];cache_fingerprint_hex(src_hash,source_hex);
+  if(snprintf(outdir,sizeof outdir,"%s/%s-%s-anygm-source",base,stem,
+           source_hex)>=(int)sizeof outdir) return 0;
   char outwin[900];
   snprintf(outwin,sizeof outwin,"%s/data.win",outdir);
   char marker[900];
   snprintf(marker,sizeof marker,"%s/.anygm_cache",outdir);
   char marker_data[1];
-  uint64_t stored_hash=0,stored_size=0,actual_hash=0,actual_size=0;
+  CacheFingerprint stored_hash,actual_hash;uint64_t stored_size=0,actual_size=0;
   if(archive_input &&
-     cache_marker_read(router,marker,ANYGM_CACHE_SOURCE_PROJECT,src_hash,src_size,
+     cache_marker_read(router,marker,ANYGM_CACHE_SOURCE_PROJECT,src_hash,src_size,0,
                        &stored_hash,&stored_size,marker_data,sizeof marker_data) &&
      file_size64(router,outwin,&actual_size) && actual_size==stored_size &&
-     file_hash64(router,outwin,&actual_hash) && actual_hash==stored_hash){
+     file_imohash(router,outwin,&actual_hash) && cache_fingerprint_equal(actual_hash,stored_hash)){
     snprintf(content_path,cpsz,"%s",outwin);
     content_log(router,ANYGM_CONTENT_LOG_INFO,"source: reusing cached package at %s",outwin);
     return 1;
@@ -1842,8 +1813,8 @@ static int load_source_project_content(const AnygmContentRouter *router,const ch
     return 0;
   }
   if(archive_input){
-    if(file_size64(router,outwin,&actual_size) && file_hash64(router,outwin,&actual_hash) &&
-       !cache_marker_write(router,marker,ANYGM_CACHE_SOURCE_PROJECT,src_hash,src_size,
+    if(file_size64(router,outwin,&actual_size) && file_imohash(router,outwin,&actual_hash) &&
+       !cache_marker_write(router,marker,ANYGM_CACHE_SOURCE_PROJECT,src_hash,src_size,0,
                            actual_hash,actual_size,NULL))
       content_log(router,ANYGM_CONTENT_LOG_WARN,"source: could not publish cache marker");
   }
