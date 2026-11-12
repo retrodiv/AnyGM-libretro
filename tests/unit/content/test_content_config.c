@@ -14,27 +14,26 @@ static void layers(void){
   const char text[]="\xef\xbb\xbf[overrides]\r\nostype|0\r\n"
     "[transforms]\ncopy=buffer copy() { return slice(0,input_size); }\n"
     "keep=buffer keep() { return slice(0,input_size); }\n"
-    "[pipelines]\ninput=copy|keep\n"
-    "[sha256:" DIGEST ".transforms]\ncopy=buffer edit() {\n"
+    "[pipelines]\ninput=copy|keep\n[unrelated]\nunchanged=value\n";
+  const char higher[]="[transforms]\ncopy=buffer edit() {\n"
     "/*\n[overrides]\n$injected=1\n*/\nwrite8(work,0,'z'); return slice(0,input_size);\n}\n"
-    "[sha256:" DIGEST ".overrides]\n; ignored\nostype|6\n"
-    "[sha256:" DIGEST ".pipelines]\ninput=keep|copy\n"
-    "[unrelated]\nunchanged=value\n";
+    "[overrides]\n; ignored\nostype|6\n"
+    "[pipelines]\ninput=keep|copy\n";
   char error[256],overrides[4096];
   AnygmContentConfig *config=anygm_content_config_parse(text,sizeof text-1,error,sizeof error);
-  assert(config);
+  AnygmContentConfig *overlay=anygm_content_config_parse(higher,sizeof higher-1,error,sizeof error);
+  assert(config && overlay);
   AnygmContentTransforms *set=anygm_content_transforms_create(),*copy=anygm_content_transforms_create();
   assert(set && copy);
-  assert(anygm_content_config_apply(config,NULL,set,0,overrides,sizeof overrides,error,sizeof error));
+  assert(anygm_content_config_apply(config,set,0,overrides,sizeof overrides,error,sizeof error));
   assert(!strcmp(overrides,"ostype|0\n"));
   assert(anygm_content_transforms_copy(copy,set));
-  uint8_t digest[32]; gml_sha256("abc",3,digest);
   uint8_t before[32],after[32];
   anygm_content_transforms_hash(set,before);
-  assert(!anygm_content_config_apply(config,digest,set,100,overrides,2,error,sizeof error));
+  assert(!anygm_content_config_apply(overlay,set,100,overrides,2,error,sizeof error));
   anygm_content_transforms_hash(set,after);
   assert(!memcmp(before,after,32));
-  assert(anygm_content_config_apply(config,digest,set,100,overrides,sizeof overrides,error,sizeof error));
+  assert(anygm_content_config_apply(overlay,set,100,overrides,sizeof overrides,error,sizeof error));
   assert(!strcmp(overrides,"ostype|6\n"));
   uint8_t *output=NULL; size_t size=0;
   assert(anygm_content_transform_run(set,"copy","abc",3,NULL,0,&output,&size,error,sizeof error));
@@ -46,15 +45,17 @@ static void layers(void){
   assert(size==3 && !memcmp(output,"abc",3)); free(output);
   assert(anygm_content_transform_run(copy,"input","abc",3,NULL,0,&output,&size,error,sizeof error));
   assert(size==3 && !memcmp(output,"abc",3)); free(output);
-  digest[0]^=1;
-  assert(anygm_content_config_apply(config,digest,copy,100,overrides,sizeof overrides,error,sizeof error));
-  assert(!overrides[0]);
   anygm_content_transforms_destroy(copy); anygm_content_transforms_destroy(set);
   anygm_content_config_destroy(config);
+  anygm_content_config_destroy(overlay);
 }
 
 static void rejection(void){
   const char *invalid[]={
+    "[sha256:" DIGEST ".overrides]\n$x=1\n",
+    "[sha256:" DIGEST ".transforms]\nx=buffer same(){return slice(0,input_size);}\n",
+    "[sha256:" DIGEST ".patches]\n",
+    "[sha256:" DIGEST ".pipelines]\nx=builtin.byteswap16\n",
     "[sha256:abc.overrides]\n$x=1\n",
     "[sha256:" DIGEST ".unknown]\n",
     "[sha256:" DIGEST ".overrides]\n[sha256:" DIGEST ".overrides]\n",

@@ -4,9 +4,9 @@
 # Content configuration
 
 The optional `AnyGM.ini` in the frontend system directory supplies content
-defaults. An advanced `.anygm` anchor adds or replaces declarations. The INI
-can also target exact original payload bytes by SHA-256. All identities and
-rules come from external configuration; the core ships none of its own.
+defaults. An advanced `.anygm` anchor adds or replaces declarations for its
+content. The INI supplies global defaults only; it cannot select individual
+payloads by hash. Content-local declarations belong in `.anygm` anchors.
 
 The canonical filename is `AnyGM.ini`. Lookup follows the host filesystem's case
 rules; the core adds no separate capitalization check. Case-sensitive hosts require
@@ -27,14 +27,10 @@ Priority runs from lowest to highest:
 3. Archive anchors, from the innermost to the outermost archive.
 4. The explicitly opened anchor.
 5. Inherited launch-anchor overrides during an internal content replacement.
-6. Matching `[sha256:<digest>.transforms]`, `[sha256:<digest>.pipelines]`,
-   `[sha256:<digest>.patches]` and
-   `[sha256:<digest>.overrides]` sections in `AnyGM.ini`.
 
-A digest is exactly 64 hexadecimal digits; uppercase and lowercase digits
-identify the same bytes. Section names and transform keys are case-sensitive.
-Hash selectors belong only in the system INI. Duplicate recognized sections,
-including equivalent digest spellings, reject the INI. Multiple sibling
+Section names and transform keys are case-sensitive. Duplicate recognized sections
+reject the INI. The removed `[sha256:...]` sections also reject the INI rather
+than silently losing a content-specific policy. Multiple sibling
 anchors select none; an explicit anchor does not discover another sibling.
 
 A transform, pipeline or patch replaces the complete entry with the same key, including its
@@ -54,44 +50,28 @@ Replacement happens before execution or capturing values for restoration.
 The winner occupies its last declaration position. Within one section, the
 last override for a destination wins; duplicate transform keys remain invalid.
 
-## Original payload identity
+## Preparation and cache identity
 
-The selector hashes complete original bytes before transformation or
-compilation. A data image uses its own bytes; a Classic project uses the
-project; a self-contained executable uses the executable. A runner delegating
-to adjacent `data.win` uses that data image. ZIP-compatible distribution
-wrappers use the selected uncompressed member, including nested archives.
-Opening an anchor, renaming a file or changing ZIP compression does not change
-this identity. Source inputs routed as `.yyp` or `.yyz` use that source file.
-Memory content uses the supplied image bytes.
+System configuration does not hash payloads to select rules. That capability
+was removed because it required complete input reads and hashing on ordinary
+loads, including large archives. Defaults apply once, then anchors supply the
+content-local layers. Integrity checks for archives, patches and disposable
+derived-content caches remain mandatory and independent of rule selection.
 
 An explicitly selected `input` function or pipeline can normalize the source before routing.
 An optional `input.probe` enumerates bounded candidate ranges in that same original source;
 the complete structural reader must select exactly one valid normalized result. An optional
 `input.final` pipeline then processes the selected representation, including after a probe's
 identity or zero-record decline. These entries
-follow the ordinary default/anchor/hash layering, with the contract in `CONTENT_TRANSFORMS.md`.
-When its path result differs from the original bytes, the original source's digest remains the
-selector through all subsequent parsing, including selection inside a resulting ZIP. This lets
-one exact wrapped source select both its adapter and its runtime directives. An absent adapter
-or byte-identical path result retains ordinary member/adjacent-payload selection. Memory content
-always uses the original supplied image's digest. `CONTENT_TRANSFORMS.md` owns the source-preparation
-contract and examples.
-
-An internal `data.alternate.win` code companion does not replace the selected
-source identity: opening `data.win` still selects its original hash.
-
-This identifies one file, not its external assets, saves or directory. No
-path hash, timestamp or derived-cache fingerprint selects these sections.
-File hashing streams through the host VFS with bounded buffers and complete
-read checks. With an INI present, logs report the selected file and SHA-256,
-default and anchor layers, and the effective directive count.
+follow the ordinary default/anchor layering, with the contract in `CONTENT_TRANSFORMS.md`.
+An absent adapter or byte-identical path result retains ordinary member/adjacent-payload
+selection. A changed path result retains original-byte identity only for its cache key,
+not for selecting runtime directives. `CONTENT_TRANSFORMS.md` owns that preparation
+contract. Logs report default and anchor layers and the effective directive count.
 
 ## Example
 
-The digest and global below are illustrative. Replace the digest with the
-intended source file's SHA-256. Keep any existing default transform functions
-in `[transforms]`.
+Keep any required default transform functions in `[transforms]`.
 
 ```ini
 [transforms]
@@ -99,8 +79,6 @@ in `[transforms]`.
 
 [overrides]
 ostype|0
-
-[sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.overrides]
 $counter=5
 ```
 
@@ -117,8 +95,8 @@ introskip|1,3-5
 introstep|78|obj_intro|0
 ```
 
-The operating-system declaration is 6. The global is held at 5 when the hash
-matches, and at 3 otherwise. A global override holds a value while enabled;
+The operating-system declaration is 6 and the anchor holds the global at 3,
+overriding the INI default of 5. A global override holds a value while enabled;
 it is not merely an initial-value declaration.
 
 ## Content renderer selection
@@ -136,7 +114,7 @@ renderer|opengl_nofallback
 `cpu` selects software, `opengl` selects OpenGL with CPU fallback, and
 `opengl_nofallback` selects OpenGL (Experimental), including its ordinary omission of unsupported
 draws. `auto` withdraws a lower-priority renderer declaration and uses the host option. Normal
-INI/anchor/hash precedence applies. The Content override directives switch must be enabled at
+INI/anchor precedence applies. The Content override directives switch must be enabled at
 load. The effective policy is frozen until unload: changing that switch or the frontend Renderer
 option during play does not renegotiate the context. Close/reopen content to select again.
 
@@ -231,10 +209,9 @@ file edits. Runtime directives respect the content-override switch; transforms
 remain independent load requirements. Host runtime cheats and development
 settings retain their separate channels and precedence.
 
-Internal `game_change` loads retain launch-anchor overrides while reselecting
-defaults and the replacement's SHA-256 sections. The previous payload's
-hash-specific directives never migrate. Transform declarations use the new
-payload's own anchors. Cross-payload state restore performs the same selection
+Internal `game_change` loads retain launch-anchor overrides while collecting
+defaults and the replacement's own anchors. Transform declarations use the new
+payload's own anchors. Cross-payload state restore performs the same collection
 before accepting the state transactionally.
 
 Effective override text and the launch-anchor envelope contribute to the
@@ -256,8 +233,8 @@ and the compiler/interpreter limits in `CONTENT_TRANSFORMS.md`.
 The INI accepts UTF-8 BOM and LF, CRLF or CR line endings. Blank lines and
 whole-line `#` or `;` comments are ignored outside functions; functions use C
 comments. Section-looking text inside a function cannot introduce another
-layer. Unknown ordinary sections are ignored; malformed `sha256:` sections
-reject the INI. Every transform is validated, including unmatched selectors.
+layer. Unknown ordinary sections are ignored; all removed `sha256:` sections
+reject the INI. Every declared transform is validated.
 Invalid selected runtime directives reject preparation before live content
 is replaced. Failure never publishes partial overrides or transforms.
 

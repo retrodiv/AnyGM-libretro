@@ -64,13 +64,13 @@ typedef enum AnygmContentResolveResult {
 /* content_overrides receives bounded low-to-high priority text for the engine's
  * directive parser. The parser resolves destinations before executing any slot.
  * anchor_overrides, if supplied on the router, receives the launch envelope
- * separately from defaults and the selected SHA-256 layer. */
+ * separately from global defaults. */
 AnygmContentResolveResult anygm_content_resolve_path(
     const AnygmContentRouter *router,const char *input_path,
     char *resolved_path,size_t resolved_path_size,
     char *asset_root,size_t asset_root_size,
     char *content_overrides,size_t content_overrides_size);
-/* Select configuration using original bytes, then execute the explicitly named
+/* Collect global configuration, then execute the explicitly named
  * input pipeline when present. A NULL normalized result borrows the original;
  * otherwise the caller owns it. Failure clears every output. */
 int anygm_content_prepare_memory(const AnygmContentRouter *router,const void *data,size_t size,

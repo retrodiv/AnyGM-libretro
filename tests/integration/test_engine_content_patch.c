@@ -73,10 +73,9 @@ static void setup(PatchFixture *f){
   snprintf(f->ini,sizeof f->ini,"%s/AnyGM.ini",f->content[0].directory);
   char text[1024];
   /* A generic global probe may decline; the local final chain must still run.
-   * Hash-specific runtime policy continues to refer to the original input. */
+   * Global defaults continue to apply after content-local transformations. */
   snprintf(text,sizeof text,"[transforms]\ninput.probe=buffer probe(){return slice(0,0);}\n"
-    "[sha256:%s.overrides]\n$patch_marker=17\n"
-    "[sha256:%s.overrides]\n$patch_marker=29\n",f->digest[0],f->digest[2]);
+    "[overrides]\n$patch_marker=17\n");
   write_text(f->ini,text); configure(f,"first | second");
   AnygmHostServices services={0}; services.struct_size=sizeof services;
   services.abi_version=ANYGM_HOST_SERVICES_VERSION; anygm_stdio_vfs_services_init(&services);

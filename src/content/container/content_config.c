@@ -9,8 +9,7 @@
 #include <string.h>
 
 typedef struct {
-  int transforms,targeted;
-  uint8_t digest[32];
+  int transforms;
   size_t begin,end;
 } ConfigSection;
 
@@ -26,31 +25,16 @@ static int config_error(char *error,size_t size,const char *message){
   return 0;
 }
 
-static int hex_digit(unsigned char c){
-  if(c>='0' && c<='9') return c-'0';
-  if(c>='a' && c<='f') return c-'a'+10;
-  if(c>='A' && c<='F') return c-'A'+10;
-  return -1;
-}
-
 static int section_name(const char *name,size_t length,ConfigSection *section){
   memset(section,0,sizeof *section);
-  if(length>=7 && !memcmp(name,"sha256:",7)){
-    if(length<72 || name[71]!='.') return -1;
-    section->targeted=1;
-    for(size_t i=0;i<32;i++){
-      int high=hex_digit((unsigned char)name[7+i*2]);
-      int low=hex_digit((unsigned char)name[8+i*2]);
-      if(high<0 || low<0) return -1;
-      section->digest[i]=(uint8_t)((high<<4)|low);
-    }
-    name+=72; length-=72;
-  }
+  /* Per-payload selectors were removed: identifying every input for global
+   * configuration adds complete-file hashing to ordinary content startup. */
+  if(length>=7 && !memcmp(name,"sha256:",7)) return -1;
   if(length==10 && !memcmp(name,"transforms",10)){ section->transforms=1; return 1; }
   if(length==9 && !memcmp(name,"pipelines",9)){ section->transforms=2; return 1; }
   if(length==7 && !memcmp(name,"patches",7)){ section->transforms=3; return 1; }
   if(length==9 && !memcmp(name,"overrides",9)) return 1;
-  return section->targeted?-1:0;
+  return 0;
 }
 
 static char *transform_document(const AnygmContentConfig *config,const ConfigSection *section){
@@ -123,13 +107,12 @@ AnygmContentConfig *anygm_content_config_parse(const void *text,size_t size,
       if(config->count==ANYGM_CONFIG_MAX_SECTIONS) goto invalid;
       for(size_t i=0;i<config->count;i++){
         const ConfigSection *old=&config->sections[i];
-        if(old->transforms==section.transforms && old->targeted==section.targeted &&
-           !memcmp(old->digest,section.digest,32)) goto invalid;
+        if(old->transforms==section.transforms) goto invalid;
       }
       current=&config->sections[config->count++];
       *current=section; current->begin=at; current->end=size;
     } else if(current && current->transforms==1){
-      /* Consume the complete function even in an unmatched section: section-like
+      /* Consume the complete function: section-like
        * source comments must never select overrides or another transform set. */
       const char *equal=memchr(config->text+begin,'=',end-begin);
       if(!equal) goto invalid;
@@ -152,8 +135,7 @@ AnygmContentConfig *anygm_content_config_parse(const void *text,size_t size,
        * Validate the sections together so their ordering cannot hide a duplicate. */
       for(size_t prior=0;document && prior<i;prior++){
         ConfigSection *other=&config->sections[prior];
-        if(!other->transforms || other->transforms==section->transforms ||
-           other->targeted!=section->targeted || memcmp(other->digest,section->digest,32)) continue;
+        if(!other->transforms || other->transforms==section->transforms) continue;
         char *preceding=transform_document(config,other);
         size_t length=strlen(document),prefix=preceding?strlen(preceding):0;
         char *combined=preceding?malloc(prefix+length+2u):NULL;
@@ -189,7 +171,7 @@ int anygm_content_config_has_input(const AnygmContentConfig *config){
   return config && config->has_input;
 }
 
-int anygm_content_config_apply(const AnygmContentConfig *config,const uint8_t *digest,
+int anygm_content_config_apply(const AnygmContentConfig *config,
                                AnygmContentTransforms *transforms,unsigned priority,
                                char *overrides,size_t capacity,char *error,size_t error_size){
   if(overrides && capacity) overrides[0]=0;
@@ -199,7 +181,6 @@ int anygm_content_config_apply(const AnygmContentConfig *config,const uint8_t *d
   int valid=staged && anygm_content_transforms_copy(staged,transforms);
   for(size_t i=0;valid && i<config->count;i++){
     const ConfigSection *section=&config->sections[i];
-    if(section->targeted!=(digest!=NULL) || (digest && memcmp(section->digest,digest,32))) continue;
     if(section->transforms){
       char *document=transform_document(config,section);
       valid=document && anygm_content_transforms_parse_layer(staged,document,strlen(document),

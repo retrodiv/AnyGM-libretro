@@ -199,15 +199,16 @@ static int final_after_decline(void){
 
 static int selectors(void){
   char text[2048],scope[80],digest_hex[65],overrides[256],error[256];
-  uint8_t digest[32]; hex("abc",3,digest_hex); gml_sha256("abc",3,digest);
+  hex("abc",3,digest_hex);
   snprintf(scope,sizeof scope,"sha256:%s.",digest_hex);
   chain_text(text,sizeof text,scope,"first|second");
   AnygmContentConfig *config=anygm_content_config_parse(text,strlen(text),error,sizeof error);
+  assert(!config && error[0]);
+  chain_text(text,sizeof text,"","first|second");
+  config=anygm_content_config_parse(text,strlen(text),error,sizeof error);
   assert(config && anygm_content_config_has_input(config));
   AnygmContentTransforms *set=anygm_content_transforms_create(); assert(set);
-  assert(anygm_content_config_apply(config,NULL,set,0,overrides,sizeof overrides,error,sizeof error));
-  assert(!anygm_content_transforms_patch_count(set));
-  assert(anygm_content_config_apply(config,digest,set,10,overrides,sizeof overrides,error,sizeof error));
+  assert(anygm_content_config_apply(config,set,0,overrides,sizeof overrides,error,sizeof error));
   assert(anygm_content_transforms_patch_count(set)==2 && anygm_content_source_configured(set));
   bind_one(set,"first",first_patch,sizeof first_patch); bind_one(set,"second",second_patch,sizeof second_patch);
   expect_chain(set);

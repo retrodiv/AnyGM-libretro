@@ -193,28 +193,77 @@ static void introstep_declaration(void){
   anygm_destroy(engine);assert(!remove(anchor));anygm_synthetic_content_destroy(&fixture);
 }
 
-static void config_text(char *out,size_t capacity,const char *digest,int base,int selected){
+static void config_text(char *out,size_t capacity,int base){
   int length=snprintf(out,capacity,
-    "[overrides]\nostype|0\n$anygm_probe=%d\n$retained=7\n"
-    "[sha256:%s.overrides]\n$anygm_probe=%d\nostype|1\n",base,digest,selected);
+    "[overrides]\nostype|0\n$anygm_probe=%d\n$retained=7\n",base);
   assert(length>0 && (size_t)length<capacity);
+}
+
+static AnygmHostServices observed_vfs;
+static const char *observed_path;
+static void *observed_files[16];
+static size_t observed_bytes;
+
+static void *observe_open(void *userdata,const char *path,AnygmFileMode mode){
+  void *file=observed_vfs.file_open(userdata,path,mode);
+  if(file && !strcmp(path,observed_path)){
+    size_t i=0;while(i<16 && observed_files[i]) i++;
+    assert(i<16);observed_files[i]=file;
+  }
+  return file;
+}
+
+static size_t observe_read(void *userdata,void *file,void *data,size_t size){
+  size_t got=observed_vfs.file_read(userdata,file,data,size);
+  for(size_t i=0;i<16;i++) if(observed_files[i]==file){ observed_bytes+=got;break; }
+  return got;
+}
+
+static void observe_close(void *userdata,void *file){
+  for(size_t i=0;i<16;i++) if(observed_files[i]==file) observed_files[i]=NULL;
+  observed_vfs.file_close(userdata,file);
+}
+
+static void defaults_do_not_hash_payload(void){
+  AnygmSyntheticContent fixture;assert(anygm_synthetic_content_create(&fixture));
+  uint8_t *bytes=NULL;size_t size=0;
+  assert(anygm_synthetic_content_read(&fixture,&bytes,&size));free(bytes);
+  char ini[256];snprintf(ini,sizeof ini,"%s/AnyGM.ini",fixture.directory);
+  AnygmHostServices services={0};services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;anygm_stdio_vfs_services_init(&services);
+  observed_vfs=services;observed_path=fixture.path;observed_bytes=0;
+  services.file_open=observe_open;services.file_read=observe_read;services.file_close=observe_close;
+  AnygmEngine *engine=NULL;assert(anygm_create(&services,&engine)==ANYGM_OK);
+  AnygmContentSource source={0};source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;source.path=fixture.path;
+  source.system_directory=fixture.directory;source.cache_directory=fixture.directory;
+  assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
+  size_t baseline=observed_bytes;anygm_unload(engine);
+  write_text(ini,"[overrides]\n$count_marker=17\n");observed_bytes=0;
+  assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
+  assert(observed_bytes==baseline);frame(engine);
+  assert(gml_global_num(&engine->vm,"count_marker")==17);anygm_unload(engine);
+  write_text(ini,"[transforms]\ninput.probe=buffer decline(){return scratch_slice(0,0);}\n"
+                 "[overrides]\n$count_marker=17\n");observed_bytes=0;
+  assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
+  assert(observed_bytes==baseline+size);frame(engine);
+  assert(gml_global_num(&engine->vm,"count_marker")==17);
+  anygm_destroy(engine);assert(!remove(ini));anygm_synthetic_content_destroy(&fixture);
 }
 
 static void lifecycle(void){
   AnygmSyntheticContent fixture;
   assert(anygm_synthetic_content_create(&fixture));
-  uint8_t *content=NULL,digest[32]; size_t content_size=0;
+  uint8_t *content=NULL; size_t content_size=0;
   assert(anygm_synthetic_content_read(&fixture,&content,&content_size));
-  gml_sha256(content,content_size,digest);
-  char hex[65],ini[256],anchor[256],text[1024];
-  for(size_t i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
+  char ini[256],anchor[256],text[1024];
   snprintf(ini,sizeof ini,"%s/AnyGM.ini",fixture.directory);
   snprintf(anchor,sizeof anchor,"%s/content.anygm",fixture.directory);
   const char *name=strrchr(fixture.path,'/'); name=name?name+1:fixture.path;
   snprintf(text,sizeof text,"[anygm]\npayload=%s\n[overrides]\n"
     "$anygm_probe=2\nostype|6\n$anchor_only=9\ngamepad|keyboard\nkeybind|1|65|b\n",name);
   write_text(anchor,text);
-  config_text(text,sizeof text,hex,1,3); write_text(ini,text);
+  config_text(text,sizeof text,1); write_text(ini,text);
   AnygmHostServices services={0}; services.struct_size=sizeof services;
   services.abi_version=ANYGM_HOST_SERVICES_VERSION;
   anygm_stdio_vfs_services_init(&services);
@@ -223,12 +272,12 @@ static void lifecycle(void){
   source.kind=ANYGM_CONTENT_PATH; source.path=anchor;
   source.system_directory=fixture.directory; source.cache_directory=fixture.directory;
   assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
-  assert(engine->vm.os_type_declared==1);
+  assert(engine->vm.os_type_declared==6);
   assert(engine_overrides_keyboard_emulation(engine));
   unsigned bound_port=ANYGM_MAX_GAMEPADS;
   assert(engine_overrides_key_binding(engine,65,&bound_port)==ANYGM_PAD_FACE_BOTTOM && bound_port==0);
   frame(engine);
-  assert(gml_global_num(&engine->vm,"anygm_probe")==3);
+  assert(gml_global_num(&engine->vm,"anygm_probe")==2);
   assert(gml_global_num(&engine->vm,"retained")==7);
   assert(gml_global_num(&engine->vm,"anchor_only")==9);
   assert(strstr(engine->launch_overrides_text,"$anygm_probe=2") &&
@@ -238,7 +287,7 @@ static void lifecycle(void){
   assert(state && before && after);
   assert(anygm_state_save(engine,state,capacity,&written)==ANYGM_OK);
   assert(anygm_reset(engine)==ANYGM_OK); frame(engine);
-  assert(gml_global_num(&engine->vm,"anygm_probe")==3);
+  assert(gml_global_num(&engine->vm,"anygm_probe")==2);
   assert(engine_overrides_keyboard_emulation(engine));
   assert(engine_overrides_key_binding(engine,65,NULL)==ANYGM_PAD_FACE_BOTTOM);
   assert(anygm_state_load(engine,state,written)==ANYGM_OK);
@@ -287,12 +336,14 @@ static void lifecycle(void){
 
   /* A hidden default has no part in the effective state identity. */
   anygm_unload(engine);
-  config_text(text,sizeof text,hex,8,3); write_text(ini,text);
+  config_text(text,sizeof text,8); write_text(ini,text);
   source.path=fixture.path;
   assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
   assert(anygm_state_load(engine,state,written)==ANYGM_OK);
   anygm_unload(engine);
-  config_text(text,sizeof text,hex,8,4); write_text(ini,text);
+  snprintf(text,sizeof text,"[anygm]\npayload=%s\n[overrides]\n"
+    "$anygm_probe=4\nostype|6\n$anchor_only=9\ngamepad|keyboard\nkeybind|1|65|b\n",name);
+  write_text(anchor,text);
   assert(anygm_load(engine,&source,NULL)==ANYGM_OK); frame(engine);
   assert(gml_global_num(&engine->vm,"anygm_probe")==4);
   size_t previous_size=0,next_size=0;
@@ -310,18 +361,17 @@ static void lifecycle(void){
   assert(anygm_state_load(engine,state,written)==ANYGM_ERROR_STATE_MISMATCH);
   anygm_unload(engine);
   delta.values.content_overrides=1; assert(anygm_set_config(engine,&delta)==ANYGM_OK);
-  hex[0]=hex[0]=='0'?'1':'0';
-  config_text(text,sizeof text,hex,8,4); write_text(ini,text);
+  snprintf(text,sizeof text,"[anygm]\npayload=%s\n[overrides]\n"
+    "$anygm_probe=2\nostype|6\n$anchor_only=9\ngamepad|keyboard\nkeybind|1|65|b\n",name);
+  write_text(anchor,text);
   assert(anygm_load(engine,&source,NULL)==ANYGM_OK); frame(engine);
   assert(engine->vm.os_type_declared==6 && gml_global_num(&engine->vm,"anygm_probe")==2);
   anygm_unload(engine);
-  gml_sha256(content,content_size,digest);
-  for(size_t i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
-  config_text(text,sizeof text,hex,1,3); write_text(ini,text);
+  config_text(text,sizeof text,3); write_text(ini,text);
   source.kind=ANYGM_CONTENT_MEMORY; source.data=content; source.size=content_size;
   source.path=NULL;
   assert(anygm_load(engine,&source,NULL)==ANYGM_OK); frame(engine);
-  assert(engine->vm.os_type_declared==1 && gml_global_num(&engine->vm,"anygm_probe")==3);
+  assert(engine->vm.os_type_declared==0 && gml_global_num(&engine->vm,"anygm_probe")==3);
   assert(!engine->launch_overrides_text[0]);
   anygm_unload(engine);
   write_text(ini,"[overrides]\nunknown|bad\n");
@@ -339,7 +389,7 @@ static void replacement(void){
   uint8_t *root_bytes=NULL,*child_bytes=NULL,digest[32]; size_t root_size=0,child_size=0;
   assert(anygm_synthetic_content_read(&fixture,&root_bytes,&root_size));
   assert(anygm_synthetic_content_read(&child,&child_bytes,&child_size));
-  char root_hex[65],child_hex[65],ini[256],anchor[256],text[1024];
+  char root_hex[65],child_hex[65],ini[256],anchor[256],child_anchor[256],text[1024];
   gml_sha256(root_bytes,root_size,digest);
   for(size_t i=0;i<32;i++) snprintf(root_hex+i*2,3,"%02x",digest[i]);
   gml_sha256(child_bytes,child_size,digest);
@@ -347,10 +397,10 @@ static void replacement(void){
   assert(strcmp(root_hex,child_hex));
   snprintf(ini,sizeof ini,"%s/AnyGM.ini",fixture.directory);
   snprintf(anchor,sizeof anchor,"%s/launch.anygm",fixture.directory);
-  snprintf(text,sizeof text,"[overrides]\n$default_marker=5\n"
-    "[sha256:%s.overrides]\nostype|6\n$root_only=11\n"
-    "[sha256:%s.overrides]\nostype|1\n$child_only=12\n",root_hex,child_hex);
+  snprintf(child_anchor,sizeof child_anchor,"%s/secondary/content.anygm",fixture.directory);
+  snprintf(text,sizeof text,"[overrides]\n$default_marker=5\nostype|6\n");
   write_text(ini,text);
+  write_text(child_anchor,"[anygm]\npayload=data.win\n[overrides]\nostype|1\n$child_only=12\n");
   write_text(anchor,"[anygm]\npayload=data.win\n[overrides]\n$launch_marker=7\n");
   AnygmHostServices services={0}; services.struct_size=sizeof services;
   services.abi_version=ANYGM_HOST_SERVICES_VERSION; anygm_stdio_vfs_services_init(&services);
@@ -368,7 +418,7 @@ static void replacement(void){
   assert(gml_global_num(&engine->vm,"launch_marker")==7);
   assert(gml_global_num(&engine->vm,"default_marker")==5);
   assert(gml_global_num(&engine->vm,"child_only")==12);
-  assert(!strstr(engine->content_overrides_text,"root_only"));
+  assert(strstr(engine->content_overrides_text,"$launch_marker=7"));
   size_t child_capacity=anygm_state_size(engine),child_written=0;
   uint8_t *child_state=malloc(child_capacity); assert(child_state);
   assert(anygm_state_save(engine,child_state,child_capacity,&child_written)==ANYGM_OK);
@@ -378,29 +428,27 @@ static void replacement(void){
   assert(engine->vm.os_type_declared==1 && gml_global_num(&engine->vm,"child_only")==12);
   anygm_destroy(engine);
   free(root_state); free(child_state); free(root_bytes); free(child_bytes);
-  assert(!remove(anchor) && !remove(ini));
+  assert(!remove(anchor) && !remove(child_anchor) && !remove(ini));
   anygm_synthetic_content_destroy(&fixture);
 }
 
 static void memory_pipeline(void){
   AnygmSyntheticContent fixture;
   assert(anygm_synthetic_content_create(&fixture));
-  uint8_t *content=NULL,digest[32]; size_t content_size=0;
+  uint8_t *content=NULL; size_t content_size=0;
   assert(anygm_synthetic_content_read(&fixture,&content,&content_size));
   GmlMediaBuffer compressed={0};
   assert(gml_deflate_encode_zlib(content,content_size,&compressed));
   uint8_t *wrapped=malloc(compressed.size+4); assert(wrapped);
   memcpy(wrapped,"WRAP",4); memcpy(wrapped+4,compressed.data,compressed.size);
-  gml_sha256(wrapped,compressed.size+4,digest);
-  char hex[65],ini[256],path[256],companion[256],config[1024];
-  for(size_t i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
+  char ini[256],path[256],companion[256],config[1024];
   snprintf(ini,sizeof ini,"%s/AnyGM.ini",fixture.directory);
   snprintf(path,sizeof path,"%s/content.bin",fixture.directory);
   snprintf(companion,sizeof companion,"%s/data.alternate.win",fixture.directory);
   snprintf(config,sizeof config,
     "[transforms]\nunwrap=buffer unwrap(){ if(input_size<4) reject(); return slice(4,input_size-4); }\n"
-    "[sha256:%s.pipelines]\ninput=unwrap|builtin.zlib:%zu\n"
-    "[sha256:%s.overrides]\n$anygm_probe=23\n",hex,content_size,hex);
+    "[pipelines]\ninput=unwrap|builtin.zlib:%zu\n"
+    "[overrides]\n$anygm_probe=23\n",content_size);
   write_text(ini,config);
   AnygmHostServices services={0}; services.struct_size=sizeof services;
   services.abi_version=ANYGM_HOST_SERVICES_VERSION; anygm_stdio_vfs_services_init(&services);
@@ -427,9 +475,9 @@ static void memory_pipeline(void){
   assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
   assert(!strcmp(engine->current_content_path,companion) && !strcmp(engine->win.content_dir,fixture.directory));
   anygm_unload(engine); assert(!remove(companion));
-  write_text(ini,config);
-  /* An unmatched selector does not run the pipeline; the original normalized
-   * image stays borrowed, with no source-format or transformation dependency. */
+  write_text(ini,"[overrides]\n$anygm_probe=23\n");
+  /* Without an input pipeline, the original normalized image stays borrowed,
+   * while ordinary global defaults remain available. */
   source.kind=ANYGM_CONTENT_MEMORY; source.path=NULL;
   source.data=content; source.size=content_size;
   assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
@@ -452,19 +500,17 @@ static void memory_pipeline(void){
 static void candidate_inputs(void){
   AnygmSyntheticContent fixture;
   assert(anygm_synthetic_content_create(&fixture));
-  uint8_t *content=NULL,digest[32]; size_t size=0;
+  uint8_t *content=NULL; size_t size=0;
   assert(anygm_synthetic_content_read(&fixture,&content,&size));
   uint8_t *container=malloc(size*2+8); assert(container);
   memcpy(container,"FORM\1\0\0\0",8); memcpy(container+8,content,size);
-  gml_sha256(container,size+8,digest);
-  char ini[256],path[256],config[2048],hex[65];
-  for(size_t i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
+  char ini[256],path[256],config[2048];
   snprintf(ini,sizeof ini,"%s/AnyGM.ini",fixture.directory);
   snprintf(path,sizeof path,"%s/indexed.bin",fixture.directory);
   snprintf(config,sizeof config,"[transforms]\ninput=buffer copy(){return slice(0,input_size);}\n"
-    "[sha256:%s.transforms]\ninput.probe=buffer ranges(){write64(scratch,8,8);"
+    "input.probe=buffer ranges(){write64(scratch,8,8);"
     "write64(scratch,80,8);write64(scratch,88,input_size-8);return scratch_slice(0,160);}\n"
-    "[sha256:%s.overrides]\n$anygm_probe=29\n",hex,hex);
+    "[overrides]\n$anygm_probe=29\n");
   write_text(ini,config); write_bytes(path,container,size+8);
   AnygmHostServices services={0}; services.struct_size=sizeof services;
   services.abi_version=ANYGM_HOST_SERVICES_VERSION; anygm_stdio_vfs_services_init(&services);
@@ -707,6 +753,7 @@ static void crt_setting_layout(void){
 }
 
 int main(void){
+  defaults_do_not_hash_payload();
   renderer_declarations();
   crt_setting_callback();
   crt_setting_layout();

@@ -1682,8 +1682,13 @@ static int selected_file_identity(const AnygmContentRouter *router,const char *i
   AnygmContentRouter scoped=*router; scoped.system_directory=directory;
   int ok=write_file(ini,text,strlen(text)) &&
     anygm_content_resolve_path(&scoped,input,resolved,sizeof resolved,NULL,0,
+                               overrides,sizeof overrides)==ANYGM_CONTENT_RESOLVE_INVALID &&
+    !resolved[0] && !overrides[0];
+  snprintf(text,sizeof text,"[overrides]\n$identity=1\n");
+  ok=ok && write_file(ini,text,strlen(text)) &&
+    anygm_content_resolve_path(&scoped,input,resolved,sizeof resolved,NULL,0,
                                overrides,sizeof overrides)==ANYGM_CONTENT_RESOLVE_OK &&
-    !strcmp(overrides,"$identity=1\n$identity=2\n");
+    !strcmp(overrides,"$identity=1\n");
   anygm_content_directory_remove(router->host,directory);
   return ok;
 }
@@ -2311,20 +2316,14 @@ static int input_pipeline_cases(const AnygmHostServices *services,const char *ro
      sizeof archive_anchor-1,sizeof archive_anchor-1,0,0,0,0}
   };
   Buffer archive={0},wrapped={0};
-  uint8_t prefix[64]={'W','R','A','P'},digest[32];
+  uint8_t prefix[64]={'W','R','A','P'};
   if(!build_zip(entries,2,&archive) || !buffer_bytes(&wrapped,prefix,sizeof prefix) ||
      !buffer_bytes(&wrapped,archive.data,archive.size)) return fail("could not build wrapped ZIP");
   uint8_t *examples=NULL; size_t examples_size=0;
   if(!read_file("examples/input_transforms.ini",&examples,&examples_size)) return fail("cannot read distributed adapters");
-  char hex[65],member_hex[65],selection[1024];
-  gml_sha256(wrapped.data,wrapped.size,digest);
-  for(size_t i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
-  gml_sha256(form,sizeof form,digest);
-  for(size_t i=0;i<32;i++) snprintf(member_hex+i*2,3,"%02x",digest[i]);
+  char selection[1024];
   snprintf(selection,sizeof selection,
-    "\n[sha256:%s.pipelines]\ninput=embedded_zip\n"
-    "[sha256:%s.overrides]\n$source_marker=3\n"
-    "[sha256:%s.overrides]\n$wrong_identity=99\n",hex,hex,member_hex);
+    "\ninput=embedded_zip\n[overrides]\n$source_marker=3\n");
   Buffer config={0};
   int ok=buffer_bytes(&config,examples,examples_size) && buffer_bytes(&config,selection,strlen(selection)) &&
     write_file(payload,wrapped.data,wrapped.size) && write_file(ini,config.data,config.size);
@@ -2333,8 +2332,8 @@ static int input_pipeline_cases(const AnygmHostServices *services,const char *ro
   router.system_directory=directory; router.log=fixture_log;
   if(!ok || !anygm_content_resolve_path(&router,payload,resolved,sizeof resolved,assets,sizeof assets,
        overrides,sizeof overrides) || !strstr(overrides,"$source_marker=3") ||
-     !strstr(overrides,"$archive_marker=11") || strstr(overrides,"$wrong_identity"))
-    return fail("wrapped ZIP lost original identity or archive directives");
+     !strstr(overrides,"$archive_marker=11"))
+    return fail("wrapped ZIP lost global defaults or archive directives");
   /* Empty asset_root means the resolved image's own directory, not the original
    * source directory. That is the archive reader's ordinary contract. */
   if(!assets[0]) anygm_content_path_parent(resolved,assets,sizeof assets);
@@ -2508,17 +2507,12 @@ static int selected_configuration_cases(const AnygmHostServices *services,const 
   Fixture project={{0},0};
   if(!build_wrapped_project(&project) || !write_file(payload,project.data,project.size))
     return fail("could not write selected configuration project");
-  uint8_t digest[32]; char hex[65],config[2048],overrides[4096];
-  gml_sha256(project.data,project.size,digest);
-  for(size_t i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
+  char config[2048],overrides[4096];
   snprintf(config,sizeof config,
     "[overrides]\n$default=1\n[transforms]\ninput=buffer stop(){"
-    "if(input_size>=4 && read32(input,0)==0x50415257) reject(); return slice(0,input_size); }\n"
-    "[sha256:%s.transforms]\ninput=buffer unwrap(){ return slice(4,input_size-4); }\n"
-    "[sha256:%s.overrides]\n$selected=3\n",hex,hex);
-  static const uint8_t anchor_text[]="[anygm]\npayload=project.gmk\n[overrides]\n$anchor=2\n"
-    "[transforms]\ninput=buffer stop(){"
-    "if(input_size>=4 && read32(input,0)==0x50415257) reject(); return slice(0,input_size); }\n";
+    "if(input_size>=4 && read32(input,0)==0x50415257) reject(); return slice(0,input_size); }\n");
+  static const uint8_t anchor_text[]="[anygm]\npayload=project.gmk\n[overrides]\n$anchor=2\n$selected=3\n"
+    "[transforms]\ninput=buffer unwrap(){ return slice(4,input_size-4); }\n";
   if(!write_file(ini,config,strlen(config)) || !write_file(anchor,anchor_text,sizeof anchor_text-1))
     return fail("could not write selected configuration declarations");
   AnygmContentRouter router={0}; router.host=services; router.cache_directory=directory;
@@ -2526,7 +2520,7 @@ static int selected_configuration_cases(const AnygmHostServices *services,const 
   for(int direct=0;direct<2;direct++){
     if(!anygm_content_resolve_path(&router,direct?payload:anchor,resolved,sizeof resolved,
          NULL,0,overrides,sizeof overrides) || strcmp(overrides,"$default=1\n$anchor=2\n$selected=3\n"))
-      return fail("SHA-256 selection did not override an anchor before source preparation");
+      return fail("a content-local anchor did not override global source defaults");
   }
   ZipEntry entries[2]={
     {(const uint8_t*)"project.gmk",11,project.data,(uint32_t)project.size,(uint32_t)project.size,0,0,0,0},
@@ -2545,15 +2539,17 @@ static int selected_configuration_cases(const AnygmHostServices *services,const 
        strcmp(overrides,"$default=1\n$outer=4\n$anchor=2\n$selected=3\n"))
       return fail("archive wrapping or cache warmth changed the selected payload configuration");
   }
-  /* A different original fingerprint cannot reuse the prior derived result. */
-  config[0]=0;
-  hex[0]=hex[0]=='0'?'1':'0';
-  snprintf(config,sizeof config,"[transforms]\ninput=buffer stop(){"
-    "if(input_size>=4 && read32(input,0)==0x50415257) reject(); return slice(0,input_size);}\n"
-    "[sha256:%s.transforms]\ninput=buffer unwrap(){return slice(4,input_size-4);}\n",hex);
-  if(!write_file(ini,config,strlen(config)) ||
+  /* Changed archive declarations cannot reuse the prior derived result. */
+  static const uint8_t changed_anchor[]="[anygm]\npayload=project.gmk\n[transforms]\n"
+    "input=buffer stop(){reject();return slice(0,input_size);}\n";
+  entries[1].data=changed_anchor;
+  entries[1].uncompressed_size=entries[1].compressed_size=sizeof changed_anchor-1;
+  archive=(Buffer){0};
+  ok=build_zip(entries,2,&archive) && write_file(archive_path,archive.data,archive.size);
+  free(archive.data);
+  if(!ok ||
      anygm_content_resolve_path(&router,archive_path,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides) ||
-     overrides[0] || resolved[0]) return fail("unmatched hash selected a cached transform result");
+     overrides[0] || resolved[0]) return fail("changed archive directives reused a cached transform result");
   return 1;
 }
 

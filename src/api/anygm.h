@@ -15,7 +15,7 @@ extern "C" {
  * runtime library version, and every publishable metadata file declares the literal "Git" instead
  * of a number, so no copy can promise a value that has gone stale. CONTRIBUTING.md owns the single
  * increment step. */
-#define ANYGM_VERSION "0.1.839"
+#define ANYGM_VERSION "0.1.840"
 #define ANYGM_API_VERSION 8u
 #define ANYGM_HOST_SERVICES_VERSION 2u
 #define ANYGM_STATE_SCHEMA 63u
@@ -322,8 +322,8 @@ typedef struct AnygmContentSource {
 /* Path sources are opened during anygm_load. Memory sources are borrowed and must remain valid
  * until anygm_unload or anygm_destroy; the optional path is an identity and directory hint.
  * cache_directory, save_directory and system_directory are roots in the host VFS.
- * system_directory optionally supplies AnyGM.ini for content transforms and overrides,
- * including SHA-256 sections selected by the original path or memory payload bytes.
+ * system_directory optionally supplies AnyGM.ini for global content transforms and overrides.
+ * Content-local declarations belong in .anygm anchors; hash-selected INI sections are unsupported.
  * When a save root is present,
  * writable content files live below save_directory/AnyGM/<sanitized-label>-<path-hash>. */
 

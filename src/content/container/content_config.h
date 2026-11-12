@@ -11,17 +11,16 @@
 
 typedef struct AnygmContentConfig AnygmContentConfig;
 
-/* Compile/validate every transform section, including unmatched selectors.
+/* Compile/validate every default transform section.
  * No partial configuration is returned after failure. Unknown INI sections
- * remain uninterpreted; malformed sha256 selectors are always rejected. */
+ * remain uninterpreted; removed sha256 selectors are always rejected. */
 AnygmContentConfig *anygm_content_config_parse(const void *text,size_t size,
                                              char *error,size_t error_size);
 void anygm_content_config_destroy(AnygmContentConfig *config);
-/* Fast-path query; includes unmatched source selectors without executing them. */
+/* Fast-path query without executing source preparation. */
 int anygm_content_config_has_input(const AnygmContentConfig *config);
-/* NULL digest selects defaults; otherwise select precisely these original bytes.
- * Overrides are returned as bounded text for the engine-owned directive parser. */
-int anygm_content_config_apply(const AnygmContentConfig *config,const uint8_t *digest,
+/* Apply defaults. Overrides are bounded text for the engine-owned directive parser. */
+int anygm_content_config_apply(const AnygmContentConfig *config,
                                AnygmContentTransforms *transforms,unsigned priority,
                                char *overrides,size_t capacity,char *error,size_t error_size);
 

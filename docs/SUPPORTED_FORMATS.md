@@ -46,7 +46,7 @@ and decoder limits are owned by `CONTENT_TRANSFORMS.md`, not by any particular f
 
 Each `[overrides]` line is one directive in the same grammar the host cheat
 interface uses, including development-menu declarations. System `AnyGM.ini`
-defaults, anchor declarations and exact-payload SHA-256 sections combine per
+defaults and anchor declarations combine per
 destination and condition before execution; `CONTENT_CONFIGURATION.md`
 defines their syntax, precedence and original-byte identity. An
 `introskip|1,3-5` directive lists room indices where A, B, or Start advances
