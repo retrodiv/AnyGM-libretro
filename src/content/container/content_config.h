@@ -13,14 +13,14 @@ typedef struct AnygmContentConfig AnygmContentConfig;
 
 /* Compile/validate every default and selected transform section.
  * No partial configuration is returned after failure. Unknown INI sections
- * remain uninterpreted; removed sha256 selectors are always rejected. */
+ * remain uninterpreted; removed sha256 and zip selectors are always rejected. */
 AnygmContentConfig *anygm_content_config_parse(const void *text,size_t size,
                                              char *error,size_t error_size);
 void anygm_content_config_destroy(AnygmContentConfig *config);
 /* Fast-path query without executing source preparation. */
 int anygm_content_config_has_input(const AnygmContentConfig *config);
 /* Recognition keys are bounded hints, never integrity checks. */
-int anygm_content_config_candidate(const AnygmContentConfig *config,const char *kind,uint64_t size);
+int anygm_content_config_candidate(const AnygmContentConfig *config,uint64_t size);
 int anygm_content_config_matches(const AnygmContentConfig *config,const char *key);
 int anygm_content_config_select(const AnygmContentConfig *config,const char *key,
                                AnygmContentTransforms *transforms,unsigned priority,

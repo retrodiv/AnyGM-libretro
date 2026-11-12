@@ -30,7 +30,7 @@ Priority runs from lowest to highest:
 6. Matching fast payload sections in `AnyGM.ini`.
 
 Section names and transform keys are case-sensitive. Duplicate recognized sections
-reject the INI. The removed `[sha256:...]` sections also reject the INI rather
+reject the INI. The removed `[sha256:...]` and `[zip:...]` sections also reject the INI rather
 than silently losing a content-specific policy. Multiple sibling
 anchors select none; an explicit anchor does not discover another sibling.
 
@@ -54,28 +54,26 @@ last override for a destination wins; duplicate transform keys remain invalid.
 ## Preparation and cache identity
 
 Complete-file SHA-256 selectors remain unsupported. Their full input reads were
-removed from ordinary startup. Fast recognition supports these section prefixes,
+removed from ordinary startup. Fast recognition supports one section prefix,
 followed by `.overrides`, `.transforms`, `.pipelines` or `.patches`:
 
-- `zip:<uncompressed-size>:<crc32>` identifies the selected archive member using
-  ZIP directory metadata. The CRC is eight hexadecimal digits. No member is
-  decompressed or hashed merely to recognize it, including with a warm cache.
-- `sample-v1:<size>:<sha256>` identifies a path-backed payload using at most
-  three 65536-byte reads. The digest is 64 hexadecimal digits. Sizes are positive
-  decimal integers without leading zeroes; hexadecimal digits are case insensitive.
+`sample-v1:<size>:<sha256>` identifies a path-backed payload using at most
+three 65536-byte reads. The digest is 64 hexadecimal digits. Sizes are positive
+decimal integers without leading zeroes; hexadecimal digits are case insensitive.
 
 For Studio, selection follows the actual data image, including an adjacent or
 extracted embedded image reached through a launcher. Classic projects and
-executables identify their original input before conversion. A ZIP selector refers
-to that selected member, never the whole archive. Repacking or renaming an archive
-preserves a member's size and CRC. Nested archives select the final payload member.
+executables identify their original input before conversion. Loose and archived
+copies of the same payload share one key and one INI rule. Archive payloads are
+sampled from their extracted files, including with a warm cache. The archive itself,
+its compression and unrelated members do not contribute to the key. Nested archives
+select the final payload member. No archive-specific selector exists.
 
 Sampling first filters declared candidates by size; with no candidate, no sample
 is read. The digest input is the 15 ASCII bytes `anygm-sample-v1`, the payload size
 as an unsigned little-endian 64-bit integer, then three samples. For size S, each
 sample has length N=min(S,65536), at offsets 0, floor((S-N)/2) and S-N, in that
-order. Overlapping samples are deliberately repeated. ZIP metadata takes precedence
-over sampling when its complete key matches. Memory-only loads retain defaults;
+order. Overlapping samples are deliberately repeated. Memory-only loads retain defaults;
 these selectors are path-backed recognition.
 
 These are recognition hints, not proof of complete-file equality. Different
@@ -87,14 +85,14 @@ Payload selectors cannot declare pre-routing `input`, `input.probe` or `input.fi
 adapters: those must be available before payload selection and belong in defaults
 or anchors. Other selected transforms and patches retain their ordinary contracts.
 
-Illustrative metadata can select runtime directives:
+An illustrative sampled key can select runtime directives:
 
 ```ini
-[zip:123456:89abcdef.overrides]
+[sample-v1:123456:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.overrides]
 ostype|0
 ```
 
-Use metadata from the actual payload; a size alone is never a selector.
+Compute the key from the actual payload; a size alone is never a selector.
 
 ### Obtain a selector without additional tools
 
@@ -110,6 +108,20 @@ import zipfile
 from pathlib import Path
 
 
+def sample_key(source, size):
+    if not size:
+        raise ValueError("payload is empty")
+    count = min(size, 65536)
+    digest = hashlib.sha256(b"anygm-sample-v1" + struct.pack("<Q", size))
+    for offset in (0, (size - count) // 2, size - count):
+        source.seek(offset)
+        sample = source.read(count)
+        if len(sample) != count:
+            raise ValueError("could not read a complete sample")
+        digest.update(sample)
+    return f"sample-v1:{size}:{digest.hexdigest()}"
+
+
 def make_key(path, member):
     if member is not None:
         with zipfile.ZipFile(path) as archive:
@@ -118,24 +130,16 @@ def make_key(path, member):
             if len(entries) != 1 or entries[0].is_dir() or not entries[0].file_size:
                 raise ValueError("select exactly one nonempty payload member")
             item = entries[0]
-            return f"zip:{item.file_size}:{item.CRC:08x}"
+            with archive.open(item) as source:
+                return sample_key(source, item.file_size)
     if zipfile.is_zipfile(path):
         raise ValueError("use --member to select the payload inside this archive")
     with path.open("rb") as source:
         size = source.seek(0, 2)
-        if not size:
-            raise ValueError("payload is empty")
-        count = min(size, 65536)
-        digest = hashlib.sha256(b"anygm-sample-v1" + struct.pack("<Q", size))
-        for offset in (0, (size - count) // 2, size - count):
-            source.seek(offset)
-            sample = source.read(count)
-            if len(sample) != count:
-                raise ValueError("could not read a complete sample")
-            digest.update(sample)
+        key = sample_key(source, size)
         if source.seek(0, 2) != size:
             raise ValueError("payload size changed while reading")
-    return f"sample-v1:{size}:{digest.hexdigest()}"
+    return key
 
 
 if __name__ == "__main__":
@@ -158,10 +162,12 @@ python3 content_selector.py "Content.zip" --member "data.win"
 python3 content_selector.py "Content.apk" --member "assets/game.droid"
 ```
 
-This mode reads ZIP directory metadata without reading or decompressing the member.
-For nested archives, run it on the innermost archive that contains the selected
-payload. Do not use the outer archive's size or the CRC of an executable that
-merely launches a Studio data image.
+This mode samples the selected member's uncompressed bytes and produces the same
+`sample-v1` key as the loose payload. Python may need to decompress that member to
+reach the samples; this is a one-time authoring operation, not an extra core load
+pass. Other members are not decompressed. For nested archives, run it on the
+innermost archive that contains the selected payload. Do not fingerprint the outer
+archive or an executable that merely launches a Studio data image.
 
 For loose content, select the actual Studio data image or the original Classic
 project/executable:
@@ -184,13 +190,13 @@ Copy the printed header into the frontend system directory's `AnyGM.ini`, then a
 the desired directives below it. For example, an illustrative output and directive:
 
 ```ini
-[zip:123456:89abcdef.overrides]
+[sample-v1:123456:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.overrides]
 ostype|0
 ```
 
 Use the header printed for your own payload, rather than these illustrative
-numbers. A loose-file sample key also works for that same payload after the core
-extracts it from a ZIP, unless a matching ZIP key takes precedence. Recompute the
+numbers. The same section works for the loose payload and any archive carrying
+those same payload bytes. Recompute the
 key when updating the content. With a matching rule present, load diagnostics show
 `configuration: recognition ... (matched)` and the selected payload path. These
 keys retain the recognition limitations described above.

@@ -46,7 +46,6 @@ typedef struct ContentConfigResolution {
   AnygmContentTransforms *selection_base;
   char specific[ANYGM_CONFIG_OVERRIDE_BYTES];
   char identity_path[1536];
-  char zip_path[1536],zip_key[112];
   char selected_path[1536];
   char defaults[ANYGM_CONFIG_OVERRIDE_BYTES];
   char anchors[CONFIG_ANCHOR_LAYERS][ANYGM_CONTENT_MAX_ANCHOR_BYTES];
@@ -495,8 +494,7 @@ static int select_fast_configuration(const AnygmContentRouter *router,const char
   char key[112]="",error[256]={0};
   uint64_t size=0;
   if(!file_size64(router,path,&size)) return 0;
-  if(!strcmp(path,config->zip_path)) snprintf(key,sizeof key,"%s",config->zip_key);
-  if(!key[0] && anygm_content_config_candidate(config->ini,"sample-v1",size)){
+  if(anygm_content_config_candidate(config->ini,size)){
     void *file=router->host->file_open(router->host->userdata,path,ANYGM_FILE_READ);
     if(!file) return 0;
     GmlSha256 hash; uint8_t bytes[65536],digest[32],length[8];
@@ -532,53 +530,6 @@ static int select_fast_configuration(const AnygmContentRouter *router,const char
   if(!ok) content_log(router,ANYGM_CONTENT_LOG_ERROR,"configuration: %s",error);
   if(ok) snprintf(config->selected_path,sizeof config->selected_path,"%s",path);
   return ok;
-}
-
-/* Read only the ZIP directory, including on cache reuse. The resolved member,
- * not its enclosing archive or launcher, supplies the recognition metadata. */
-static int select_zip_metadata(const AnygmContentRouter *router,const char *archive,
-                               const char *member,const char *resolved){
-  ContentConfigResolution *config=router->configuration;
-  if(!anygm_content_config_candidate(config->ini,"zip",0)) return 1;
-  uint64_t size=0;
-  if(!file_size64(router,archive,&size) || size<22) return 0;
-  void *file=router->host->file_open(router->host->userdata,archive,ANYGM_FILE_READ);
-  if(!file) return 0;
-  uint8_t tail[65557],header[46];
-  size_t take=size<sizeof tail?(size_t)size:sizeof tail;
-  int ok=router_read_at(router,file,size,size-take,tail,take),found=0;
-  size_t end=take-22;
-  while(ok && (zu32(tail+end)!=0x06054b50u || end+22u+zu16(tail+end+20)!=take)){
-    if(!end){ok=0;break;} end--;
-  }
-  uint64_t at=ok?zu32(tail+end+16):0;
-  unsigned count=ok?zu16(tail+end+10):0;
-  if(count>ANYGM_CONTENT_MAX_ARCHIVE_ENTRIES || count==0xffffu) ok=0;
-  for(unsigned i=0;ok && i<count;i++){
-    ok=router_read_at(router,file,size,at,header,sizeof header) && zu32(header)==0x02014b50u;
-    if(!ok) break;
-    unsigned n=zu16(header+28);
-    char name[ANYGM_CONTENT_MAX_MEMBER_PATH+1u];
-    if(!n || n>ANYGM_CONTENT_MAX_MEMBER_PATH || !router_read_at(router,file,size,at+46,name,n)) {ok=0;break;}
-    name[n]=0;
-    if(!anygm_content_member_normalize(name,n)){ok=0;break;}
-    if(!strcmp(name,member)){
-      uint64_t member_size=zu32(header+24);
-      if(found++){ok=0;break;}
-      if(anygm_content_config_candidate(config->ini,"zip",member_size)){
-        char key[112];
-        snprintf(key,sizeof key,"zip:%llu:%08x",
-          (unsigned long long)member_size,zu32(header+16));
-        if(anygm_content_config_matches(config->ini,key)){
-          snprintf(config->zip_key,sizeof config->zip_key,"%s",key);
-          snprintf(config->zip_path,sizeof config->zip_path,"%s",resolved);
-        }
-      }
-    }
-    at+=46u+n+zu16(header+30)+zu16(header+32);
-  }
-  router->host->file_close(router->host->userdata,file);
-  return ok && found==1;
 }
 
 /* Select a single bounded FORM data image carried by an executable. Validation uses the ordinary
@@ -1580,7 +1531,6 @@ static int load_archive_content_depth(const AnygmContentRouter *router,const cha
     /* The generated payload lands in the cache, so the extracted tree stays the asset root the
      * content opens by path. Route executable members through the same Classic/Cabinet boundary
      * as a directly selected path. */
-    if(!select_zip_metadata(router,zpath,rel,resolved)) return 0;
     int resolved_ok=0;
     int adapted=load_input_pipeline(router,resolved,content_path,cpsz,asset_root,arsz,
                                      content_overrides,content_overrides_size,depth+1);
@@ -1597,8 +1547,7 @@ static int load_archive_content_depth(const AnygmContentRouter *router,const cha
     return resolved_ok;
   }
   if(kind!='C') return 0;
-  if(!select_zip_metadata(router,zpath,rel,resolved) ||
-     !select_fast_configuration(router,resolved)) return 0;
+  if(!select_fast_configuration(router,resolved)) return 0;
   int adapted=load_input_pipeline(router,resolved,content_path,cpsz,asset_root,arsz,
                                    content_overrides,content_overrides_size,depth+1);
   if(adapted) return adapted>0;
@@ -1997,7 +1946,7 @@ static AnygmContentResolveResult content_resolve_path_direct(
   resolved_path[0]=0;
   if(asset_root && asset_root_size) asset_root[0]=0;
   if(!path_ext_is(input_path,".anygm")){
-    if(anygm_content_config_candidate(router->configuration->ini,"sample-v1",0) &&
+    if(anygm_content_config_candidate(router->configuration->ini,0) &&
        file_magic_kind(router,input_path)==1 && !select_fast_configuration(router,input_path))
       return ANYGM_CONTENT_RESOLVE_INVALID;
     int adapted=load_input_pipeline(router,input_path,resolved_path,resolved_path_size,

@@ -30,15 +30,13 @@ static int config_error(char *error,size_t size,const char *message){
 
 static int section_name(const char *name,size_t length,ConfigSection *section){
   memset(section,0,sizeof *section);
-  /* Per-payload selectors were removed: identifying every input for global
-   * configuration adds complete-file hashing to ordinary content startup. */
-  if(length>=7 && !memcmp(name,"sha256:",7)) return -1;
-  if((length>=4 && !memcmp(name,"zip:",4)) ||
-     (length>=10 && !memcmp(name,"sample-v1:",10))){
+  /* Retired selectors reject rather than silently losing a configured policy. */
+  if((length>=7 && !memcmp(name,"sha256:",7)) ||
+     (length>=4 && !memcmp(name,"zip:",4))) return -1;
+  if(length>=10 && !memcmp(name,"sample-v1:",10)){
     const char *dot=memchr(name,'.',length);
     if(!dot || (size_t)(dot-name)>=sizeof section->key) return -1;
-    size_t prefix=!memcmp(name,"zip:",4)?4u:10u;
-    size_t at=prefix;
+    size_t at=10u;
     uint64_t size=0;
     if(at>=length || name[at]<'1' || name[at]>'9') return -1;
     while(at<length && name[at]>='0' && name[at]<='9'){
@@ -47,7 +45,7 @@ static int section_name(const char *name,size_t length,ConfigSection *section){
       size=size*10u+digit;
     }
     if(at>=length || name[at++]!=':') return -1;
-    size_t digits=prefix==4?8u:64u;
+    size_t digits=64u;
     if((size_t)(dot-name)!=at+digits) return -1;
     for(size_t i=0;i<at+digits;i++){
       unsigned char c=(unsigned char)name[i];
@@ -209,10 +207,10 @@ int anygm_content_config_apply(const AnygmContentConfig *config,
   return anygm_content_config_select(config,"",transforms,priority,overrides,capacity,error,error_size);
 }
 
-int anygm_content_config_candidate(const AnygmContentConfig *config,const char *kind,uint64_t size){
+int anygm_content_config_candidate(const AnygmContentConfig *config,uint64_t size){
   char prefix[64];
-  snprintf(prefix,sizeof prefix,"%s:%" PRIu64 ":",kind,size);
-  if(!size) snprintf(prefix,sizeof prefix,"%s:",kind);
+  snprintf(prefix,sizeof prefix,"sample-v1:%" PRIu64 ":",size);
+  if(!size) snprintf(prefix,sizeof prefix,"sample-v1:");
   for(size_t i=0;config && i<config->count;i++)
     if(!strncmp(config->sections[i].key,prefix,strlen(prefix))) return 1;
   return 0;

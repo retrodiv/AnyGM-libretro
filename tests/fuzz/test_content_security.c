@@ -2591,13 +2591,20 @@ static int fast_configuration_cases(const AnygmHostServices *services,const char
   Buffer archive={0};
   int ok=build_zip(&entry,1,&archive) && write_file(archive_path,archive.data,archive.size);
   free(archive.data);if(!ok) return 0;
-  snprintf(text,sizeof text,"[overrides]\n$base=1\n[zip:%zu:%08x.overrides]\n$selected=4\n",
-    sizeof form,crc32_bytes(form,sizeof form));
-  if(!write_file(ini,text,strlen(text))) return 0;
+  /* Keep the exact loose/embedded declaration: packaging adds no selector. */
   for(unsigned warm=0;warm<2;warm++){
     if(anygm_content_resolve_path(&router,archive_path,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides)!=ANYGM_CONTENT_RESOLVE_OK ||
-       strcmp(overrides,"$base=1\n$selected=4\n")) return fail("ZIP member metadata did not select consistently on cold and warm loads");
+       strcmp(overrides,"$base=1\n$selected=2\n")) return fail("archived and loose payloads did not share their sampled identity");
   }
+  static const uint8_t extra[]="unrelated archive member";
+  ZipEntry repacked[2]={entry,
+    {(const uint8_t *)"extra.bin",9,extra,sizeof extra-1,sizeof extra-1,0,0,0,0}};
+  repacked[0].name=(const uint8_t *)"nested/data.win";repacked[0].name_size=15;
+  archive=(Buffer){0};
+  ok=build_zip(repacked,2,&archive) && write_file(archive_path,archive.data,archive.size);
+  free(archive.data);
+  if(!ok || anygm_content_resolve_path(&router,archive_path,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides)!=ANYGM_CONTENT_RESOLVE_OK ||
+     strcmp(overrides,"$base=1\n$selected=2\n")) return fail("repacking a payload changed its configuration identity");
   Fixture project={{0},0};
   if(!build_project_fixture(701,&project)) return 0;
   snprintf(payload,sizeof payload,"%s/project.gmk",directory);
