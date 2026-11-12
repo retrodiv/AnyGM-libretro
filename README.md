@@ -314,7 +314,7 @@ It requests the same rendering policy and graphics availability as the correspon
 - [Compatibility](docs/COMPATIBILITY.md)
 - [State format](docs/STATE_FORMAT.md)
 - [Supported formats](docs/SUPPORTED_FORMATS.md)
-- [Content configuration and SHA-256 selectors](docs/CONTENT_CONFIGURATION.md)
+- [Content configuration and fast payload selectors](docs/CONTENT_CONFIGURATION.md)
 - [Room-layer effects](docs/EFFECT_LAYERS.md)
 - [Security model](docs/SECURITY_MODEL.md)
 - [Development and validation](docs/DEVELOPMENT.md)

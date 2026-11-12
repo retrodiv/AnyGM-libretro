@@ -7,10 +7,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
+#include <inttypes.h>
 
 typedef struct {
   int transforms;
   size_t begin,end;
+  char key[112];
 } ConfigSection;
 
 struct AnygmContentConfig {
@@ -30,11 +33,35 @@ static int section_name(const char *name,size_t length,ConfigSection *section){
   /* Per-payload selectors were removed: identifying every input for global
    * configuration adds complete-file hashing to ordinary content startup. */
   if(length>=7 && !memcmp(name,"sha256:",7)) return -1;
+  if((length>=4 && !memcmp(name,"zip:",4)) ||
+     (length>=10 && !memcmp(name,"sample-v1:",10))){
+    const char *dot=memchr(name,'.',length);
+    if(!dot || (size_t)(dot-name)>=sizeof section->key) return -1;
+    size_t prefix=!memcmp(name,"zip:",4)?4u:10u;
+    size_t at=prefix;
+    uint64_t size=0;
+    if(at>=length || name[at]<'1' || name[at]>'9') return -1;
+    while(at<length && name[at]>='0' && name[at]<='9'){
+      unsigned digit=(unsigned)(name[at++]-'0');
+      if(size>(UINT64_MAX-digit)/10u) return -1;
+      size=size*10u+digit;
+    }
+    if(at>=length || name[at++]!=':') return -1;
+    size_t digits=prefix==4?8u:64u;
+    if((size_t)(dot-name)!=at+digits) return -1;
+    for(size_t i=0;i<at+digits;i++){
+      unsigned char c=(unsigned char)name[i];
+      if(i>=at && !((c>='0' && c<='9') || (c>='a' && c<='f') || (c>='A' && c<='F')))
+        return -1;
+      section->key[i]=(char)(c>='A' && c<='F'?c+('a'-'A'):c);
+    }
+    length-=(size_t)(dot+1-name); name=dot+1;
+  }
   if(length==10 && !memcmp(name,"transforms",10)){ section->transforms=1; return 1; }
   if(length==9 && !memcmp(name,"pipelines",9)){ section->transforms=2; return 1; }
   if(length==7 && !memcmp(name,"patches",7)){ section->transforms=3; return 1; }
   if(length==9 && !memcmp(name,"overrides",9)) return 1;
-  return 0;
+  return section->key[0]?-1:0;
 }
 
 static char *transform_document(const AnygmContentConfig *config,const ConfigSection *section){
@@ -107,7 +134,7 @@ AnygmContentConfig *anygm_content_config_parse(const void *text,size_t size,
       if(config->count==ANYGM_CONFIG_MAX_SECTIONS) goto invalid;
       for(size_t i=0;i<config->count;i++){
         const ConfigSection *old=&config->sections[i];
-        if(old->transforms==section.transforms) goto invalid;
+        if(old->transforms==section.transforms && !strcmp(old->key,section.key)) goto invalid;
       }
       current=&config->sections[config->count++];
       *current=section; current->begin=at; current->end=size;
@@ -135,7 +162,8 @@ AnygmContentConfig *anygm_content_config_parse(const void *text,size_t size,
        * Validate the sections together so their ordering cannot hide a duplicate. */
       for(size_t prior=0;document && prior<i;prior++){
         ConfigSection *other=&config->sections[prior];
-        if(!other->transforms || other->transforms==section->transforms) continue;
+        if(!other->transforms || other->transforms==section->transforms ||
+           strcmp(other->key,section->key)) continue;
         char *preceding=transform_document(config,other);
         size_t length=strlen(document),prefix=preceding?strlen(preceding):0;
         char *combined=preceding?malloc(prefix+length+2u):NULL;
@@ -148,7 +176,11 @@ AnygmContentConfig *anygm_content_config_parse(const void *text,size_t size,
       AnygmContentTransforms *validation=anygm_content_transforms_create();
       int ok=document && validation && anygm_content_transforms_parse(validation,document,
         strlen(document),error,error_size);
-      if(ok && anygm_content_source_configured(validation)) config->has_input=1;
+      /* A payload can be identified only after its container has been routed.
+       * Pre-routing source adapters therefore belong in defaults or anchors. */
+      if(ok && section->key[0] && anygm_content_source_configured(validation))
+        ok=config_error(error,error_size,"selected sections cannot declare input adapters");
+      if(ok && !section->key[0] && anygm_content_source_configured(validation)) config->has_input=1;
       free(document); anygm_content_transforms_destroy(validation);
       if(!ok) goto invalid;
     } else {
@@ -174,6 +206,27 @@ int anygm_content_config_has_input(const AnygmContentConfig *config){
 int anygm_content_config_apply(const AnygmContentConfig *config,
                                AnygmContentTransforms *transforms,unsigned priority,
                                char *overrides,size_t capacity,char *error,size_t error_size){
+  return anygm_content_config_select(config,"",transforms,priority,overrides,capacity,error,error_size);
+}
+
+int anygm_content_config_candidate(const AnygmContentConfig *config,const char *kind,uint64_t size){
+  char prefix[64];
+  snprintf(prefix,sizeof prefix,"%s:%" PRIu64 ":",kind,size);
+  if(!size) snprintf(prefix,sizeof prefix,"%s:",kind);
+  for(size_t i=0;config && i<config->count;i++)
+    if(!strncmp(config->sections[i].key,prefix,strlen(prefix))) return 1;
+  return 0;
+}
+
+int anygm_content_config_matches(const AnygmContentConfig *config,const char *key){
+  for(size_t i=0;config && i<config->count;i++)
+    if(!strcmp(config->sections[i].key,key)) return 1;
+  return 0;
+}
+
+int anygm_content_config_select(const AnygmContentConfig *config,const char *key,
+                               AnygmContentTransforms *transforms,unsigned priority,
+                               char *overrides,size_t capacity,char *error,size_t error_size){
   if(overrides && capacity) overrides[0]=0;
   if(!config) return 1;
   AnygmContentTransforms *staged=anygm_content_transforms_create();
@@ -181,6 +234,7 @@ int anygm_content_config_apply(const AnygmContentConfig *config,
   int valid=staged && anygm_content_transforms_copy(staged,transforms);
   for(size_t i=0;valid && i<config->count;i++){
     const ConfigSection *section=&config->sections[i];
+    if(strcmp(section->key,key)) continue;
     if(section->transforms){
       char *document=transform_document(config,section);
       valid=document && anygm_content_transforms_parse_layer(staged,document,strlen(document),

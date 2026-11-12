@@ -2553,6 +2553,69 @@ static int selected_configuration_cases(const AnygmHostServices *services,const 
   return 1;
 }
 
+static void fixture_sample_key(const uint8_t *bytes,size_t size,char key[112]){
+  GmlSha256 hash;uint8_t digest[32],length[8];char hex[65];
+  gml_sha256_init(&hash);gml_sha256_update(&hash,"anygm-sample-v1",15);
+  for(unsigned i=0;i<8;i++) length[i]=(uint8_t)((uint64_t)size>>(i*8));
+  gml_sha256_update(&hash,length,8);
+  size_t take=size<65536?size:65536;
+  size_t offsets[]={0,(size-take)/2,size-take};
+  for(unsigned i=0;i<3;i++) gml_sha256_update(&hash,bytes+offsets[i],take);
+  gml_sha256_final(&hash,digest);
+  for(unsigned i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
+  snprintf(key,112,"sample-v1:%zu:%s",size,hex);
+}
+
+static int fast_configuration_cases(const AnygmHostServices *services,const char *root){
+  char directory[600],ini[700],payload[700],archive_path[700],exe[700],resolved[1024],overrides[4096];
+  snprintf(directory,sizeof directory,"%s/fast-config",root);
+  if(mkdir(directory,0700)) return 0;
+  snprintf(ini,sizeof ini,"%s/AnyGM.ini",directory);
+  snprintf(payload,sizeof payload,"%s/data.win",directory);
+  snprintf(archive_path,sizeof archive_path,"%s/content.zip",directory);
+  snprintf(exe,sizeof exe,"%s/embedded.exe",directory);
+  uint8_t form[200],executable[224]={0};build_no_code_form(form);
+  executable[0]='M';executable[1]='Z';memcpy(executable+24,form,sizeof form);
+  if(!write_file(payload,form,sizeof form) || !write_file(exe,executable,sizeof executable)) return 0;
+  AnygmContentRouter router={0};router.host=services;router.cache_directory=directory;router.system_directory=directory;
+  char key[112],decoy[112],text[2048];fixture_sample_key(form,sizeof form,key);
+  fixture_sample_key(executable,sizeof executable,decoy);
+  snprintf(text,sizeof text,"[overrides]\n$base=1\n[%s.overrides]\n$selected=2\n"
+    "[%s.overrides]\n$wrong=3\n",key,decoy);
+  if(!write_file(ini,text,strlen(text))) return 0;
+  for(unsigned i=0;i<2;i++){
+    if(anygm_content_resolve_path(&router,i?exe:payload,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides)!=ANYGM_CONTENT_RESOLVE_OK ||
+       strcmp(overrides,"$base=1\n$selected=2\n")) return fail("Studio identity followed its executable rather than its data image");
+  }
+  ZipEntry entry={(const uint8_t *)"data.win",8,form,sizeof form,sizeof form,0,0,0,0};
+  Buffer archive={0};
+  int ok=build_zip(&entry,1,&archive) && write_file(archive_path,archive.data,archive.size);
+  free(archive.data);if(!ok) return 0;
+  snprintf(text,sizeof text,"[overrides]\n$base=1\n[zip:%zu:%08x.overrides]\n$selected=4\n",
+    sizeof form,crc32_bytes(form,sizeof form));
+  if(!write_file(ini,text,strlen(text))) return 0;
+  for(unsigned warm=0;warm<2;warm++){
+    if(anygm_content_resolve_path(&router,archive_path,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides)!=ANYGM_CONTENT_RESOLVE_OK ||
+       strcmp(overrides,"$base=1\n$selected=4\n")) return fail("ZIP member metadata did not select consistently on cold and warm loads");
+  }
+  Fixture project={{0},0};
+  if(!build_project_fixture(701,&project)) return 0;
+  snprintf(payload,sizeof payload,"%s/project.gmk",directory);
+  fixture_sample_key(project.data,project.size,key);
+  snprintf(text,sizeof text,"[%s.overrides]\n$classic=5\n",key);
+  if(!write_file(payload,project.data,project.size) || !write_file(ini,text,strlen(text)) ||
+     anygm_content_resolve_path(&router,payload,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides)!=ANYGM_CONTENT_RESOLVE_OK ||
+     strcmp(overrides,"$classic=5\n")) return fail("Classic identity did not follow the original project");
+  Fixture classic={{0},0};
+  if(!build_gm6_executable_fixture(&classic)) return 0;
+  fixture_sample_key(classic.data,classic.size,key);
+  snprintf(text,sizeof text,"[%s.overrides]\n$classic_executable=6\n",key);
+  if(!write_file(exe,classic.data,classic.size) || !write_file(ini,text,strlen(text)) ||
+     anygm_content_resolve_path(&router,exe,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides)!=ANYGM_CONTENT_RESOLVE_OK ||
+     strcmp(overrides,"$classic_executable=6\n")) return fail("Classic executable identity did not follow its original bytes");
+  return 1;
+}
+
 int main(void){
   char root[]="build/content-security-XXXXXX";
   if(!mkdtemp(root)) return fail("could not create temporary root")?0:1;
@@ -2599,7 +2662,8 @@ int main(void){
          direct_anchor_cases(&services,root) &&
          transform_configuration_cases(&services,root) &&
          input_pipeline_cases(&services,root) &&
-         selected_configuration_cases(&services,root);
+         selected_configuration_cases(&services,root) &&
+         fast_configuration_cases(&services,root);
   ZipEntry pair[2]={traversal,safe};
   ok=ok&&invalid_case(&services,root,"traversal.zip",pair,2);
   pair[0]=absolute;

@@ -5,8 +5,8 @@
 
 The optional `AnyGM.ini` in the frontend system directory supplies content
 defaults. An advanced `.anygm` anchor adds or replaces declarations for its
-content. The INI supplies global defaults only; it cannot select individual
-payloads by hash. Content-local declarations belong in `.anygm` anchors.
+content. The INI supplies global defaults and optional fast payload selectors.
+Content-local declarations can also live in `.anygm` anchors.
 
 The canonical filename is `AnyGM.ini`. Lookup follows the host filesystem's case
 rules; the core adds no separate capitalization check. Case-sensitive hosts require
@@ -27,6 +27,7 @@ Priority runs from lowest to highest:
 3. Archive anchors, from the innermost to the outermost archive.
 4. The explicitly opened anchor.
 5. Inherited launch-anchor overrides during an internal content replacement.
+6. Matching fast payload sections in `AnyGM.ini`.
 
 Section names and transform keys are case-sensitive. Duplicate recognized sections
 reject the INI. The removed `[sha256:...]` sections also reject the INI rather
@@ -52,11 +53,48 @@ last override for a destination wins; duplicate transform keys remain invalid.
 
 ## Preparation and cache identity
 
-System configuration does not hash payloads to select rules. That capability
-was removed because it required complete input reads and hashing on ordinary
-loads, including large archives. Defaults apply once, then anchors supply the
-content-local layers. Integrity checks for archives, patches and disposable
-derived-content caches remain mandatory and independent of rule selection.
+Complete-file SHA-256 selectors remain unsupported. Their full input reads were
+removed from ordinary startup. Fast recognition supports these section prefixes,
+followed by `.overrides`, `.transforms`, `.pipelines` or `.patches`:
+
+- `zip:<uncompressed-size>:<crc32>` identifies the selected archive member using
+  ZIP directory metadata. The CRC is eight hexadecimal digits. No member is
+  decompressed or hashed merely to recognize it, including with a warm cache.
+- `sample-v1:<size>:<sha256>` identifies a path-backed payload using at most
+  three 65536-byte reads. The digest is 64 hexadecimal digits. Sizes are positive
+  decimal integers without leading zeroes; hexadecimal digits are case insensitive.
+
+For Studio, selection follows the actual data image, including an adjacent or
+extracted embedded image reached through a launcher. Classic projects and
+executables identify their original input before conversion. A ZIP selector refers
+to that selected member, never the whole archive. Repacking or renaming an archive
+preserves a member's size and CRC. Nested archives select the final payload member.
+
+Sampling first filters declared candidates by size; with no candidate, no sample
+is read. The digest input is the 15 ASCII bytes `anygm-sample-v1`, the payload size
+as an unsigned little-endian 64-bit integer, then three samples. For size S, each
+sample has length N=min(S,65536), at offsets 0, floor((S-N)/2) and S-N, in that
+order. Overlapping samples are deliberately repeated. ZIP metadata takes precedence
+over sampling when its complete key matches. Memory-only loads retain defaults;
+these selectors are path-backed recognition.
+
+These are recognition hints, not proof of complete-file equality. Different
+payloads can share them. Duplicate equivalent sections reject the INI, and every
+section is validated even when unmatched. No content database is bundled.
+Archive, patch and derived-cache integrity checks remain mandatory and independent.
+
+Payload selectors cannot declare pre-routing `input`, `input.probe` or `input.final`
+adapters: those must be available before payload selection and belong in defaults
+or anchors. Other selected transforms and patches retain their ordinary contracts.
+
+Illustrative metadata can select runtime directives:
+
+```ini
+[zip:123456:89abcdef.overrides]
+ostype|0
+```
+
+Use metadata from the actual payload; a size alone is never a selector.
 
 An explicitly selected `input` function or pipeline can normalize the source before routing.
 An optional `input.probe` enumerates bounded candidate ranges in that same original source;

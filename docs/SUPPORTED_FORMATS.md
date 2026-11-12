@@ -48,7 +48,7 @@ Each `[overrides]` line is one directive in the same grammar the host cheat
 interface uses, including development-menu declarations. System `AnyGM.ini`
 defaults and anchor declarations combine per
 destination and condition before execution; `CONTENT_CONFIGURATION.md`
-defines their syntax, precedence and original-byte identity. An
+defines their syntax, precedence and fast payload recognition. An
 `introskip|1,3-5` directive lists room indices where A, B, or Start advances
 to the next room in play order; the `GML_INTROSKIP` development setting, when
 present, may also use `1,3-5|8` to select room index 8 explicitly. The anchor

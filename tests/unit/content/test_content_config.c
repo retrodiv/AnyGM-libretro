@@ -81,8 +81,43 @@ static void rejection(void){
   assert(!anygm_content_config_parse(nul,sizeof nul-1,error,sizeof error));
 }
 
+static void fast_selectors(void){
+  const char text[]="[overrides]\n$x=1\n"
+    "[zip:123:1234ABCD.overrides]\n$x=2\n"
+    "[sample-v1:456:" DIGEST ".overrides]\n$x=3\n"
+    "[zip:123:1234abcd.transforms]\ncopy=buffer f(){return slice(0,input_size);}\n"
+    "[zip:124:1234abcd.transforms]\ncopy=buffer f(){return slice(0,input_size);}\n";
+  char error[256],out[4096];
+  AnygmContentConfig *config=anygm_content_config_parse(text,sizeof text-1,error,sizeof error);
+  AnygmContentTransforms *set=anygm_content_transforms_create();
+  assert(config && set);
+  assert(anygm_content_config_candidate(config,"zip",123));
+  assert(!anygm_content_config_candidate(config,"zip",125));
+  assert(anygm_content_config_candidate(config,"sample-v1",456));
+  assert(!anygm_content_config_candidate(config,"sample-v1",123));
+  assert(anygm_content_config_apply(config,set,0,out,sizeof out,error,sizeof error));
+  assert(!strcmp(out,"$x=1\n") && !anygm_content_transforms_has(set,"copy"));
+  assert(anygm_content_config_select(config,"zip:123:1234abcd",set,100,out,sizeof out,error,sizeof error));
+  assert(!strcmp(out,"$x=2\n") && anygm_content_transforms_has(set,"copy"));
+  assert(anygm_content_config_select(config,"zip:123:1234abce",set,100,out,sizeof out,error,sizeof error));
+  assert(!out[0]);
+  assert(anygm_content_config_select(config,"sample-v1:456:" DIGEST,set,100,out,sizeof out,error,sizeof error));
+  assert(!strcmp(out,"$x=3\n"));
+  anygm_content_config_destroy(config);anygm_content_transforms_destroy(set);
+  const char *invalid[]={
+    "[zip:123:1234abcd.overrides]\n[zip:123:1234ABCD.overrides]\n",
+    "[zip:0:1234abcd.overrides]\n", "[zip:01:1234abcd.overrides]\n",
+    "[zip:18446744073709551616:1234abcd.overrides]\n",
+    "[zip:123:1234abcg.overrides]\n", "[sample-v1:123:1234abcd.overrides]\n",
+    "[zip:123:1234abcd.unknown]\n",
+    "[zip:123:1234abcd.transforms]\ninput=buffer f(){return slice(0,input_size);}\n",
+    "[zip:123:1234abcd.transforms]\nx=buffer bad(){unknown();}\n"};
+  for(size_t i=0;i<sizeof invalid/sizeof invalid[0];i++)
+    assert(!anygm_content_config_parse(invalid[i],strlen(invalid[i]),error,sizeof error));
+}
+
 int main(void){
-  layers(); rejection();
+  layers(); rejection(); fast_selectors();
   puts("Content configuration selection, isolation and rejection: ok");
   return 0;
 }

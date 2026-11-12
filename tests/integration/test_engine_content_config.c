@@ -251,6 +251,44 @@ static void defaults_do_not_hash_payload(void){
   anygm_destroy(engine);assert(!remove(ini));anygm_synthetic_content_destroy(&fixture);
 }
 
+static void sampled_configuration(void){
+  AnygmSyntheticContent fixture;assert(anygm_synthetic_content_create(&fixture));
+  uint8_t *bytes=NULL;size_t size=0;
+  assert(anygm_synthetic_content_read(&fixture,&bytes,&size));
+  GmlSha256 hash;uint8_t digest[32],length[8];char hex[65];
+  gml_sha256_init(&hash);gml_sha256_update(&hash,"anygm-sample-v1",15);
+  for(unsigned i=0;i<8;i++) length[i]=(uint8_t)((uint64_t)size>>(i*8));
+  gml_sha256_update(&hash,length,8);
+  size_t take=size<65536?size:65536;
+  size_t positions[]={0,(size-take)/2,size-take};
+  for(unsigned i=0;i<3;i++) gml_sha256_update(&hash,bytes+positions[i],take);
+  gml_sha256_final(&hash,digest);free(bytes);
+  for(unsigned i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
+  char ini[256],text[1024];snprintf(ini,sizeof ini,"%s/AnyGM.ini",fixture.directory);
+  AnygmHostServices services={0};services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;anygm_stdio_vfs_services_init(&services);
+  observed_vfs=services;observed_path=fixture.path;observed_bytes=0;
+  services.file_open=observe_open;services.file_read=observe_read;services.file_close=observe_close;
+  AnygmEngine *engine=NULL;assert(anygm_create(&services,&engine)==ANYGM_OK);
+  AnygmContentSource source={0};source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;source.path=fixture.path;
+  source.system_directory=fixture.directory;source.cache_directory=fixture.directory;
+  assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
+  size_t baseline=observed_bytes;anygm_unload(engine);
+  snprintf(text,sizeof text,"[sample-v1:%zu:%s.overrides]\n$count_marker=31\n",size,hex);
+  write_text(ini,text);observed_bytes=0;
+  assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
+  /* Four bytes classify the source; exactly three bounded samples identify it. */
+  assert(observed_bytes==baseline+4+3*take);frame(engine);
+  assert(gml_global_num(&engine->vm,"count_marker")==31);anygm_unload(engine);
+  snprintf(text,sizeof text,"[sample-v1:%zu:%s.overrides]\n$count_marker=31\n",size+1,hex);
+  write_text(ini,text);observed_bytes=0;
+  assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
+  assert(observed_bytes==baseline+4);frame(engine);
+  assert(gml_global_num(&engine->vm,"count_marker")!=31);
+  anygm_destroy(engine);assert(!remove(ini));anygm_synthetic_content_destroy(&fixture);
+}
+
 static void lifecycle(void){
   AnygmSyntheticContent fixture;
   assert(anygm_synthetic_content_create(&fixture));
@@ -754,6 +792,7 @@ static void crt_setting_layout(void){
 
 int main(void){
   defaults_do_not_hash_payload();
+  sampled_configuration();
   renderer_declarations();
   crt_setting_callback();
   crt_setting_layout();
