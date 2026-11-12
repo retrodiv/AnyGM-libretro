@@ -1537,6 +1537,29 @@ static int instance_id_view_contract(void){
   return ok;
 }
 
+static int unavailable_steam_contract(GmlVM *vm,LogFixture *logs){
+  const char *names[]={"steam_file_exists","steam_file_read","steam_file_write",
+                       "steam_get_persona_name","steam_stats_ready"};
+  GmlVal args[]={vstr("neutral-cloud-slot"),vstr("neutral payload")};
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    for(int i=0;i<5;i++){
+      int before=logs->count;
+      GmlVal result=cached?call_fast(vm,names[i],args,2,&ok)
+                          :gml_builtin_call(vm,names[i],args,2);
+      if(i==1 || i==3) ok=expect_string(names[i],result,"") && ok;
+      else ok=expect_real(names[i],result,0) && ok;
+      if(logs->count!=before){
+        fprintf(stderr,"%s must be a recognized unavailable capability\n",names[i]);
+        ok=0;
+      }
+      gml_values_release(&result,1);
+    }
+  }
+  if(ok) puts("Steam unavailable capabilities: named/cached typed answers passed");
+  return ok;
+}
+
 static int internal_value_helpers_contract(void){
   GmlWin win={.bytecode=17};
   GmlVM vm;
@@ -1658,6 +1681,7 @@ int main(int argc,char **argv){
   }
   int ok=guid_only ? gamepad_guid_capability_contract(&vm) :
          canonical_registry_resolution(&vm) &&
+         unavailable_steam_contract(&vm,&log_fixture) &&
          internal_value_helpers_contract() &&
          instance_id_view_contract() &&
          gamepad_guid_capability_contract(&vm) &&

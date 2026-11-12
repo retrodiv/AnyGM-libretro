@@ -354,7 +354,10 @@ supports event play/stop. Random, switch, and music containers choose the first 
 branch deterministically; parameter and switch setters are accepted but do not yet alter mixing.
 Steam-, GOG-, analytics-, presence-, shell-, window-, and network-service extension calls are
 deliberately offline or unavailable no-ops: they neither contact services nor obtain ambient OS
-authority, but their absence does not abort a game. Savestates retain
+authority, but their absence does not abort a game. Built-in Steam capability queries likewise
+report an unavailable service: initialization, file existence, cloud writes and stats readiness
+return false, while cloud reads and the persona-name query return empty strings. Cloud writes do
+not create local save files or completion events. Savestates retain
 their logical paths and dynamically computed SHA-256 identities so a closed handle can be recreated
 without embedding an entire soundtrack or accepting changed bytes.
 
