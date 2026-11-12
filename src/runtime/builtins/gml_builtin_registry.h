@@ -706,6 +706,7 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(619, OBJECT_GET_INDEX, "object_get_index", DRAW, DRAW, ALWAYS) \
   ENTRY(620, OBJECT_GET_MASK, "object_get_mask", DRAW, DRAW, ALWAYS) \
   ENTRY(621, OBJECT_GET_NAME, "object_get_name", DRAW, DRAW, ALWAYS) \
+  ALIAS(OBJECT_GET_NAME, "object_name", DRAW, DRAW, ALWAYS) \
   ENTRY(622, OBJECT_GET_PARENT, "object_get_parent", DRAW, DRAW, ALWAYS) \
   ENTRY(623, OBJECT_GET_PHYSICS, "object_get_physics", DRAW, DRAW, ALWAYS) \
   ENTRY(624, OBJECT_GET_SPRITE, "object_get_sprite", DRAW, DRAW, ALWAYS) \

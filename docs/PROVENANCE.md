@@ -113,8 +113,8 @@ release evidence. The following SHA-256 directives pin only the two
 first-party files in this repository; `make provenance-check` verifies
 their current bytes.
 
-<!-- PROVENANCE-CHECK: src/runtime/builtins/gml_builtin_registry.h = 9dbcc2f52980cbd957bf4272776bef0afac320a6734a6051a8e2ca9311f07be6 -->
-<!-- PROVENANCE-CHECK: src/generated/gml_builtin_registry_index.h = 20f5f8bc59f29c75c365eb6a4c4532f47a1865d9ed642c76d0d120738c00f28f -->
+<!-- PROVENANCE-CHECK: src/runtime/builtins/gml_builtin_registry.h = 9317e0a179347ba768eac9c4efa24856f4486a396c7201c004fa5f6c21342b0f -->
+<!-- PROVENANCE-CHECK: src/generated/gml_builtin_registry_index.h = f844e2b05f7d99864ad8e2ecedf82e5e2c9861b6c85fc46e0e4a6fedd5bf1f76 -->
 
 ## Audio setup packets
 
@@ -367,3 +367,13 @@ with an exact integer payload for the integer variants. The same value and
 state owners serve CPU and OpenGL execution. The exercised controls are
 synthetic language and state tests; they do not establish native Studio
 compiler optimization, overflow, invalid coercion or device behavior.
+
+
+## Legacy object-name query
+
+The selected `object_name` compatibility spelling shares the existing
+`object_get_name` adapter and authored object metadata. The publisher's
+[object-name contract](https://manual.gamemaker.io/lts/en/GameMaker_Language/GML_Reference/Asset_Management/Objects/object_get_name.htm)
+defines the returned asset-name string. The alias adds no resource or renderer
+state. Historical native availability and invalid argument coercion are not
+established by the synthetic carrier controls.

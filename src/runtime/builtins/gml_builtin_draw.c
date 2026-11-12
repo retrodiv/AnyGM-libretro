@@ -1589,7 +1589,9 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"object_set_parent")){
     gml_object_set_parent(vm,(int)N(a,n,0),(int)N(a,n,1));
     return vreal(0); }
-  if(!strcmp(nm,"object_get_name")){ int ob=(int)N(a,n,0);
+  if(!strcmp(nm,"object_get_name") || !strcmp(nm,"object_name")){
+    if(n<1 && !strcmp(nm,"object_name")) return vstr("");
+    int ob=(int)N(a,n,0);
     return vstr((ob>=0&&ob<vm->n_objects&&vm->objects[ob].name)?vm->objects[ob].name:""); }
   if(!strcmp(nm,"object_get_sprite")){ int ob=(int)N(a,n,0);
     return vreal((ob>=0&&ob<vm->n_objects)?vm->objects[ob].sprite_index:-1); }

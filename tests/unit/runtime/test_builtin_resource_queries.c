@@ -105,6 +105,36 @@ static GmlVal query(GmlVM *vm,const char *name,GmlVal argument,int cached,int *o
   *ok &= expect(id>=0,"query must have a cached builtin ID");
   return id>=0?gml_builtin_call_fast_id(vm,id,name,&argument,1):vundef();
 }
+/* The legacy spelling uses the authored asset table with or without a renderer. */
+static int legacy_object_names_case(void){
+  int ok=1;
+  const int indices[]={0,1,2,-1,3};
+  const char *expected[]={"neutral_alpha","neutral_beta","","",""};
+  for(int bound=0;bound<2;bound++) for(int cached=0;cached<2;cached++){
+    GmlObject objects[3]={{.name="neutral_alpha"},{.name="neutral_beta"},{0}};
+    GmlObject original[3];memcpy(original,objects,sizeof objects);
+    GmlWin win={0};GmlRender render={.win=&win};
+    GmlVM vm={.win=&win,.objects=objects,.n_objects=3,.render=bound?&render:NULL};
+    int alias_id=gml_builtin_fast_id(&vm,"object_name");
+    int canonical_id=gml_builtin_fast_id(&vm,"object_get_name");
+    ok &= expect(alias_id>=0 && alias_id==canonical_id,
+                 "legacy object name shares the established cached ID");
+    for(unsigned index=0;index<sizeof indices/sizeof indices[0];index++){
+      GmlVal result=query(&vm,"object_name",vreal(indices[index]),cached,&ok);
+      ok &= expect(result.t==V_STR && result.s && !strcmp(result.s,expected[index]),
+                   "legacy object name returns authored text or the existing empty fallback");
+    }
+    GmlVal missing=cached && alias_id>=0
+      ?gml_builtin_call_fast_id(&vm,alias_id,"object_name",NULL,0)
+      :gml_builtin_call(&vm,"object_name",NULL,0);
+    ok &= expect(missing.t==V_STR && missing.s && !*missing.s,
+                 "legacy object name without an index returns empty text");
+    ok &= expect(!memcmp(objects,original,sizeof objects),
+                 "object-name reads preserve all authored object metadata");
+    vm.objects=NULL;vm.n_objects=0;vm.render=NULL;gml_vm_free(&vm);
+  }
+  return ok;
+}
 static int object_flags_case(void){
   int ok=1;
   const char *names[]={"object_get_solid","object_get_persistent"};
@@ -137,7 +167,7 @@ static int timeline_size_case(void){
     timeline->moments=calloc(3,sizeof *timeline->moments);
     if(!timeline->moments){ gml_vm_free(&vm); return 0; }
     timeline->n=3; timeline->last_step=20;
-    for(int i=0;i<3;i++) timeline->moments[i]=(GmlTimelineMoment){i*10,i};
+    for(int i=0;i<3;i++) timeline->moments[i]=(GmlTimelineMoment){.step=i*10,.code=i};
     ok &= expect(real_is(query(&vm,"timeline_size",empty,cached,&ok),0),
                  "a new timeline has no active moments");
     ok &= expect(real_is(query(&vm,"timeline_size",populated,cached,&ok),3),
@@ -203,6 +233,7 @@ int main(void){
   static const AnygmTestCase cases[]={
     {"authored_texture_groups",texture_groups_case},
     {"malformed_texture_groups",malformed_texture_groups_case},
+    {"legacy_object_names",legacy_object_names_case},
     {"object_asset_flags",object_flags_case},
     {"timeline_active_moments",timeline_size_case},
     {"gamepad_configured_deadzone",deadzone_case},
