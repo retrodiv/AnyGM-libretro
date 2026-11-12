@@ -84,7 +84,10 @@ uint32_t gml_physics_bind_fixture(GmlVM *vm,const GmlPhysicsFixture *source,
     }
   }
   if(gml_physics_is_chain(copy.shape)){
-    if(!gml_physics_chain_valid(source,gml_physics_world_scale(vm))) return 0;
+    if(!gml_physics_chain_valid(source,gml_physics_world_scale(vm))){
+      gml_physics_report_error(vm,"chain fixture geometry is invalid");
+      return 0;
+    }
     size_t bytes=(size_t)copy.points*sizeof(*copy.chain);
     copy.chain=malloc(bytes);
     if(!copy.chain) return 0;

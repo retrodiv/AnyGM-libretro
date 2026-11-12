@@ -371,6 +371,11 @@ without embedding an entire soundtrack or accepting changed bytes.
 Legacy `action_if_question` calls use the same portable dialog policy as `show_question`:
 the native dialog is unavailable and the result is false.
 
+`physics_debug` controls per-VM host error reporting, disabled by default. Rejected
+fixture and joint handles, fixture capacity, world scale and chain geometry report
+through the host logger when enabled. The switch is transient diagnostic verbosity;
+it does not alter the simulation, drawing configuration or game-state bytes.
+
 Compiled bytecode exception hooks preserve pending messages across nested calls
 and `finally` dispatch. A `catch` receives a struct with a `message` field.
 Handlers and deferred messages survive supported suspended direct-call chains

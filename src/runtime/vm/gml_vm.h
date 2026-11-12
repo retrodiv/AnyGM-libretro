@@ -217,6 +217,7 @@ typedef struct {
   uint8_t *code_seen;         /* one byte per CODE entry, set on first execution */
   int watchdog_warnings;
   int wait_warnings;   /* blocking waits that could not span a frame and ended their run */
+  int physics_error_output; /* host diagnostic verbosity; no effect on game-state bytes */
   int pc_initialized;
   char pc_name[128];
   long pc_offset;

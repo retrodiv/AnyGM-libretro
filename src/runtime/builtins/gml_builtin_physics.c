@@ -10,14 +10,23 @@
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
+void gml_physics_report_error(GmlVM *vm,const char *message){
+  if(vm && vm->diagnostics.physics_error_output)
+    anygm_host_logf(vm->host,ANYGM_LOG_ERROR,"[physics] %s\n",message);
+}
+
 static uint32_t phys_next_id(GmlVM *vm){
   if(!vm->builtins->phys_next_id) vm->builtins->phys_next_id=4000001u;
   return vm->builtins->phys_next_id++;
 }
 static GmlPhysicsFixture *phys_fixture_find(GmlVM *vm, int id){
-  if(!vm || id<=0) return NULL;
+  if(!vm || id<=0){
+    gml_physics_report_error(vm,"fixture handle is not live");
+    return NULL;
+  }
   for(int i=0;i<GML_PHYS_FIXTURE_MAX;i++)
     if(vm->builtins->phys_fixture[i].live && vm->builtins->phys_fixture[i].id==(uint32_t)id) return &vm->builtins->phys_fixture[i];
+  gml_physics_report_error(vm,"fixture handle is not live");
   return NULL;
 }
 static int fixture_units_used(const GmlVM *vm){
@@ -30,7 +39,10 @@ static int fixture_units_used(const GmlVM *vm){
 }
 
 GmlPhysicsFixture *gml_physics_fixture_new(GmlVM *vm,int units){
-  if(!vm || fixture_units_used(vm)>GML_PHYS_FIXTURE_MAX-units) return NULL;
+  if(!vm || fixture_units_used(vm)>GML_PHYS_FIXTURE_MAX-units){
+    gml_physics_report_error(vm,"fixture capacity exceeded");
+    return NULL;
+  }
   for(int i=0;i<GML_PHYS_FIXTURE_MAX;i++) if(!vm->builtins->phys_fixture[i].live){
     GmlPhysicsFixture *f=&vm->builtins->phys_fixture[i];
     memset(f,0,sizeof(*f));
@@ -38,6 +50,7 @@ GmlPhysicsFixture *gml_physics_fixture_new(GmlVM *vm,int units){
     f->density=GML_PHYS_FIXTURE_DEFAULT_DENSITY; f->friction=0.2; f->lin_damp=0.1; f->ang_damp=0.1;
     return f;
   }
+  gml_physics_report_error(vm,"fixture capacity exceeded");
   return NULL;
 }
 
@@ -77,6 +90,11 @@ GmlPhysicsJoint *gml_physics_find_joint(GmlVM *vm,double id){
   for(int i=0;i<GML_PHYS_JOINT_MAX;i++)
     if(vm->builtins->phys_joint[i].live && vm->builtins->phys_joint[i].id==(uint32_t)id) return &vm->builtins->phys_joint[i];
   return NULL;
+}
+static GmlPhysicsJoint *phys_joint_find_checked(GmlVM *vm,double id){
+  GmlPhysicsJoint *joint=gml_physics_find_joint(vm,id);
+  if(!joint) gml_physics_report_error(vm,"joint handle is not live");
+  return joint;
 }
 void gml_physics_drop_joint(GmlVM *vm,GmlPhysicsJoint *joint){
   joint->live=0;
@@ -373,6 +391,11 @@ static GmlVal physics_draw_debug(GmlVM *vm){
 }
 
 GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
+  if(!strcmp(nm,"physics_debug")){
+    double enabled=N(a,n,0);
+    if(n>0 && isfinite(enabled)) vm->diagnostics.physics_error_output=enabled>=0.5;
+    return vundef();
+  }
   if(!strcmp(nm,"physics_draw_debug")) return physics_draw_debug(vm);
   if(!strcmp(nm,"physics_test_overlap")) return vreal(physics_overlap(vm,a,n));
   if(!strcmp(nm,"physics_raycast")) return physics_raycast(vm,a,n);
@@ -615,7 +638,7 @@ GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"physics_joint_enable_motor")){
     double id=N(a,n,0);
     if(n<2 || !(id>0 && id<=INT_MAX)) return vreal(0);
-    GmlPhysicsJoint *j=gml_physics_find_joint(vm,id);
+    GmlPhysicsJoint *j=phys_joint_find_checked(vm,id);
     if(!j) return vreal(0);
     int enabled=N(a,n,1)!=0;
     switch(j->type){
@@ -626,7 +649,7 @@ GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(0);
   }
   if(!strcmp(nm,"physics_joint_delete")){
-    GmlPhysicsJoint *j=gml_physics_find_joint(vm,N(a,n,0));
+    GmlPhysicsJoint *j=phys_joint_find_checked(vm,N(a,n,0));
     if(j) gml_physics_drop_joint(vm,j);
     return vreal(0);
   }
@@ -634,7 +657,7 @@ GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int write=!strcmp(nm,"physics_joint_set_value");
     double field=N(a,n,1);
     if(n<(write?3:2) || !(field>=0 && field<GML_JOINT_FIELD_COUNT)) return vreal(0);
-    GmlPhysicsJoint *j=gml_physics_find_joint(vm,N(a,n,0));
+    GmlPhysicsJoint *j=phys_joint_find_checked(vm,N(a,n,0));
     if(!j || !j->initialized) return vreal(0);
     if(!write) return vreal(joint_get_value(vm,j,(int)field));
     joint_set_value(vm,j,(int)field,N(a,n,2));
@@ -656,7 +679,7 @@ GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(isfinite(scale) && scale>0.000001 && scale<=1000.0){
       *gml_varmap_put(&vm->globals,"__physics_world_scale")=vreal(scale);
       *gml_varmap_put(&vm->globals,"__physics_world_scale_room")=vreal(vm->room_index);
-    }
+    }else gml_physics_report_error(vm,"world scale is outside the supported domain");
     return vreal(0);
   }
   if(!strcmp(nm,"physics_world_gravity")){ vm->builtins->phys_gravity_x=N(a,n,0); vm->builtins->phys_gravity_y=N(a,n,1); return vreal(0); }

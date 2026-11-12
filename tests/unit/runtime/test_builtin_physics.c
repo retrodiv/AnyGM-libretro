@@ -7,6 +7,7 @@
 #include "gml_particle.h"
 #include "gml_physics_solver.h"
 #include "gml_render_internal.h"
+#include "anygm_host.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -630,6 +631,81 @@ static GmlVal physics_query(GmlVM *vm,int cached,const char *name,GmlVal *args,i
   return cached?gml_builtin_call_fast_id(vm,id,name,args,count):gml_builtin_call(vm,name,args,count);
 }
 
+typedef struct {
+  int count;
+  AnygmLogLevel level;
+  char text[256];
+} PhysicsErrorLog;
+
+static void physics_error_log(void *userdata,AnygmLogLevel level,const char *text){
+  PhysicsErrorLog *log=userdata;
+  log->count++;log->level=level;
+  snprintf(log->text,sizeof log->text,"%s",text?text:"");
+}
+
+static void error_output_control(void){
+  for(int cached=0;cached<2;cached++){
+    GmlVM vm,peer;GmlWin win,peer_win;
+    setup(&vm,&win);setup(&peer,&peer_win);
+    PhysicsErrorLog log={0},peer_log={0};
+    AnygmHostServices host={.struct_size=sizeof(AnygmHostServices),
+      .abi_version=ANYGM_HOST_SERVICES_VERSION,
+      .userdata=&log,.log=physics_error_log};
+    AnygmHostServices peer_host=host;peer_host.userdata=&peer_log;
+    vm.host=&host;peer.host=&peer_host;
+    assert(gml_builtin_fast_id(&vm,"physics_debug")>0);
+    CALL(&vm,"physics_world_create",-1);
+    CALL(&vm,"physics_fixture_set_circle_shape",987654,2);
+    assert(log.count==0);
+
+    size_t size=gml_vm_state_size(&vm),written=0,repeated=0;
+    unsigned char *before=malloc(size),*after=malloc(size);
+    assert(before && after && gml_vm_state_save(&vm,before,size,&written));
+    GmlVal enabled=vreal(1),disabled=vreal(0);
+    GmlVal result=physics_query(&vm,cached,"physics_debug",&enabled,1);
+    assert(result.t==V_UNDEF && log.count==0);
+    assert(gml_vm_state_save(&vm,after,size,&repeated));
+    assert(written==repeated && !memcmp(before,after,written));
+    free(before);free(after);
+
+    CALL(&vm,"physics_fixture_set_circle_shape",987654,2);
+    assert(log.count==1 && log.level==ANYGM_LOG_ERROR && strstr(log.text,"[physics]"));
+    CALL(&vm,"physics_joint_delete",987654);
+    assert(log.count==2);
+    CALL(&vm,"physics_world_create",-1);
+    assert(log.count==3);
+    double fixture=call(&vm,"physics_fixture_create",NULL,0).d;
+    CALL(&vm,"physics_fixture_set_box_shape",fixture,2,3);
+    CALL(&vm,"physics_fixture_delete",fixture);
+    assert(log.count==3);
+    fixture=call(&vm,"physics_fixture_create",NULL,0).d;
+    CALL(&vm,"physics_fixture_set_chain_shape",fixture,0);
+    CALL(&vm,"physics_fixture_add_point",fixture,0,0);
+    assert(CALL(&vm,"physics_fixture_bind",fixture,vm.inst[0].id).d==0);
+    assert(log.count==4);
+    CALL(&peer,"physics_world_create",-1);
+    assert(peer_log.count==0);
+    result=physics_query(&vm,cached,"physics_debug",NULL,0);
+    assert(result.t==V_UNDEF);
+    CALL(&vm,"physics_world_create",-1);
+    assert(log.count==5);
+    GmlVal invalid=vreal(NAN);
+    result=physics_query(&vm,cached,"physics_debug",&invalid,1);
+    assert(result.t==V_UNDEF);
+    CALL(&vm,"physics_world_create",-1);
+    assert(log.count==6);
+    result=physics_query(&vm,cached,"physics_debug",&disabled,1);
+    assert(result.t==V_UNDEF);
+    CALL(&vm,"physics_world_create",-1);
+    assert(log.count==6);
+    vm.host=NULL;
+    physics_query(&vm,cached,"physics_debug",&enabled,1);
+    CALL(&vm,"physics_world_create",-1);
+    gml_vm_free(&vm);gml_vm_free(&peer);
+  }
+  puts("physics error output: named/cached default-off, gated failures, VM isolation and unchanged game-state bytes passed");
+}
+
 static double hit_field(GmlVM *vm,GmlVal hits,int index,const char *field){
   GmlVal record=gml_arr_get(hits,index);
   assert(record.t==V_REAL);
@@ -1054,6 +1130,7 @@ static void instance_debug_drawing(void){
 }
 
 int main(void){
+  error_output_control();
   units_and_ownership(); offset_and_rotation(); binding_origin_and_phase(); floor_joints_and_restore(); filtering_and_sensors(); malformed_geometry_and_mass();
   if(!bound_fixture_properties()) return EXIT_FAILURE;
   direct_joint_constructors();

@@ -248,6 +248,7 @@ void gml_physics_initialize_joint(GmlVM *vm,GmlPhysicsJoint *joint);
 int gml_physics_capture_gear_pose(GmlVM *vm,const GmlPhysicsJoint *source,int shared_ground,double pose[6]);
 void gml_physics_drop_joint(GmlVM *vm,GmlPhysicsJoint *joint);
 GmlPhysicsJoint *gml_physics_find_joint(GmlVM *vm,double id);
+void gml_physics_report_error(GmlVM *vm,const char *message);
 double gml_physics_joint_geometry(GmlVM *vm,const GmlPhysicsJoint *joint,int field);
 GmlPhysicsBody gml_physics_body_pose(const GmlInstance *instance);
 GmlPhysicsBody gml_physics_placement_pose(const GmlInstance *instance,double x,double y,double angle);
