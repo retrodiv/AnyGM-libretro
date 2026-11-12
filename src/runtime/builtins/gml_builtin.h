@@ -11,6 +11,7 @@ typedef struct GmlBuiltinState GmlBuiltinState;
 typedef struct GmlVmStateWriter GmlVmStateWriter;
 typedef struct GmlVmStateReader GmlVmStateReader;
 typedef void (*GmlBuiltinValueVisitor)(void *userdata, GmlVal value);
+void gml_builtin_finish_game_load(GmlVM *vm);
 
 GmlBuiltinState *gml_builtin_state_create(GmlVM *vm);
 GmlBuiltinState *gml_builtin_state_ensure(GmlVM *vm);

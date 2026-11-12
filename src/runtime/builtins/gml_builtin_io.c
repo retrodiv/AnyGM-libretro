@@ -36,6 +36,30 @@ static int path_readable(GmlVM *vm,const char *p){
   return vm && p && anygm_vfs_stat(vm->host,p,&info) &&
          (info.flags&ANYGM_FILE_INFO_REGULAR)!=0;
 }
+
+/* No user event is executing at this boundary. Keep the existing VM codec and
+ * VFS namespace; a rejected file restores the snapshot taken before its read. */
+void gml_builtin_finish_game_load(GmlVM *vm){
+  if(!vm || !vm->pending_game_load) return;
+  char *path=vm->pending_game_load;
+  vm->pending_game_load=NULL;
+  uint8_t *data=NULL,*snapshot=NULL;size_t length=0,written=0,used=0;
+  if(anygm_vfs_read_all(vm->host,path,&data,&length,256u*1024u*1024u) && length){
+    size_t size=gml_vm_state_size(vm);
+    snapshot=size?malloc(size):NULL;
+    if(snapshot && gml_vm_state_save(vm,snapshot,size,&written) && written==size){
+      int loaded=gml_vm_state_load(vm,data,length,&used) && used==length;
+      if(!loaded){
+        used=0;
+        if(!gml_vm_state_load(vm,snapshot,written,&used) || used!=written){
+          anygm_host_logf(vm->host,ANYGM_LOG_ERROR,"[gml] game load rollback failed\n");
+          vm->game_end=1;
+        }
+      }
+    }
+  }
+  free(snapshot);free(data);free(path);
+}
 static int path_absolute(const char *p){
   return p && (p[0]=='/' || (p[0] && p[1]==':'));
 }
@@ -1744,20 +1768,25 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int ok=vm->host && vm->host->path_rename &&
       vm->host->path_rename(vm->host->userdata,oldp,newp)==ANYGM_OK;
     free(oldp); free(newp); return vreal(ok); }
-  if(!strcmp(nm,"game_save")){
+  if(!strcmp(nm,"game_save") || !strcmp(nm,"action_save_game")){
+    if(n<1) return vreal(0);
     char *path=resolve_write_path(vm,S(vm,a,n,0));
+    /* Basic save files do not replay the control request that is replacing
+     * their runtime. Frontend state serialization still preserves that request. */
+    char *pending=vm->pending_game_load;vm->pending_game_load=NULL;
     size_t size=gml_vm_state_size(vm), written=0; unsigned char *data=size?malloc(size):NULL;
     int ok=path && data && gml_vm_state_save(vm,data,size,&written) && written==size;
+    vm->pending_game_load=pending;
     if(ok) ok=anygm_vfs_write_all(vm->host,path,data,written);
     free(data); free(path); (void)ok;
     return vreal(0);
   }
-  if(!strcmp(nm,"game_load")){
+  if(!strcmp(nm,"game_load") || !strcmp(nm,"action_load_game")){
+    if(n<1) return vreal(0);
     char *path=resolve_read_path(vm,S(vm,a,n,0));
-    uint8_t *data=NULL; size_t length=0,used=0; int ok=0;
-    if(path && anygm_vfs_read_all(vm->host,path,&data,&length,256u*1024u*1024u) && length)
-      ok=gml_vm_state_load(vm,data,length,&used) && used==length;
-    free(data); free(path); (void)ok;
+    if(path && strlen(path)<=GML_VM_GAME_LOAD_PATH_MAX){
+      free(vm->pending_game_load);vm->pending_game_load=path;
+    }else free(path);
     return vreal(0);
   }
   if(!strcmp(nm,"game_save_buffer")){

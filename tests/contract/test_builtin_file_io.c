@@ -78,6 +78,88 @@ static int string_is(GmlVal value,const char *expected){
   return ok;
 }
 static int real_is(GmlVal value,double expected){ return value.t==V_REAL && value.d==expected; }
+static double saved_marker(GmlVM *vm){
+  GmlVal *value=gml_varmap_get(&vm->globals,"saved_marker");
+  return value && value->t==V_REAL?value->d:-1;
+}
+static int legacy_save_actions_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    FileFixture f;GmlVM vm;GmlWin win={.bytecode=17};fixture_init(&f,&vm);
+    snprintf(win.content_dir,sizeof win.content_dir,"/content");
+    snprintf(win.save_dir,sizeof win.save_dir,"/save");
+    if(gml_vm_init(&vm,&win,&f.host))return 0;
+    GmlVal path=vstr("action.sav");
+    *gml_varmap_put(&vm.globals,"saved_marker")=vreal(17);
+    ok &= real_is(invoke(&vm,"action_save_game",&path,1,cached,&ok),0);
+    GmlVal exists=invoke(&vm,"file_exists",&path,1,cached,&ok);
+    ok &= real_is(exists,1);
+    *gml_varmap_put(&vm.globals,"saved_marker")=vreal(99);
+    invoke(&vm,"action_load_game",&path,1,cached,&ok);
+    ok &= saved_marker(&vm)==99 && vm.pending_game_load &&
+      !strcmp(vm.pending_game_load,"/save/action.sav");
+    *gml_varmap_put(&vm.globals,"saved_marker")=vreal(101);
+    gml_vm_post_draw(&vm);
+    ok &= saved_marker(&vm)==17 && !vm.pending_game_load;
+    /* Both spellings use one file format and the same deferred owner. */
+    *gml_varmap_put(&vm.globals,"saved_marker")=vreal(23);
+    invoke(&vm,"game_save",&path,1,cached,&ok);
+    *gml_varmap_put(&vm.globals,"saved_marker")=vreal(99);
+    invoke(&vm,"action_load_game",&path,1,cached,&ok);
+    gml_vm_post_draw(&vm);ok &= saved_marker(&vm)==23;
+    invoke(&vm,"action_save_game",&path,1,cached,&ok);
+    *gml_varmap_put(&vm.globals,"saved_marker")=vreal(77);
+    invoke(&vm,"game_load",&path,1,cached,&ok);
+    ok &= saved_marker(&vm)==77;
+    gml_vm_post_draw(&vm);ok &= saved_marker(&vm)==23;
+    ok &= fixture_destroy(&f,&vm);
+  }
+  return ok;
+}
+static int legacy_load_request_state_case(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    FileFixture f;GmlVM vm;GmlWin win={.bytecode=17};fixture_init(&f,&vm);
+    snprintf(win.save_dir,sizeof win.save_dir,"/save");
+    if(gml_vm_init(&vm,&win,&f.host))return 0;
+    GmlVal path=vstr("action.sav"),missing=vstr("missing.sav");
+    *gml_varmap_put(&vm.globals,"saved_marker")=vreal(31);
+    invoke(&vm,"action_save_game",&path,1,cached,&ok);
+    *gml_varmap_put(&vm.globals,"saved_marker")=vreal(99);
+    invoke(&vm,"action_load_game",&path,1,cached,&ok);
+    size_t size=gml_vm_state_size(&vm),written=0,used=0;
+    uint8_t *bytes=malloc(size?size:1u);
+    if(!bytes || !gml_vm_state_save(&vm,bytes,size,&written) || written!=size){
+      free(bytes);fixture_destroy(&f,&vm);return 0;
+    }
+    invoke(&vm,"action_load_game",&missing,1,cached,&ok);
+    ok &= gml_vm_state_load(&vm,bytes,size,&used) && used==size &&
+      saved_marker(&vm)==99 && vm.pending_game_load &&
+      !strcmp(vm.pending_game_load,"/save/action.sav");
+    free(bytes);
+    gml_vm_post_draw(&vm);ok &= saved_marker(&vm)==31 && !vm.pending_game_load;
+    invoke(&vm,"action_load_game",&missing,1,cached,&ok);
+    gml_vm_post_draw(&vm);ok &= saved_marker(&vm)==31 && !vm.pending_game_load;
+    size_t saved_length=0;uint8_t *truncated=NULL;
+    for(size_t i=0;i<f.memory.node_count;i++){
+      AnygmMemoryVfsNode *node=&f.memory.nodes[i];
+      if(!strcmp(node->path,"/save/action.sav") && node->size>8){
+        saved_length=node->size-1u;truncated=malloc(saved_length);
+        if(truncated)memcpy(truncated,node->data,saved_length);
+        break;
+      }
+    }
+    ok &= truncated && anygm_memory_vfs_add_file(&f.memory,"/save/truncated.sav",truncated,saved_length);
+    free(truncated);
+    GmlVal bad=vstr("truncated.sav");
+    invoke(&vm,"action_load_game",&bad,1,cached,&ok);
+    gml_vm_post_draw(&vm);ok &= saved_marker(&vm)==31 && !vm.pending_game_load;
+    invoke(&vm,"action_load_game",NULL,0,cached,&ok);
+    ok &= !vm.pending_game_load;
+    ok &= fixture_destroy(&f,&vm);
+  }
+  return ok;
+}
 static int text_signature_case(void){
   static const char *inputs[]={
     "\xef\xbb\xbf" "header\r\nnext", "header\r\nnext", "", "\xef", "\xef\xbb",
@@ -342,6 +424,8 @@ static int image_save_failure_case(void){
 }
 int main(void){
   static const AnygmTestCase cases[]={
+    {"legacy_save_load_files_and_deferred_boundary",legacy_save_actions_case},
+    {"legacy_load_pending_state_and_rejected_files",legacy_load_request_state_case},
     {"text_signature_and_binary_preservation",text_signature_case},
     {"digest_vectors_overlay_and_short_reads",digest_case},
     {"digest_injected_failures",digest_failure_case},

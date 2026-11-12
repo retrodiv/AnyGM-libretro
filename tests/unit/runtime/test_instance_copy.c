@@ -283,10 +283,12 @@ static int copied_arrays_fork_on_named_writes(int mode,int cached){
   /* Two keyed bindings and one owned array occupy this fixture's exact trailer.
    * Malformed ownership must fail in a separate reader, without leaking partial
    * arrays or changing the still-live original VM. */
-  REQUIRE(written>=73 && state[written-1]==0 && copy_test_u64(state+written-73)==2);
+  REQUIRE(!vm.pending_game_load && written>=77 &&
+          !memcmp(state+written-4,(const unsigned char[4]){0},4) &&
+          state[written-5]==0 && copy_test_u64(state+written-77)==2);
   for(int fault=0;fault<7;fault++){
     memcpy(again,state,written);
-    unsigned char *tail=again+written-73;
+    unsigned char *tail=again+written-77;
     if(fault==0) memset(tail,0,8);                 /* counter below live keys */
     if(fault==1) memcpy(tail+32,tail+12,8);       /* repeated lvalue key */
     if(fault==2) tail[20]=3;                     /* unknown lvalue kind */
@@ -372,10 +374,12 @@ static int argument_and_view_owners_survive_state(void){
   REQUIRE(resaved==written && !memcmp(state,again,written));
   /* Three lvalues, three arrays and one writable view occupy this exact fixture
    * trailer. Exercise every new selector plus the old-schema refusal. */
-  REQUIRE(written>=133 && state[written-1]==0 && copy_test_u64(state+written-133)==3);
+  REQUIRE(!vm.pending_game_load && written>=137 &&
+          !memcmp(state+written-4,(const unsigned char[4]){0},4) &&
+          state[written-5]==0 && copy_test_u64(state+written-137)==3);
   for(int fault=0;fault<12;fault++){
     memcpy(again,state,written);
-    unsigned char *tail=again+written-133;
+    unsigned char *tail=again+written-137;
     if(fault==0) tail[24]=1;                       /* live arguments have no frame target */
     if(fault==1) tail[28]=16;                      /* invalid live argument register */
     if(fault==2) tail[44]=1;                       /* absent parked frame */

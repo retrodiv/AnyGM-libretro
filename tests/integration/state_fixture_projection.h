@@ -144,7 +144,7 @@ static void fixture_map(FixtureProjection *p){
  * against the live fixture. Direct state controls cover mutation/restoration of these fields. */
 static int project_fixture_playback(AnygmEngine *engine,uint8_t **data,size_t *written){
   uint8_t *bytes=*data;
-  if(*written<112 || (uint32_t)read_u64(bytes+4)!=61 || engine->render.n_spr<0)return 0;
+  if(*written<112 || (uint32_t)read_u64(bytes+4)!=62 || engine->render.n_spr<0)return 0;
   /* The historical fixture contains no dynamic sprite information or nine-slice.
    * Validate each current metadata word before omitting this new trailer. */
   size_t metadata_start=112+(size_t)read_u64(bytes+64);
@@ -256,6 +256,11 @@ static int project_fixture_vm(AnygmEngine *engine,uint8_t **data,size_t *written
   size_t start=112+(size_t)read_u64(bytes+64)+(size_t)read_u64(bytes+72);
   size_t size=(size_t)read_u64(bytes+80);
   if(start>*written || size>*written-start || size<132)return 0;
+  size_t wire_size=size;
+  /* Only an absent pending file request is neutral in this historical pin. */
+  if(engine->vm.pending_game_load || size<4 ||
+     memcmp(bytes+start+size-4,(const uint8_t[4]){0},4))return 0;
+  size-=4;
   FixtureProjection *p=calloc(1,sizeof(*p));if(!p)return 0;
   /* This bounded fixture has no recycled/relinked object groups. Strip only the verified
    * empty order trailer; nonempty new behavior belongs to its direct continuation controls. */
@@ -272,7 +277,7 @@ static int project_fixture_vm(AnygmEngine *engine,uint8_t **data,size_t *written
   if((uint32_t)read_u64(p->input+timeline_at)!=0 ||
      (uint32_t)read_u64(p->input+timeline_at+4)!=(uint32_t)engine->vm.n_objects){free(p);return 0;}
   fixture_copy(p,132);
-  if((uint32_t)read_u64(p->output+4)!=36)p->ok=0;
+  if((uint32_t)read_u64(p->output+4)!=37)p->ok=0;
   write_u32(p->output+4,19);
   for(unsigned i=0;i<16;i++)(void)fixture_value(p,0);
   fixture_copy(p,76+26*4+616*8+10*4); /* RNG and unchanged software-3D scalars */
@@ -336,11 +341,11 @@ static int project_fixture_vm(AnygmEngine *engine,uint8_t **data,size_t *written
     p->pos+=4;fixture_copy(p,p->size-p->pos);
   }
   if(!p->ok){fprintf(stderr,"fixture projection stopped at VM byte %zu/%zu\n",p->pos,size);free(p);return 0;}
-  size_t total=*written-size+p->used;
+  size_t total=*written-wire_size+p->used;
   uint8_t *result=malloc(total);
   if(!result){free(p);return 0;}
   memcpy(result,bytes,start);memcpy(result+start,p->output,p->used);
-  memcpy(result+start+p->used,bytes+start+size,*written-start-size);
+  memcpy(result+start+p->used,bytes+start+wire_size,*written-start-wire_size);
   write_u32(result+4,37);write_u64(result+16,total);write_u64(result+80,p->used);
   write_u64(result+96,total-112);write_u64(result+56,state_checksum(result+112,total-112));
   free(p);free(*data);*data=result;*written=total;return 1;
@@ -393,7 +398,15 @@ static int fixture_projection_controls(AnygmEngine *engine,const uint8_t *baseli
     free(bytes);engine->vm.script_args[0]=original;gml_values_release_owned(&array,1);
   }
   engine->vm.script_args[0]=original;
-  const uint32_t unknown_roots[]={50,51,52,53,54,55,56,57,58,59,60,62};
+  if(ok){
+    uint8_t *bytes=NULL;size_t count=0;
+    engine->vm.pending_game_load=strdup("neutral-request.sav");
+    ok=engine->vm.pending_game_load && save_state(engine,&bytes,&count) &&
+       !project_fixture_vm(engine,&bytes,&count);
+    free(engine->vm.pending_game_load);engine->vm.pending_game_load=NULL;
+    free(bytes);
+  }
+  const uint32_t unknown_roots[]={50,51,52,53,54,55,56,57,58,59,60,61,63};
   for(unsigned i=0;i<sizeof unknown_roots/sizeof unknown_roots[0] && ok;i++){
     uint8_t *bytes=NULL;size_t count=0;
     ok=save_state(engine,&bytes,&count);

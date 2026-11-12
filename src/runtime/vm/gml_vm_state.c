@@ -18,7 +18,7 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=36 };
+enum { GML_VM_STATE_SCHEMA=37 };
 enum { STATE_MAX_TILEMAPS=512, STATE_TILEMAP_RECORD_BYTES=56 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 /* IDs are assigned in canonical traversal order, never from addresses. Zero is the null array;
@@ -1643,6 +1643,7 @@ static void runtime_release_builtin_value(void *userdata,GmlVal value){
 }
 
 static void runtime_clear(GmlVM *vm,GmlArr **partial_arrays,uint32_t partial_count){
+  free(vm->pending_game_load); vm->pending_game_load=NULL;
   gml_vm_wait_cancel(vm);   /* the state about to be read decides what is parked, if anything */
   gml_vm_input_text_release(vm);
   gml_vm_rooms_clear_stored_visuals(vm);
@@ -2494,6 +2495,10 @@ static void sw_vm(StateW *s, GmlVM *vm){
   sw_varmap(s,&vm->member_names);
   sw_array_ownership(s,vm);
   sw_u8(s,(unsigned)vm->date_timezone);
+  size_t request_length=vm->pending_game_load?strlen(vm->pending_game_load):0;
+  if(request_length>GML_VM_GAME_LOAD_PATH_MAX){ s->ok=0;return; }
+  sw_u32(s,(uint32_t)request_length);
+  if(request_length) sw_raw(s,vm->pending_game_load,request_length);
   vm_state_profile_globals(vm);
   if(save_time){
     uint64_t save_t4=anygm_host_monotonic_time_ns(vm->host);
@@ -2887,6 +2892,20 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     unsigned mode=sr_u8(&s);
     if(mode>1){ state_debug(vm,"bad date timezone",s.pos,0); s.ok=0; }
     else vm->date_timezone=(int)mode;
+  }
+  if(s.ok){
+    uint32_t length=sr_u32(&s);
+    if(!s.ok || length>GML_VM_GAME_LOAD_PATH_MAX || s.pos>s.cap || length>s.cap-s.pos)
+      s.ok=0;
+    else if(length){
+      char *request=malloc((size_t)length+1u);
+      if(!request) s.ok=0;
+      else {
+        sr_raw(&s,request,length);request[length]=0;
+        if(memchr(request,0,length)){free(request);s.ok=0;}
+        else vm->pending_game_load=request;
+      }
+    }
   }
   /* Rebind immutable grids before restoring their saved handles. The temporary
    * construction IDs never escape this state transaction. */

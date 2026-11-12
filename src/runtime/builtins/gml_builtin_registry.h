@@ -895,8 +895,10 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(807, FILE_TEXT_WRITE_STRING, "file_text_write_string", IO, IO, ALWAYS) \
   ENTRY(808, FILE_TEXT_WRITELN, "file_text_writeln", IO, IO, ALWAYS) \
   ENTRY(809, GAME_LOAD, "game_load", IO, IO, ALWAYS) \
+  ALIAS(GAME_LOAD, "action_load_game", IO, IO, ALWAYS) \
   ENTRY(810, GAME_LOAD_BUFFER, "game_load_buffer", IO, IO, ALWAYS) \
   ENTRY(811, GAME_SAVE, "game_save", IO, IO, ALWAYS) \
+  ALIAS(GAME_SAVE, "action_save_game", IO, IO, ALWAYS) \
   ENTRY(812, GAME_SAVE_BUFFER, "game_save_buffer", IO, IO, ALWAYS) \
   ENTRY(813, ACTION_EXECUTE_SCRIPT, "action_execute_script", INSTANCES, INSTANCES_SCRIPTS, ALWAYS) \
   ENTRY(814, SCRIPT_EXECUTE, "script_execute", INSTANCES, INSTANCES_SCRIPTS, ALWAYS) \

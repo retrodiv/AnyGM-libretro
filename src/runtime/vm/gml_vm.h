@@ -386,6 +386,7 @@ typedef struct GmlVM {
   int      date_timezone;     /* 0: local civil clock; 1: UTC civil clock */
   int      room_index;        /* current room (ROOM index) */
   int      pending_room;      /* -1 none, else target ROOM index (play-order resolved) */
+  char    *pending_game_load; /* owned filename; consumed only after event/draw stacks unwind */
   unsigned char *room_stored; int room_state_count;
   struct GmlRoomVisualState *room_visuals; /* dormant, room-owned layer/map storage */
   int      game_end;
@@ -798,6 +799,7 @@ int     gml_vm_draw_pass_active(GmlVM *vm, const char *suffix);
 void    gml_vm_draw_pass(GmlVM *vm, const char *suffix); /* Draw_72-77 and Draw_65/66 stage events */
 int     gml_vm_state_save(GmlVM *vm, void *data, size_t len, size_t *written);
 int     gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used);
+enum { GML_VM_GAME_LOAD_PATH_MAX=1024*1024 };
 
 /* Software-3D state is serialized with the VM so rewind/load cannot change
  * the active projection, culling, lighting, or light definitions mid-frame. */

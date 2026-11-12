@@ -193,6 +193,7 @@ void gml_vm_post_draw(GmlVM *vm){
    * boundary: taking it here would leave every state holding an animation one step past the frame
    * it was saved from, so restoring it and redrawing would not reproduce that frame. */
   if(vm && anygm_policy_animation_before_step(vm->win)) vm->animation_due=1;
+  gml_builtin_finish_game_load(vm);
 }
 
 static int classic_joystick_event_fires(GmlVM *vm,int s){

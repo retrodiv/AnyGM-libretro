@@ -71,7 +71,8 @@ static size_t render_metadata_body_end(const AnygmEngine *engine,
 /* Locate older table controls only after proving this fixture has no semantic
  * array-owner records. Never skip a populated or unknown trailer. */
 static size_t neutral_vm_body_end(const AnygmEngine *engine,const uint8_t *bytes,size_t size){
-  if(engine->vm.next_array_owner || engine->vm.member_names.len) return SIZE_MAX;
+  if(engine->vm.next_array_owner || engine->vm.member_names.len ||
+     engine->vm.pending_game_load) return SIZE_MAX;
   if(size<STATE_HEADER_SIZE || (uint32_t)read_u64(bytes+4)!=ANYGM_STATE_SCHEMA) return SIZE_MAX;
   size_t start=STATE_HEADER_SIZE;
   for(unsigned offset=64;offset<=72;offset+=8){
@@ -80,9 +81,11 @@ static size_t neutral_vm_body_end(const AnygmEngine *engine,const uint8_t *bytes
     start+=(size_t)part;
   }
   uint64_t length=read_u64(bytes+80);
-  if(length<33 || length>size-start || (uint32_t)read_u64(bytes+start+4)!=36)
+  if(length<37 || length>size-start || (uint32_t)read_u64(bytes+start+4)!=37)
     return SIZE_MAX;
   size_t end=start+(size_t)length;
+  if(memcmp(bytes+end-4,(const uint8_t[4]){0},4)) return SIZE_MAX;
+  end-=4;
   if(bytes[end-1]!=0) return SIZE_MAX;
   end--;
   if(memcmp(bytes+end-20,(const uint8_t[20]){0},20)) return SIZE_MAX;
@@ -97,7 +100,7 @@ static int neutral_vm_body_end_controls(const AnygmEngine *engine,
     return fail("current neutral VM trailer was not located");
   uint8_t *candidate=malloc(size);
   if(!candidate) return fail("neutral trailer control allocation");
-  const uint32_t roots[]={53,54,55,56,57,58,59,60,62},vms[]={31,32,33,34,35,37};
+  const uint32_t roots[]={53,54,55,56,57,58,59,60,61,63},vms[]={31,32,33,34,35,36,38};
   size_t vm_start=STATE_HEADER_SIZE+(size_t)read_u64(bytes+64)+
                   (size_t)read_u64(bytes+72);
   int ok=1;
@@ -1586,8 +1589,10 @@ static int registered_member_state_cases(const AnygmHostServices *services,
     candidate=malloc(size);ok=candidate!=NULL;
     size_t end=STATE_HEADER_SIZE+(size_t)read_u64(state+64)+(size_t)read_u64(state+72)+
                (size_t)read_u64(state+80);
-    ok=ok && end<=size && end>=29 &&
-       !memcmp(state+end-25,(const uint8_t[25]){0},25);
+    ok=ok && !engine->vm.pending_game_load && end<=size && end>=33 &&
+       !memcmp(state+end-4,(const uint8_t[4]){0},4);
+    if(ok)end-=4;
+    ok=ok && !memcmp(state+end-25,(const uint8_t[25]){0},25);
     if(ok) ok=reject_payload_u32(engine,candidate,size,state,size,end-25,UINT32_MAX,
                                  "invalid member registry count");
   }
@@ -1601,8 +1606,10 @@ static int registered_member_state_cases(const AnygmHostServices *services,
     candidate=malloc(size);ok=candidate!=NULL;
     size_t start=STATE_HEADER_SIZE+(size_t)read_u64(state+64)+(size_t)read_u64(state+72);
     size_t end=start+(size_t)read_u64(state+80);
-    ok=ok && end<=size && end>=start+22 &&
-       !memcmp(state+end-21,(const uint8_t[21]){0},21) && state[end-22]==V_UNDEF;
+    ok=ok && !engine->vm.pending_game_load && end<=size && end>=start+26 &&
+       !memcmp(state+end-4,(const uint8_t[4]){0},4);
+    if(ok)end-=4;
+    ok=ok && !memcmp(state+end-21,(const uint8_t[21]){0},21) && state[end-22]==V_UNDEF;
     if(ok){
       memcpy(candidate,state,size);
       candidate[end-22]=6; /* valid compact real zero, invalid registry marker */
@@ -1654,13 +1661,15 @@ static int date_timezone_state_cases(const AnygmHostServices *services,
   if(ok){
     size_t at=STATE_HEADER_SIZE+(size_t)read_u64(utc+64)+(size_t)read_u64(utc+72);
     size_t length=(size_t)read_u64(utc+80);
-    ok=at<utc_size && length>8 && length<=utc_size-at &&
-       utc[at+length-1]==1 && local[at+length-1]==0;
+    ok=at<utc_size && length>12 && length<=utc_size-at &&
+       !memcmp(utc+at+length-4,(const uint8_t[4]){0},4) &&
+       !memcmp(local+at+length-4,(const uint8_t[4]){0},4) &&
+       utc[at+length-5]==1 && local[at+length-5]==0;
     candidate=malloc(utc_size);
     ok=ok && candidate;
     const unsigned invalid[]={2,255};
     for(unsigned i=0;i<sizeof invalid/sizeof invalid[0] && ok;i++){
-      memcpy(candidate,utc,utc_size);candidate[at+length-1]=(uint8_t)invalid[i];
+      memcpy(candidate,utc,utc_size);candidate[at+length-5]=(uint8_t)invalid[i];
       refresh_checksum(candidate);
       ok=reject_unchanged(engine,candidate,utc_size,local,local_size,"invalid date timezone");
     }
@@ -1675,6 +1684,40 @@ static int date_timezone_state_cases(const AnygmHostServices *services,
   if(ok) ok=anygm_reset(engine)==ANYGM_OK && engine->vm.date_timezone==0;
   free(candidate);free(local);free(utc);anygm_destroy(engine);
   return ok?1:fail("date timezone state, rejection or Reset");
+}
+
+static int deferred_game_load_state_cases(const AnygmHostServices *services,
+                                            const AnygmContentSource *source){
+  AnygmEngine *engine=NULL;uint8_t *baseline=NULL,*candidate=NULL;size_t size=0;
+  int ok=anygm_create(services,&engine)==ANYGM_OK && anygm_load(engine,source,NULL)==ANYGM_OK;
+  GmlVal path=vstr("neutral-request.sav");
+  if(ok)gml_builtin_call(&engine->vm,"action_load_game",&path,1);
+  ok=ok && engine->vm.pending_game_load && save_state(engine,&baseline,&size);
+  size_t length=ok?strlen(engine->vm.pending_game_load):0;
+  if(ok){
+    free(engine->vm.pending_game_load);engine->vm.pending_game_load=NULL;
+    ok=anygm_state_load(engine,baseline,size)==ANYGM_OK && engine_matches(engine,baseline,size);
+  }
+  size_t vm_start=ok?STATE_HEADER_SIZE+(size_t)read_u64(baseline+64)+
+    (size_t)read_u64(baseline+72):0;
+  size_t vm_size=ok?(size_t)read_u64(baseline+80):0;
+  if(ok)ok=length>=4 && vm_size>=length+4u && vm_start<=size && vm_size<=size-vm_start;
+  size_t count_at=ok?vm_start+vm_size-length-4u:0;
+  if(ok)ok=engine->vm.pending_game_load &&
+    (uint32_t)read_u64(baseline+count_at)==length &&
+    !memcmp(baseline+count_at+4,engine->vm.pending_game_load,length);
+  candidate=ok?malloc(size):NULL;ok=ok && candidate;
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,count_at,UINT32_MAX,
+                             "oversized deferred load filename");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,count_at+4,0,
+                             "embedded NUL in deferred load filename");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,4,61,
+                             "previous pending-load-free public schema");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,vm_start+4,36,
+                             "previous pending-load-free VM schema");
+  if(ok)ok=anygm_reset(engine)==ANYGM_OK && !engine->vm.pending_game_load;
+  free(candidate);free(baseline);anygm_destroy(engine);
+  return ok?1:fail("deferred game-load request state, rollback or Reset");
 }
 
 int main(void){
@@ -1701,6 +1744,7 @@ int main(void){
   if(anygm_load(engine,&source,NULL)!=ANYGM_OK) return fail("content load failed")?0:1;
 
   if(!sprite_playback_state_cases(&services,&source) ||
+     !deferred_game_load_state_cases(&services,&source) ||
      !sprite_information_state_cases(&services,&source) ||
      !registered_member_state_cases(&services,&source) ||
      !date_timezone_state_cases(&services,&source) ||
