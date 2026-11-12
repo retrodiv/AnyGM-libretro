@@ -20,9 +20,15 @@ failed partial reads leave the canonical image unpublished and invalid as a
 current resource. See R03-P9-INCREMENTAL-CHECKPOINT in
 [the renderer map](RENDERER_BACKENDS.md) for owners and controls.
 
-The current AnyGM save-state schema is `58`. It is the format transported by
+The current AnyGM save-state schema is `59`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `59` introduces VM schema `35`. A fixed one-byte VM trailer retains the
+date timezone selector: local is zero and UTC is one. Other values are rejected
+before publication. This field is present before the first frame and does not
+grow when a game changes its date clock. Earlier public and VM schemas reject
+transactionally; other embedded schemas and the public API version are unchanged.
 
 Schema `58` introduces VM schema `34`. Numeric wire tags `10` and `11` retain
 32-bit and 64-bit integer identity and signed little-endian payloads. They are

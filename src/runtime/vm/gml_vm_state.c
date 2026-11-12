@@ -18,7 +18,7 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=34 };
+enum { GML_VM_STATE_SCHEMA=35 };
 enum { STATE_MAX_TILEMAPS=512, STATE_TILEMAP_RECORD_BYTES=56 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 /* IDs are assigned in canonical traversal order, never from addresses. Zero is the null array;
@@ -1679,6 +1679,7 @@ static void runtime_clear(GmlVM *vm,GmlArr **partial_arrays,uint32_t partial_cou
   vm->next_array_owner=0;
   vm->event_type=0; vm->event_number=0;
   vm->step_alloc_base=0; vm->action_relative=0;
+  vm->date_timezone=0;
   vm->potential_max_rotation=30; vm->potential_rotate_step=10;
   vm->potential_check_distance=3; vm->potential_rotate_on_spot=1;
   vm->window_x=0; vm->window_y=0; vm->window_cursor=0;
@@ -2307,6 +2308,7 @@ static GmlTimeline *sr_timelines(StateR *s, GmlVM *vm, int *total){
 }
 
 static void sw_vm(StateW *s, GmlVM *vm){
+  if(!vm || (vm->date_timezone!=0 && vm->date_timezone!=1)){ s->ok=0; return; }
   int save_time=s->data && vm && vm->host &&
     anygm_host_development_setting(vm->host,"GML_DBG_STATE_TIME")!=NULL &&
     vm->diagnostics.state_save_time_log_count<16;
@@ -2471,6 +2473,7 @@ static void sw_vm(StateW *s, GmlVM *vm){
   sw_object_properties(s,vm);
   sw_instance_order(s,vm);
   sw_array_ownership(s,vm);
+  sw_u8(s,(unsigned)vm->date_timezone);
   vm_state_profile_globals(vm);
   if(save_time){
     uint64_t save_t4=anygm_host_monotonic_time_ns(vm->host);
@@ -2856,6 +2859,11 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   gml_obj_alive_recount(vm);   /* family live counts rebuilt from the restored pool */
   if(s.ok)sr_instance_order(&s,vm);
   if(s.ok)sr_array_ownership(&s,vm);
+  if(s.ok){
+    unsigned mode=sr_u8(&s);
+    if(mode>1){ state_debug(vm,"bad date timezone",s.pos,0); s.ok=0; }
+    else vm->date_timezone=(int)mode;
+  }
   /* Rebind immutable grids before restoring their saved handles. The temporary
    * construction IDs never escape this state transaction. */
   if(s.ok && vm->win && vm->room_index>=0){

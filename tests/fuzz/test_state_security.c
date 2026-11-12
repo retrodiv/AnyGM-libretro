@@ -52,9 +52,11 @@ static size_t neutral_vm_body_end(const AnygmEngine *engine,const uint8_t *bytes
     start+=(size_t)part;
   }
   uint64_t length=read_u64(bytes+80);
-  if(length<28 || length>size-start || (uint32_t)read_u64(bytes+start+4)!=34)
+  if(length<29 || length>size-start || (uint32_t)read_u64(bytes+start+4)!=35)
     return SIZE_MAX;
   size_t end=start+(size_t)length;
+  if(bytes[end-1]!=0) return SIZE_MAX;
+  end--;
   if(memcmp(bytes+end-20,(const uint8_t[20]){0},20)) return SIZE_MAX;
   return end-20;
 }
@@ -65,7 +67,7 @@ static int neutral_vm_body_end_controls(const AnygmEngine *engine,
     return fail("current neutral VM trailer was not located");
   uint8_t *candidate=malloc(size);
   if(!candidate) return fail("neutral trailer control allocation");
-  const uint32_t roots[]={53,54,55,56,57,59},vms[]={31,32,33,35};
+  const uint32_t roots[]={53,54,55,56,57,58,60},vms[]={31,32,33,34,36};
   size_t vm_start=STATE_HEADER_SIZE+(size_t)read_u64(bytes+64)+
                   (size_t)read_u64(bytes+72);
   int ok=1;
@@ -1491,6 +1493,47 @@ static int blend_state_cases(AnygmEngine *engine){
   return ok?1:fail("blend tuple/equation validation and rollback failed");
 }
 
+static int date_timezone_state_cases(const AnygmHostServices *services,
+                                     const AnygmContentSource *source){
+  AnygmEngine *engine=NULL;
+  uint8_t *utc=NULL,*local=NULL,*candidate=NULL; size_t utc_size=0,local_size=0;
+  int ok=anygm_create(services,&engine)==ANYGM_OK &&
+         anygm_load(engine,source,NULL)==ANYGM_OK;
+  if(ok) ok=engine->vm.date_timezone==0;
+  if(ok){
+    gml_builtin_call(&engine->vm,"date_set_timezone",(GmlVal[]){vreal(1)},1);
+    ok=save_state(engine,&utc,&utc_size);
+  }
+  if(ok){
+    gml_builtin_call(&engine->vm,"date_set_timezone",(GmlVal[]){vreal(0)},1);
+    ok=save_state(engine,&local,&local_size) && local_size==utc_size;
+  }
+  if(ok){
+    size_t at=STATE_HEADER_SIZE+(size_t)read_u64(utc+64)+(size_t)read_u64(utc+72);
+    size_t length=(size_t)read_u64(utc+80);
+    ok=at<utc_size && length>8 && length<=utc_size-at &&
+       utc[at+length-1]==1 && local[at+length-1]==0;
+    candidate=malloc(utc_size);
+    ok=ok && candidate;
+    const unsigned invalid[]={2,255};
+    for(unsigned i=0;i<sizeof invalid/sizeof invalid[0] && ok;i++){
+      memcpy(candidate,utc,utc_size);candidate[at+length-1]=(uint8_t)invalid[i];
+      refresh_checksum(candidate);
+      ok=reject_unchanged(engine,candidate,utc_size,local,local_size,"invalid date timezone");
+    }
+    if(ok) ok=reject_payload_u32(engine,candidate,utc_size,local,local_size,at+4,34,
+                                 "previous timezone-free VM schema");
+    if(ok) ok=reject_payload_u32(engine,candidate,utc_size,local,local_size,4,58,
+                                 "previous timezone-free public schema");
+  }
+  if(ok) ok=anygm_state_load(engine,utc,utc_size)==ANYGM_OK &&
+            gml_builtin_call(&engine->vm,"date_get_timezone",NULL,0).d==1 &&
+            engine_matches(engine,utc,utc_size);
+  if(ok) ok=anygm_reset(engine)==ANYGM_OK && engine->vm.date_timezone==0;
+  free(candidate);free(local);free(utc);anygm_destroy(engine);
+  return ok?1:fail("date timezone state, rejection or Reset");
+}
+
 int main(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_list_override_content_create(&fixture))
@@ -1515,6 +1558,7 @@ int main(void){
   if(anygm_load(engine,&source,NULL)!=ANYGM_OK) return fail("content load failed")?0:1;
 
   if(!sprite_playback_state_cases(&services,&source) ||
+     !date_timezone_state_cases(&services,&source) ||
      !instance_order_state_cases(&services,&source) ||
      !map_reference_state_cases(&services,&source) ||
      !repeated_static_scope_state_case(&services,&source)) return 1;

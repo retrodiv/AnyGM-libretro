@@ -380,6 +380,7 @@ int gml_vm_init_launch(GmlVM *vm,GmlWin *win,const AnygmHostServices *host,
   gml_vm_instances_reset_caches(vm); /* cache slots belong to this VM */
   vm->win=win; vm->pending_room=-1; vm->room_index=-1; vm->next_id=100000; vm->rng_state=0;
   vm->time_sample_frame=-1;
+  vm->date_timezone=0;
   snprintf(vm->working_directory,sizeof vm->working_directory,"%s/",win?win->content_dir:"");
   snprintf(vm->program_directory,sizeof vm->program_directory,"%s/",
            program_directory&&program_directory[0]?program_directory:(win?win->content_dir:""));

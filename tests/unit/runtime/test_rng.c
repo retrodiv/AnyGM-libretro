@@ -21,6 +21,80 @@ static AnygmResult fixture_wall_time(void *userdata,AnygmWallTime *wall){
   return ANYGM_OK;
 }
 
+typedef struct DateClock {
+  int64_t seconds;
+  int offset;
+  unsigned flags;
+  AnygmResult result;
+} DateClock;
+static AnygmResult date_wall_time(void *userdata,AnygmWallTime *wall){
+  DateClock *clock=userdata;
+  wall->unix_seconds=clock->seconds;
+  wall->utc_offset_minutes=clock->offset;
+  wall->flags=clock->flags;
+  return clock->result;
+}
+static GmlVal date_call(GmlVM *vm,const char *name,GmlVal *args,int count,int cached){
+  if(!cached) return gml_builtin_call(vm,name,args,count);
+  int id=gml_builtin_fast_id(vm,name);
+  return id>=0?gml_builtin_call_fast_id(vm,id,name,args,count):vundef();
+}
+static int check_date_timezone(void){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlWin win={0}; win.bytecode=17;
+    DateClock clock={0,60,ANYGM_WALL_TIME_OFFSET_VALID,ANYGM_OK};
+    AnygmHostServices host={0};
+    host.struct_size=sizeof host; host.abi_version=ANYGM_HOST_SERVICES_VERSION;
+    host.userdata=&clock; host.wall_time=date_wall_time;
+    GmlVM first={0},second={0};
+    if(gml_vm_init(&first,&win,&host) || gml_vm_init(&second,&win,&host)) return 0;
+    const int offsets[]={60,-330,0};
+    ok=ok && gml_global_num(&first,"timezone_local")==0 &&
+             gml_global_num(&first,"timezone_utc")==1;
+    for(unsigned i=0;i<sizeof offsets/sizeof offsets[0] && ok;i++){
+      clock.offset=offsets[i];
+      clock.seconds=i==1?-60:0;
+      GmlVal local=vreal(0),utc=vreal(1);
+      date_call(&first,"date_set_timezone",&local,1,cached);
+      double local_serial=25569.0+(double)(clock.seconds+(int64_t)clock.offset*60)/86400.0;
+      double utc_serial=25569.0+(double)clock.seconds/86400.0;
+      GmlVal value=date_call(&first,"date_current_datetime",NULL,0,cached);
+      ok=value.t==V_REAL && value.d==local_serial &&
+         date_call(&first,"date_get_timezone",NULL,0,cached).d==0;
+      date_call(&first,"date_set_timezone",&utc,1,cached);
+      value=date_call(&first,"date_current_datetime",NULL,0,cached);
+      ok=ok && value.t==V_REAL && value.d==utc_serial &&
+         date_call(&first,"date_get_timezone",NULL,0,cached).d==1 &&
+         date_call(&second,"date_get_timezone",NULL,0,cached).d==0 &&
+         date_call(&second,"date_current_datetime",NULL,0,cached).d==local_serial;
+      const double invalid[]={-1,2,0.5,INFINITY,NAN};
+      for(unsigned j=0;j<sizeof invalid/sizeof invalid[0];j++){
+        GmlVal arg=vreal(invalid[j]);
+        date_call(&first,"date_set_timezone",&arg,1,cached);
+        ok=ok && first.date_timezone==1;
+      }
+      date_call(&first,"date_set_timezone",NULL,0,cached);
+      ok=ok && first.date_timezone==1;
+      /* current_* remains the local host calendar, independently of date mode. */
+      AnygmCalendarTime calendar={0};
+      ok=ok && anygm_calendar_from_unix_seconds(clock.seconds+(int64_t)clock.offset*60,&calendar) &&
+         gml_global_num(&first,"current_hour")==calendar.hour;
+    }
+    clock.flags=0; clock.offset=180;
+    for(int mode=0;mode<2;mode++){
+      GmlVal arg=vreal(mode); date_call(&first,"date_set_timezone",&arg,1,cached);
+      ok=ok && date_call(&first,"date_current_datetime",NULL,0,cached).d==25569.0;
+      clock.result=ANYGM_ERROR_UNSUPPORTED;
+      ok=ok && date_call(&first,"date_current_datetime",NULL,0,cached).d==25569.0;
+      clock.result=ANYGM_OK;
+    }
+    gml_vm_free(&first); gml_vm_free(&second);
+  }
+  if(!ok) fprintf(stderr,"date timezone clock, isolation or dispatch mismatch\n");
+  return ok;
+}
+
 static int check_classic_comparisons(void){
   double accumulated=0.0;
   for(int i=0;i<100;i++) accumulated+=0.06;
@@ -65,6 +139,7 @@ int main(void){
   vm.particles=gml_particle_state_create(&vm);
   if(!vm.particles) return 1;
   if(!check_classic_comparisons()) return 1;
+  if(!check_date_timezone()) return 1;
   {
     static const uint64_t expected[]={
       16,5,13,17,13,0,10,15,15,9,18,14,10,19,16,12

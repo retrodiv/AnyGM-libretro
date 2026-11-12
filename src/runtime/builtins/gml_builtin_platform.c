@@ -392,12 +392,20 @@ GmlVal gml_builtin_try_platform(GmlVM *vm, const char *nm, GmlVal *a, int n){
     double h=(double)presentation_size(vm,R,1);
     return array4(0,0,w,h);
   }
+  if(!strcmp(nm,"date_get_timezone")) return vreal(vm->date_timezone);
+  if(!strcmp(nm,"date_set_timezone")){
+    if(n>0){
+      double mode=N(a,n,0);
+      if(mode==0.0 || mode==1.0) vm->date_timezone=(int)mode;
+    }
+    return vreal(0);
+  }
   if(!strcmp(nm,"date_current_datetime")){
     AnygmWallTime wall={0};
     wall.struct_size=sizeof wall;
     if(gml_host_wall_time(vm,&wall)!=ANYGM_OK) return vreal(25569.0);
     int64_t seconds=wall.unix_seconds;
-    if(wall.flags&ANYGM_WALL_TIME_OFFSET_VALID)
+    if(vm->date_timezone==0 && (wall.flags&ANYGM_WALL_TIME_OFFSET_VALID))
       seconds+=(int64_t)wall.utc_offset_minutes*60;
     return vreal(25569.0+(double)seconds/86400.0);
   }

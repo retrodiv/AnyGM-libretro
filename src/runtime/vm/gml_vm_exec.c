@@ -501,6 +501,7 @@ static const char *const g_special_var_names[]={
   "event_type","event_number","mouse_x","mouse_y","mouse_button","mouse_lastbutton",
   "current_time","current_second","current_minute","current_hour","current_day","current_weekday",
   "current_month","current_year","os_type","os_windows","os_uwp","os_xboxone","os_ps3","os_ps4","os_psvita",
+  "timezone_local","timezone_utc",
   "os_macosx","os_linux","os_ios","os_android","os_unknown","os_switch_operating_system","room_width",
   "time_source_global","time_source_game","time_source_units_seconds","time_source_units_frames",
   "time_source_expire_nearest","time_source_expire_after","time_source_state_initial",
@@ -710,6 +711,8 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
     if(vm->os_type_declared>=0) return vreal(vm->os_type_declared);
     return vreal(0 /*os_windows*/); }
   if(!strcmp(name,"os_windows")) return vreal(0);
+  if(!strcmp(name,"timezone_local")) return vreal(0);
+  if(!strcmp(name,"timezone_utc")) return vreal(1);
   if(!strcmp(name,"os_macosx")) return vreal(1);
   if(!strcmp(name,"os_ios")) return vreal(3);
   if(!strcmp(name,"os_android")) return vreal(4);

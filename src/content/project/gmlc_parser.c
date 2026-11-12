@@ -220,6 +220,8 @@ static int resolve_const(Compiler *c, const char *name, double *out){
   if(!strcmp(name,"self")){ *out=IT_SELF; return 1; }
   if(!strcmp(name,"other")){ *out=IT_OTHER; return 1; }
   if(!strcmp(name,"all")){ *out=IT_ALL; return 1; }
+  if(!strcmp(name,"timezone_local")){ *out=0; return 1; }
+  if(!strcmp(name,"timezone_utc")){ *out=1; return 1; }
   if(!strcmp(name,"c_black")){ *out=0; return 1; }
   if(!strcmp(name,"c_maroon")){ *out=128; return 1; }
   if(!strcmp(name,"c_green")){ *out=32768; return 1; }

@@ -35,6 +35,7 @@ static const char *const recognized_names[]={
   "phy_position_x","gravity","path_index","path_endaction","timeline_index","timeline_loop",
   "transition_kind","transition_steps","time_source_global","time_source_state_stopped",
   "cursor_sprite","working_directory","async_load",
+  "timezone_local","timezone_utc",
 };
 
 /* Prefix-matched families the gate also claims. */

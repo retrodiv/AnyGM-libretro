@@ -382,6 +382,7 @@ typedef struct GmlVM {
   int      draw_phase;          /* set for the presentation part of a frame */
   int      animation_due;       /* classic animation advance owed by the last draw */
   uint64_t fallback_monotonic_ns;
+  int      date_timezone;     /* 0: local civil clock; 1: UTC civil clock */
   int      room_index;        /* current room (ROOM index) */
   int      pending_room;      /* -1 none, else target ROOM index (play-order resolved) */
   unsigned char *room_stored; int room_state_count;

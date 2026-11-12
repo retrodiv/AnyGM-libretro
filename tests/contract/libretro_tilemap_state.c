@@ -337,10 +337,10 @@ static int run_ds_case(int response){
   size_t object_bytes=4+28*(size_t)g_libretro.engine->vm.n_objects;
   /* This neutral fixture has neither reordered instances nor array ownership. Validate both
    * trailers and every original object word before corrupting the count, not a property. */
-  const size_t trailer_bytes=24; /* order count, then the empty ownership trailer */
+  const size_t trailer_bytes=25; /* order count, empty ownership, local date mode */
   REQUIRE(vm_end>=object_bytes+trailer_bytes && vm_end<=saved_size &&
           !g_libretro.engine->vm.next_array_owner &&
-          !memcmp(saved+vm_end-trailer_bytes,(const unsigned char[24]){0},trailer_bytes),
+          !memcmp(saved+vm_end-trailer_bytes,(const unsigned char[25]){0},trailer_bytes),
           "locate VM object table before empty order and ownership trailers");
   size_t object_at=vm_end-trailer_bytes-object_bytes;
   REQUIRE((uint32_t)read_word64(saved+object_at)==(uint32_t)g_libretro.engine->vm.n_objects,
