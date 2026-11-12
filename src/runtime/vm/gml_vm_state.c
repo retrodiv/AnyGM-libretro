@@ -18,7 +18,7 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=33 };
+enum { GML_VM_STATE_SCHEMA=34 };
 enum { STATE_MAX_TILEMAPS=512, STATE_TILEMAP_RECORD_BYTES=56 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 /* IDs are assigned in canonical traversal order, never from addresses. Zero is the null array;
@@ -29,6 +29,7 @@ _Static_assert((int)V_OBJECT!=(int)STATE_ARRAY_REF,"object and array references 
  * Equal maps share a record, not storage: restore copies their independent variable tables. */
 enum { STATE_MAX_MAPS=2000000, STATE_MAX_MAP_ENTRIES=16000000,
        STATE_REAL_ZERO=6, STATE_REAL_INTEGER=7, STATE_REAL_I8=8, STATE_REAL_I16=9,
+       STATE_TYPED_I32=10, STATE_TYPED_I64=11,
        STATE_MAX_STRINGS=1000000 };
 typedef struct { const GmlVarMap *map; uint32_t hash,id,count,key_bytes; } StateMapEntry;
 /* Dense records keep traversal IDs stable. Sparse buckets retain each hash beside its one-based
@@ -199,7 +200,7 @@ static int sr_i32(StateR *s){ return (int)(int32_t)sr_u32(s); }
 static int64_t sr_i64(StateR *s){
   uint8_t b[8]={0}; sr_raw(s,b,sizeof b); uint64_t u=0;
   for(unsigned i=0;i<8;i++) u|=(uint64_t)b[i]<<(i*8);
-  return (int64_t)u;
+  return gml_int64_from_bits(u);
 }
 static double sr_d(StateR *s){ uint64_t bits=(uint64_t)sr_i64(s); double v=0; memcpy(&v,&bits,sizeof v); return v; }
 static void sw_particle_state(StateW *s){
@@ -556,7 +557,7 @@ void gml_vm_state_runtime_strings_clear(GmlVM *vm){
 }
 static int state_val_is_default_zero(GmlVal v){
   uint64_t bits=0;memcpy(&bits,&v.d,sizeof bits);
-  return v.t==V_REAL && !bits;
+  return v.t==V_REAL && v.number_kind==GML_NUM_REAL && !bits;
 }
 static void sw_val(StateW *s, GmlVal v, int depth);
 static int state_array_row_width(GmlArr *A, int row){
@@ -658,7 +659,18 @@ static void sw_val(StateW *s, GmlVal v, int depth){
     if(id || !v.arr){ sw_u8(s,STATE_ARRAY_REF); sw_u32(s,id); return; }
     if(depth>=STATE_MAX_ARRAY_DEPTH){ s->ok=0; return; }
   }
-  if(v.t==V_REAL){sw_real(s,v.d);return;}
+  if(v.t==V_REAL){
+    if(v.number_kind==GML_NUM_REAL){sw_real(s,v.d);return;}
+    if(v.d!=(double)v.integer){s->ok=0;return;}
+    if(v.number_kind==GML_NUM_INT32){
+      if(v.integer<INT32_MIN || v.integer>INT32_MAX){s->ok=0;return;}
+      sw_u8(s,STATE_TYPED_I32);sw_i32(s,(int32_t)v.integer);return;
+    }
+    if(v.number_kind==GML_NUM_INT64){
+      sw_u8(s,STATE_TYPED_I64);sw_i64(s,v.integer);return;
+    }
+    s->ok=0;return;
+  }
   sw_u8(s,(uint8_t)v.t);
   if(v.t==V_OBJECT){
     if(!isfinite(v.d) || v.d<0 || v.d>UINT32_MAX || floor(v.d)!=v.d){ s->ok=0; return; }
@@ -726,6 +738,8 @@ static GmlVal sr_val(GmlVM *vm, StateR *s, int depth){
     return vreal((int16_t)(low|(high<<8)));
   }
   if(t==V_REAL) return vreal(sr_d(s));
+  if(t==STATE_TYPED_I32) return vint32(sr_i32(s));
+  if(t==STATE_TYPED_I64) return vint64(sr_i64(s));
   if(t==V_OBJECT) return vobject(sr_u32(s));
   if(t==V_STR) return vstr(state_runtime_string(s,sr_str_dup(s)));
   if(t==V_UNDEF) return vundef();
@@ -973,6 +987,8 @@ static GmlVal sr_scalar_value(StateR *reader){
     return vreal((int16_t)(low|(high<<8)));
   }
   if(type==V_REAL) return vreal(sr_d(reader));
+  if(type==STATE_TYPED_I32) return vint32(sr_i32(reader));
+  if(type==STATE_TYPED_I64) return vint64(sr_i64(reader));
   if(type==V_OBJECT) return vobject(sr_u32(reader));
   if(type==V_STR) return vstr(state_runtime_string(reader,sr_str_dup(reader)));
   if(type==V_UNDEF) return vundef();
@@ -1118,7 +1134,9 @@ static uint64_t state_map_hash(const GmlVarMap *map,uint32_t *count,uint64_t *sh
     const GmlVarSlot *slot=&map->slots[i];
     GmlVal value=slot->val;
     uint64_t bits=0;
-    if(value.t==V_REAL || value.t==V_OBJECT) memcpy(&bits,&value.d,sizeof bits);
+    if(value.t==V_REAL && value.number_kind!=GML_NUM_REAL)
+      bits=state_map_mix((uint64_t)value.integer)^((uint64_t)value.number_kind<<56);
+    else if(value.t==V_REAL || value.t==V_OBJECT) memcpy(&bits,&value.d,sizeof bits);
     else if(value.t==V_STR) bits=state_map_text_hash(value.s);
     else if(value.t==V_ARR) bits=(uintptr_t)value.arr;
     hash+=state_map_mix(slot->hash^state_map_mix(bits)^value.t);
@@ -1140,6 +1158,8 @@ static int state_maps_equal(const GmlVarMap *left,const GmlVarMap *right){
     if(!other) return 0;
     if(slot->array_owner!=*gml_varmap_value_owner(other)) return 0;
     if(value.t!=other->t) return 0;
+    if(value.t==V_REAL && (value.number_kind!=other->number_kind ||
+       (value.number_kind!=GML_NUM_REAL && value.integer!=other->integer))) return 0;
     if(value.t==V_REAL || value.t==V_OBJECT){
       if(memcmp(&value.d,&other->d,sizeof value.d)) return 0;
     } else if(value.t==V_STR){
@@ -1304,7 +1324,7 @@ static void sw_varmap(StateW *s,GmlVarMap *m){
       }
       sw_encoded_string(s,slot->key,text,NULL,NULL,NULL,NULL,NULL);
     }
-    if(value->t==V_REAL) sw_real(s,value->d);
+    if(value->t==V_REAL && value->number_kind==GML_NUM_REAL) sw_real(s,value->d);
     else sw_val(s,*value,0);
   }
   /* The key shape and shared values already identify each binding's canonical

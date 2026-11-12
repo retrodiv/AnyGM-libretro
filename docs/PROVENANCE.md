@@ -113,8 +113,8 @@ release evidence. The following SHA-256 directives pin only the two
 first-party files in this repository; `make provenance-check` verifies
 their current bytes.
 
-<!-- PROVENANCE-CHECK: src/runtime/builtins/gml_builtin_registry.h = c74141b1a69d82ba7975b9b62448bdba81f4621cc82f88ac4af7c8418786cc2c -->
-<!-- PROVENANCE-CHECK: src/generated/gml_builtin_registry_index.h = 13166fd166a08a754806b31a8268f960ec89872c937ad1b522a815940c8103ea -->
+<!-- PROVENANCE-CHECK: src/runtime/builtins/gml_builtin_registry.h = 9dbcc2f52980cbd957bf4272776bef0afac320a6734a6051a8e2ca9311f07be6 -->
+<!-- PROVENANCE-CHECK: src/generated/gml_builtin_registry_index.h = 20f5f8bc59f29c75c365eb6a4c4532f47a1865d9ed642c76d0d120738c00f28f -->
 
 ## Audio setup packets
 
@@ -353,3 +353,17 @@ This establishes the exercised GM8 integer-selector contract, not native Studio
 behavior, invalid argument coercion or within-poll event ordering. Other Classic
 carriers apply that shared policy; Studio retains its selected current-button
 policy. No proprietary implementation is bundled or needed at build time.
+
+## Integer type identity
+
+The independently authored integer predicates and retained numeric kinds use
+the publisher's variable-function, data-type and expression contracts. The
+interfaces are documented by the publisher's
+[integer queries](https://manual.gamemaker.io/monthly/en/GameMaker_Language/GML_Reference/Variable_Functions/is_int64.htm),
+[data types](https://manual.gamemaker.io/monthly/en/GameMaker_Language/GML_Overview/Data_Types.htm)
+and [expression rules](https://manual.gamemaker.io/monthly/en/GameMaker_Language/GML_Overview/Expressions_And_Operators.htm).
+The implementation keeps the existing numeric owner and floating algorithms,
+with an exact integer payload for the integer variants. The same value and
+state owners serve CPU and OpenGL execution. The exercised controls are
+synthetic language and state tests; they do not establish native Studio
+compiler optimization, overflow, invalid coercion or device behavior.

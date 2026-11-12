@@ -22,6 +22,16 @@ int log_ds_on(GmlVM *vm){
 }
 
 
+static void ds_numeric_key(GmlVal value,char *buffer,size_t size){
+  if(gml_val_number_kind(value)!=GML_NUM_REAL &&
+     (value.d>=0x1p63 || value.d< -0x1p63 || (int64_t)value.d!=value.integer)){
+    if(size<3) return;
+    buffer[0]='r';buffer[1]=':';
+    gml_val_format_integer(value,buffer+2,size-2);
+    return;
+  }
+  snprintf(buffer,size,"r:%.17g",gml_val_is_number_or_object(value)?value.d:0.0);
+}
 static char *ds_key_make(GmlVal v){
   char buf[96];
   if(v.t==V_STR){
@@ -33,7 +43,7 @@ static char *ds_key_make(GmlVal v){
     return o;
   }
   if(v.t==V_UNDEF) return strdup("u:");
-  snprintf(buf,sizeof(buf),"r:%.17g",gml_val_is_number_or_object(v)?v.d:0.0);
+  ds_numeric_key(v,buf,sizeof buf);
   return strdup(buf);
 }
 typedef struct { char buf[160]; char *heap; } DsKeyTemp;
@@ -56,7 +66,7 @@ static const char *ds_key_temp(GmlVal v, DsKeyTemp *t){
     return t->heap;
   }
   if(v.t==V_UNDEF) return "u:";
-  snprintf(t->buf,sizeof(t->buf),"r:%.17g",gml_val_is_number_or_object(v)?v.d:0.0);
+  ds_numeric_key(v,t->buf,sizeof t->buf);
   return t->buf;
 }
 static void ds_key_temp_free(DsKeyTemp *t){
@@ -75,8 +85,8 @@ static GmlVal ds_key_val_clone(GmlVal v){
    * caller's temporary value. */
   if(v.t==V_STR){ char *c=v.s?strdup(v.s):NULL; return c?vstr_owned(c):vstr(""); }
   if(v.t==V_UNDEF) return vundef();
-  if(v.t==V_OBJECT) return v;
-  return vreal(v.t==V_REAL?v.d:0.0);
+  if(v.t==V_OBJECT || v.t==V_REAL) return v;
+  return vreal(0);
 }
 static void ds_entry_state_memo_clear(GmlDSMapEntry *e,int slot){
   if(!e || slot<0 || slot>=3) return;
@@ -119,8 +129,8 @@ static GmlVal ds_val_clone(GmlVal v){
   if(v.t==V_STR){ char *c=v.s?strdup(v.s):NULL; return c?vstr_owned(c):vstr(""); }
   if(v.t==V_ARR){ gml_arr_mark_escaped(v); return v; }   /* ds structures outlive the scope */
   if(v.t==V_UNDEF) return vundef();
-  if(v.t==V_OBJECT) return v;
-  return vreal(v.t==V_REAL?v.d:0.0);
+  if(v.t==V_OBJECT || v.t==V_REAL) return v;
+  return vreal(0);
 }
 GmlDSMap *ds_map_slot(GmlVM *vm, int id){
   if(!vm || !vm->builtins) return NULL;

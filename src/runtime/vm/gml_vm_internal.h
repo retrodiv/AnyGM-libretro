@@ -33,9 +33,11 @@ GmlVal gml_vm_legacy_tile_appearance(GmlVM *vm,int room);
 int gml_vm_legacy_tile_draw_appearance(GmlVal appearance,uint32_t index,double *alpha);
 int gml_vm_room_background_moved(GmlVM *vm,int order,const GmlRtLayer *layer);
 GmlVal gml_vm_asset_tile_bindings(GmlVM *vm,int order);
-/* The value a CONV opcode should leave on the stack. Only a conversion to bool changes the value:
-   GML's bool is 0 or 1, and the ops that consume one read the number, not the type tag. */
+/* Encoded conversions and integer operations share one numeric value owner.
+ * The interpreter and admitted loop fusions consume the same results. */
 GmlVal gml_vm_conv_value(GmlVal value, unsigned char to_type);
+int gml_vm_integer_binary(int operation,GmlVal left,GmlVal right,
+                          int typed_literals,GmlVal *result);
 void gml_vm_motion_from_components(GmlVM *vm, GmlInstance *instance);
 void gml_vm_motion_from_speed_direction(GmlVM *vm, GmlInstance *instance);
 int gml_vm_instance_builtin_set(GmlVM *vm, GmlInstance *instance,

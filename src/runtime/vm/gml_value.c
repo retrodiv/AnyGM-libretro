@@ -4,8 +4,50 @@
 /* Canonical language-value, array, variable-map, and lifetime implementation. */
 #include "gml_value_internal.h"
 
+#include <ctype.h>
+#include <errno.h>
+#include <inttypes.h>
+#include <limits.h>
+#include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+int64_t gml_val_as_integer(GmlVal value){
+  GmlNumberKind kind=gml_val_number_kind(value);
+  if(kind==GML_NUM_INT32 || kind==GML_NUM_INT64) return value.integer;
+  double number=gml_val_is_number_or_object(value)?value.d:0;
+  if(value.t==V_STR && value.s){
+    const char *text=value.s;
+    while(isspace((unsigned char)*text)) text++;
+    const char *digits=(*text=='+' || *text=='-')?text+1:text;
+    int base=digits[0]=='0' && (digits[1]=='x' || digits[1]=='X')?16:10;
+    char *end=NULL;
+    errno=0;
+    int64_t integer=(int64_t)strtoll(text,&end,base);
+    if(end!=text){
+      while(isspace((unsigned char)*end)) end++;
+      if(!*end) return errno==ERANGE?0:integer;
+    }
+    end=NULL;
+    number=strtod(text,&end);
+    if(end==text) return 0;
+    while(isspace((unsigned char)*end)) end++;
+    if(*end) return 0;
+  }
+  if(!isfinite(number)) return 0;
+  double remainder=fmod(trunc(number),0x1p64);
+  if(remainder>=0x1p63) return INT64_MIN+(int64_t)(remainder-0x1p63);
+  if(remainder< -0x1p63) return (int64_t)(remainder+0x1p63)+INT64_MAX+1;
+  return (int64_t)remainder;
+}
+
+int gml_val_format_integer(GmlVal value,char *buffer,size_t size){
+  GmlNumberKind kind=gml_val_number_kind(value);
+  if(kind!=GML_NUM_INT32 && kind!=GML_NUM_INT64) return 0;
+  snprintf(buffer,size,"%" PRId64,value.integer);
+  return 1;
+}
 
 typedef struct GmlOwnedText {
   char *text;
@@ -263,7 +305,9 @@ void gml_arr_note_legacy_2d_set(GmlArr *A, int idx){
     if(A->row_len && col+1>A->row_len[row]) A->row_len[row]=col+1;
   }
 }
-static int arr_value_nonzero(GmlVal v){ return !(v.t==V_REAL && v.d==0.0); }
+static int arr_value_nonzero(GmlVal v){
+  return !(v.t==V_REAL && v.number_kind==GML_NUM_REAL && v.d==0.0);
+}
 void gml_arr_rebuild_legacy_2d_meta(GmlArr *A){
   if(!A || A->len<=GML_2D_STRIDE) return;
   free(A->row_len); A->row_len=NULL; A->row_cap=0; A->height2d=0; A->is_2d=0;
@@ -351,8 +395,8 @@ GmlVal gml_arr_store_clone(GmlVal v){
   if(v.t==V_STR){ char *c=v.s?strdup(v.s):NULL; return c?vstr_owned(c):vstr(""); }
   if(v.t==V_ARR){ gml_arr_mark_escaped(v); return gml_arr_publish(v); }
   if(v.t==V_UNDEF) return vundef();
-  if(v.t==V_OBJECT) return v;
-  return vreal(v.t==V_REAL?v.d:0.0);
+  if(v.t==V_OBJECT || v.t==V_REAL) return v;
+  return vreal(0);
 }
 #define arr_store_clone gml_arr_store_clone
 GmlVal gml_arr_new(int size, GmlVal fill){
@@ -362,7 +406,7 @@ GmlVal gml_arr_new(int size, GmlVal fill){
   if(A && size>0){ A->data=malloc((size_t)size*sizeof(GmlVal));
     if(A->data){ A->cap=size; A->len=size; for(int i=0;i<size;i++) A->data[i]=arr_store_clone(fill); } }
   if(A) A->escaped=1;
-  GmlVal v; v.t=V_ARR; v.d=0; v.s=NULL; v.arr=A; return v;
+  GmlVal v=vreal(0); v.t=V_ARR; v.arr=A; return v;
 }
 void gml_arr_set(GmlVal arr, int idx, GmlVal val){
   if(arr.t!=V_ARR || !arr.arr || idx<0) return;
@@ -382,7 +426,7 @@ GmlVal gml_arr_chain_ensure(GmlVal arr, int idx){
   if(arr.t!=V_ARR || !arr.arr || idx<0) return vreal(0);
   GmlArr *A=arr.arr;
   GmlVal value=idx<A->len?A->data[idx]:vreal(0);
-  if(value.t==V_REAL && value.d==0.0){
+  if(value.t==V_REAL && value.number_kind==GML_NUM_REAL && value.d==0.0){
     gml_arr_index_ensure(A,idx);
     if(idx<A->cap){
       gml_arr_store_value(A,idx,gml_arr_new(0,vreal(0)));

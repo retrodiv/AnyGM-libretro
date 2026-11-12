@@ -39,6 +39,7 @@ int gml_vm_value_is_true(GmlVal value){ return astrue(value); }
 static const char *asstr_cmp(GmlVal v, char *buf, size_t n){
   if(v.t==V_STR) return v.s?v.s:"";
   if(v.t==V_UNDEF) return "";
+  if(gml_val_format_integer(v,buf,n)) return buf;
   snprintf(buf,n,"%g",gml_val_is_number_or_object(v)?v.d:0.0);
   return buf;
 }
@@ -72,6 +73,19 @@ int gml_vm_value_compare(GmlVM *vm, GmlVal lhs, GmlVal rhs, int cmp){
       case CMP_NEQ: return c!=0;
       case CMP_GTE: return c>=0;
       case CMP_GT: return c>0;
+      default: return 0;
+    }
+  }
+  if(gml_val_number_kind(lhs)!=GML_NUM_REAL &&
+     gml_val_number_kind(rhs)!=GML_NUM_REAL){
+    int64_t left=lhs.integer,right=rhs.integer;
+    switch(cmp){
+      case CMP_LT: return left<right;
+      case CMP_LTE: return left<=right;
+      case CMP_EQ: return left==right;
+      case CMP_NEQ: return left!=right;
+      case CMP_GTE: return left>=right;
+      case CMP_GT: return left>right;
       default: return 0;
     }
   }
@@ -2721,6 +2735,17 @@ static int draw_loop_numeric_push(const GmlInsn *instruction,double *value){
   }
 }
 
+static GmlVal numeric_push_value(const GmlVM *vm,const GmlInsn *instruction){
+  int typed=vm && !anygm_policy_uses_classic_runtime(vm->win);
+  if(instruction->type1==DT_INT64)
+    return typed?vint64(instruction->lval):vreal((double)instruction->lval);
+  if(instruction->type1==DT_INT32)
+    return typed?vint32(instruction->ival):vreal(instruction->ival);
+  if(instruction->type1==DT_INT16)
+    return typed?vint32(instruction->sval):vreal(instruction->sval);
+  return vreal(instruction->dval);
+}
+
 static int draw_loop_normal_variable_push(const GmlInsn *instruction){
   return instruction && instruction->kind==OP_PUSH &&
          instruction->type1==DT_VAR && instruction->reftype==0xA0 &&
@@ -2769,12 +2794,15 @@ static int draw_loop_parse_argument(
     uint32_t index=current+1;
     if(index<end && insn_push_same_ref(&instructions[index],counter)){
       index++;
-      if(index<end && instructions[index].kind==OP_CONV) index++;
+      if(index<end && instructions[index].kind==OP_CONV){
+        if(instructions[index].type2!=DT_VAR) return 0;
+        index++;
+      }
       if(index>=end) return 0;
       GmlInsn *array_push=&instructions[index];
       if(array_push->kind!=OP_PUSH || array_push->type1!=DT_VAR ||
          array_push->reftype!=0x00 || !array_push->refname ||
-         number!=(double)(int)number || number<INT_MIN || number>INT_MAX)
+         number<INT_MIN || number>INT_MAX || number!=(double)(int)number)
         return 0;
       const char *name=array_push->refname;
       uint32_t hash=array_push->refhash
@@ -2793,9 +2821,12 @@ static int draw_loop_parse_argument(
       return 1;
     }
     argument->kind=GML_DRAW_LOOP_CONSTANT;
-    argument->value=vreal(number);
+    argument->value=numeric_push_value(vm,first);
     current++;
-    if(current<end && instructions[current].kind==OP_CONV) current++;
+    if(current<end && instructions[current].kind==OP_CONV){
+      if(instructions[current].type2!=DT_VAR) return 0;
+      current++;
+    }
     *cursor=current;
     return 1;
   }
@@ -2808,7 +2839,10 @@ static int draw_loop_parse_argument(
       if(!draw_loop_variable_value(vm,locals,first,&argument->value)) return 0;
     }
     current++;
-    if(current<end && instructions[current].kind==OP_CONV) current++;
+    if(current<end && instructions[current].kind==OP_CONV){
+      if(instructions[current].type2!=DT_VAR) return 0;
+      current++;
+    }
     *cursor=current;
     return 1;
   }
@@ -2854,6 +2888,9 @@ static int vm_try_array_draw_loop(
      !draw_loop_variable_value(vm,locals,limit,&limit_value) ||
      limit_value.t!=V_REAL || !isfinite(counter_slot->d) ||
      !isfinite(limit_value.d)) return 0;
+  /* The fusion indexes arrays with this counter. Wide retained integers and
+   * wrapping counters stay on the general instruction path. */
+  if(counter_slot->d<INT_MIN || counter_slot->d>INT_MAX) return 0;
 
   GmlDrawLoopArgument arguments[9];
   uint32_t cursor=header+4;
@@ -2882,12 +2919,15 @@ static int vm_try_array_draw_loop(
     iterations++;
     probe+=1.0;
     if(!isfinite(probe)) return 0;
+    if(probe>INT_MAX) return 0;
   }
   uint64_t consumed=iterations*loop_instructions+4;
   if(consumed==0 || watchdog>watchdog_max ||
      consumed-1>watchdog_max-watchdog) return 0;
 
   double counter_value=counter_slot->d;
+  GmlVal increment=numeric_push_value(vm,&instructions[footer+3]);
+  int typed_literals=!anygm_policy_uses_classic_runtime(vm->win);
   for(uint64_t iteration=0;iteration<iterations;iteration++){
     int index=(int)counter_value;
     GmlVal call_arguments[9];
@@ -2898,7 +2938,7 @@ static int vm_try_array_draw_loop(
         GmlArr *array=argument->array;
         if(index>=0 && index<array->len) value=array->data[index];
       } else if(argument->kind==GML_DRAW_LOOP_COUNTER){
-        value=vreal(counter_value);
+        value=*counter_slot;
       } else {
         value=argument->value;
       }
@@ -2906,11 +2946,11 @@ static int vm_try_array_draw_loop(
     }
     (void)gml_builtin_call_fast_id(
       vm,builtin_id,call->refname,call_arguments,9);
-    counter_value+=1.0;
-    counter_slot->t=V_REAL;
-    counter_slot->d=counter_value;
-    counter_slot->s=NULL;
-    counter_slot->arr=NULL;
+    GmlVal advanced;
+    if(!gml_vm_integer_binary(OP_ADD,*counter_slot,increment,typed_literals,&advanced))
+      advanced=vreal(counter_value+1.0);
+    *counter_slot=advanced;
+    counter_value=advanced.d;
   }
   *exit_out=(uint32_t)exit;
   *instruction_count_out=consumed;
@@ -2942,12 +2982,53 @@ static int vm_stack_type_bias(uint8_t type){
   return 0;
 }
 
-/* The value a CONV opcode should leave on the stack. Only a conversion to bool changes
-   the value: branch opcodes test truthiness, but arithmetic and bitwise opcodes read the
-   numeric result. */
+/* Encoded integer conversions preserve their category and exact payload.
+ * Classic's ordinary scalar conversions retain their policy at dispatch. */
 GmlVal gml_vm_conv_value(GmlVal value, unsigned char to_type){
-  if(to_type!=DT_BOOL || value.t==V_UNDEF) return value;
-  return vreal(astrue(value)?1:0);
+  if(value.t==V_UNDEF) return value;
+  if(to_type==DT_BOOL) return vreal(astrue(value)?1:0);
+  if(to_type==DT_INT32 || to_type==DT_INT16)
+    return vint32(gml_int32_from_bits((uint32_t)gml_val_as_integer(value)));
+  if(to_type==DT_INT64) return vint64(gml_val_as_integer(value));
+  if(to_type==DT_DOUBLE || to_type==DT_FLOAT) return vreal(asnum(value));
+  return value;
+}
+
+/* Integer variants intercept only their own operands. The established floating
+ * arithmetic below remains the path for mixed-real expressions. */
+int gml_vm_integer_binary(int operation,GmlVal left,GmlVal right,
+                          int typed_literals,GmlVal *result){
+  GmlNumberKind lk=gml_val_number_kind(left),rk=gml_val_number_kind(right);
+  int bitwise=operation==OP_AND || operation==OP_OR || operation==OP_XOR ||
+              operation==OP_SHL || operation==OP_SHR;
+  if(bitwise){
+    if(!typed_literals && lk==GML_NUM_REAL && rk==GML_NUM_REAL) return 0;
+  }else if(lk==GML_NUM_REAL || rk==GML_NUM_REAL) return 0;
+  int64_t a=gml_val_as_integer(left),b=gml_val_as_integer(right);
+  uint64_t bits=0;
+  switch(operation){
+    case OP_ADD: bits=(uint64_t)a+(uint64_t)b;break;
+    case OP_SUB: bits=(uint64_t)a-(uint64_t)b;break;
+    case OP_MUL: bits=(uint64_t)a*(uint64_t)b;break;
+    case OP_DIV: case OP_REM:
+      bits=b==0?0:(a==INT64_MIN && b==-1?(uint64_t)INT64_MIN:(uint64_t)(a/b));break;
+    case OP_MOD:
+      bits=b==0 || (a==INT64_MIN && b==-1)?0:(uint64_t)(a%b);break;
+    case OP_AND: bits=(uint64_t)a&(uint64_t)b;break;
+    case OP_OR: bits=(uint64_t)a|(uint64_t)b;break;
+    case OP_XOR: bits=(uint64_t)a^(uint64_t)b;break;
+    case OP_SHL: bits=(uint64_t)a<<((unsigned)b&63u);break;
+    case OP_SHR:{
+      unsigned shift=(unsigned)b&63u;
+      bits=(uint64_t)a>>shift;
+      if(a<0 && shift) bits|=UINT64_MAX<<(64u-shift);
+      break;
+    }
+    default: return 0;
+  }
+  *result=bitwise || lk==GML_NUM_INT64 || rk==GML_NUM_INT64
+    ?vint64(gml_int64_from_bits(bits)):vint32(gml_int32_from_bits((uint32_t)bits));
+  return 1;
 }
 
 static uint8_t vm_math_result_type(uint8_t left, uint8_t right){
@@ -3031,6 +3112,7 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
     : ((vm->wait_direct_marker==vm->execution_depth-1 && save_wait_chain==vm->execution_depth-1)
          ? vm->execution_depth : 0);
   GmlWin *w=vm->win; const uint8_t *d=w->data;
+  const int typed_literals=!anygm_policy_uses_classic_runtime(w);
   uint32_t start=w->code[ci].start, end=start+w->code[ci].length;
   GmlInstance *save_self=vm->cur_self, *save_other=vm->cur_other;
   int save_code_index=vm->cur_code_index;
@@ -3229,13 +3311,13 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
     switch(in.kind){
       case OP_PUSH:{
         GmlVal v;
-        if(in.type1==DT_INT16) v=vreal(in.sval);
+        if(in.type1==DT_INT16) v=typed_literals?vint32(in.sval):vreal(in.sval);
         else if(in.type1==DT_DOUBLE) v=vreal(in.dval);
         else if(in.type1==DT_INT32){
           const char *hash_name=use_cache ? in.refname :
             (gml_ref_kind(w,pc+4)==GML_REF_VARIABLE?gml_ref_name(w,pc+4):NULL);
-          v=vreal(hash_name ? (double)(use_cache?in.refhash:gml_value_name_hash(hash_name))
-                            : (double)in.ival);
+          v=hash_name ? vreal((double)(use_cache?in.refhash:gml_value_name_hash(hash_name)))
+                      : (typed_literals?vint32(in.ival):vreal(in.ival));
           /* GMS2.3 function-value: a `push.i32` whose reference word (pc+4) resolves via the FUNC
            * occurrence chain to a script code-entry is pushing that function as a value (later called
            * by OP_CALLV or bound by method()). Tag it so OP_CALLV can dispatch the code entry. */
@@ -3251,7 +3333,9 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
                 vm->diagnostics.function_value_debug=anygm_host_development_setting(vm->host,"GML_DBG_FUNCVAL")!=NULL;
               if(vm->diagnostics.function_value_debug) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[funcval] %s pc=%u i32=%d -> %s (ci=%d)\n",
                 w->code[ci].name,pc-start,in.ival,fn?fn:(w->code[fci].name?w->code[fci].name:"?"),fci); } } }
-        else if(in.type1==DT_INT64) v=vreal((double)in.lval);
+        else if(in.type1==DT_INT64) v=typed_literals?vint64(in.lval):vreal((double)in.lval);
+        else if(in.type1==DT_BOOL) v=vreal(in.ival?1:0);
+        else if(in.type1==DT_FLOAT){float value;memcpy(&value,&in.ival,sizeof value);v=vreal(value);}
         else if(in.type1==DT_STRING) v=vstr(gml_str_by_index(w,in.strindex));
         else if(in.type1==DT_VAR){
           const char *nm=in.refname?in.refname:gml_ref_name(w,in.refaddr);
@@ -3516,10 +3600,27 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
         }
         break; }
       case OP_CONV: /* values are dynamically typed; retain the encoded stack width. */
-        if(sp>0){ stk[sp-1]=gml_vm_conv_value(stk[sp-1],in.type2); stkt[sp-1]=in.type2; }
+        if(sp>0){
+          if(typed_literals || in.type2==DT_BOOL || gml_val_number_kind(stk[sp-1])!=GML_NUM_REAL)
+            stk[sp-1]=gml_vm_conv_value(stk[sp-1],in.type2);
+          stkt[sp-1]=in.type2;
+        }
         break;
-      case OP_NEG: if(sp>0){ stk[sp-1]=(stk[sp-1].t==V_UNDEF)?vundef():vreal(-asnum(stk[sp-1])); stkt[sp-1]=in.type1; } break;
-      case OP_NOT: if(sp>0){ stk[sp-1]=vreal(!astrue(stk[sp-1])); stkt[sp-1]=in.type1==DT_BOOL?DT_BOOL:in.type1; } break;
+      case OP_NEG: if(sp>0){
+        GmlVal value=stk[sp-1];
+        GmlNumberKind kind=gml_val_number_kind(value);
+        uint64_t bits=kind==GML_NUM_REAL?0:UINT64_C(0)-(uint64_t)value.integer;
+        stk[sp-1]=value.t==V_UNDEF?vundef():kind==GML_NUM_INT64?vint64(gml_int64_from_bits(bits)):
+          kind==GML_NUM_INT32?vint32(gml_int32_from_bits((uint32_t)bits)):vreal(-asnum(value));
+        stkt[sp-1]=in.type1;
+      } break;
+      case OP_NOT: if(sp>0){
+        int integer=in.type1!=DT_BOOL && stkt[sp-1]!=DT_BOOL &&
+          (typed_literals || gml_val_number_kind(stk[sp-1])!=GML_NUM_REAL);
+        stk[sp-1]=integer?vint64(gml_int64_from_bits(~(uint64_t)gml_val_as_integer(stk[sp-1]))):
+          vreal(!astrue(stk[sp-1]));
+        stkt[sp-1]=in.type1==DT_BOOL?DT_BOOL:in.type1;
+      } break;
       case OP_MUL: case OP_DIV: case OP_REM: case OP_MOD: case OP_ADD: case OP_SUB:
       case OP_AND: case OP_OR: case OP_XOR: case OP_SHL: case OP_SHR:{
         if(sp<2) break;
@@ -3530,6 +3631,7 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
           memcpy(c,l.s,la); memcpy(c+la,r.s,lb+1); stk[sp]=vstr_owned(c); stkt[sp++]=result_type; GC_TRACK(c); break;
         }
         if(l.t==V_UNDEF || r.t==V_UNDEF){ stk[sp]=vundef(); stkt[sp++]=result_type; break; }
+        if(gml_vm_integer_binary(in.kind,l,r,typed_literals,&stk[sp])){stkt[sp++]=result_type;break;}
         double a=asnum(l), b=asnum(r), o=0;
         switch(in.kind){
           case OP_MUL:o=a*b;break; case OP_DIV:o=b!=0?a/b:0;break;

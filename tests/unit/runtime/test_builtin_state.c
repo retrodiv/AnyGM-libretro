@@ -717,10 +717,81 @@ static int array_zero_bits_roundtrip(void){
   free(bytes);gml_vm_free(&source);gml_vm_free(&restored);return ok;
 }
 
+static int typed_numeric_state_roundtrip(void){
+  GmlWin win={0};GmlVM vm={0};int ok=0;
+  unsigned char *before=NULL,*after=NULL;
+  vm.win=&win;vm.room_index=vm.pending_room=-1;vm.next_creation_seq=1;
+  vm.particles=gml_particle_state_create(&vm);
+  if(!vm.particles) return 0;
+  gml_vm_software3d_reset(&vm);
+  const int64_t adjacent[]={INT64_C(9007199254740992),INT64_C(9007199254740993)};
+  GmlVal roots=gml_arr_new(2,vreal(0));
+  *gml_varmap_put(&vm.globals,"integer_roots")=roots;
+  *gml_varmap_put(&vm.globals,"integer_zero")=vint32(0);
+  *gml_varmap_put(&vm.globals,"wide_zero")=vint64(0);
+  for(int i=0;i<2;i++){
+    GmlInstance *node=gml_struct_new(&vm);
+    if(!node) goto done;
+    *gml_varmap_put(&node->vars,"numeric")=vint64(adjacent[i]);
+    gml_arr_set(roots,i,vobject(node->id));
+  }
+  GmlVal map=call(&vm,"ds_map_create",NULL,0);
+  for(int i=0;i<2;i++){
+    GmlVal args[]={map,vint64(adjacent[i]),vint64(i?INT64_MAX:INT64_MIN)};
+    call(&vm,"ds_map_add",args,3);
+  }
+  GmlVal dims[]={vreal(4),vreal(1)},grid=call(&vm,"ds_grid_create",dims,2);
+  GmlVal cells[]={vreal(0),vint32(0),vint64(0),vint64(INT64_MAX)};
+  for(int i=0;i<4;i++){
+    GmlVal args[]={grid,vreal(i),vreal(0),cells[i]};
+    call(&vm,"ds_grid_set",args,4);
+  }
+  size_t size=gml_vm_state_size(&vm),written=0,used=0,repeated=0;
+  before=malloc(size?size:1);after=malloc(size?size:1);
+  if(!before || !after || !gml_vm_state_save(&vm,before,size,&written) || written!=size) goto done;
+  /* The previous VM schema must be rejected before touching this live graph. */
+  before[4]--;
+  if(gml_vm_state_load(&vm,before,written,&used)) goto done;
+  before[4]++;
+  for(int phase=0;phase<2;phase++){
+    GmlVal *root=gml_varmap_get(&vm.globals,"integer_roots");
+    GmlVal *narrow_zero=gml_varmap_get(&vm.globals,"integer_zero");
+    GmlVal *wide_zero=gml_varmap_get(&vm.globals,"wide_zero");
+    if(!root || !narrow_zero || !wide_zero || gml_val_number_kind(*narrow_zero)!=GML_NUM_INT32 ||
+       gml_val_number_kind(*wide_zero)!=GML_NUM_INT64) goto done;
+    for(int i=0;i<2;i++){
+      GmlVal ref=gml_arr_get(*root,i);
+      GmlInstance *node=gml_struct_find(&vm,(unsigned)ref.d);
+      GmlVal *value=node?gml_varmap_get(&node->vars,"numeric"):NULL;
+      GmlVal args[]={map,vint64(adjacent[i])};
+      GmlVal found=call(&vm,"ds_map_find_value",args,2);
+      if(!value || gml_val_number_kind(*value)!=GML_NUM_INT64 || value->integer!=adjacent[i] ||
+         gml_val_number_kind(found)!=GML_NUM_INT64 || found.integer!=(i?INT64_MAX:INT64_MIN)) goto done;
+    }
+    for(int i=0;i<4;i++){
+      GmlVal args[]={grid,vreal(i),vreal(0)},value=call(&vm,"ds_grid_get",args,3);
+      if(gml_val_number_kind(value)!=gml_val_number_kind(cells[i]) || value.d!=cells[i].d ||
+         (i && value.integer!=cells[i].integer)) goto done;
+    }
+    if(!phase){
+      *narrow_zero=vreal(19);
+      gml_builtin_state_reset(vm.builtins);
+      if(!gml_vm_state_load(&vm,before,written,&used) || used!=written) goto done;
+    }
+  }
+  if(!gml_vm_state_save(&vm,after,size,&repeated) || repeated!=written || memcmp(before,after,written)) goto done;
+  ok=1;
+done:
+  if(!ok) fputs("typed numeric state: kind, exact payload, zero, map identity or transactional rejection failed\n",stderr);
+  else puts("typed numeric state: exact globals/arrays/maps/grids and old-schema rejection passed");
+  free(before);free(after);gml_vm_free(&vm);return ok;
+}
+
 int main(void){
 #ifdef ANYGM_TEST_STATE_ALLOC_FAILURE
   if(!writer_allocation_failure_is_bounded()) return 1;
 #endif
+  if(!typed_numeric_state_roundtrip()) return 1;
   if(!array_zero_bits_roundtrip()) return 1;
   if(!ds_owned_string_memo_roundtrip()) return 1;
   if(!repeated_map_heap_roundtrip(0) || !repeated_map_heap_roundtrip(1)) return 1;

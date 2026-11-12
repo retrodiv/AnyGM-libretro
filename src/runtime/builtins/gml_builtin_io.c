@@ -898,7 +898,9 @@ static void buffer_write_at(GmlVM *vm, int bi, int pos, const void *p, int n){
   memcpy(buffer_at(vm,bi)->data+pos,p,(size_t)n);
   if(buffer_at(vm,bi)->size<pos+n) buffer_at(vm,bi)->size=pos+n;
 }
-static int buffer_write_typed_at(GmlVM *vm, int bi, int pos, int type, const char *sv, double dv){
+static int buffer_write_typed_at(GmlVM *vm, int bi, int pos, int type, GmlVal value){
+  const char *sv=S(vm,&value,1,0);
+  double dv=N(&value,1,0);
   if(type==11 || type==13){
     int len=(int)strlen(sv?sv:"") + (type==11);
     buffer_write_at(vm,bi,pos,sv?sv:"",len);
@@ -911,7 +913,7 @@ static int buffer_write_typed_at(GmlVM *vm, int bi, int pos, int type, const cha
   if(type==7){ uint16_t v=0; float f=(float)dv; uint32_t u; memcpy(&u,&f,4);
     v=(uint16_t)(((u>>16)&0x8000)|((((u>>23)&0xFF)-112)<<10&0x7C00)|((u>>13)&0x3FF));
     buffer_write_at(vm,bi,pos,&v,2); return 2; }
-  if(type==12){ uint64_t v=(uint64_t)(int64_t)dv; buffer_write_at(vm,bi,pos,&v,8); return 8; }
+  if(type==12){ uint64_t v=(uint64_t)gml_val_as_integer(value); buffer_write_at(vm,bi,pos,&v,8); return 8; }
   double v=dv; buffer_write_at(vm,bi,pos,&v,8); return 8;
 }
 void buffer_write_raw(GmlVM *vm, int bi, const void *p, int n){
@@ -955,7 +957,7 @@ static GmlVal buffer_read_typed_at_pos(GmlVM *vm, int bi, int pos, int type){
     uint32_t u = ex==0 ? sgn : (sgn|((ex+112)<<23)|(mn<<13));
     float f; memcpy(&f,&u,4); out=vreal(f);
   } else if(type==8){ uint32_t u=(uint32_t)buffer_read_u(vm,bi,4); float f; memcpy(&f,&u,4); out=vreal(f);
-  } else if(type==12){ uint64_t u=buffer_read_u(vm,bi,8); out=vreal((double)(int64_t)u);
+  } else if(type==12){ uint64_t u=buffer_read_u(vm,bi,8); out=vint64(gml_int64_from_bits(u));
   } else { uint64_t u=buffer_read_u(vm,bi,8); double d; memcpy(&d,&u,8); out=vreal(d); }
   buffer_at(vm,bi)->pos=old;
   return out;
@@ -2023,12 +2025,12 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(0);
   }
   if(!strcmp(nm,"buffer_poke")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); if(i>=0)
-      buffer_write_typed_at(vm,i,(int)N(a,n,1),(int)N(a,n,2),S(vm,a,n,3),N(a,n,3));
+      buffer_write_typed_at(vm,i,(int)N(a,n,1),(int)N(a,n,2),n>3?a[3]:vreal(0));
     return vreal(0); }
   if(!strcmp(nm,"buffer_fill")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); int off=(int)N(a,n,1), type=(int)N(a,n,2), bytes=(int)N(a,n,4);
     if(i>=0 && off>=0 && bytes>0){
       int p=off, end=off+bytes;
-      while(p<end){ int w=buffer_write_typed_at(vm,i,p,type,S(vm,a,n,3),N(a,n,3)); if(w<=0) break; p+=w; }
+      while(p<end){ int w=buffer_write_typed_at(vm,i,p,type,n>3?a[3]:vreal(0)); if(w<=0) break; p+=w; }
     }
     return vreal(0); }
   /* GM buffer types: 1 u8, 2 s8, 3 u16, 4 s16, 5 u32, 6 s32, 7 f16, 8 f32, 9 f64,
@@ -2044,7 +2046,7 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     else if(type==7){ uint16_t v=0; float f=(float)dv;   /* f16: crude truncation via f32 bits */
       uint32_t u; memcpy(&u,&f,4); v=(uint16_t)(((u>>16)&0x8000)|((((u>>23)&0xFF)-112)<<10&0x7C00)|((u>>13)&0x3FF));
       buffer_write_raw(vm,i,&v,2); }
-    else if(type==12){ uint64_t v=(uint64_t)(int64_t)dv; buffer_write_raw(vm,i,&v,8); }
+    else if(type==12){ uint64_t v=(uint64_t)(n>2?gml_val_as_integer(a[2]):0); buffer_write_raw(vm,i,&v,8); }
     else { double v=dv; buffer_write_raw(vm,i,&v,8); }
     return vreal(0); }
   if(!strcmp(nm,"buffer_peek")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); if(i<0) return vreal(0);
@@ -2069,7 +2071,7 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
       uint32_t u = ex==0 ? sgn : (sgn|((ex+112)<<23)|(mn<<13));
       float f; memcpy(&f,&u,4); return vreal(f); }
     if(type==8){ uint32_t u=(uint32_t)buffer_read_u(vm,i,4); float f; memcpy(&f,&u,4); return vreal(f); }
-    if(type==12){ uint64_t u=buffer_read_u(vm,i,8); return vreal((double)(int64_t)u); }
+    if(type==12){ uint64_t u=buffer_read_u(vm,i,8); return vint64(gml_int64_from_bits(u)); }
     uint64_t u=buffer_read_u(vm,i,8); double d; memcpy(&d,&u,8); return vreal(d); }
   /* Async buffer file I/O reads into the caller's buffer and returns a request id. I/O is completed
    * synchronously, but the Async Save/Load event is deferred until the end of the step so the caller

@@ -1296,6 +1296,12 @@ static int parse_primary(Compiler *c){
     if(project_constant>0) goto postfix_calls;
     double cv=0;
     if(resolve_const(c,name,&cv)){
+      if(!strcmp(name,"true") || !strcmp(name,"false")){
+        if(!emit_u32(&c->code,fw(OP_PUSH,DT_BOOL,0)) || !emit_u32(&c->code,(uint32_t)cv)) return 0;
+        expr_not_const(c);
+        c->expr_boolish=1;
+        goto postfix_calls;
+      }
       if(!strcmp(name,"pi")){
         if(!emit_const_number(c,cv)) return 0;
         goto postfix_calls;

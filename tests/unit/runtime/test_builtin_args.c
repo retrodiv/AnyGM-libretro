@@ -78,6 +78,10 @@ static int argument_reader(void){
   expect("negative argument wraps",NU32(args,3,0),0xFFFFFFFFu);
   expect("ordinary colour argument",NU32(args,3,1),16711680u);
   expect("missing argument reads zero",NU32(args,3,7),0u);
+  args[0]=vint64(INT64_C(0x20000000000001));
+  expect("retained wide integer keeps its low colour bits",NU32(args,3,0),1u);
+  args[0]=vint64(-1);
+  expect("retained negative integer wraps",NU32(args,3,0),UINT32_MAX);
   return failures==0;
 }
 

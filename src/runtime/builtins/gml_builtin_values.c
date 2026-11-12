@@ -706,7 +706,7 @@ GmlVal gml_builtin_try_values_strings(GmlVM *vm, const char *nm, GmlVal *a, int 
     if(!text) return vstr("");
     for(char *p=text;*p;p++) if(*p=='#') *p='\n';
     return vstr_owned(text); }
-  if(!strcmp(nm,"int64")){ return vreal((double)(int64_t)N(a,n,0)); }
+  if(!strcmp(nm,"int64")) return vint64(n>0?gml_val_as_integer(a[0]):0);
   if(!strcmp(nm,"ptr")){  /* pointers are opaque numbers here; the conversion must keep the value */
     return vreal(N(a,n,0)); }
   if(!strcmp(nm,"string_upper")){ const char*s=S(vm,a,n,0); int len=(int)strlen(s); char *o=dup_n(s,len);
@@ -821,8 +821,8 @@ GmlVal var_store_clone(GmlVal v){
   }
   if(v.t==V_ARR){ gml_arr_mark_escaped(v); return gml_arr_publish(v); }
   if(v.t==V_UNDEF) return vundef();
-  if(v.t==V_OBJECT) return v;
-  return vreal(v.t==V_REAL?v.d:0.0);
+  if(v.t==V_OBJECT || v.t==V_REAL) return v;
+  return vreal(0);
 }
 static GmlVarMap *struct_public_map(GmlVM *vm, GmlVal ref, GmlInstance **owner){
   if(owner) *owner=NULL;
@@ -1098,6 +1098,8 @@ GmlVal gml_builtin_try_values_variables(GmlVM *vm, const char *nm, GmlVal *a, in
   (void)R;
   if(!strcmp(nm,"is_undefined")) return vreal(n>0 && a[0].t==V_UNDEF);
   if(!strcmp(nm,"is_string")) return vreal(n>0 && a[0].t==V_STR);
+  if(!strcmp(nm,"is_int32")) return vreal(n>0 && gml_val_number_kind(a[0])==GML_NUM_INT32);
+  if(!strcmp(nm,"is_int64")) return vreal(n>0 && gml_val_number_kind(a[0])==GML_NUM_INT64);
   if(!strcmp(nm,"is_real")||!strcmp(nm,"is_numeric")) return vreal(n>0 && a[0].t==V_REAL);
   if(!strcmp(nm,"is_array")) return vreal(n>0 && a[0].t==V_ARR);
   /* Only a real can be either: a string or an undefined is neither NaN nor infinite, and
@@ -1112,6 +1114,8 @@ GmlVal gml_builtin_try_values_variables(GmlVM *vm, const char *nm, GmlVal *a, in
     if(n<1 || a[0].t==V_UNDEF) return vstr("undefined");
     if(a[0].t==V_STR) return vstr("string");
     if(a[0].t==V_ARR) return vstr("array");
+    if(gml_val_number_kind(a[0])==GML_NUM_INT32) return vstr("int32");
+    if(gml_val_number_kind(a[0])==GML_NUM_INT64) return vstr("int64");
     if(gml_val_is_number_or_object(a[0]) && GML_IS_STRUCT_ID(a[0].d)){
       GmlInstance *st=gml_struct_find(vm,(unsigned)a[0].d);
       if(st){
@@ -1149,7 +1153,8 @@ GmlVal gml_builtin_try_values_variables(GmlVM *vm, const char *nm, GmlVal *a, in
     int raw=n>0 && a[0].t==V_REAL && GML_IS_FUNCVAL((int)a[0].d);
     return vreal(raw || (n>0 && gml_value_is_method(vm,a[0])));
   }
-  if(!strcmp(nm,"is_bool")) return vreal(n>0 && a[0].t==V_REAL && (a[0].d==0||a[0].d==1));
+  if(!strcmp(nm,"is_bool")) return vreal(n>0 && a[0].t==V_REAL &&
+    gml_val_number_kind(a[0])==GML_NUM_REAL && (a[0].d==0||a[0].d==1));
   /* In GM6/7/8 "local" means a field on the current instance, not a temporary VM stack
    * local. Classic projects use this to initialise a field only once from a Step event. */
   if(!strcmp(nm,"variable_local_exists"))

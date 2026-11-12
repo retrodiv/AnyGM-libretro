@@ -11,11 +11,24 @@
 /* ---- value ---- */
 /* Wire tag four belongs to the array-identity codec. */
 typedef enum { V_REAL=0, V_STR=1, V_ARR=2, V_UNDEF=3, V_OBJECT=5 } GmlValType;
+typedef enum { GML_NUM_REAL=0, GML_NUM_INT32=1, GML_NUM_INT64=2 } GmlNumberKind;
 /* The tag selects one pointer payload. String ownership remains in d; numeric
  * and object values retain the complete double independently of pointer storage.
  * An array on a writable operand-stack path carries its lvalue identity in d;
  * ordinary reads and publication clear it before the reference escapes. */
-typedef struct { GmlValType t; double d; union { const char *s; void *arr; }; } GmlVal;
+/* Numeric kinds share the established numeric owner and double projection.
+ * Integer payloads retain all bits independently of that projection. The kind
+ * occupies the tag word, leaving the established double offset unchanged. */
+typedef struct {
+  GmlValType t:8;
+  unsigned number_kind:2;
+  unsigned reserved:22;
+  double d;
+  union { const char *s; void *arr; int64_t integer; };
+} GmlVal;
+static inline GmlNumberKind gml_val_number_kind(GmlVal value){
+  return value.t==V_REAL ? (GmlNumberKind)value.number_kind : GML_NUM_REAL;
+}
 /* Object values retain their category while carrying the VM's stable handle in d.
  * Numeric selectors can consume that handle; container operations must retain the category.
  * No host address forms part of an object value or its serialized representation. */
@@ -35,15 +48,31 @@ typedef struct GmlArr {
   struct GmlArr *heap_previous, *heap_next;
   uint64_t cow_owner; /* stable lvalue identity, never a host address */
 } GmlArr;
-static inline GmlVal vreal(double d){ GmlVal v; v.t=V_REAL; v.d=d; v.s=0; v.arr=0; return v; }
+static inline GmlVal vreal(double d){ GmlVal v={0}; v.d=d; return v; }
+static inline GmlVal vint32(int32_t value){
+  GmlVal v=vreal((double)value); v.number_kind=GML_NUM_INT32; v.integer=value; return v;
+}
+static inline GmlVal vint64(int64_t value){
+  GmlVal v=vreal((double)value); v.number_kind=GML_NUM_INT64; v.integer=value; return v;
+}
+static inline int64_t gml_int64_from_bits(uint64_t bits){
+  return bits<=INT64_MAX?(int64_t)bits:-1-(int64_t)(UINT64_MAX-bits);
+}
+static inline int32_t gml_int32_from_bits(uint32_t bits){
+  return bits<=INT32_MAX?(int32_t)bits:-1-(int32_t)(UINT32_MAX-bits);
+}
 static inline GmlVal vobject(uint32_t id){
   GmlVal v=vreal(id); v.t=V_OBJECT; return v;
 }
-static inline GmlVal vstr(const char *s){ GmlVal v; v.t=V_STR; v.d=0; v.s=s; return v; }
+static inline GmlVal vstr(const char *s){ GmlVal v=vreal(0); v.t=V_STR; v.s=s; return v; }
 /* owned = the string is a fresh malloc'd temporary (v.d!=0 marks ownership); the VM frees it when
  * consumed. Literals/references (data.win STRG, rodata, var pointers) use vstr() and are never freed. */
-static inline GmlVal vstr_owned(char *s){ GmlVal v; v.t=V_STR; v.d=1; v.s=s; return v; }
-static inline GmlVal vundef(void){ GmlVal v; v.t=V_UNDEF; v.d=0; v.s=0; v.arr=0; return v; }
+static inline GmlVal vstr_owned(char *s){ GmlVal v=vreal(1); v.t=V_STR; v.s=s; return v; }
+static inline GmlVal vundef(void){ GmlVal v=vreal(0); v.t=V_UNDEF; return v; }
+
+/* Integer consumers use the retained payload, not its floating projection. */
+int64_t gml_val_as_integer(GmlVal value);
+int gml_val_format_integer(GmlVal value,char *buffer,size_t size);
 
 /* ---- variable map: open-addressing, key = interned name pointer ---- */
 typedef struct {

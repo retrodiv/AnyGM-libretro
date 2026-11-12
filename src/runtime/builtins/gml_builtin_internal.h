@@ -611,7 +611,10 @@ static inline uint32_t U32(double value){
   if(wrapped<0.0) wrapped+=4294967296.0;
   return (uint32_t)wrapped;
 }
-static inline uint32_t NU32(GmlVal *a, int n, int i){ return U32(N(a,n,i)); }
+static inline uint32_t NU32(GmlVal *a, int n, int i){
+  if(i<n && gml_val_number_kind(a[i])!=GML_NUM_REAL) return (uint32_t)a[i].integer;
+  return U32(N(a,n,i));
+}
 
 
 #endif

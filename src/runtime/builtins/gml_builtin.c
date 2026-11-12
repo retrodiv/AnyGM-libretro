@@ -197,6 +197,7 @@ double classic_display_mouse_coord(const GmlVM *vm,const GmlRender *r,double val
 const char *gm_string_format(GmlVal v,char buffer[64]){
   if(v.t==V_STR) return v.s?v.s:"";
   if(v.t==V_UNDEF || v.t==V_ARR) return "";
+  if(gml_val_format_integer(v,buffer,64)) return buffer;
   double d=gml_val_is_number_or_object(v)?v.d:0;
   if(d==floor(d)&&fabs(d)<1e15) snprintf(buffer,64,"%.0f",d);
   else snprintf(buffer,64,"%.2f",d);

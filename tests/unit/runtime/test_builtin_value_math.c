@@ -13,6 +13,7 @@
  */
 #include "gml_vm.h"
 #include "gml_builtin.h"
+#include "gml_vm_internal.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -26,10 +27,60 @@ static int expect(const char *label, GmlVal actual, double want){
   return 0;
 }
 
+static int integer_type_queries(GmlVM *vm){
+  GmlVal values[]={vint32(0),vint32(-1),vint32(INT32_MAX),vint64(0),
+    vint64(INT64_MIN),vint64(INT64_MAX),vreal(0),vreal(7),vreal(-0.0),
+    vreal(7.5),vreal(NAN),vreal(INFINITY),vstr("7"),vundef(),vobject(7)};
+  const char *names[]={"is_int32","is_int64"};
+  int ok=1;
+  for(unsigned which=0;which<2;which++){
+    int id=gml_builtin_fast_id(vm,names[which]);
+    if(id<0) return 0;
+    for(unsigned index=0;index<sizeof values/sizeof values[0];index++){
+      double wanted=gml_val_number_kind(values[index])==
+        (which?GML_NUM_INT64:GML_NUM_INT32);
+      ok&=expect("named integer kind",gml_builtin_call(vm,names[which],&values[index],1),wanted);
+      ok&=expect("cached integer kind",gml_builtin_call_fast_id(vm,id,names[which],&values[index],1),wanted);
+    }
+    ok&=expect("missing integer kind",gml_builtin_call(vm,names[which],NULL,0),0);
+  }
+  GmlVal text=vstr("9007199254740993");
+  GmlVal wide=gml_builtin_call(vm,"int64",&text,1);
+  char formatted[64];
+  if(gml_val_number_kind(wide)!=GML_NUM_INT64 || wide.integer!=INT64_C(9007199254740993) ||
+     !gml_val_format_integer(wide,formatted,sizeof formatted) || strcmp(formatted,"9007199254740993")){
+    fprintf(stderr,"integer type: explicit conversion lost bits above double precision\n");ok=0;
+  }
+  GmlVal array=gml_arr_new(0,vreal(0));
+  gml_arr_set(array,31,vint64(0));
+  gml_arr_set(array,0,wide);
+  GmlVal zero=gml_arr_get(array,31),hole=gml_arr_get(array,30),stored=gml_arr_get(array,0);
+  if(gml_val_number_kind(zero)!=GML_NUM_INT64 || zero.integer ||
+     gml_val_number_kind(hole)!=GML_NUM_REAL || gml_val_number_kind(stored)!=GML_NUM_INT64 ||
+     stored.integer!=wide.integer){
+    fprintf(stderr,"integer type: array copy or zero elision lost numeric identity\n");ok=0;
+  }
+  gml_values_release_owned(&array,1);
+  GmlVal computed;
+  if(!gml_vm_integer_binary(OP_ADD,wide,vint64(2),1,&computed) ||
+     gml_val_number_kind(computed)!=GML_NUM_INT64 || computed.integer!=INT64_C(9007199254740995)) ok=0;
+  if(!gml_vm_integer_binary(OP_DIV,vint64(5),vint64(2),1,&computed) ||
+     gml_val_number_kind(computed)!=GML_NUM_INT64 || computed.integer!=2) ok=0;
+  if(!gml_vm_integer_binary(OP_SHL,vint32(1),vint32(60),1,&computed) ||
+     gml_val_number_kind(computed)!=GML_NUM_INT64 || computed.integer!=INT64_C(1152921504606846976)) ok=0;
+  if(!gml_vm_integer_binary(OP_ADD,vint32(7),vint32(1),1,&computed) ||
+     gml_val_number_kind(computed)!=GML_NUM_INT32 || computed.integer!=8) ok=0;
+  if(gml_vm_integer_binary(OP_DIV,vint64(5),vreal(2),1,&computed) ||
+     gml_vm_integer_binary(OP_AND,vreal(7),vreal(3),0,&computed)) ok=0;
+  if(ok) puts("integer types: named/cached kind matrix, exact conversion and array identity passed");
+  return ok;
+}
+
 int main(void){
   GmlVM vm;
   memset(&vm,0,sizeof vm);
   int ok=1;
+  ok&=integer_type_queries(&vm);
 
   /* Independent Euclidean-distance controls: all three axes, translation,
    * symmetry, coincidence, and cached dispatch must agree. */

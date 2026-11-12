@@ -413,3 +413,25 @@ integer selectors test whether `mouse_button` is zero; they are not the
 modern `mb_any` or side-button query meanings. This does not consume an edge
 or alter input. Missing, nonfinite and out-of-range numeric arguments return
 false defensively; native coercion for those arguments is unmeasured.
+
+### Numeric value identity
+
+Integer identity is retained independently of a number's floating projection.
+`is_int32` and `is_int64` inspect that identity; a whole-valued real is not
+therefore an integer value. Studio integer immediates retain their encoded
+kind, while Classic ordinary literals and scalar conversions keep their
+established real-number policy. Explicit `int64`, Studio bitwise results and
+`buffer_u64` observations preserve signed 64-bit payloads, including values
+that a double cannot represent exactly.
+
+Ordinary variables, arrays, DS values and current-format snapshots copy that
+identity with the value. Integer arithmetic retains the wider integer kind;
+mixed-real arithmetic uses the existing floating path. Integer formatting
+and integer comparisons use the retained payload. Boolean literals remain
+distinct from integer literals for the integer predicates.
+
+Numeric overflow uses modular signed-width arithmetic, shift counts use their
+low six bits, and unsafe numeric conversions produce zero. Integer division
+by zero retains the runtime's bounded zero result. These defensive boundaries
+are selected policies, not native-runner measurements. Native Studio
+coercion and compiler optimization have not been measured by these controls.

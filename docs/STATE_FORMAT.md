@@ -20,9 +20,17 @@ failed partial reads leave the canonical image unpublished and invalid as a
 current resource. See R03-P9-INCREMENTAL-CHECKPOINT in
 [the renderer map](RENDERER_BACKENDS.md) for owners and controls.
 
-The current AnyGM save-state schema is `57`. It is the format transported by
+The current AnyGM save-state schema is `58`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `58` introduces VM schema `34`. Numeric wire tags `10` and `11` retain
+32-bit and 64-bit integer identity and signed little-endian payloads. They are
+distinct from the compact encodings of real values that happen to be whole.
+Typed zero is not a default real-zero hole. Variable-map dictionaries compare
+numeric kind and exact payload before sharing a record; scalar DS blocks use
+the same value codec. Root field offsets and other embedded schemas are
+unchanged. Earlier public and VM schemas reject transactionally.
 
 Schema `57` expands the existing mouse suppression mask to five bits for left, right,
 middle and the two side buttons. The fixed root field offsets and VM schema `33`
@@ -630,7 +638,7 @@ same form without an intervening mutation produces identical bytes.
 ## VM payload ownership
 
 `src/core/engine_state.c` owns the root framing and section transaction.
-Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `33`,
+Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `34`,
 field order, value-graph encoding, sizing, and restore scratch.
 
 Builtin resources have a separate storage and lifetime owner, not a separate
