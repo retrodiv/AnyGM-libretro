@@ -1283,13 +1283,19 @@ static void vm_fixture_resolve(GmlVM *vm,GmlInstance *a,GmlInstance *b,
   gml_colgrid_touch(vm,b);
 }
 static int vm_bbox_at(GmlVM *vm, GmlInstance *in, double atx, double aty,
+                      int empty_uses_sprite_extent,
                       double *l, double *t, double *r, double *b){
   GmlRender *R=(GmlRender*)vm->render; if(!R) return 0;
   int si=inst_mask_sprite_index(in);
   GmlRenderSpriteMetrics sprite;
-  if(si<0 || !gml_render_sprite_collision_metrics(R,si,&sprite) ||
-     sprite.collision_right<sprite.collision_left ||
-     sprite.collision_bottom<sprite.collision_top) return 0;
+  if(si<0 || !gml_render_sprite_collision_metrics(R,si,&sprite)) return 0;
+  if(sprite.collision_right<sprite.collision_left ||
+     sprite.collision_bottom<sprite.collision_top){
+    if(!empty_uses_sprite_extent || sprite.width<=0 || sprite.height<=0) return 0;
+    sprite.collision_left=sprite.collision_top=0;
+    sprite.collision_right=sprite.width-1;
+    sprite.collision_bottom=sprite.height-1;
+  }
   double xs=in->image_xscale, ys=in->image_yscale;
   if(fabs(xs)<1e-9 || fabs(ys)<1e-9) return 0;
   double ang=in->image_angle*M_PI/180.0, c=cos(ang), sn=sin(ang);
@@ -1332,7 +1338,11 @@ static int vm_bbox_at(GmlVM *vm, GmlInstance *in, double atx, double aty,
 }
 int gml_vm_instances_bbox(GmlVM *vm, GmlInstance *in,
                           double *l, double *t, double *r, double *b){
-  return vm_bbox_at(vm,in,in->x,in->y,l,t,r,b);
+  return vm_bbox_at(vm,in,in->x,in->y,0,l,t,r,b);
+}
+int gml_vm_instances_mouse_bbox(GmlVM *vm, GmlInstance *in,
+                                double *l, double *t, double *r, double *b){
+  return vm_bbox_at(vm,in,in->x,in->y,1,l,t,r,b);
 }
 int gml_vm_instance_bbox(GmlVM *vm, GmlInstance *instance,
                          double *left, double *top, double *right, double *bottom){

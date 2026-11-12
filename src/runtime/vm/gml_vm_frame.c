@@ -648,7 +648,7 @@ void gml_vm_step(GmlVM *vm){
             GmlInstance *in=&vm->inst[i];
             if(!in->active||in->marked||in->deactivated||in->obj!=object) continue;
             double l=0,t=0,r2=0,b=0; int hov=0;
-            int have_bbox=gml_vm_instances_bbox(vm,in,&l,&t,&r2,&b);
+            int have_bbox=gml_vm_instances_mouse_bbox(vm,in,&l,&t,&r2,&b);
             if(have_bbox) hov=mx>=l&&mx<=r2&&my>=t&&my<=b;
             if(anygm_host_development_setting(vm->host,"GML_LOG_MOUSE_HIT") && mpressed)
               anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[mouse-hit] %s at=%.1f,%.1f bbox=%d:%.1f,%.1f..%.1f,%.1f hover=%d event=%s\n",
@@ -662,7 +662,7 @@ void gml_vm_step(GmlVM *vm){
       for(int i=0;i<vm->inst_count;i++){ GmlInstance *in=&vm->inst[i];
         if(!in->active||in->marked||in->deactivated) continue;
         double l,t,r2,b; int hov=0;
-        if(gml_vm_instances_bbox(vm,in,&l,&t,&r2,&b)) hov=mx>=l&&mx<=r2&&my>=t&&my<=b;
+        if(gml_vm_instances_mouse_bbox(vm,in,&l,&t,&r2,&b)) hov=mx>=l&&mx<=r2&&my>=t&&my<=b;
         in->mouse_over=(unsigned char)hov;
       }
     } else {
@@ -682,7 +682,7 @@ void gml_vm_step(GmlVM *vm){
           if(!in->active||in->marked||in->deactivated||
              !gml_vm_instances_step_snapshot_member(vm,in)) continue;
           double l,t,r2,b; int hov=0;
-          if(gml_vm_instances_bbox(vm,in,&l,&t,&r2,&b)) hov=mx>=l&&mx<=r2&&my>=t&&my<=b;
+          if(gml_vm_instances_mouse_bbox(vm,in,&l,&t,&r2,&b)) hov=mx>=l&&mx<=r2&&my>=t&&my<=b;
           if(mouse_event_fires(vm,s,hov,in->mouse_over,mheld,mpressed,mreleased,mwheel))
             gml_run_event(vm,in,vm->mouse_events[e].suffix);
         }
@@ -691,7 +691,7 @@ void gml_vm_step(GmlVM *vm){
         GmlInstance *in=&vm->inst[i];
         if(!in->active||in->marked||in->deactivated) continue;
         double l,t,r2,b; int hov=0;
-        if(gml_vm_instances_bbox(vm,in,&l,&t,&r2,&b)) hov=mx>=l&&mx<=r2&&my>=t&&my<=b;
+        if(gml_vm_instances_mouse_bbox(vm,in,&l,&t,&r2,&b)) hov=mx>=l&&mx<=r2&&my>=t&&my<=b;
         in->mouse_over=(unsigned char)hov;
       }
     }

@@ -81,6 +81,9 @@ void gml_vm_code_cache_discard(GmlCode *code);
 int gml_vm_instances_bbox(GmlVM *vm, GmlInstance *instance,
                           double *left, double *top, double *right,
                           double *bottom);
+int gml_vm_instances_mouse_bbox(GmlVM *vm, GmlInstance *instance,
+                                double *left, double *top, double *right,
+                                double *bottom);
 void gml_vm_global_array_set(GmlVM *vm, const char *name, int index,
                              double value);
 double gml_vm_global_array_number(GmlVM *vm, const char *name, int index);

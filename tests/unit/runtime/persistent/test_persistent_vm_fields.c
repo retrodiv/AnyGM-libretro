@@ -319,6 +319,37 @@ int expect_bounding_box_far_edges_by_generation(void){
   return 1;
 }
 
+int expect_empty_collision_mask_keeps_mouse_extent(void){
+  GmlWin win={0};
+  GmlVM vm={0};
+  GmlRender render={0};
+  GmlSprite sprite={0};
+  GmlInstance instance={0};
+  double left=0,top=0,right=0,bottom=0;
+
+  win.bytecode=15;
+  render.n_spr=1;
+  render.spr=&sprite;
+  sprite.w=sprite.h=64;
+  sprite.ml=sprite.mt=63;
+  sprite.mr=sprite.mb=0;
+  vm.win=&win;
+  vm.render=&render;
+  instance.sprite_index=0;
+  instance.mask_index=-1;
+  instance.image_xscale=instance.image_yscale=1;
+  instance.x=552;
+  instance.y=248;
+
+  int collision=gml_vm_instances_bbox(&vm,&instance,&left,&top,&right,&bottom);
+  int mouse=gml_vm_instances_mouse_bbox(&vm,&instance,&left,&top,&right,&bottom);
+  int ok=!collision && mouse && left==552 && top==248 && right==615 && bottom==311;
+  if(!ok)
+    fprintf(stderr,"empty collision mouse extent: collision=%d mouse=%d bounds=%.0f,%.0f..%.0f,%.0f\n",
+            collision,mouse,left,top,right,bottom);
+  return ok;
+}
+
 int expect_studio_transformed_mask_bounds(void){
   GmlWin win={0};
   GmlVM vm={0};

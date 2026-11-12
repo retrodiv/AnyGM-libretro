@@ -33,6 +33,7 @@ int main(int argc,char **argv){
     {"destroy_callback_population",expect_destroy_callback_population},
     {"indexed_instance_queries",expect_indexed_instance_queries},
     {"bounding_box_far_edges_by_generation",expect_bounding_box_far_edges_by_generation},
+    {"empty_collision_mask_mouse_extent",expect_empty_collision_mask_keeps_mouse_extent},
     {"rectangular_mask_edge_contacts",expect_rectangular_mask_edge_contacts},
     {"studio_transformed_mask_bounds",expect_studio_transformed_mask_bounds},
     {"bounding_box_far_edges_at_a_fractional_position",
