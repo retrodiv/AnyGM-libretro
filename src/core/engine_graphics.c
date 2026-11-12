@@ -703,6 +703,42 @@ static int engine_present_plan_device_canvas(AnygmEngine *engine,GmlRenderPlan *
   return 1;
 }
 
+/* A completed logical frame may include processor-owned GUI work around a smaller resident
+ * application image. Upload that small logical raster to the private device target before the
+ * CRT fit. This retains the established rule that a borrowed CPU image is never filtered
+ * directly: the sharp pass consumes only the promoted completed-device image. */
+static int engine_present_cpu_completed_device_canvas(AnygmEngine *engine,
+                                                       unsigned *width,unsigned *height){
+  GmlRenderPlan *plan;
+  GmlPlanImage source={0};
+  GmlPlanAxis axis_x={0},axis_y={0};
+  GmlPlanRect whole={0,0,0,0};
+  uint32_t image;
+  if(!engine || !engine->screen || !engine->output_width || !engine->output_height) return 0;
+  plan=&engine->host_plan;
+  gml_render_plan_reset(plan,GML_PLAN_TARGET_DEVICE_PRESENTATION,
+                        engine->output_width,engine->output_height);
+  source.image_class=GML_PLAN_IMAGE_COMPLETED_FRAME;
+  source.identity=engine->host_frame_generation;
+  source.content_generation=source.pixel_generation=engine->host_frame_generation;
+  source.width=source.pitch_pixels=engine->output_width;
+  source.height=engine->output_height;
+  source.pixel_format=GML_PLAN_PIXEL_XRGB8888;
+  source.opaque=1u;
+  source.cpu_pixels=engine->screen;
+  image=gml_render_plan_add_image(plan,&source);
+  if(image==GML_PLAN_NO_IMAGE) return 0;
+  whole.width=engine->output_width;
+  whole.height=engine->output_height;
+  axis_x.rule=axis_y.rule=GML_PLAN_AXIS_ACCUMULATOR;
+  axis_x.source_extent=axis_x.destination_extent=engine->output_width;
+  axis_y.source_extent=axis_y.destination_extent=engine->output_height;
+  if(!gml_render_plan_add_blit_nearest(plan,image,whole,axis_x,axis_y,0xFFu) ||
+     !engine_present_plan_device_canvas(engine,plan,width,height)) return 0;
+  engine->frame_authority=ENGINE_FRAME_GPU_PRESENTED_DEVICE_RESIDENT;
+  return 1;
+}
+
 int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned *height){
   GmlRenderDeferredPresentation record;
   GmlRenderPlan *plan;
@@ -951,7 +987,11 @@ static int engine_present_hardware_canvas_plan(AnygmEngine *engine,
     (identity_crop || (!crop_requested &&
       engine->host_canvas_width>=(int)engine->output_width &&
       engine->host_canvas_height>=(int)engine->output_height));
-  if(!resident && (resident_crt || (!hybrid && !cpu_nearest))) return 0;
+  if(!resident && resident_crt){
+    if(!engine_materialize_completed_frame(engine)) return 0;
+    return engine_present_cpu_completed_device_canvas(engine,width,height);
+  }
+  if(!resident && !hybrid && !cpu_nearest) return 0;
   if(!resident && !engine_materialize_completed_frame(engine)) return 0;
   engine_host_extent(engine,&host_width,&host_height);
   if(!host_width || !host_height) return 0;

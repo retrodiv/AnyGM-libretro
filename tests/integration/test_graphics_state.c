@@ -3948,6 +3948,8 @@ static int presentation_filter_case(void){
 
 static int scene_canvas_cpu_source_case(void){
   Session selected={0};
+  CurrentContextWitness witness={1u,0u};
+  AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
   AnygmConfigDelta presentation={0};
   GmlGpuCounters before={0},after={0};
   GmlRenderDispatchMetrics dispatch={0};
@@ -3965,7 +3967,9 @@ static int scene_canvas_cpu_source_case(void){
           advance(selected.engine,1,NULL),"cold canvas completes a CPU source before adoption");
   REQUIRE(selected.engine->host_canvas_active && selected.engine->output_width==128u &&
           selected.engine->output_height==96u,"cold canvas selects the box presentation path");
-  REQUIRE(graphics_adopt(selected.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+  context.userdata=&witness;
+  context.is_current=graphics_context_is_current;
+  REQUIRE(anygm_graphics_context_reset(selected.engine,&context)==ANYGM_OK,
           "cold canvas adopts a scene-only context");
   REQUIRE(!gml_render_completed_screen_image(&selected.engine->render,selected.engine->screen,
           128,96,&image),"cold canvas has no current resident source");
@@ -3979,6 +3983,55 @@ static int scene_canvas_cpu_source_case(void){
           after.frames_offered==before.frames_offered && after.draw_calls==before.draw_calls &&
           after.full_uploads==before.full_uploads && width==7u && height==9u,
           "cold scene canvas does not submit an unqualified borrowed-source plan");
+  /* CRT has a qualified two-stage owner: upload the completed logical raster unchanged to a
+   * private device target, then sharp-filter that promoted image. The borrowed source itself
+   * remains ineligible for direct filtered sampling. */
+  selected.engine->host_output_width=256u;
+  selected.engine->host_output_height=192u;
+  selected.engine->host_canvas_active=selected.engine->host_crt_active=1;
+  selected.engine->host_canvas_x=selected.engine->host_canvas_y=0;
+  selected.engine->host_canvas_width=256;
+  selected.engine->host_canvas_height=192;
+  selected.engine->present_crop_left=selected.engine->present_crop_top=0;
+  selected.engine->present_crop_right=selected.engine->present_crop_bottom=0;
+  /* This branch is entered after an ordinary current CPU composition, not merely after adopting
+   * a context over an old frame (context adoption intentionally clears frame authority). */
+  gml_render_completed_screen_publish(&selected.engine->render,selected.engine->screen,128,96);
+  gml_render_discard_deferred_presentation(&selected.engine->render);
+  selected.engine->frame_authority=ENGINE_FRAME_CPU_MATERIALIZED;
+  selected.engine->scene_renderer_session=ANYGM_SCENE_RENDERER_OPENGL;
+  REQUIRE(engine_materialize_completed_frame(selected.engine),
+          "cold completed CPU frame remains materialized");
+  gml_gpu_counters(selected.engine->gpu,&before);
+  int promoted=engine_present_hardware_screen(selected.engine,&width,&height);
+  if(!promoted){
+    gml_gpu_counters(selected.engine->gpu,&after);
+    fprintf(stderr,"cold CRT promotion: offered=%llu accepted=%llu fallback=%u uploads=%u "
+      "copies=%llu authority=%u error=%s\n",
+      (unsigned long long)(after.frames_offered-before.frames_offered),
+      (unsigned long long)(after.passes_accepted-before.passes_accepted),
+      after.fallbacks[GML_PLAN_FALLBACK_UNSUPPORTED_OPERATION]-
+        before.fallbacks[GML_PLAN_FALLBACK_UNSUPPORTED_OPERATION],
+      after.full_uploads-before.full_uploads,
+      (unsigned long long)(after.completed_frame_copies-before.completed_frame_copies),
+      selected.engine->frame_authority,gml_gpu_last_error(selected.engine->gpu));
+  }
+  REQUIRE(promoted,
+          "cold completed frame is promoted before CRT filtering");
+  gml_gpu_counters(selected.engine->gpu,&after);
+  REQUIRE(width==256u && height==192u &&
+          after.passes_accepted==before.passes_accepted+2u &&
+          after.full_uploads==before.full_uploads+1u &&
+          after.completed_frame_copies==before.completed_frame_copies+1u &&
+          after.completed_frame_reads==before.completed_frame_reads &&
+          after.scene_readbacks==before.scene_readbacks &&
+          selected.engine->frame_authority==ENGINE_FRAME_GPU_PRESENTED_DEVICE_RESIDENT &&
+          selected.engine->canvas_pass_frames==1u &&
+          selected.engine->host_plan.images[0].device_completed==1u &&
+          !selected.engine->host_plan.images[0].cpu_pixels &&
+          selected.engine->host_plan.operations[1].opcode==
+            GML_PLAN_OP_BLIT_OPAQUE_SHARP_BILINEAR,
+          "CRT promotion uploads only the logical frame and filters its completed device copy");
   session_close(&selected);
   return 1;
 }

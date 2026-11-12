@@ -899,6 +899,24 @@ alias, interpolation, shader, CRT, crop/shift and host box reduction retain thei
 existing owners. This is a candidate until the listed focused controls qualify it;
 it does not establish a whole game, frontend state transport or performance.
 
+R03-P7-CPU-COMPLETED-CRT handles a current CPU-composed logical picture whose
+extent does not match the smaller resident application image. The complete
+logical XRGB raster is uploaded unchanged to the private presentation target,
+promoted to the completed-device cache, and only that cache is sharp-filtered
+to the CRT host canvas. The established direct-filter guard remains: a borrowed
+CPU image is still ineligible for sharp bilinear sampling. This path therefore
+transports one logical raster instead of producing and uploading a larger
+host-sized software-filtered raster. The promoted logical image remains state
+authority and its explicit observation uses the existing completed-frame
+readback; host pixels are transient presentation. Geometry and state bytes are
+exact, while device filtering remains picture evidence judged against the
+original. Crops, shifts, absent current CPU authority, context loss and an
+ineligible host plan retain their prior transactional software fallback. The
+neutral cold-canvas integration control requires one logical upload, one
+device-to-device promotion, one sharp completed-device delivery, no readback,
+and preserves the non-CRT pre-submission refusal. Real-device paired game
+evidence owns performance, rewind and local-raster qualification.
+
 R03-RAW-LINEAR-BASE preserves borrowed SCREEN storage with EXACT RGBA0 when
 the same allocation changes pitch. A separate device high-water image retains
 the inactive suffix across shrink/grow; disjoint nearest1:1 bands map identical
