@@ -295,21 +295,21 @@ int main(void){
 
   /* An animated image states its own subimage count. Applying a one-image request to it would
    * collapse the animation to its first frame. */
-  int animated_sprite=gml_sprite_add_file(&render,animated,1,0,0,0);
+  int animated_sprite=gml_sprite_add_file(&render,animated,1,0,0,0,0);
   REQUIRE(animated_sprite>=0,"animated sprite was not added");
   REQUIRE(gml_sprite_frames(&render,animated_sprite)==2,
           "animated subimage count did not come from the file");
 
-  int all_frames=gml_sprite_add_file(&render,animated,-1,0,0,0);
+  int all_frames=gml_sprite_add_file(&render,animated,-1,0,0,0,0);
   REQUIRE(all_frames>=0 && gml_sprite_frames(&render,all_frames)==2,
           "an unrestricted request changed the animated subimage count");
 
   /* A single-image strip keeps taking its subimage count from the request, which is the only
    * information that says where to cut it. */
-  int strip_sprite=gml_sprite_add_file(&render,strip,4,0,0,0);
+  int strip_sprite=gml_sprite_add_file(&render,strip,4,0,0,0,0);
   REQUIRE(strip_sprite>=0 && gml_sprite_frames(&render,strip_sprite)==4,
           "strip subimage count did not follow the request");
-  int whole_strip=gml_sprite_add_file(&render,strip,1,0,0,0);
+  int whole_strip=gml_sprite_add_file(&render,strip,1,0,0,0,0);
   REQUIRE(whole_strip>=0 && gml_sprite_frames(&render,whole_strip)==1,
           "an uncut strip gained subimages");
 

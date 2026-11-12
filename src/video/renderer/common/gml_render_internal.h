@@ -113,7 +113,14 @@ typedef struct {
   double x, y, rotation, scale_x, scale_y;
   double world_x, world_y, a, b, c, d;
 } GmlSpinePoseBone;
+enum {
+  GML_SPRITE_META_TRANSPARENT=1u, GML_SPRITE_META_SMOOTH=2u,
+  GML_SPRITE_META_PRELOAD=4u, GML_SPRITE_META_TYPE_SHIFT=3u,
+  GML_SPRITE_META_NINESLICE=32u, GML_SPRITE_META_ROTATED=64u,
+  GML_SPRITE_META_MASK=127u
+};
 typedef struct GmlSprite { const char *name; int originx, originy, w, h, n_frames; int *frame;
+                 uint32_t metadata_flags;
                  int ml, mr, mt, mb;                /* collision bbox coordinates: left,right,top,bottom */
                  const uint8_t *mask; int mask_rowb, mask_count;  /* SPRT collision mask: 1bpp */
                  uint8_t *runtime_mask;                           /* owned copy for runtime assets */
@@ -134,6 +141,8 @@ typedef struct GmlSprite { const char *name; int originx, originy, w, h, n_frame
                  int base_valid, base_originx, base_originy, base_w, base_h, base_n_frames;
                  int base_ml, base_mr, base_mt, base_mb, base_mask_rowb, base_mask_count;
                  int base_collision_kind, base_collision_tolerance, base_bbox_mode;
+                 uint32_t base_metadata_flags;
+                 int base_ns_enabled, base_ns_l, base_ns_t, base_ns_r, base_ns_b, base_ns_tile[5];
                  const uint8_t *base_mask;
                  GmlSpine *spine;
                  /* GMS2.3+ nine-slice: draw scaled with fixed-size borders (corners never scale;

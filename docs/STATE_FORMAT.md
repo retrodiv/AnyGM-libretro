@@ -20,9 +20,16 @@ failed partial reads leave the canonical image unpublished and invalid as a
 current resource. See R03-P9-INCREMENTAL-CHECKPOINT in
 [the renderer map](RENDERER_BACKENDS.md) for owners and controls.
 
-The current AnyGM save-state schema is `60`. It is the format transported by
+The current AnyGM save-state schema is `61`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `61` retains sprite information flags and nine-slice descriptors in a
+counted renderer metadata trailer. Runtime creation, duplication, assignment,
+replacement and restoration share these resource-owned values. Returned metadata
+uses ordinary VM struct/array ownership; VM schema `36` and the public API version
+are unchanged. Earlier public states reject transactionally. The renderer payload
+has no separate embedded schema header.
 
 Schema `60` introduces VM schema `36`. Registered dynamic member spellings use
 the existing canonical variable-map codec, with undefined marker values and no

@@ -105,6 +105,86 @@ static GmlVal query(GmlVM *vm,const char *name,GmlVal argument,int cached,int *o
   *ok &= expect(id>=0,"query must have a cached builtin ID");
   return id>=0?gml_builtin_call_fast_id(vm,id,name,&argument,1):vundef();
 }
+static GmlVal sprite_info_field(GmlVM *vm,GmlVal object,const char *name){
+  GmlInstance *record=gml_val_is_number_or_object(object) && GML_IS_STRUCT_ID(object.d)
+    ?gml_struct_find(vm,(unsigned)object.d):NULL;
+  GmlVal *field=record?gml_varmap_get(&record->vars,name):NULL;
+  return field?*field:vundef();
+}
+static int sprite_information_case(void){
+  int all=1;
+  for(int cached=0;cached<2;cached++){
+    int ok=1;GmlWin win={.bytecode=17};GmlVM vm={0};
+    if(gml_vm_init(&vm,&win,NULL))return 0;
+    int frame=0;
+    GmlSprite sprite={.name="neutral_bitmap",.w=20,.h=12,.n_frames=1,.frame=&frame,
+      .originx=3,.originy=4,.ml=2,.mt=1,.mr=18,.mb=10,.mask_count=1,
+      .metadata_flags=GML_SPRITE_META_SMOOTH|GML_SPRITE_META_NINESLICE,
+      .playback_speed=0.25f,.playback_speed_type=1,.playback_speed_valid=1,
+      .ns_enabled=1,.ns_l=2,.ns_t=1,.ns_r=3,.ns_b=2,.ns_tile={0,1,2,3,4}};
+    GmlTpag page={.sx=7,.sy=9,.sw=8,.sh=6,.tx=2,.ty=1,.tw=16,.th=10,
+                  .bw=20,.bh=12,.atlas=0};
+    GmlAtlas atlas={.w=64,.h=64};
+    GmlRender render={.win=&win,.spr=&sprite,.n_spr=1,.tpag=&page,.n_tpag=1,
+                      .atlas=&atlas,.n_atlas=1};
+    vm.render=&render;
+    GmlVal info=query(&vm,"sprite_get_info",vreal(0),cached,&ok);
+    ok &= expect(GML_IS_STRUCT_ID(info.d),"sprite info returns a real struct");
+    ok &= expect(real_is(sprite_info_field(&vm,info,"width"),20) &&
+                 real_is(sprite_info_field(&vm,info,"height"),12) &&
+                 real_is(sprite_info_field(&vm,info,"xoffset"),3) &&
+                 real_is(sprite_info_field(&vm,info,"yoffset"),4),
+                 "information preserves logical metrics and origin");
+    ok &= expect(real_is(sprite_info_field(&vm,info,"smooth"),1) &&
+                 real_is(sprite_info_field(&vm,info,"use_mask"),1) &&
+                 real_is(sprite_info_field(&vm,info,"frame_speed"),0.25),
+                 "information preserves resource flags, masks and playback");
+    GmlVal frames=sprite_info_field(&vm,info,"frames");
+    GmlVal first=gml_arr_get(frames,0);
+    ok &= expect(gml_val_array_length(frames)==1 &&
+                 real_is(sprite_info_field(&vm,first,"x"),7) &&
+                 real_is(sprite_info_field(&vm,first,"y"),9) &&
+                 real_is(sprite_info_field(&vm,first,"w"),8) &&
+                 real_is(sprite_info_field(&vm,first,"crop_width"),16) &&
+                 real_is(sprite_info_field(&vm,first,"original_width"),20) &&
+                 real_is(sprite_info_field(&vm,first,"texture"),gml_render_atlas_texture_handle(&render,0)),
+                 "frame texture, packed, cropped and original geometry remain distinct");
+    GmlVal slice=sprite_info_field(&vm,info,"nineslice");
+    GmlVal modes=sprite_info_field(&vm,slice,"tilemode");
+    ok &= expect(real_is(sprite_info_field(&vm,slice,"left"),2) &&
+                 gml_val_array_length(modes)==5 && gml_arr_get(modes,4).d==4,
+                 "nine-slice information retains authored borders and modes");
+    gml_arr_set(modes,4,vreal(0));
+    GmlInstance *record=gml_struct_find(&vm,(unsigned)info.d);
+    if(record)*gml_varmap_put(&record->vars,"width")=vreal(99);
+    record=gml_struct_find(&vm,(unsigned)first.d);
+    if(record)*gml_varmap_put(&record->vars,"original_width")=vreal(99);
+    GmlVal fresh=query(&vm,"sprite_get_info",vreal(0),cached,&ok);
+    GmlVal fresh_frame=gml_arr_get(sprite_info_field(&vm,fresh,"frames"),0);
+    GmlVal fresh_slice=sprite_info_field(&vm,fresh,"nineslice");
+    ok &= expect(real_is(sprite_info_field(&vm,fresh,"width"),20) &&
+                 real_is(sprite_info_field(&vm,fresh_frame,"original_width"),20) &&
+                 gml_arr_get(sprite_info_field(&vm,fresh_slice,"tilemode"),4).d==4 &&
+                 sprite.w==20 && sprite.ns_tile[4]==4 && !atlas.decode_attempted,
+                 "mutating nested snapshots changes no resource or later query and decodes no image");
+    sprite.name="renamed_bitmap";sprite.metadata_flags=GML_SPRITE_META_ROTATED;
+    fresh=query(&vm,"sprite_get_info",vreal(0),cached,&ok);
+    GmlVal retained_name=sprite_info_field(&vm,info,"name");
+    ok &= expect(retained_name.t==V_STR && !strcmp(retained_name.s,"neutral_bitmap") &&
+                 real_is(sprite_info_field(&vm,fresh,"rotated_bounds"),1) &&
+                 real_is(sprite_info_field(&vm,fresh,"use_mask"),0),
+                 "retained text and rotated-bounds metadata stay independent of later source mutation");
+    const double invalid[]={-1,1,1e100,NAN,INFINITY};
+    for(unsigned i=0;i<sizeof invalid/sizeof invalid[0];i++)
+      ok &= expect(query(&vm,"sprite_get_info",vreal(invalid[i]),cached,&ok).t==V_UNDEF,
+                   "invalid sprite information returns undefined");
+    vm.render=NULL;
+    ok &= expect(query(&vm,"sprite_get_info",vreal(0),cached,&ok).t==V_UNDEF,
+                 "an absent renderer cannot supply sprite information");
+    gml_vm_free(&vm);free(win.str_hix);all &=ok;
+  }
+  return all;
+}
 /* The legacy spelling uses the authored asset table with or without a renderer. */
 static int legacy_object_names_case(void){
   int ok=1;
@@ -233,6 +313,7 @@ int main(void){
   static const AnygmTestCase cases[]={
     {"authored_texture_groups",texture_groups_case},
     {"malformed_texture_groups",malformed_texture_groups_case},
+    {"sprite_information",sprite_information_case},
     {"legacy_object_names",legacy_object_names_case},
     {"object_asset_flags",object_flags_case},
     {"timeline_active_moments",timeline_size_case},

@@ -176,6 +176,19 @@ typedef struct {
   const char *name;
 } GmlRenderSpriteMetrics;
 
+/* Streaming metadata keeps image and skeletal records inside their resource
+ * owner. Containers are balanced; array entries have a null key. A string is
+ * borrowed for the callback only, and consumers copy anything they retain. */
+typedef enum {
+  GML_RENDER_INFO_NUMBER, GML_RENDER_INFO_STRING, GML_RENDER_INFO_UNDEFINED,
+  GML_RENDER_INFO_OBJECT, GML_RENDER_INFO_ARRAY, GML_RENDER_INFO_END
+} GmlRenderInfoKind;
+typedef int (*GmlRenderInfoSink)(void *context,const char *key,
+                                GmlRenderInfoKind kind,double number,
+                                const char *text);
+int gml_render_sprite_information(const GmlRender *render,int sprite,
+                                   GmlRenderInfoSink sink,void *context);
+
 /* Instance-owned skeletal state reaches the renderer through narrow callbacks.
  * The renderer does not borrow VM storage or language values. */
 typedef const char *(*GmlRenderSkeletonAttachmentFn)(
@@ -1000,7 +1013,7 @@ int  gml_font_add_sprite_ext(GmlRender *r, int sprite, const char *map, int prop
 int  gml_font_add_file(GmlRender *r, const char *path, double point_size,
                        int bold, int italic, int first, int last); /* runtime TTF (font_add) */
 void gml_font_delete(GmlRender *r, int font);
-int  gml_sprite_add_file(GmlRender *r, const char *path, int imgnum, int removeback, int xorig, int yorig);
+int  gml_sprite_add_file(GmlRender *r, const char *path, int imgnum, int removeback, int xorig, int yorig,int smooth);
 void gml_render_rebuild_font_maps(GmlRender *r);
 void gml_draw_text(GmlRender *r, double x, double y, const char *str);
 void gml_draw_text_ext(GmlRender *r, double x, double y, const char *str, double sep, double w);

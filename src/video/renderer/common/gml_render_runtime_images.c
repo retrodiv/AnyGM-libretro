@@ -22,6 +22,10 @@ static void sprite_backup(GmlSprite *s){
   s->base_mask=s->mask; s->base_mask_rowb=s->mask_rowb; s->base_mask_count=s->mask_count;
   s->base_collision_kind=s->collision_kind; s->base_collision_tolerance=s->collision_tolerance;
   s->base_bbox_mode=s->bbox_mode;
+  s->base_metadata_flags=s->metadata_flags;
+  s->base_ns_enabled=s->ns_enabled;s->base_ns_l=s->ns_l;s->base_ns_t=s->ns_t;
+  s->base_ns_r=s->ns_r;s->base_ns_b=s->ns_b;
+  memcpy(s->base_ns_tile,s->ns_tile,sizeof s->ns_tile);
 }
 static void sprite_restore_base(GmlSprite *s){
   if(!s->base_valid) return;
@@ -31,6 +35,10 @@ static void sprite_restore_base(GmlSprite *s){
   s->mask=s->base_mask; s->mask_rowb=s->base_mask_rowb; s->mask_count=s->base_mask_count;
   s->collision_kind=s->base_collision_kind; s->collision_tolerance=s->base_collision_tolerance;
   s->bbox_mode=s->base_bbox_mode;
+  s->metadata_flags=s->base_metadata_flags;
+  s->ns_enabled=s->base_ns_enabled;s->ns_l=s->base_ns_l;s->ns_t=s->base_ns_t;
+  s->ns_r=s->base_ns_r;s->ns_b=s->base_ns_b;
+  memcpy(s->ns_tile,s->base_ns_tile,sizeof s->ns_tile);
   s->base_valid=0;
 }
 int gml_render_runtime_sprite_scene_source_view(GmlRender *r,GmlSprite *sprite,int frame,
@@ -263,6 +271,10 @@ int gml_sprite_duplicate(GmlRender *r, int sprite){
     dst->collision_kind=src->collision_kind;
     dst->collision_tolerance=src->collision_tolerance;
     dst->bbox_mode=src->bbox_mode;
+    dst->metadata_flags=src->metadata_flags;
+    dst->playback_speed=src->playback_speed;
+    dst->playback_speed_type=src->playback_speed_type;
+    dst->playback_speed_valid=src->playback_speed_valid;
     dst->ns_enabled=src->ns_enabled;
     dst->ns_l=src->ns_l; dst->ns_t=src->ns_t; dst->ns_r=src->ns_r; dst->ns_b=src->ns_b;
     for(int i=0;i<5;i++) dst->ns_tile[i]=src->ns_tile[i];
@@ -295,6 +307,7 @@ int gml_sprite_assign(GmlRender *r,int destination,int source){
   dst->collision_kind=src->collision_kind;
   dst->collision_tolerance=src->collision_tolerance;
   dst->bbox_mode=src->bbox_mode;
+  dst->metadata_flags=src->metadata_flags;
   dst->playback_speed=src->playback_speed;
   dst->playback_speed_type=src->playback_speed_type;
   dst->playback_speed_valid=src->playback_speed_valid;
@@ -502,19 +515,26 @@ int gml_background_replace_from_file(GmlRender *r,int background,const char *pat
   return 0;
 }
 
-int gml_sprite_add_file(GmlRender *r, const char *path, int imgnum, int removeback, int xorig, int yorig){
+int gml_sprite_add_file(GmlRender *r, const char *path, int imgnum, int removeback, int xorig, int yorig,int smooth){
   if(!r || !path) return -1;
   int fw=0,H=0,frames=0;
   uint8_t *rgba=runtime_sprite_image_load(
       r,path,imgnum,removeback,&fw,&H,&frames);
   if(!rgba) return -1;
   int id=gml_sprite_append_from_rgba_frames(r,rgba,fw,H,frames,xorig,yorig,path);
-  if(id>=0 && id<r->n_spr) sprite_set_runtime_source(&r->spr[id],path,imgnum,removeback);
+  if(id>=0 && id<r->n_spr){
+    sprite_set_runtime_source(&r->spr[id],path,imgnum,removeback);
+    r->spr[id].metadata_flags=(removeback?GML_SPRITE_META_TRANSPARENT:0u) |
+      (smooth?GML_SPRITE_META_SMOOTH:0u);
+  }
   return id;
 }
 int gml_sprite_replace_from_rgba_frames(GmlRender *r, int sprite, uint8_t *rgba, int w, int h, int frames, int xorig, int yorig){
   if(sprite<0 || sprite>=r->n_spr || !rgba || w<=0 || h<=0 || frames<=0) return 0;
-  return sprite_set_runtime_rgba(r,&r->spr[sprite],rgba,w,h,frames,xorig,yorig,0);
+  if(!sprite_set_runtime_rgba(r,&r->spr[sprite],rgba,w,h,frames,xorig,yorig,0)) return 0;
+  r->spr[sprite].metadata_flags &= GML_SPRITE_META_NINESLICE;
+  if(r->spr[sprite].spine) r->spr[sprite].metadata_flags|=2u<<GML_SPRITE_META_TYPE_SHIFT;
+  return 1;
 }
 int gml_sprite_replace_from_rgba(GmlRender *r, int sprite, uint8_t *rgba, int w, int h, int xorig, int yorig){
   return gml_sprite_replace_from_rgba_frames(r,sprite,rgba,w,h,1,xorig,yorig);
@@ -666,10 +686,12 @@ static uint8_t *surface_region_rgba(GmlRender *r,int surf,int x,int y,int w,int 
 }
 int gml_sprite_create_from_surface(GmlRender *r, int surf, int x, int y, int w, int h,
                                    int removeback, int smooth, int xorig, int yorig){
-  (void)smooth;
   uint8_t *rgba=surface_region_rgba(r,surf,x,y,w,h,removeback);
   if(!rgba) return -1;
-  return gml_sprite_append_from_rgba_frames(r,rgba,w,h,1,xorig,yorig,NULL);
+  int sprite=gml_sprite_append_from_rgba_frames(r,rgba,w,h,1,xorig,yorig,NULL);
+  if(sprite>=0) r->spr[sprite].metadata_flags=
+    (removeback?GML_SPRITE_META_TRANSPARENT:0u) | (smooth?GML_SPRITE_META_SMOOTH:0u);
+  return sprite;
 }
 int gml_sprite_add_from_surface(GmlRender *r,int sprite,int surf,int x,int y,int w,int h,
                                  int removeback,int smooth){
@@ -728,14 +750,18 @@ int gml_sprite_add_from_surface(GmlRender *r,int sprite,int surf,int x,int y,int
 }
 int gml_sprite_replace_from_file(GmlRender *r, int sprite, const char *path, int imgnumb,
                                  int removeback, int smooth, int xorig, int yorig){
-  (void)smooth;
   if(sprite<0 || sprite>=r->n_spr || !path || !*path) return 0;
   int w=0,h=0,frames=0;
   uint8_t *rgba=runtime_sprite_image_load(
       r,path,imgnumb,removeback,&w,&h,&frames);
   if(!rgba) return 0;
   int ok=gml_sprite_replace_from_rgba_frames(r,sprite,rgba,w,h,frames,xorig,yorig);
-  if(ok) sprite_set_runtime_source(&r->spr[sprite],path,imgnumb,removeback);
+  if(ok){
+    sprite_set_runtime_source(&r->spr[sprite],path,imgnumb,removeback);
+    r->spr[sprite].metadata_flags=(r->spr[sprite].metadata_flags &
+      ~(GML_SPRITE_META_TRANSPARENT|GML_SPRITE_META_SMOOTH)) |
+      (removeback?GML_SPRITE_META_TRANSPARENT:0u) | (smooth?GML_SPRITE_META_SMOOTH:0u);
+  }
   if(!ok) free(rgba);
   return ok;
 }

@@ -40,6 +40,9 @@ static void parse_sprt(GmlRender *r){
     if(!p) continue;
     GmlSprite *s=&r->spr[i];
     s->name=gml_str_by_ptr(r->win,u32(d,p));
+    s->metadata_flags=(u32(d,p+28)?GML_SPRITE_META_TRANSPARENT:0u) |
+      (u32(d,p+32)?GML_SPRITE_META_SMOOTH:0u) |
+      (u32(d,p+36)?GML_SPRITE_META_PRELOAD:0u);
     s->playback_speed=1.0f; s->playback_speed_type=1; s->playback_speed_valid=0;
     s->w=(int)u32(d,p+4); s->h=(int)u32(d,p+8);
     s->ml=(int)u32(d,p+12); s->mr=(int)u32(d,p+16); s->mb=(int)u32(d,p+20); s->mt=(int)u32(d,p+24);
@@ -48,6 +51,7 @@ static void parse_sprt(GmlRender *r){
      * It is not a separate-subimage flag: one shared plane can still be precise.
      * Other native types retain their existing sampled geometry. */
     s->collision_kind=u32(d,p+44)==0?1:0;
+    if(u32(d,p+44)==2) s->metadata_flags|=GML_SPRITE_META_ROTATED;
     s->collision_tolerance=63; /* preserve the old alpha>=64 fallback */
     /* Header: ...,BBoxMode(40),MaskType(44),OriginX(48),OriginY(52),frameList(56). */
     s->originx=(int)u32(d,p+48); s->originy=(int)u32(d,p+52);
@@ -58,6 +62,7 @@ static void parse_sprt(GmlRender *r){
      * frame count (=-1) would zero the frame list and blank every sprite. */
     if(u32(d,p+56)==0xFFFFFFFFu){
       uint32_t sver=u32(d,p+60), stype=u32(d,p+64);
+      if(stype<=3) s->metadata_flags|=stype<<GML_SPRITE_META_TYPE_SHIFT;
       float playback; memcpy(&playback,d+p+68,sizeof playback);
       uint32_t playback_type=u32(d,p+72);
       if(isfinite(playback) && playback>=0.0f && playback_type<=1){
@@ -85,7 +90,7 @@ static void parse_sprt(GmlRender *r){
       if(sver>=2) fl+=4;                       /* SequenceOffset */
       if(sver>=3){                             /* NineSliceOffset */
         uint32_t nso=u32(d,p+80);
-        if(nso && nso+40<=r->win->size && u32(d,nso+16)){
+        if(nso && (size_t)nso<=r->win->size && r->win->size-(size_t)nso>=40){
           /* NineSlice layout: Left,Top,Right,Bottom (i32), Enabled, TileModes[5]
            * (left,top,right,bottom,center). GM keeps the borders at native size when the
            * sprite draws scaled — stretching them uniformly deforms UI boards/bubbles. */
@@ -94,7 +99,10 @@ static void parse_sprt(GmlRender *r){
           for(int k=0;k<5;k++) s->ns_tile[k]=(int)(int32_t)u32(d,nso+20+4u*k);
           if(s->ns_l>=0 && s->ns_t>=0 && s->ns_r>=0 && s->ns_b>=0 &&
              s->ns_l+s->ns_r<=s->w && s->ns_t+s->ns_b<=s->h)
-            s->ns_enabled=1;
+          {
+            s->metadata_flags|=GML_SPRITE_META_NINESLICE;
+            s->ns_enabled=u32(d,nso+16)!=0;
+          }
         }
         fl+=4;
       }

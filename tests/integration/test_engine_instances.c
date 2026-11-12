@@ -4882,6 +4882,11 @@ int main(int argc,char **argv){
   write_u32(deterministic+canonical_vm+4,8);
   write_u64(deterministic+56,state_checksum(deterministic+112,preceding_size-112));
   uint64_t preceding_hash=state_checksum(deterministic,preceding_size);
+  /* Projection may return a smaller allocation. Restore its capacity before
+   * reusing this scratch buffer for the complete current-format snapshot. */
+  uint8_t *current_scratch=realloc(deterministic,first_written);
+  if(!current_scratch){free(deterministic);return 1;}
+  deterministic=current_scratch;
   memcpy(deterministic,first_state,first_written);
   deterministic_size=first_written;
   if(preceding_scale_size!=22862 || preceding_filter_size!=22826 || preceding_io_size!=22818 ||

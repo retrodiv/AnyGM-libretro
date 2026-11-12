@@ -118,6 +118,67 @@ static GmlVal vertex_format_information(GmlVM *vm,GmlVal *arguments,int count){
   }
   return vreal(info->id);
 }
+typedef struct {
+  GmlVM *vm;
+  GmlVal root, container[8];
+  int index[8], depth;
+} SpriteInfoBuilder;
+
+static int sprite_info_value(void *context,const char *key,GmlRenderInfoKind kind,
+                              double number,const char *text){
+  SpriteInfoBuilder *builder=context;
+  if(kind==GML_RENDER_INFO_END){
+    if(builder->depth<=0) return 0;
+    builder->depth--; return 1;
+  }
+  GmlVal value=vundef();
+  if(kind==GML_RENDER_INFO_NUMBER) value=vreal(number);
+  else if(kind==GML_RENDER_INFO_STRING){
+    char *owned=strdup(text?text:"");
+    if(!owned) return 0;
+    value=vstr_owned(owned);
+  }else if(kind==GML_RENDER_INFO_OBJECT){
+    GmlInstance *object=gml_struct_new(builder->vm);
+    if(!object) return 0;
+    value=vobject(object->id);
+  }else if(kind==GML_RENDER_INFO_ARRAY){
+    if(!isfinite(number) || number<0 || number>100000 || floor(number)!=number) return 0;
+    value=gml_arr_new((int)number,vundef());
+    if(gml_val_array_length(value)!=(int)number) return 0;
+  }
+  if(builder->depth==0) builder->root=value;
+  else {
+    GmlVal parent=builder->container[builder->depth-1];
+    if(parent.t==V_ARR){
+      int index=builder->index[builder->depth-1]++;
+      if(key || index>=gml_val_array_length(parent)) return 0;
+      gml_arr_set(parent,index,value);
+    }else{
+      GmlInstance *object=gml_struct_find(builder->vm,(unsigned)parent.d);
+      if(!object || !key) return 0;
+      GmlVal *field=gml_varmap_put(&object->vars,key);
+      if(!field) return 0;
+      *field=value;
+    }
+  }
+  if(kind==GML_RENDER_INFO_OBJECT || kind==GML_RENDER_INFO_ARRAY){
+    if(builder->depth>=8) return 0;
+    builder->container[builder->depth]=value;
+    builder->index[builder->depth++]=0;
+  }
+  return 1;
+}
+
+static GmlVal sprite_information(GmlVM *vm,GmlVal *arguments,int count){
+  double raw=N(arguments,count,0);
+  if(count<1 || !isfinite(raw) || raw<0 || raw>INT_MAX) return vundef();
+  SpriteInfoBuilder builder={.vm=vm,.root=vundef()};
+  if(!gml_render_sprite_information((GmlRender*)vm->render,(int)raw,
+                                     sprite_info_value,&builder) || builder.depth)
+    return vundef();
+  return builder.root;
+}
+
 static int primitive_raster_coordinate(const GmlVM *vm,double coordinate){
   if(vm && vm->win && anygm_policy_uses_first_generation_studio(vm->win))
     return (int)ceil(coordinate)+1;
@@ -1521,6 +1582,7 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       uint32_t colour=((p>>16)&0xff)|(p&0xff00)|((p&0xff)<<16);
       if(!strcmp(nm,"surface_getpixel_ext")) colour|=p&0xFF000000u;
       return vreal(ok?colour:0); }
+    if(!strcmp(nm,"sprite_get_info")) return sprite_information(vm,a,n);
     if(!strcmp(nm,"sprite_get_width")){ GmlRenderSpriteMetrics sprite; return vreal(gml_render_sprite_metrics(R,(int)N(a,n,0),&sprite)?sprite.width:0); }
     if(!strcmp(nm,"sprite_get_height")){ GmlRenderSpriteMetrics sprite; return vreal(gml_render_sprite_metrics(R,(int)N(a,n,0),&sprite)?sprite.height:0); }
     if(!strcmp(nm,"sprite_get_number")){ GmlRenderSpriteMetrics sprite; return vreal(gml_render_sprite_metrics(R,(int)N(a,n,0),&sprite)?sprite.frame_count:0); }
@@ -1554,7 +1616,7 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       /* sprite_add(fname, imgnum, removeback, smooth, xorig, yorig): load a loose image
        * (localized charsets/signs in ports) as a runtime sprite; -1 when missing, like GM. */
       char *p=resolve_read_path(vm,S(vm,a,n,0));
-      int id = p? gml_sprite_add_file(R,p,(int)N(a,n,1),(int)N(a,n,2)>=1,(int)N(a,n,4),(int)N(a,n,5)) : -1;
+      int id = p? gml_sprite_add_file(R,p,(int)N(a,n,1),(int)N(a,n,2)>=1,(int)N(a,n,4),(int)N(a,n,5),(int)N(a,n,3)) : -1;
       if(builtin_setting(vm,"GML_LOG_SPRADD")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[sprite_add] '%s' -> %d\n",p?p:"?",id);
       free(p);
       return vreal(id);

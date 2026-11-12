@@ -40,6 +40,34 @@ static void write_u64(uint8_t *data,uint64_t value){
   for(unsigned i=0;i<8;i++) data[i]=(uint8_t)(value>>(i*8));
 }
 
+/* Locate preceding renderer controls only after validating the new metadata
+ * trailer against its live owner. No corruption target may drift into this table. */
+static size_t render_metadata_body_end(const AnygmEngine *engine,
+                                        const uint8_t *bytes,size_t size){
+  if(size<STATE_HEADER_SIZE || engine->render.n_spr<0 ||
+     (uint32_t)read_u64(bytes+4)!=ANYGM_STATE_SCHEMA)return SIZE_MAX;
+  uint64_t core=read_u64(bytes+64),length=read_u64(bytes+72);
+  if(core>size-STATE_HEADER_SIZE)return SIZE_MAX;
+  size_t start=STATE_HEADER_SIZE+(size_t)core;
+  if(length>size-start)return SIZE_MAX;
+  size_t count=(size_t)engine->render.n_spr;
+  if(count>(SIZE_MAX-4u)/44u)return SIZE_MAX;
+  size_t trailer=4u+44u*count;
+  if(trailer>length)return SIZE_MAX;
+  size_t at=start+(size_t)length-trailer;
+  uint8_t word[4];write_u32(word,(uint32_t)count);
+  if(memcmp(bytes+at,word,4))return SIZE_MAX;
+  for(size_t i=0;i<count;i++){
+    const GmlSprite *sprite=&engine->render.spr[i];uint8_t expected[44];
+    write_u32(expected,sprite->metadata_flags);write_u32(expected+4,(uint32_t)sprite->ns_enabled);
+    write_u32(expected+8,(uint32_t)sprite->ns_l);write_u32(expected+12,(uint32_t)sprite->ns_t);
+    write_u32(expected+16,(uint32_t)sprite->ns_r);write_u32(expected+20,(uint32_t)sprite->ns_b);
+    for(int mode=0;mode<5;mode++)write_u32(expected+24+4*mode,(uint32_t)sprite->ns_tile[mode]);
+    if(memcmp(bytes+at+4u+44u*i,expected,sizeof expected))return SIZE_MAX;
+  }
+  return at;
+}
+
 /* Locate older table controls only after proving this fixture has no semantic
  * array-owner records. Never skip a populated or unknown trailer. */
 static size_t neutral_vm_body_end(const AnygmEngine *engine,const uint8_t *bytes,size_t size){
@@ -69,7 +97,7 @@ static int neutral_vm_body_end_controls(const AnygmEngine *engine,
     return fail("current neutral VM trailer was not located");
   uint8_t *candidate=malloc(size);
   if(!candidate) return fail("neutral trailer control allocation");
-  const uint32_t roots[]={53,54,55,56,57,58,59,61},vms[]={31,32,33,34,35,37};
+  const uint32_t roots[]={53,54,55,56,57,58,59,60,62},vms[]={31,32,33,34,35,37};
   size_t vm_start=STATE_HEADER_SIZE+(size_t)read_u64(bytes+64)+
                   (size_t)read_u64(bytes+72);
   int ok=1;
@@ -308,9 +336,9 @@ static int runtime_mask_state_cases(AnygmEngine *engine){
 
   if(ok){
     size_t render_start=STATE_HEADER_SIZE+(size_t)read_u64(baseline+64);
-    size_t render_size=(size_t)read_u64(baseline+72);
-    size_t mode_at=render_start+render_size-16;
-    if(render_size<16 || mode_at>state_size-4 ||
+    size_t body_end=render_metadata_body_end(engine,baseline,state_size);
+    size_t mode_at=body_end==SIZE_MAX?SIZE_MAX:body_end-16;
+    if(body_end==SIZE_MAX || body_end-render_start<16 || mode_at>state_size-4 ||
        !engine->render.spr[engine->render.n_spr-1].runtime_rgba ||
        (uint32_t)read_u64(baseline+mode_at)!=(uint32_t)runtime->bbox_mode)
       ok=fail("runtime bounding-box mode locator mismatch");
@@ -1272,8 +1300,11 @@ static int sprite_playback_state_cases(const AnygmHostServices *services,const A
   size_t render_start=112+(size_t)read_u64(baseline+64),render_size=(size_t)read_u64(baseline+72);
   size_t count=(size_t)engine->render.n_spr,trailer=4+12;
   for(size_t i=0;i<count;i++) trailer+=engine->render.spr[i].runtime_rgba?16:32;
-  if(trailer>render_size){free(baseline);anygm_destroy(engine);return 0;}
-  size_t at=render_start+render_size-trailer;
+  size_t body_end=render_metadata_body_end(engine,baseline,size);
+  if(body_end==SIZE_MAX || trailer>body_end-render_start || trailer>render_size){
+    free(baseline);anygm_destroy(engine);return 0;
+  }
+  size_t at=body_end-trailer;
   ok=(uint32_t)read_u64(baseline+at)==count &&
     anygm_state_load(engine,baseline,size)==ANYGM_OK && engine_matches(engine,baseline,size);
   candidate=malloc(size?size:1);ok=ok && candidate;
@@ -1470,8 +1501,11 @@ static int blend_state_cases(AnygmEngine *engine){
   candidate=ok?malloc(size):NULL;ok=ok && candidate;
   size_t start=ok?112+(size_t)read_u64(baseline+64):0;
   size_t length=ok?(size_t)read_u64(baseline+72):0;
-  if(!ok || length<12u){free(baseline);free(candidate);return 0;}
-  size_t at=start+length-12u;
+  size_t body_end=ok?render_metadata_body_end(engine,baseline,size):SIZE_MAX;
+  if(!ok || body_end==SIZE_MAX || body_end-start<12u || length<12u){
+    free(baseline);free(candidate);return 0;
+  }
+  size_t at=body_end-12u;
   gml_builtin_call(vm,"gpu_set_blendmode",(GmlVal[]){vreal(0)},1);
   ok=anygm_state_load(engine,baseline,size)==ANYGM_OK && engine_matches(engine,baseline,size);
   GmlVal values=gml_builtin_call(&engine->vm,"gpu_get_blendmode_ext_sepalpha",NULL,0);
@@ -1493,6 +1527,52 @@ static int blend_state_cases(AnygmEngine *engine){
                              "invalid stacked blend equation");
   free(candidate);free(baseline);
   return ok?1:fail("blend tuple/equation validation and rollback failed");
+}
+
+static int sprite_information_state_cases(const AnygmHostServices *services,
+                                            const AnygmContentSource *source){
+  AnygmEngine *engine=NULL;uint8_t *baseline=NULL,*candidate=NULL;size_t size=0;
+  int ok=anygm_create(services,&engine)==ANYGM_OK && anygm_load(engine,source,NULL)==ANYGM_OK;
+  uint8_t *pixels=ok?calloc(24,1):NULL;
+  int sprite=pixels?gml_sprite_append_from_rgba_frames(&engine->render,pixels,2,3,1,1,2,NULL):-1;
+  ok=ok && sprite>=0;
+  if(ok){
+    GmlSprite *resource=&engine->render.spr[sprite];
+    resource->metadata_flags=GML_SPRITE_META_SMOOTH|GML_SPRITE_META_NINESLICE;
+    resource->ns_enabled=1;resource->ns_l=1;resource->ns_r=1;
+    resource->ns_t=1;resource->ns_b=1;
+    for(int mode=0;mode<5;mode++)resource->ns_tile[mode]=mode;
+    GmlVal argument=vreal(sprite);
+    *gml_varmap_put(&engine->vm.globals,"sprite_snapshot")=
+      gml_builtin_call(&engine->vm,"sprite_get_info",&argument,1);
+    ok=save_state(engine,&baseline,&size);
+  }
+  size_t metadata=ok?render_metadata_body_end(engine,baseline,size):SIZE_MAX;
+  ok=ok && metadata!=SIZE_MAX;
+  candidate=ok?malloc(size):NULL;ok=ok && candidate;
+  if(ok){
+    engine->render.spr[sprite].metadata_flags=0;
+    engine->render.spr[sprite].ns_tile[4]=0;
+    ok=anygm_state_load(engine,baseline,size)==ANYGM_OK && engine_matches(engine,baseline,size);
+    GmlSprite *resource=&engine->render.spr[sprite];
+    GmlVal *snapshot=gml_varmap_get(&engine->vm.globals,"sprite_snapshot");
+    GmlVal arguments[]={snapshot?*snapshot:vundef(),vstr("smooth")};
+    GmlVal smooth=gml_builtin_call(&engine->vm,"struct_get",arguments,2);
+    ok=ok && resource->metadata_flags==(GML_SPRITE_META_SMOOTH|GML_SPRITE_META_NINESLICE) &&
+       resource->ns_enabled==1 && resource->ns_tile[4]==4 && smooth.t==V_REAL && smooth.d==1;
+  }
+  size_t row=metadata==SIZE_MAX?0:metadata+4u+44u*(size_t)sprite;
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,metadata,UINT32_MAX,
+                             "invalid sprite metadata count");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,row,128,
+                             "unknown sprite metadata flags");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,row+4,2,
+                             "invalid nine-slice metadata enable");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,4,60,
+                             "previous sprite-metadata-free public schema");
+  if(ok)ok=anygm_reset(engine)==ANYGM_OK && !gml_sprite_exists(&engine->render,sprite);
+  free(candidate);free(baseline);anygm_destroy(engine);
+  return ok?1:fail("sprite information state, rollback or Reset");
 }
 
 static int registered_member_state_cases(const AnygmHostServices *services,
@@ -1621,6 +1701,7 @@ int main(void){
   if(anygm_load(engine,&source,NULL)!=ANYGM_OK) return fail("content load failed")?0:1;
 
   if(!sprite_playback_state_cases(&services,&source) ||
+     !sprite_information_state_cases(&services,&source) ||
      !registered_member_state_cases(&services,&source) ||
      !date_timezone_state_cases(&services,&source) ||
      !instance_order_state_cases(&services,&source) ||

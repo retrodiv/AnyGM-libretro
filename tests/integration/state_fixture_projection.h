@@ -144,7 +144,29 @@ static void fixture_map(FixtureProjection *p){
  * against the live fixture. Direct state controls cover mutation/restoration of these fields. */
 static int project_fixture_playback(AnygmEngine *engine,uint8_t **data,size_t *written){
   uint8_t *bytes=*data;
-  if(*written<112 || (uint32_t)read_u64(bytes+4)!=60 || engine->render.n_spr<0)return 0;
+  if(*written<112 || (uint32_t)read_u64(bytes+4)!=61 || engine->render.n_spr<0)return 0;
+  /* The historical fixture contains no dynamic sprite information or nine-slice.
+   * Validate each current metadata word before omitting this new trailer. */
+  size_t metadata_start=112+(size_t)read_u64(bytes+64);
+  size_t metadata_size=(size_t)read_u64(bytes+72);
+  size_t metadata_count=(size_t)engine->render.n_spr;
+  if(metadata_count>(SIZE_MAX-4u)/44u)return 0;
+  size_t metadata_bytes=4u+44u*metadata_count;
+  if(metadata_start>*written || metadata_size>*written-metadata_start ||
+     metadata_bytes>metadata_size)return 0;
+  size_t metadata_at=metadata_start+metadata_size-metadata_bytes;
+  if((uint32_t)read_u64(bytes+metadata_at)!=(uint32_t)metadata_count)return 0;
+  for(size_t i=0;i<metadata_count;i++){
+    const GmlSprite *sprite=&engine->render.spr[i];
+    if(sprite->metadata_flags || sprite->ns_enabled || sprite->ns_l || sprite->ns_t ||
+       sprite->ns_r || sprite->ns_b)return 0;
+    for(int mode=0;mode<5;mode++)if(sprite->ns_tile[mode])return 0;
+    if(memcmp(bytes+metadata_at+4u+44u*i,(const uint8_t[44]){0},44))return 0;
+  }
+  size_t metadata_end=metadata_start+metadata_size;
+  memmove(bytes+metadata_at,bytes+metadata_end,*written-metadata_end);
+  *written-=metadata_bytes;
+  write_u64(bytes+72,metadata_size-metadata_bytes);
   /* Only a neutral current blend may disappear from this historical scratch pin. */
   size_t render=112+(size_t)read_u64(bytes+64),render_size=(size_t)read_u64(bytes+72);
   const uint8_t neutral_blend[12]={0,0,0,0,1,0,0,0,1,0,0,0};
@@ -371,7 +393,7 @@ static int fixture_projection_controls(AnygmEngine *engine,const uint8_t *baseli
     free(bytes);engine->vm.script_args[0]=original;gml_values_release_owned(&array,1);
   }
   engine->vm.script_args[0]=original;
-  const uint32_t unknown_roots[]={50,51,52,53,54,55,56,57,58,59,61};
+  const uint32_t unknown_roots[]={50,51,52,53,54,55,56,57,58,59,60,62};
   for(unsigned i=0;i<sizeof unknown_roots/sizeof unknown_roots[0] && ok;i++){
     uint8_t *bytes=NULL;size_t count=0;
     ok=save_state(engine,&bytes,&count);
@@ -386,6 +408,14 @@ static int fixture_projection_controls(AnygmEngine *engine,const uint8_t *baseli
     engine->vm.date_timezone=1;
     ok=save_state(engine,&bytes,&count) && !project_fixture_vm(engine,&bytes,&count);
     engine->vm.date_timezone=0;
+    free(bytes);
+  }
+  if(ok && engine->render.n_spr>0){
+    uint8_t *bytes=NULL;size_t count=0;
+    uint32_t flags=engine->render.spr[0].metadata_flags;
+    engine->render.spr[0].metadata_flags|=GML_SPRITE_META_SMOOTH;
+    ok=save_state(engine,&bytes,&count) && !project_fixture_playback(engine,&bytes,&count);
+    engine->render.spr[0].metadata_flags=flags;
     free(bytes);
   }
   if(ok){
@@ -406,10 +436,18 @@ static int fixture_projection_controls(AnygmEngine *engine,const uint8_t *baseli
     uint8_t *bytes=NULL;size_t count=0;
     ok=save_state(engine,&bytes,&count);
     size_t render=112+(size_t)read_u64(bytes+64),render_size=(size_t)read_u64(bytes+72);
-    if(ok && render<=count && render_size<=count-render && render_size>=12u){
-      write_u32(bytes+render+render_size-12u,1u);
-      write_u64(bytes+56,state_checksum(bytes+112,count-112));
-      ok=!project_fixture_vm(engine,&bytes,&count);
+    size_t sprites=(size_t)engine->render.n_spr;
+    if(sprites>(SIZE_MAX-4u)/44u)ok=0;
+    size_t metadata_bytes=4u+44u*sprites;
+    const uint8_t neutral[12]={0,0,0,0,1,0,0,0,1,0,0,0};
+    if(ok && render<=count && render_size<=count-render && render_size>=metadata_bytes+12u){
+      size_t mode_at=render+render_size-metadata_bytes-12u;
+      ok=!memcmp(bytes+mode_at,neutral,sizeof neutral);
+      if(ok){
+        write_u32(bytes+mode_at,1u);
+        write_u64(bytes+56,state_checksum(bytes+112,count-112));
+        ok=!project_fixture_vm(engine,&bytes,&count);
+      }
     }else ok=0;
     free(bytes);
   }

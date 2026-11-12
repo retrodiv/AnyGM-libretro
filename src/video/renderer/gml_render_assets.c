@@ -35,6 +35,74 @@ int gml_render_sprite_metrics(const GmlRender *R,int sprite,
   return 1;
 }
 
+/* Information queries stream values and never borrow or decode image pixels. */
+int gml_render_sprite_information(const GmlRender *render,int sprite,
+                                   GmlRenderInfoSink sink,void *context){
+  if(!sink || !render || sprite<0 || sprite>=render->n_spr ||
+     (!render->spr[sprite].n_frames && !render->spr[sprite].spine)) return 0;
+  const GmlSprite *source=&render->spr[sprite];
+#define INFO(kind,key,number,text) do { if(!sink(context,key,kind,number,text)) return 0; } while(0)
+#define INFO_NUM(key,value) INFO(GML_RENDER_INFO_NUMBER,key,value,NULL)
+#define INFO_END() INFO(GML_RENDER_INFO_END,NULL,0,NULL)
+  INFO(GML_RENDER_INFO_OBJECT,NULL,0,NULL);
+  INFO_NUM("width",source->w); INFO_NUM("height",source->h);
+  INFO_NUM("xoffset",source->originx); INFO_NUM("yoffset",source->originy);
+  INFO_NUM("bbox_left",source->ml); INFO_NUM("bbox_top",source->mt);
+  INFO_NUM("bbox_right",source->mr); INFO_NUM("bbox_bottom",source->mb);
+  INFO(GML_RENDER_INFO_STRING,"name",0,source->name?source->name:"");
+  INFO_NUM("transparent",(source->metadata_flags&GML_SPRITE_META_TRANSPARENT)!=0);
+  INFO_NUM("smooth",(source->metadata_flags&GML_SPRITE_META_SMOOTH)!=0);
+  INFO_NUM("preload",(source->metadata_flags&GML_SPRITE_META_PRELOAD)!=0);
+  int type=(int)((source->metadata_flags>>GML_SPRITE_META_TYPE_SHIFT)&3u);
+  INFO_NUM("type",type);
+  INFO_NUM("num_subimages",source->n_frames);
+  INFO_NUM("frame_speed",source->playback_speed_valid?source->playback_speed:1);
+  INFO_NUM("frame_type",source->playback_speed_type);
+  INFO_NUM("use_mask",source->collision_kind!=1 &&
+    !(source->metadata_flags&GML_SPRITE_META_ROTATED));
+  INFO_NUM("num_masks",source->mask_count);
+  INFO_NUM("rotated_bounds",(source->metadata_flags&GML_SPRITE_META_ROTATED)!=0);
+  if((source->metadata_flags&GML_SPRITE_META_NINESLICE) || source->ns_enabled){
+    INFO(GML_RENDER_INFO_OBJECT,"nineslice",0,NULL);
+    INFO_NUM("enabled",source->ns_enabled);
+    INFO_NUM("left",source->ns_l); INFO_NUM("right",source->ns_r);
+    INFO_NUM("top",source->ns_t); INFO_NUM("bottom",source->ns_b);
+    INFO(GML_RENDER_INFO_ARRAY,"tilemode",5,NULL);
+    for(int i=0;i<5;i++) INFO_NUM(NULL,source->ns_tile[i]);
+    INFO_END(); INFO_END();
+  }else INFO(GML_RENDER_INFO_UNDEFINED,"nineslice",0,NULL);
+  if(type==0){
+    INFO(GML_RENDER_INFO_ARRAY,"frames",source->n_frames,NULL);
+    for(int i=0;i<source->n_frames;i++){
+      const GmlTpag *page=NULL;
+      if(!source->runtime_rgba && source->frame && source->frame[i]>=0 &&
+         source->frame[i]<render->n_tpag) page=&render->tpag[source->frame[i]];
+      INFO(GML_RENDER_INFO_OBJECT,NULL,0,NULL);
+      INFO_NUM("x",page?page->sx:0); INFO_NUM("y",page?page->sy:0);
+      INFO_NUM("w",page?page->sw:source->w); INFO_NUM("h",page?page->sh:source->h);
+      INFO_NUM("x_offset",page?page->tx:0); INFO_NUM("y_offset",page?page->ty:0);
+      INFO_NUM("crop_width",page?page->tw:source->w);
+      INFO_NUM("crop_height",page?page->th:source->h);
+      INFO_NUM("original_width",page?page->bw:source->w);
+      INFO_NUM("original_height",page?page->bh:source->h);
+      int texture=page?gml_render_atlas_texture_handle(render,page->atlas):
+        gml_render_sprite_texture_handle(sprite,i);
+      INFO_NUM("texture",texture);
+      INFO_END();
+    }
+    INFO_END();
+  }
+  /* This interface does not expose decoded timeline or skeletal collections.
+   * Undefined does not assert that authored messages or stretched frames are absent. */
+  INFO(GML_RENDER_INFO_UNDEFINED,"messages",0,NULL);
+  INFO(GML_RENDER_INFO_UNDEFINED,"frame_info",0,NULL);
+  INFO_END();
+#undef INFO_END
+#undef INFO_NUM
+#undef INFO
+  return 1;
+}
+
 int gml_render_sprite_collision_metrics(const GmlRender *r,int sprite,
                                         GmlRenderSpriteMetrics *metrics){
   if(!gml_render_sprite_metrics(r,sprite,metrics)) return 0;

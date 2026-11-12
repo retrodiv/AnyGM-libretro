@@ -419,6 +419,16 @@ static void render_state_write(GmlRender *render,int view_surface,CoreW *s,
   }
   cw_i32(s,render->blendmode);
   cw_i32(s,render->blend_equation);cw_i32(s,render->blend_equation_alpha);
+  cw_i32(s,render->n_spr);
+  for(int i=0;i<render->n_spr;i++){
+    const GmlSprite *sprite=&render->spr[i];
+    if((sprite->metadata_flags&~GML_SPRITE_META_MASK) ||
+       sprite->ns_enabled<0 || sprite->ns_enabled>1){s->ok=0;return;}
+    cw_u32(s,sprite->metadata_flags);cw_i32(s,sprite->ns_enabled);
+    cw_i32(s,sprite->ns_l);cw_i32(s,sprite->ns_t);
+    cw_i32(s,sprite->ns_r);cw_i32(s,sprite->ns_b);
+    for(int mode=0;mode<5;mode++) cw_i32(s,sprite->ns_tile[mode]);
+  }
 }
 
 
@@ -582,7 +592,7 @@ static int render_state_read(GmlRender *render,CoreR *s){
             }
             gml_sprite_delete(render,id);
           }
-          got=gml_sprite_add_file(render,path,imgnum,removeback,ox,oy);
+          got=gml_sprite_add_file(render,path,imgnum,removeback,ox,oy,0);
         } else {
           got=gml_sprite_replace_from_file(render,id,path,imgnum,removeback,0,ox,oy) ? id : -1;
         }
@@ -783,6 +793,20 @@ static int render_state_read(GmlRender *render,CoreR *s){
   if(s->ok){
     render->blendmode=blend;render->blend_equation=rgb_equation;
     render->blend_equation_alpha=alpha_equation;
+  }
+  int metadata_count=cr_i32(s);
+  if(metadata_count!=render->n_spr){s->ok=0;return 0;}
+  for(int i=0;i<metadata_count;i++){
+    uint32_t flags=cr_u32(s);int enabled=cr_i32(s);
+    int left=cr_i32(s),top=cr_i32(s),right=cr_i32(s),bottom=cr_i32(s),modes[5];
+    for(int mode=0;mode<5;mode++) modes[mode]=cr_i32(s);
+    if((flags&~GML_SPRITE_META_MASK) || enabled<0 || enabled>1){s->ok=0;return 0;}
+    if(s->ok){
+      GmlSprite *sprite=&render->spr[i];
+      sprite->metadata_flags=flags;sprite->ns_enabled=enabled;
+      sprite->ns_l=left;sprite->ns_t=top;sprite->ns_r=right;sprite->ns_b=bottom;
+      memcpy(sprite->ns_tile,modes,sizeof modes);
+    }
   }
   /* The application target is presentation storage, not a serialized surface record. A
    * successful load must not retain a device/journal version from the pre-load timeline. */
