@@ -54,9 +54,18 @@ typedef struct {
   struct { int defined, enabled; double x,y,z,range; uint32_t color; } light[8];
   double shade_r, shade_g, shade_b;
   float *depth; size_t depth_cap;
+  int depth_normalized;
   int depth_w, depth_h;
   long depth_frame;
 } GmlD3State;
+typedef struct GmlD3DepthTarget {
+  int identity,width,height,normalized,pending;
+  long frame;
+  const void *storage;
+  float clear_value,*pixels;
+  size_t capacity;
+  struct GmlD3DepthTarget *next;
+} GmlD3DepthTarget;
 #define GML_D3_PRIM_MAX 4096
 #define GML_D3_MODEL_MAX 256
 #define GML_D3_MODEL_VERTEX_MAX GML_SOFTWARE3D_MODEL_VERTEX_MAX
@@ -79,6 +88,7 @@ struct GmlSoftware3D {
   GmlD3Vertex *vertex_blend_scratch;
   int vertex_blend_scratch_capacity;
   GmlD3State d3;
+  GmlD3DepthTarget *depth_targets;
   double matrix_view[16],matrix_projection[16];
   GmlD3Vertex d3_prim[GML_D3_PRIM_MAX];
   int d3_prim_kind,d3_prim_texture,d3_prim_n;
@@ -101,6 +111,7 @@ typedef struct {
 /* Software-3D-private raster operations shared by the fixed-function owners. */
 void gml_software3d_transform_point(GmlRender *render,double *x,double *y,double *z);
 int gml_software3d_depth_prepare(GmlRender *render);
+void gml_software3d_depth_targets_clear(GmlSoftware3D *graphics);
 int gml_software3d_texture(GmlRender *render,int handle,GmlD3Texture *texture);
 void gml_software3d_emit_triangle(GmlRender *render,const GmlD3Vertex vertices[3],
                                   const GmlD3Texture *texture);

@@ -99,6 +99,10 @@ typedef struct {
 GmlSoftware3D *gml_software3d_create(void);
 void gml_software3d_destroy(GmlSoftware3D *software3d);
 void gml_software3d_reset(GmlSoftware3D *software3d);
+/* Depth storage is volatile and scoped to the physical render target. A clear
+ * remains lazy until a software fragment needs the plane. */
+int gml_software3d_clear_depth(struct GmlRender *render,double depth);
+void gml_software3d_depth_target_forget(GmlSoftware3D *graphics,int identity);
 int gml_software3d_status_get(const GmlSoftware3D *software3d,
                               GmlSoftware3DStatus *status);
 void gml_software3d_set_classic(GmlSoftware3D *software3d,int classic);

@@ -114,6 +114,7 @@ typedef struct GlAxisMap {
 typedef struct GlSceneImage {
   GmlRenderImageRef ref;
   GLuint texture,framebuffer;
+  GLuint depth_renderbuffer;
   GLuint content_source_texture,content_source_framebuffer;
   uint32_t content_source_width,content_source_height;
   uint64_t content_source_version;

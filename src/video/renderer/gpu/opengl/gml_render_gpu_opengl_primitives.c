@@ -89,6 +89,50 @@ int gml_render_gpu_opengl_clear(GmlGpuBackend *backend,const GmlRenderDrawOp *op
   return fill_region(backend,target,&op->target.region,op->payload.clear_colour);
 }
 
+int gml_gpu_opengl_scene_clear_depth(GmlGpuBackend *backend,
+                                     const GmlRenderTargetRef *target,double depth){
+  if(!backend || !target || !isfinite(depth) || !backend->loaded ||
+     !backend->gl.ClearBufferfv || !backend->gl.GenRenderbuffers ||
+     !backend->gl.BindRenderbuffer || !backend->gl.RenderbufferStorage ||
+     !backend->gl.FramebufferRenderbuffer || !backend->gl.DeleteRenderbuffers) return 0;
+  GLint maximum=0,write_mask=0,scissor=0,old_renderbuffer=0;
+  backend->gl.GetIntegerv(GL_MAX_RENDERBUFFER_SIZE,&maximum);
+  if(maximum<=0 || target->width>(uint32_t)maximum || target->height>(uint32_t)maximum)
+    return 0;
+  GlSceneImage *image=gml_gpu_opengl_scene_target(backend,target);
+  if(!image) return 0;
+  backend->gl.GetIntegerv(GL_RENDERBUFFER_BINDING,&old_renderbuffer);
+  if(!image->depth_renderbuffer){
+    GLuint attachment=0;
+    backend->gl.GenRenderbuffers(1,&attachment);
+    if(!attachment) return 0;
+    backend->gl.BindRenderbuffer(GL_RENDERBUFFER,attachment);
+    backend->gl.RenderbufferStorage(GL_RENDERBUFFER,GL_DEPTH_COMPONENT24,
+                                    (GLsizei)target->width,(GLsizei)target->height);
+    backend->gl.FramebufferRenderbuffer(GL_FRAMEBUFFER,GL_DEPTH_ATTACHMENT,
+                                        GL_RENDERBUFFER,attachment);
+    int complete=backend->gl.CheckFramebufferStatus(GL_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE;
+    if(backend->gl.GetError()!=GL_NO_ERROR || !complete){
+      backend->gl.FramebufferRenderbuffer(GL_FRAMEBUFFER,GL_DEPTH_ATTACHMENT,GL_RENDERBUFFER,0);
+      backend->gl.DeleteRenderbuffers(1,&attachment);
+      backend->gl.BindRenderbuffer(GL_RENDERBUFFER,(GLuint)old_renderbuffer);
+      return 0;
+    }
+    image->depth_renderbuffer=attachment;
+  }
+  backend->gl.GetIntegerv(GL_DEPTH_WRITEMASK,&write_mask);
+  backend->gl.GetIntegerv(GL_SCISSOR_TEST,&scissor);
+  backend->gl.Disable(GL_SCISSOR_TEST);
+  backend->gl.DepthMask(GL_TRUE);
+  GLfloat value=(GLfloat)fmax(0,fmin(1,depth));
+  backend->gl.ClearBufferfv(GL_DEPTH,0,&value);
+  int succeeded=backend->gl.GetError()==GL_NO_ERROR;
+  backend->gl.DepthMask(write_mask?GL_TRUE:GL_FALSE);
+  if(scissor) backend->gl.Enable(GL_SCISSOR_TEST);
+  backend->gl.BindRenderbuffer(GL_RENDERBUFFER,(GLuint)old_renderbuffer);
+  return succeeded && backend->gl.GetError()==GL_NO_ERROR;
+}
+
 int gml_render_gpu_opengl_draw_primitive(GmlGpuBackend *backend,
                                          const GmlRenderDrawOp *op,GlSceneImage *target){
   return fill_region(backend,target,&op->payload.primitive.region,

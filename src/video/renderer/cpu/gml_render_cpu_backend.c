@@ -180,6 +180,8 @@ int gml_render_cpu_backend_draw_view(GmlRender *r,GmlRenderCpuBackendDrawView *v
   view->coordinate_scale_y=world_coordinates?r->world_scale_y:1.0;
   view->alpha=r->alpha;
   view->width=r->fbw; view->height=r->fbh;
+  view->target_id=r->target_id>0?r->target_id:
+    (r->app_surface_owned && r->fb==r->app_surface_owned?0:-1);
   view->interpolate=r->interp;
   view->alpha_blend=r->alphablend; view->blend_mode=r->blendmode;
   view->circle_precision=r->circle_precision;

@@ -1254,6 +1254,10 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
         gml_render_maybe_prepare_draw(R);
         gml_render_primitive_triangle_alpha(R,x1,y1,x2,y2,x3,y3,col,draw.alpha,outline); }
       return vreal(0); }
+    if(!strcmp(nm,"draw_clear_depth")){
+      if(R) gml_render_clear_depth(R,n>0?N(a,n,0):1.0);
+      return vundef();
+    }
     if(!strcmp(nm,"draw_clear")||!strcmp(nm,"draw_clear_alpha")){ if(R){
       if(builtin_setting(vm,"GML_LOG_SURF"))
         anygm_host_logf(vm?vm->host:NULL,ANYGM_LOG_DEBUG,"[surf] clear colour=%06x\n",

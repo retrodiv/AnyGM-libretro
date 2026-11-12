@@ -30,6 +30,8 @@ typedef struct GmlRenderDeviceServices {
    * it does not publish uninitialised texels elsewhere. Unknown consumers still use upload. */
   int (*upload_source_region)(void *context,const GmlRenderImageUpload *full,
                               GmlRenderRect region);
+  /* Ordered side-plane operation; it never advances the colour image version. */
+  int (*clear_depth)(void *context,const GmlRenderTargetRef *target,double depth);
 } GmlRenderDeviceServices;
 
 #endif

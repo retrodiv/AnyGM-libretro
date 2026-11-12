@@ -1245,6 +1245,7 @@ static int scene_upload_policy_case(void){
 static int scene_service_contract_case(void){
   static const GmlRenderOperationCode unselected[]={
     GML_RENDER_OP_TEXTURED_TRIANGLES,
+    GML_RENDER_OP_CLEAR_DEPTH,
     GML_RENDER_OP_COMPOSE_SURFACE,GML_RENDER_OP_PRESENT_IMAGE
   };
   const uint64_t supported_operations=(UINT64_C(1)<<GML_RENDER_OP_CLEAR)|
@@ -1270,13 +1271,16 @@ static int scene_service_contract_case(void){
   REQUIRE(gpu!=NULL,"device metadata allocated");
   memset(&services,0xA5,sizeof services);
   gml_gpu_device_services(gpu,&services);
-  REQUIRE(!services.context && !services.submit,"no service is bound before context adoption");
+  REQUIRE(!services.context && !services.submit && !services.clear_depth,
+          "no service is bound before context adoption");
   context=fake_context(GML_GPU_API_OPENGL_CORE);
   REQUIRE(gml_gpu_context_reset(gpu,&context),"context adopted");
   gml_gpu_device_services(gpu,&services);
   REQUIRE(services.context==gpu && services.capabilities && services.submit &&
           services.upload && services.readback && services.retire && services.flush && services.wait,
           "the neutral service has a complete callback table");
+  REQUIRE(services.clear_depth && !services.clear_depth(services.context,NULL,.5),
+          "the separate depth-only service rejects a missing target");
   memset(&caps,0xA5,sizeof caps);
   REQUIRE(services.capabilities(services.context,&caps),"capability query succeeds");
   REQUIRE(caps.max_texture_extent==4096 && caps.max_batch_quads==2048 &&

@@ -6,6 +6,7 @@ GML_RENDER_CPU_OPERATION(TEXTURED_QUAD, supported, gml_render_cpu_blit_tpag_part
 GML_RENDER_CPU_OPERATION(TEXTURED_TRIANGLES, supported, gml_render_cpu_blit_sprite_pos_resolved, "existing positioned-quad triangle raster")
 GML_RENDER_CPU_OPERATION(COLOURED_PRIMITIVE, supported, gml_render_cpu_rectangle, "existing primitive coverage closure")
 GML_RENDER_CPU_OPERATION(CLEAR, supported, gml_render_clear, "existing deferred/full-target clear")
+GML_RENDER_CPU_OPERATION(CLEAR_DEPTH, supported, gml_software3d_clear_depth, "lazy normalized current-target depth clear")
 GML_RENDER_CPU_OPERATION(COPY_IMAGE, supported, gml_surface_copy, "existing alias-safe surface copy")
 GML_RENDER_CPU_OPERATION(COMPOSE_SURFACE, supported, gml_render_cpu_draw_surface_stretched_impl, "existing surface composition closure")
 GML_RENDER_CPU_OPERATION(LAYER_EFFECT, supported, gml_render_cpu_layer_filter_end, "existing recognized layer-filter kernels")

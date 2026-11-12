@@ -56,6 +56,7 @@ typedef struct {
   double camera_x, camera_y, alpha;
   double coordinate_scale_x, coordinate_scale_y;
   int width, height;
+  int target_id; /* numbered surface, owned application 0, or screen -1 */
   int interpolate, alpha_blend, blend_mode, circle_precision;
   int zero_alpha_writes;
   atomic_int *dispatch_written;

@@ -212,20 +212,103 @@ static void d3_transform_point(GmlRender *R,double *x,double *y,double *z){
   *y=g_d3.transform[1]*inx+g_d3.transform[5]*iny+g_d3.transform[9]*inz+g_d3.transform[13];
   *z=g_d3.transform[2]*inx+g_d3.transform[6]*iny+g_d3.transform[10]*inz+g_d3.transform[14];
 }
+static void d3_depth_target_release(GmlSoftware3D *graphics,GmlD3DepthTarget *target){
+  if(target->pixels && graphics->d3.depth==target->pixels){
+    graphics->d3.depth=NULL;graphics->d3.depth_cap=0;
+  }
+  free(target->pixels);free(target);
+}
+void gml_software3d_depth_target_forget(GmlSoftware3D *graphics,int identity){
+  if(!graphics) return;
+  GmlD3DepthTarget **link=&graphics->depth_targets;
+  while(*link){
+    GmlD3DepthTarget *target=*link;
+    if(target->identity!=identity){link=&target->next;continue;}
+    /* Revoking a borrowed allocation must not request a clear on another target. */
+    *link=target->next;d3_depth_target_release(graphics,target);
+  }
+}
+void gml_software3d_depth_targets_clear(GmlSoftware3D *graphics){
+  if(!graphics) return;
+  while(graphics->depth_targets)
+    gml_software3d_depth_target_forget(graphics,graphics->depth_targets->identity);
+  graphics->d3.depth=NULL;graphics->d3.depth_cap=0;
+  graphics->d3.depth_frame=-1;graphics->d3.depth_normalized=0;
+}
+static GmlD3DepthTarget *d3_depth_target(GmlRender *R,
+                                        const GmlRenderCpuBackendDrawView *draw){
+  if(!GML_GRAPHICS || draw->width<=0 || draw->height<=0 ||
+     (size_t)draw->width>SIZE_MAX/(size_t)draw->height ||
+     (size_t)draw->width*(size_t)draw->height>SIZE_MAX/sizeof(float)) return NULL;
+  /* Borrowed screen allocations have no surface-free callback. Keep the prior
+   * frame for alternating roots; older depths would be cleared on reuse anyway. */
+  if(draw->target_id==-1 && draw->frame>0){
+    GmlD3DepthTarget **link=&GML_GRAPHICS->depth_targets;
+    while(*link){
+      GmlD3DepthTarget *stale=*link;
+      if(stale->identity==-1 && stale->storage!=draw->pixels &&
+         stale->frame<draw->frame-1){
+        *link=stale->next;d3_depth_target_release(GML_GRAPHICS,stale);
+      }else link=&stale->next;
+    }
+  }
+  GmlD3DepthTarget *target=GML_GRAPHICS->depth_targets;
+  while(target && (target->identity!=draw->target_id || target->storage!=draw->pixels))
+    target=target->next;
+  if(!target){
+    target=calloc(1,sizeof *target);
+    if(!target) return NULL;
+    target->identity=draw->target_id;target->storage=draw->pixels;
+    target->frame=-1;target->pending=1;
+    target->next=GML_GRAPHICS->depth_targets;GML_GRAPHICS->depth_targets=target;
+  }
+  if(target->frame!=draw->frame || target->width!=draw->width ||
+     target->height!=draw->height){
+    target->frame=draw->frame;target->width=draw->width;target->height=draw->height;
+    target->clear_value=0;target->normalized=0;target->pending=1;
+  }
+  return target;
+}
 static int d3_depth_prepare(GmlRender *R){
   GmlRenderCpuBackendDrawView draw;
-  if(!gml_render_cpu_backend_draw_view(R,&draw) || draw.width<=0 || draw.height<=0) return 0;
+  if(!gml_render_cpu_backend_draw_view(R,&draw)) return 0;
+  GmlD3DepthTarget *target=d3_depth_target(R,&draw);
+  if(!target) return 0;
   size_t count=(size_t)draw.width*(size_t)draw.height;
-  if(count>g_d3.depth_cap){
-    float *depth=(float*)realloc(g_d3.depth,count*sizeof(*depth));
-    if(!depth) return 0;
-    g_d3.depth=depth; g_d3.depth_cap=count;
+  if(count>target->capacity){
+    float *pixels=realloc(target->pixels,count*sizeof *pixels);
+    if(!pixels) return 0;
+    target->pixels=pixels;target->capacity=count;target->pending=1;
   }
-  if(g_d3.depth_frame!=draw.frame || g_d3.depth_w!=draw.width || g_d3.depth_h!=draw.height){
-    memset(g_d3.depth,0,count*sizeof(*g_d3.depth));
-    g_d3.depth_frame=draw.frame; g_d3.depth_w=draw.width; g_d3.depth_h=draw.height;
+  if(g_d3.depth_frame<0){
+    target->clear_value=0;target->normalized=0;target->pending=1;
   }
+  if(target->pending){
+    if(target->clear_value==0) memset(target->pixels,0,count*sizeof *target->pixels);
+    else for(size_t index=0;index<count;index++) target->pixels[index]=target->clear_value;
+    target->pending=0;
+  }
+  g_d3.depth=target->pixels;g_d3.depth_cap=target->capacity;
+  g_d3.depth_w=draw.width;g_d3.depth_h=draw.height;g_d3.depth_frame=draw.frame;
+  g_d3.depth_normalized=target->normalized;
   return 1;
+}
+int gml_software3d_clear_depth(GmlRender *R,double depth){
+  GmlRenderCpuBackendDrawView draw;
+  if(!isfinite(depth) || !gml_render_cpu_backend_draw_view(R,&draw)) return 0;
+  GmlD3DepthTarget *target=d3_depth_target(R,&draw);
+  if(!target) return 0;
+  target->clear_value=(float)fmax(0,fmin(1,depth));
+  target->normalized=1;target->pending=1;
+  g_d3.depth=target->pixels;g_d3.depth_cap=target->capacity;
+  g_d3.depth_w=draw.width;g_d3.depth_h=draw.height;g_d3.depth_normalized=1;
+  g_d3.depth_frame=draw.frame;
+  return 1;
+}
+static double d3_normalized_perspective(const GmlD3State *state,double reciprocal){
+  double nearz=state->near_clip>1e-6?state->near_clip:.05;
+  double farz=state->far_clip>nearz?state->far_clip:32000;
+  return farz/(farz-nearz)-(nearz*farz/(farz-nearz))*reciprocal;
 }
 static int d3_texture_from_backend_view(const GmlRenderCpuBackendTextureView *view,
                                         GmlD3Texture *out){
@@ -363,7 +446,7 @@ static void d3_raster_triangle_impl(GmlRender *R, const GmlD3Vertex in[3], const
         riz[i]=in[i].r; giz[i]=in[i].g; biz[i]=in[i].b; aiz[i]=in[i].alpha;
       }
       sx[i]=in[i].x*draw.width/ow+pixel_offset; sy[i]=in[i].y*draw.height/oh+pixel_offset;
-      depth_value[i]=1000000.0-in[i].z;
+      depth_value[i]=d3->depth_normalized?.5+in[i].z/32000.0:1000000.0-in[i].z;
       view_distance[i]=fabs(in[i].z);
     } else {
       if(in[i].z<=1e-6) return;
@@ -373,7 +456,7 @@ static void d3_raster_triangle_impl(GmlRender *R, const GmlD3Vertex in[3], const
       }
       sx[i]=draw.width*0.5+in[i].x*focal_x*iz[i]+pixel_offset;
       sy[i]=draw.height*0.5-in[i].y*focal_y*iz[i]+pixel_offset;
-      depth_value[i]=iz[i];
+      depth_value[i]=d3->depth_normalized?d3_normalized_perspective(d3,iz[i]):iz[i];
       view_distance[i]=in[i].z;
     }
   }
@@ -438,7 +521,9 @@ static void d3_raster_triangle_impl(GmlRender *R, const GmlD3Vertex in[3], const
      * one another: text glyphs and quads are emitted as multiple triangles at one layer depth. */
     /* Compare in the depth buffer's representation. Interpolation can land
      * just below an equal stored float without being a farther fragment. */
-    if(d3->hidden && (float)ztest<d3->depth[di]) continue;
+    if(d3->depth_normalized && (!isfinite(ztest) || ztest<0 || ztest>1)) continue;
+    if(d3->hidden && (d3->depth_normalized?(float)ztest>d3->depth[di]:
+                                             (float)ztest<d3->depth[di])) continue;
     double sampled[4]={255,255,255,255};
     if(texture&&texture->kind){
       double u=(b0*uz[0]+b1*uz[1]+b2*uz[2])/invz;
@@ -1050,7 +1135,9 @@ static int d3_project_vertex(GmlRender *R,const GmlRenderCpuBackendDrawView *dra
     double pixel_offset=g_d3.classic?0.5:0.0;
     *screen_x=vertex->x*draw->width/width+pixel_offset;
     *screen_y=vertex->y*draw->height/height+pixel_offset;
-    *inverse_z=1; *depth=1000000.0-vertex->z; *distance=fabs(vertex->z);
+    *inverse_z=1;
+    *depth=g_d3.depth_normalized?.5+vertex->z/32000.0:1000000.0-vertex->z;
+    *distance=fabs(vertex->z);
     return 1;
   }
   double nearz=g_d3.near_clip>1e-6?g_d3.near_clip:.05;
@@ -1065,7 +1152,8 @@ static int d3_project_vertex(GmlRender *R,const GmlRenderCpuBackendDrawView *dra
   double pixel_offset=g_d3.classic?0.5:0.0;
   *screen_x=draw->width*.5+vertex->x*focal_x*(*inverse_z)+pixel_offset;
   *screen_y=draw->height*.5-vertex->y*focal_y*(*inverse_z)+pixel_offset;
-  *depth=*inverse_z; *distance=vertex->z;
+  *depth=g_d3.depth_normalized?d3_normalized_perspective(&g_d3,*inverse_z):*inverse_z;
+  *distance=vertex->z;
   return 1;
 }
 static void d3_raster_sample(GmlRender *R,const GmlRenderCpuBackendDrawView *draw,
@@ -1074,7 +1162,9 @@ static void d3_raster_sample(GmlRender *R,const GmlRenderCpuBackendDrawView *dra
                              const GmlD3Texture *texture){
   if(!R || !draw || x<0 || y<0 || x>=draw->width || y>=draw->height || alpha<=0) return;
   size_t index=(size_t)y*draw->width+x;
-  if(g_d3.hidden && (float)depth<g_d3.depth[index]) return;
+  if(g_d3.depth_normalized && (!isfinite(depth) || depth<0 || depth>1)) return;
+  if(g_d3.hidden && (g_d3.depth_normalized?(float)depth>g_d3.depth[index]:
+                                            (float)depth<g_d3.depth[index])) return;
   double sampled[4]={255,255,255,255};
   if(texture&&texture->kind) d3_sample(R,draw,texture,u,v,sampled);
   if(red<0) red=0; else if(red>255) red=255;
@@ -1117,7 +1207,7 @@ static int d3_clip_segment_plane(GmlD3Vertex *a,GmlD3Vertex *b,double plane,int 
 }
 static void d3_emit_point_impl(GmlRender *R,GmlD3Vertex world,const GmlD3Texture *texture){
   GmlRenderCpuBackendDrawView draw;
-  if(!gml_render_cpu_backend_prepare_draw_view(R,&draw)) return;
+  if(!d3_depth_prepare(R) || !gml_render_cpu_backend_prepare_draw_view(R,&draw)) return;
   if(g_d3.lighting){ double factor[3]; if(d3_vertex_light_factor(R,&world,factor)) d3_apply_light_factor(&world,factor); }
   GmlD3Vertex camera=d3_vertex_camera(R,world);
   double x,y,inverse_z,depth,distance;
@@ -1136,7 +1226,7 @@ static void d3_emit_point(GmlRender *R,GmlD3Vertex world,const GmlD3Texture *tex
 }
 static void d3_emit_line_impl(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,const GmlD3Texture *texture){
   GmlRenderCpuBackendDrawView draw;
-  if(!gml_render_cpu_backend_prepare_draw_view(R,&draw)) return;
+  if(!d3_depth_prepare(R) || !gml_render_cpu_backend_prepare_draw_view(R,&draw)) return;
   if(g_d3.lighting){
     double factor[3]; int have=d3_vertex_light_factor(R,&a,factor);
     if(have) d3_apply_light_factor(&a,factor);
@@ -1822,9 +1912,11 @@ static void vertex_submit_buffer(GmlRender *R,int id,int primitive,int texture_h
   if(temporary){
     float *depth=g_d3.depth; size_t depth_cap=g_d3.depth_cap;
     int depth_w=g_d3.depth_w,depth_h=g_d3.depth_h; long depth_frame=g_d3.depth_frame;
+    int depth_normalized=g_d3.depth_normalized;
     g_d3=saved;
     g_d3.depth=depth; g_d3.depth_cap=depth_cap;
     g_d3.depth_w=depth_w; g_d3.depth_h=depth_h; g_d3.depth_frame=depth_frame;
+    g_d3.depth_normalized=depth_normalized;
   }
 }
 
@@ -2004,9 +2096,11 @@ static void d3_end_2d_projection(GmlRender *R,const GmlD3State *saved,int tempor
   if(temporary){
     float *depth=g_d3.depth; size_t depth_cap=g_d3.depth_cap;
     int depth_w=g_d3.depth_w,depth_h=g_d3.depth_h; long depth_frame=g_d3.depth_frame;
+    int depth_normalized=g_d3.depth_normalized;
     g_d3=*saved;
     g_d3.depth=depth; g_d3.depth_cap=depth_cap;
     g_d3.depth_w=depth_w; g_d3.depth_h=depth_h; g_d3.depth_frame=depth_frame;
+    g_d3.depth_normalized=depth_normalized;
   }
 }
 static int immediate_batch_scene(GmlRender *R){

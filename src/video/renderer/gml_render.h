@@ -813,6 +813,7 @@ int gml_render_recover_empty_screen(GmlRender *r,uint32_t *pixels,int width,int 
                                      double x,double y,double w,double h,int zero_camera);
 void gml_render_cancel_pending_fill(GmlRender *r);
 void gml_render_clear(GmlRender *r,uint32_t color,double alpha);
+void gml_render_clear_depth(GmlRender *render,double depth);
 void gml_render_cancel_pending_underlay(GmlRender *r);
 void gml_render_prepare_draw(GmlRender *r);
 void gml_render_prepare_opaque_rect(GmlRender *r, int x0, int y0, int x1, int y1);

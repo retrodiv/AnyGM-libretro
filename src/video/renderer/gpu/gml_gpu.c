@@ -254,6 +254,13 @@ static int scene_has_rgb(void *context,GmlRenderImageRef image,int *has_rgb){
 static int scene_observe_on_demand(void *context){
   return gml_gpu_context_is_current((GmlGpu*)context);
 }
+static int scene_clear_depth(void *context,const GmlRenderTargetRef *target,double depth){
+  GmlGpu *gpu=context;
+  if(!context_accessible(gpu) ||
+     !gml_gpu_opengl_scene_clear_depth(gpu->backend,target,depth)) return 0;
+  gpu->counters.scene_operations[GML_RENDER_OP_CLEAR_DEPTH]++;
+  return 1;
+}
 
 void gml_gpu_device_services(GmlGpu *gpu,GmlRenderDeviceServices *out_services){
   if(!out_services) return;
@@ -271,6 +278,7 @@ void gml_gpu_device_services(GmlGpu *gpu,GmlRenderDeviceServices *out_services){
   out_services->content_program_failed=scene_content_program_failed;
   out_services->has_rgb=scene_has_rgb;
   out_services->observe_on_demand=scene_observe_on_demand;
+  out_services->clear_depth=scene_clear_depth;
 }
 
 int gml_gpu_execute_plan(GmlGpu *gpu,GmlRenderPlan *plan){

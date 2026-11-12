@@ -635,6 +635,7 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(546, DRAW_CIRCLE_COLOR, "draw_circle_color", DRAW, DRAW, NEVER) \
   ENTRY(547, DRAW_CIRCLE_COLOUR, "draw_circle_colour", DRAW, DRAW, NEVER) \
   ENTRY(548, DRAW_CLEAR, "draw_clear", DRAW, DRAW, ALWAYS) \
+  ENTRY(1913, DRAW_CLEAR_DEPTH, "draw_clear_depth", DRAW, DRAW, ALWAYS) \
   ENTRY(549, DRAW_CLEAR_ALPHA, "draw_clear_alpha", DRAW, DRAW, ALWAYS) \
   ENTRY(550, DRAW_ELLIPSE, "draw_ellipse", DRAW, DRAW, NEVER) \
   ENTRY(551, DRAW_ELLIPSE_COLOR, "draw_ellipse_color", DRAW, DRAW, NEVER) \
@@ -2027,7 +2028,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1913
+  GML_BUILTIN_ID_LIMIT = 1914
 } GmlBuiltinId;
 
 #endif

@@ -206,7 +206,7 @@ void gml_software3d_destroy(GmlSoftware3D *graphics){
   }
   for(int i=0;i<GML_D3_MODEL_MAX;i++) gml_software3d_model_clear_data(&graphics->d3_model[i]);
   free(graphics->vertex_blend_scratch);
-  free(graphics->d3.depth);
+  gml_software3d_depth_targets_clear(graphics);
   free(graphics);
 }
 void gml_software3d_models_clear_all(GmlSoftware3D *graphics){
@@ -234,9 +234,9 @@ GmlSoftware3D *gml_software3d_create(void){
 
 void gml_software3d_reset(GmlSoftware3D *graphics){
   if(!graphics) return;
-  float *depth=graphics->d3.depth; size_t cap=graphics->d3.depth_cap;
+  gml_software3d_depth_targets_clear(graphics);
   memset(&graphics->d3,0,sizeof(graphics->d3));
-  graphics->d3.depth=depth; graphics->d3.depth_cap=cap; graphics->d3.depth_frame=-1;
+  graphics->d3.depth_frame=-1;
   graphics->d3.shade_r=graphics->d3.shade_g=graphics->d3.shade_b=1;
   graphics->d3.zwrite=1; graphics->d3.smooth=1; graphics->d3.perspective=1;
   graphics->d3.fov=41.2; graphics->d3.near_clip=1; graphics->d3.far_clip=32000;

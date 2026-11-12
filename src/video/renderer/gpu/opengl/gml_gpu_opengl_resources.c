@@ -203,6 +203,7 @@ static int scene_same_version(GmlRenderImageRef a,GmlRenderImageRef b){
 }
 
 static void scene_delete_image(GmlGpuBackend *backend,GlSceneImage *image){
+  if(image->depth_renderbuffer) backend->gl.DeleteRenderbuffers(1,&image->depth_renderbuffer);
   if(image->content_source_framebuffer)
     backend->gl.DeleteFramebuffers(1,&image->content_source_framebuffer);
   if(image->content_source_texture) backend->gl.DeleteTextures(1,&image->content_source_texture);
@@ -844,6 +845,12 @@ static int scene_upload_image(GmlGpuBackend *backend,const GmlRenderImageUpload 
     transfer->region.width==transfer->storage_width &&
     transfer->region.height==transfer->storage_height;
   if(first || resize){
+    if(slot->depth_renderbuffer){
+      backend->gl.BindFramebuffer(GL_FRAMEBUFFER,slot->framebuffer);
+      backend->gl.FramebufferRenderbuffer(GL_FRAMEBUFFER,GL_DEPTH_ATTACHMENT,GL_RENDERBUFFER,0);
+      backend->gl.DeleteRenderbuffers(1,&slot->depth_renderbuffer);
+      slot->depth_renderbuffer=0;
+    }
     slot->framebuffer_complete=0;
     backend->gl.TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,(GLsizei)transfer->storage_width,
                            (GLsizei)transfer->storage_height,0,GL_RGBA,GL_UNSIGNED_BYTE,
@@ -1017,6 +1024,12 @@ GlSceneImage *gml_gpu_opengl_scene_target(GmlGpuBackend *backend,const GmlRender
   backend->gl.ActiveTexture(GL_TEXTURE0);
   backend->gl.BindTexture(GL_TEXTURE_2D,slot->texture);
   if(first || resize){
+    if(slot->depth_renderbuffer){
+      backend->gl.BindFramebuffer(GL_FRAMEBUFFER,slot->framebuffer);
+      backend->gl.FramebufferRenderbuffer(GL_FRAMEBUFFER,GL_DEPTH_ATTACHMENT,GL_RENDERBUFFER,0);
+      backend->gl.DeleteRenderbuffers(1,&slot->depth_renderbuffer);
+      slot->depth_renderbuffer=0;
+    }
     slot->framebuffer_complete=0;
     backend->gl.TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,(GLsizei)target->width,
                            (GLsizei)target->height,0,GL_RGBA,GL_UNSIGNED_BYTE,NULL);

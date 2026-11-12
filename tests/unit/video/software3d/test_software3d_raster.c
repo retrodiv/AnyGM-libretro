@@ -3,6 +3,176 @@
  */
 #include "software3d_test_fixture.h"
 
+static void depth_clear_sample(GmlRender *render,int primitive,uint32_t colour){
+  if(primitive==0) gml_software3d_draw_point_2d(render,4,4,colour,1);
+  else if(primitive==1)
+    gml_software3d_draw_line_2d(render,4,4,11,4,colour,colour,1,1);
+  else{
+    const double points[3][2]={{2,2},{12,2},{2,12}};
+    const uint32_t colours[3]={colour,colour,colour};
+    gml_software3d_draw_triangle_2d(render,points,colours,1,0);
+  }
+}
+
+int depth_clear_fixture(void){
+  enum { WIDTH=16,HEIGHT=16,PIXEL=4*WIDTH+4 };
+  uint32_t pixels[WIDTH*HEIGHT],before[WIDTH*HEIGHT];
+  GmlRender render={0};GmlVM vm={0};int ok=1;
+  vm.render=&render;gml_vm_software3d_reset(&vm);
+  render.alpha=1;render.color_write_mask=15;render.alphablend=1;
+  render.next_surface_id=1;
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  call_numbers(&vm,"d3d_start",NULL,0);
+  call_numbers(&vm,"d3d_set_projection_ortho",(double[]){0,0,WIDTH,HEIGHT,0},5);
+  int clear_id=gml_builtin_fast_id(&vm,"draw_clear_depth");
+  ok=clear_id>0 && ok;
+  for(int cached=0;cached<2 && clear_id>0;cached++){
+    GmlVal argument=vreal(.4);
+    GmlVal result=cached?gml_builtin_call_fast_id(&vm,clear_id,"draw_clear_depth",&argument,1):
+                        call_values(&vm,"draw_clear_depth",&argument,1);
+    memset(pixels,0,sizeof pixels);gml_d3_set_draw_depth(&render,0);
+    depth_clear_sample(&render,0,255);
+    ok=result.t==V_UNDEF && pixels[PIXEL]==0 && ok;
+    argument=vreal(.75);
+    result=cached?gml_builtin_call_fast_id(&vm,clear_id,"draw_clear_depth",&argument,1):
+                  call_values(&vm,"draw_clear_depth",&argument,1);
+    depth_clear_sample(&render,0,255);
+    ok=result.t==V_UNDEF && (pixels[PIXEL]&0xFFFFFFu)==0xFF0000u && ok;
+    ok=gml_software3d_clear_depth(&render,.25) && ok;
+    memset(pixels,0,sizeof pixels);
+    result=cached?gml_builtin_call_fast_id(&vm,clear_id,"draw_clear_depth",NULL,0):
+                  call_values(&vm,"draw_clear_depth",NULL,0);
+    depth_clear_sample(&render,0,255);
+    ok=result.t==V_UNDEF && (pixels[PIXEL]&0xFFFFFFu)==0xFF0000u && ok;
+  }
+  for(int primitive=0;primitive<3;primitive++){
+    memset(pixels,0,sizeof pixels);
+    memcpy(before,pixels,sizeof pixels);
+    ok=gml_software3d_clear_depth(&render,.4) && ok;
+    ok=!memcmp(before,pixels,sizeof pixels) && ok;
+    gml_d3_set_draw_depth(&render,0);
+    depth_clear_sample(&render,primitive,255);
+    ok=pixels[PIXEL]==0 && ok;
+    gml_d3_set_draw_depth(&render,-6400);
+    depth_clear_sample(&render,primitive,255);
+    ok=(pixels[PIXEL]&0xFFFFFFu)==0xFF0000u && ok;
+    gml_d3_set_draw_depth(&render,-4800);
+    depth_clear_sample(&render,primitive,0x00FF00u);
+    ok=(pixels[PIXEL]&0xFFFFFFu)==0xFF0000u && ok;
+    ok=gml_software3d_clear_depth(&render,1) && ok;
+    depth_clear_sample(&render,primitive,0x00FF00u);
+    ok=(pixels[PIXEL]&0xFFFFFFu)==0x00FF00u && ok;
+    if(!ok) fprintf(stderr,"depth clear primitive %d pixel=%08x\n",primitive,pixels[PIXEL]);
+  }
+  /* Separate root allocations can share the screen selector in one frame. */
+  uint32_t sibling[WIDTH*HEIGHT]={0};
+  ok=gml_software3d_clear_depth(&render,.75) && ok;
+  render.fb=render.base_fb=sibling;
+  ok=gml_software3d_clear_depth(&render,.25) && ok;
+  render.fb=render.base_fb=pixels;gml_d3_set_draw_depth(&render,0);
+  depth_clear_sample(&render,0,255);
+  ok=(pixels[PIXEL]&0xFFFFFFu)==0xFF0000u && ok;
+  render.fb=render.base_fb=sibling;
+  depth_clear_sample(&render,0,255);
+  ok=sibling[PIXEL]==0 && ok;
+  render.fb=render.base_fb=pixels;
+  /* A clear ignores write/test toggles; they still govern subsequent fragments. */
+  call_numbers(&vm,"d3d_set_hidden",software3d_disable,1);
+  call_numbers(&vm,"d3d_set_zwriteenable",software3d_disable,1);
+  ok=gml_software3d_clear_depth(&render,.25) && ok;
+  call_numbers(&vm,"d3d_set_hidden",software3d_enable,1);
+  memset(pixels,0,sizeof pixels);gml_d3_set_draw_depth(&render,0);
+  depth_clear_sample(&render,0,255);
+  ok=pixels[PIXEL]==0 && ok;
+  if(!ok) fprintf(stderr,"depth clear disabled-mask phase pixel=%08x\n",pixels[PIXEL]);
+  call_numbers(&vm,"d3d_set_zwriteenable",software3d_enable,1);
+
+  int surface=gml_surface_create(&render,WIDTH,HEIGHT);
+  ok=surface>0 && gml_surface_set_target(&render,surface) && ok;
+  ok=gml_software3d_clear_depth(&render,.25) && ok;
+  gml_surface_reset_target(&render);
+  ok=gml_software3d_clear_depth(&render,.75) && ok;
+  depth_clear_sample(&render,0,255);
+  ok=(pixels[PIXEL]&0xFFFFFFu)==0xFF0000u && ok;
+  ok=gml_surface_set_target(&render,surface) && ok;
+  depth_clear_sample(&render,0,255);
+  uint32_t child=0;ok=gml_render_target_pixel(&render,4,4,&child) && !child && ok;
+  ok=gml_software3d_clear_depth(&render,.75) && ok;
+  depth_clear_sample(&render,0,0x00FF00u);
+  ok=gml_render_target_pixel(&render,4,4,&child) && (child&0xFFFFFFu)==0x00FF00u && ok;
+  gml_surface_reset_target(&render);
+  gml_d3_set_draw_depth(&render,3200);
+  depth_clear_sample(&render,0,0x00FF00u);
+  ok=(pixels[PIXEL]&0xFFFFFFu)==0xFF0000u && ok;
+  ok=gml_surface_set_target(&render,surface) && ok;
+  ok=gml_software3d_clear_depth(&render,.25) && ok;
+  gml_surface_resize(&render,surface,WIDTH+4,HEIGHT);
+  call_numbers(&vm,"d3d_set_projection_ortho",(double[]){0,0,WIDTH+4,HEIGHT,0},5);
+  memset(render.fb,0,(size_t)render.fbw*render.fbh*sizeof *render.fb);
+  gml_d3_set_draw_depth(&render,0);depth_clear_sample(&render,0,255);
+  ok=gml_render_target_pixel(&render,4,4,&child) && (child&0xFFFFFFu)==0xFF0000u && ok;
+  ok=gml_software3d_clear_depth(&render,.25) && ok;
+  gml_surface_reset_target(&render);
+  ok=gml_software3d_clear_depth(&render,.25) && ok;
+  ok=gml_surface_set_target(&render,surface) && ok;
+  ok=gml_software3d_clear_depth(&render,.25) && ok;
+  gml_surface_reset_target(&render);
+  gml_surface_free(&render,surface);
+  memset(pixels,0,sizeof pixels);gml_d3_set_draw_depth(&render,0);
+  depth_clear_sample(&render,0,255);
+  ok=pixels[PIXEL]==0 && ok;
+  render.next_surface_id=surface;
+  int replacement=gml_surface_create(&render,WIDTH,HEIGHT);
+  ok=replacement==surface && gml_surface_set_target(&render,replacement) && ok;
+  call_numbers(&vm,"d3d_set_projection_ortho",(double[]){0,0,WIDTH,HEIGHT,0},5);
+  depth_clear_sample(&render,0,255);
+  ok=gml_render_target_pixel(&render,4,4,&child) && (child&0xFFFFFFu)==0xFF0000u && ok;
+  gml_surface_reset_target(&render);gml_surface_free(&render,replacement);
+  if(!ok) fprintf(stderr,"depth clear target phase parent=%08x child=%08x surface=%d\n",
+                  pixels[PIXEL],child,surface);
+
+  /* Invalid inputs preserve the previous clear; finite endpoints are clamped. */
+  memset(pixels,0,sizeof pixels);ok=gml_software3d_clear_depth(&render,-1) && ok;
+  ok=!gml_software3d_clear_depth(&render,NAN) &&
+     !gml_software3d_clear_depth(&render,INFINITY) && ok;
+  depth_clear_sample(&render,0,255);ok=pixels[PIXEL]==0 && ok;
+  ok=gml_software3d_clear_depth(&render,2) && ok;
+  depth_clear_sample(&render,0,255);
+  ok=(pixels[PIXEL]&0xFFFFFFu)==0xFF0000u && ok;
+  /* Depth cache lifetime follows the pre-existing frame and state boundaries. */
+  memset(pixels,0,sizeof pixels);ok=gml_software3d_clear_depth(&render,.25) && ok;
+  gml_render_set_frame(&render,render.frame+1);
+  depth_clear_sample(&render,0,255);
+  ok=(pixels[PIXEL]&0xFFFFFFu)==0xFF0000u && ok;
+  int flags[GML_SOFTWARE3D_STATE_FLAG_COUNT],after_flags[GML_SOFTWARE3D_STATE_FLAG_COUNT];
+  double values[GML_SOFTWARE3D_STATE_VALUE_COUNT],after_values[GML_SOFTWARE3D_STATE_VALUE_COUNT];
+  uint32_t colours[GML_SOFTWARE3D_STATE_COLOR_COUNT],after_colours[GML_SOFTWARE3D_STATE_COLOR_COUNT];
+  GmlSoftware3D *graphics=gml_render_software3d(&render);
+  gml_software3d_state_get(graphics,flags,values,colours);
+  ok=gml_software3d_clear_depth(&render,.25) && ok;
+  gml_software3d_state_get(graphics,after_flags,after_values,after_colours);
+  ok=!memcmp(flags,after_flags,sizeof flags) && !memcmp(values,after_values,sizeof values) &&
+     !memcmp(colours,after_colours,sizeof colours) && ok;
+  gml_software3d_state_set(graphics,flags,values,colours);
+  memset(pixels,0,sizeof pixels);depth_clear_sample(&render,0,255);
+  ok=(pixels[PIXEL]&0xFFFFFFu)==0xFF0000u && ok;
+  if(!ok) fprintf(stderr,"depth clear finite-input or transient lifetime phase failed\n");
+
+  /* Near/far projection gives 0.55 at z=2 and about 0.37 at z=1.5. */
+  call_numbers(&vm,"d3d_set_projection_ext",(double[]){0,0,0,0,0,1,0,1,0,90,1,1,11},13);
+  memset(pixels,0,sizeof pixels);ok=gml_software3d_clear_depth(&render,.5) && ok;
+  gml_d3_set_draw_depth(&render,2);
+  gml_software3d_draw_point_2d(&render,0,0,255,1);
+  ok=pixels[8*WIDTH+8]==0 && ok;
+  gml_d3_set_draw_depth(&render,1.5);
+  gml_software3d_draw_point_2d(&render,0,0,255,1);
+  ok=(pixels[8*WIDTH+8]&0xFFFFFFu)==0xFF0000u && ok;
+  if(!ok) fprintf(stderr,"depth clear perspective phase pixel=%08x\n",pixels[8*WIDTH+8]);
+  gml_vm_free(&vm);free(render.rotated_batch);
+  if(!ok) fprintf(stderr,"normalized depth clear, unchanged colour or target isolation failed\n");
+  return ok;
+}
+
 int software3d_dispatch_fixture(void){
   enum { WIDTH=64,HEIGHT=48,PARTICLE_VARIANTS=14 };
   uint32_t pixels[WIDTH*HEIGHT],reference[WIDTH*HEIGHT];

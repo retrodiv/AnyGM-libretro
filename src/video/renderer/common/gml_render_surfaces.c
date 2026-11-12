@@ -1316,6 +1316,33 @@ int gml_render_clear_target_prepare(GmlRender *r){
   return 1;
 }
 
+void gml_render_clear_depth(GmlRender *r,double depth){
+  if(!r || !isfinite(depth) || !gml_render_application_scene_flush(r) ||
+     !gml_software3d_clear_depth(r,depth)) return;
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  GmlRenderResource *resource=NULL;
+  if(device && device->clear_depth && device->observe_on_demand &&
+     device->observe_on_demand(device->context)){
+    resource=gml_render_scene_target_resource_ensure(r);
+    if(!resource && gml_render_clear_target_prepare(r))
+      resource=gml_render_scene_target_resource_ensure(r);
+  }
+  if(resource){
+    GmlRenderTargetRef target={gml_render_resource_image_ref(resource),1u,
+      (uint32_t)r->fbw,(uint32_t)r->fbh,GML_RENDER_PIXEL_ARGB8888,
+      {0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
+    if(device->clear_depth(device->context,&target,depth)){
+      GmlRenderDrawOp operation={.opcode=GML_RENDER_OP_CLEAR_DEPTH,
+        .scene_family=GML_RENDER_SCENE_PRIMITIVE,.target=target};
+      GmlRenderDrawBatch batch={&operation,1,NULL,0};
+      gml_render_dispatch_batch_record(r,&batch,GML_RENDER_RESOURCE_EXEC_DEVICE);
+      return;
+    }
+  }
+  gml_render_dispatch_cpu_record(r,GML_RENDER_SCENE_PRIMITIVE,
+                                  gml_render_dispatch_cpu_reason(r),1);
+}
+
 int gml_render_multiview_copy(GmlRender *r,const uint32_t *pixels,int sw,int sh,
   uint32_t *destination,int dw,int dh,int x,int y,int width,int height,int seed){
   GmlRenderResourceSource source={0};
@@ -4529,6 +4556,7 @@ void gml_surface_free(GmlRender *r, int id){
   }
   gml_render_surface_resource_dispose(r,id);
   free(r->surface[i].px); free(r->surface[i].rle); memset(&r->surface[i],0,sizeof(r->surface[i]));
+  gml_software3d_depth_target_forget(r->software3d,id);
 }
 /* Stage a new incarnation before replacing any borrowed allocation. Resize is a raw RGBA
  * copy, not a draw with the caller's blend, colour, alpha test or camera state. The old
@@ -4640,6 +4668,7 @@ static int application_surface_resize(GmlRender *r,int w,int h){
     r->app_surface_resource_height=h;
   }
   free(owned);
+  gml_software3d_depth_target_forget(r->software3d,0);
   return 1;
 }
 int gml_render_application_surface_ensure_owned(GmlRender *r,int w,int h){
@@ -4693,6 +4722,7 @@ void gml_surface_resize(GmlRender *r, int id, int w, int h){
   }
   gml_render_surface_resource_dispose(r,id);
   free(r->surface[i].px); r->surface[i].px=px; r->surface[i].w=w; r->surface[i].h=h;
+  gml_software3d_depth_target_forget(r->software3d,id);
   r->surface[i].resource=replacement;
   r->surface[i].dirty=1;
   r->surface[i].opaque_known=0;

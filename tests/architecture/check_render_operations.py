@@ -21,6 +21,7 @@ GPU_TABLE = RENDERER / "gpu/gml_render_gpu_operations.def"
 BACKEND_MAP = ROOT / "docs/RENDERER_BACKENDS.md"
 FAMILIES = {"TEXTURE", "PRIMITIVE", "SURFACE", "EFFECT", "PRESENTATION", "SHADER", "SOFTWARE3D"}
 REQUIRED_RULES = {
+    "R03-DEPTH-CLEAR",
     "R03-SPR-POSITIONED-FUNCTION",
     "R03-SPR-FILTERED-UNIT-COPY",
     "R03-PRIM-ROUNDRECT-EXT-FUNCTION",
@@ -222,6 +223,7 @@ EXECUTOR_ROW = re.compile(
 # Stop traversal here: following resource replay would make CPU kernels appear
 # GPU-capable merely because the resource owner also implements device submission.
 DISPATCH_PORTS = {
+    "gml_render_clear_depth",
     "gml_render_cpu_backend_resident_surface_stretched",
     "gml_render_cpu_backend_native_triangles",
     "gml_render_cpu_backend_native_textured_triangles",
@@ -251,6 +253,7 @@ DISPATCH_CPU_BOUNDARIES = {
     "surface_pixels", "surface_pixels_observe", "surface_pixels_access",
 }
 DISPATCH_ADDITIONAL = {
+    "gml_render_clear_depth",
     "gml_render_cpu_backend_resident_surface_stretched",
     "gml_render_cpu_backend_native_triangles",
     "gml_render_cpu_backend_native_textured_triangles",
@@ -293,6 +296,7 @@ DISPATCH_HELPERS = {
 }
 DISPATCH_DEFERRED = {"render_present_first_generation", "render_present_content_shader"}
 DISPATCH_DEVICE_EXTRA = {
+    "gml_gpu_opengl_scene_clear_depth",
     "view_copy_quad_valid",
     "gml_gpu_opengl_scene_submit", "gml_gpu_opengl_execute_shader_draw",
     "gml_gpu_opengl_scene_shader_draw", "gml_gpu_opengl_execute",
@@ -935,6 +939,10 @@ gml_draw_multiline(void){
             "void gml_draw_gpu_probe(void){ gml_render_application_scene_enqueue(); }",
         prefix + "gml_draw_deferred_probe":
             "void gml_draw_deferred_probe(void){ gml_render_resource_submit_deferred(); }",
+        prefix + "gml_draw_depth_probe":
+            "void gml_draw_depth_probe(void){ gml_render_clear_depth(); }",
+        prefix + "gml_draw_cpu_depth_probe":
+            "void gml_draw_cpu_depth_probe(void){ gml_software3d_clear_depth(); }",
         prefix + "gml_draw_vertex_probe":
             "void gml_draw_vertex_probe(void){ gml_render_cpu_backend_vertex_spans(); }",
         prefix + "gml_draw_textured_vertex_probe":
@@ -950,6 +958,10 @@ gml_draw_multiline(void){
         raise ValueError("D8 CPU preparation falsely credited an earlier GPU prefix")
     if inventory[prefix + "gml_draw_deferred_probe"][0] != "gml_render_resource_submit_deferred":
         raise ValueError("D8 deferred resource submission lost its typed device boundary")
+    if inventory[prefix + "gml_draw_depth_probe"][0] != "gml_render_clear_depth":
+        raise ValueError("D8 depth-only submission lost its typed device boundary")
+    if inventory[prefix + "gml_draw_cpu_depth_probe"][0] != "CPU":
+        raise ValueError("D8 CPU depth cache falsely credited a device clear")
     if inventory[prefix + "gml_draw_vertex_probe"][0] != "gml_render_cpu_backend_vertex_spans" or \
             inventory[prefix + "gml_draw_textured_vertex_probe"][0] != "gml_render_cpu_backend_textured_vertex_spans" or \
             inventory[prefix + "gml_draw_cpu_vertex_probe"][0] != "CPU":
