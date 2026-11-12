@@ -26,6 +26,25 @@ static inline float gml_vm_read_f32_le(const uint8_t *data, uint32_t offset){
   memcpy(&result,&value,4);
   return result;
 }
+/* Read hints only: traversal, ownership and canonical order remain with the caller. */
+static inline void gml_vm_prefetch_read(const void *address){
+#if defined(__GNUC__) || defined(__clang__)
+  if(address) __builtin_prefetch(address,0,2);
+#else
+  (void)address;
+#endif
+}
+static inline void gml_vm_prefetch_variable_map(const GmlVarMap *map){
+#if defined(__GNUC__) || defined(__clang__)
+  if(!map || !map->slots || map->cap<=0) return;
+  int slots=map->cap<32?map->cap:32;
+  size_t bytes=(size_t)slots*sizeof(*map->slots);
+  for(size_t offset=0;offset<bytes;offset+=64u)
+    __builtin_prefetch((const unsigned char *)map->slots+offset,0,2);
+#else
+  (void)map;
+#endif
+}
 double gml_vm_classic_round_even(double value);
 double gml_vm_value_as_number(GmlVal value);
 int gml_vm_value_is_true(GmlVal value);

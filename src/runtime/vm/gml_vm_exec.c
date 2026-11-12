@@ -1616,7 +1616,10 @@ void gml_struct_gc(GmlVM *vm){
   /* A fresh array carries epoch 0, so a pass never claims one it has not reached. Skipping 0 on
    * wrap keeps that true for as long as the process runs. */
   if(++vm->gc_epoch==0) vm->gc_epoch=1;
-  for(int i=0;i<vm->n_structs;i++) if(vm->structs[i]) vm->structs[i]->marked=0;
+  for(int i=0;i<vm->n_structs;i++){
+    if(vm->n_structs-i>16) gml_vm_prefetch_read(vm->structs[i+16]);
+    if(vm->structs[i]) vm->structs[i]->marked=0;
+  }
   GmlInstance **wl=NULL; int wn=0, wcap=0;
   /* roots: globals, function statics, every instance (active AND deactivated — the latter can be
    * reactivated), the argument register, and all GmlVal-bearing ds containers. */
@@ -1640,11 +1643,17 @@ void gml_struct_gc(GmlVM *vm){
                                  gc_scan_builtin_value,
                                  &builtin_roots);
   /* transitive: a live struct's own fields keep other structs/arrays alive */
-  while(wn>0){ GmlInstance *s=wl[--wn]; gc_scan_vm(vm,&s->vars,&wl,&wn,&wcap); }
+  while(wn>0){
+    if(wn>16) gml_vm_prefetch_read(&wl[wn-17]->vars);
+    if(wn>8) gml_vm_prefetch_variable_map(&wl[wn-9]->vars);
+    GmlInstance *s=wl[--wn]; gc_scan_vm(vm,&s->vars,&wl,&wn,&wcap);
+  }
   if(vm->gc_incomplete){ free(wl); return; }
   /* sweep: free the unmarked, recycle their slots. gml_varmap_free_ex(,1) skips escaped (aliased) arrays,
    * exactly like instance teardown, so a shared GmlArr is never double-freed. */
-  for(int i=0;i<vm->n_structs;i++){ GmlInstance *s=vm->structs[i];
+  for(int i=0;i<vm->n_structs;i++){
+    if(vm->n_structs-i>16) gml_vm_prefetch_read(vm->structs[i+16]);
+    GmlInstance *s=vm->structs[i];
     if(s && !s->marked){
       gml_varmap_free_ex(&s->vars,1); free(s); vm->structs[i]=NULL;
       gml_vm_struct_free_slot_push(vm,i);

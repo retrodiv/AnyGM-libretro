@@ -2383,6 +2383,14 @@ static void sw_vm(StateW *s, GmlVM *vm){
   for(int i=0;i<vm->inst_count;i++) sw_instance(s,&vm->inst[i]);
   sw_i32(s,vm->n_structs);
   for(int i=0;i<vm->n_structs;i++){
+    if(vm->n_structs-i>16){
+      GmlInstance *next=vm->structs[i+16];
+      if(next) gml_vm_prefetch_read(&next->vars);
+    }
+    if(vm->n_structs-i>8){
+      GmlInstance *next=vm->structs[i+8];
+      if(next) gml_vm_prefetch_variable_map(&next->vars);
+    }
     unsigned generation=vm->struct_gen?(vm->struct_gen[i]&0x7Fu):0u;
     sw_u8(s,(uint8_t)(generation|(vm->structs[i]?0x80u:0u)));
     if(vm->structs[i]) sw_struct(s,vm->structs[i],state_struct_id(vm,i));
