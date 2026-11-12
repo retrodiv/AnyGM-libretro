@@ -585,7 +585,7 @@ GmlVal gml_builtin_try_platform(GmlVM *vm, const char *nm, GmlVal *a, int n){
         anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[gml] unsupported execute_string: %s\n",source);
     }
     return vreal(0); }
-  if(!strcmp(nm,"show_message")||!strcmp(nm,"show_message_async")||!strcmp(nm,"show_question")||!strcmp(nm,"action_message")||
+  if(!strcmp(nm,"show_message")||!strcmp(nm,"show_message_async")||!strcmp(nm,"show_question")||!strcmp(nm,"action_if_question")||!strcmp(nm,"action_message")||
      !strcmp(nm,"wd_message_simple")||
      !strcmp(nm,"message_button")||!strcmp(nm,"message_background")||
      !strcmp(nm,"message_text_font")||!strcmp(nm,"message_button_font")||

@@ -1537,6 +1537,28 @@ static int instance_id_view_contract(void){
   return ok;
 }
 
+static int legacy_question_contract(GmlVM *vm,LogFixture *logs){
+  int ok=1,canonical=gml_builtin_fast_id(vm,"show_question");
+  ok &= gml_builtin_fast_id(vm,"action_if_question")==canonical && canonical>0;
+  uint32_t rng[16],seed=vm->rng_state,classic=vm->rng_classic_state;
+  memcpy(rng,vm->rng_well,sizeof rng);int rng_index=vm->rng_index;
+  int relative=vm->action_relative,wait=vm->wait_requested;
+  GmlVal questions[]={vstr(""),vstr("neutral question")};
+  for(int cached=0;cached<2;cached++) for(int i=0;i<2;i++){
+    GmlVal expected=gml_builtin_call(vm,"show_question",&questions[i],1);
+    int before=logs->count;
+    GmlVal actual=cached?call_fast(vm,"action_if_question",&questions[i],1,&ok)
+                        :gml_builtin_call(vm,"action_if_question",&questions[i],1);
+    ok=expect_real("legacy question uses the canonical unavailable answer",actual,expected.d) && ok;
+    ok=actual.t==expected.t && logs->count==before && ok;
+  }
+  ok=!memcmp(rng,vm->rng_well,sizeof rng) && vm->rng_index==rng_index &&
+     vm->rng_state==seed && vm->rng_classic_state==classic &&
+     vm->action_relative==relative && vm->wait_requested==wait && ok;
+  if(ok) puts("legacy question: named/cached canonical answer and unchanged control state passed");
+  return ok;
+}
+
 static int unavailable_steam_contract(GmlVM *vm,LogFixture *logs){
   const char *names[]={"steam_file_exists","steam_file_read","steam_file_write",
                        "steam_get_persona_name","steam_stats_ready"};
@@ -1681,6 +1703,7 @@ int main(int argc,char **argv){
   }
   int ok=guid_only ? gamepad_guid_capability_contract(&vm) :
          canonical_registry_resolution(&vm) &&
+         legacy_question_contract(&vm,&log_fixture) &&
          unavailable_steam_contract(&vm,&log_fixture) &&
          internal_value_helpers_contract() &&
          instance_id_view_contract() &&

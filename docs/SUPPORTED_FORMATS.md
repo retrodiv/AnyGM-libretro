@@ -367,6 +367,10 @@ not create local save files or completion events. Savestates retain
 their logical paths and dynamically computed SHA-256 identities so a closed handle can be recreated
 without embedding an entire soundtrack or accepting changed bytes.
 
+
+Legacy `action_if_question` calls use the same portable dialog policy as `show_question`:
+the native dialog is unavailable and the result is false.
+
 ## Source projects and packages
 
 The content layer can normalize supported project manifests, project archives,
