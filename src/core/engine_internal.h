@@ -305,6 +305,9 @@ struct AnygmEngine {
    * scene dependencies before the next observation without transferring pixels to the CPU. */
   int state_gpu_frame_capture;
   size_t state_vm_size_hint;
+  /* Last complete write in this engine, used only to try allocating a rollback snapshot.
+   * A missing or stale bound falls back to the exact measuring traversal. Not serialized. */
+  size_t state_written_size_hint;
   /* Set only while a save is being retried without its completed frame, because the buffer the
    * host offered cannot hold one. Never set while a state is measured: the answer a frontend sizes
    * itself from has to describe the whole state. */

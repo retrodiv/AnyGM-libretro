@@ -701,6 +701,7 @@ static void state_write(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity
     header.payload_checksum=state_hash_bytes(s->data+ANYGM_STATE_HEADER_SIZE,
                                              (size_t)header.payload_size);
     state_header_write(s->data,&header);
+    if(!engine->state_omit_frame) engine->state_written_size_hint=s->pos;
   }
   if(save_time){
     save_t5=anygm_host_monotonic_time_ns(&engine->host);
@@ -938,6 +939,46 @@ bool state_unserialize_impl(AnygmEngine *engine,const void *d, size_t n, int sch
   }
   return offset==(size_t)header.payload_size;
 }
+static uint8_t *state_create_rollback_snapshot(AnygmEngine *engine,size_t *written){
+  size_t hint=engine->state_written_size_hint;
+  if(hint){
+    /* A moving frame or growing graph can exceed the preceding write by a few bytes.
+     * Leave bounded slack so ordinary growth does not require a failed full traversal. */
+    size_t growth=hint/8u;
+    if(growth<1024u) growth=1024u;
+    if(growth<=SIZE_MAX-hint) hint+=growth;
+    uint8_t *snapshot=malloc(hint);
+    if(snapshot){
+      CoreW writer={snapshot,hint,0,1};
+      /* This is always the full writer. A transactional backup cannot use the ordinary
+       * save API's frame-free fallback merely because its allocation hint was too small. */
+      state_write(engine,&writer,NULL);
+      if(writer.ok && writer.pos && writer.pos<=hint){
+        *written=writer.pos;
+        return snapshot;
+      }
+      free(snapshot);
+      if(writer.pos<=hint) return NULL;
+    }
+  }
+  CoreW measure={0}; measure.ok=1;
+  state_write(engine,&measure,NULL);
+  if(!measure.ok || !measure.pos) return NULL;
+  size_t snapshot_capacity=measure.pos;
+  uint8_t *snapshot=malloc(snapshot_capacity);
+  if(!snapshot) return NULL;
+  CoreW snapshot_writer={snapshot,snapshot_capacity,0,1};
+  state_write(engine,&snapshot_writer,NULL);
+  if(!snapshot_writer.ok || !snapshot_writer.pos ||
+     snapshot_writer.pos>snapshot_capacity ||
+     (!state_size_is_metadata_only(engine) && snapshot_writer.pos!=snapshot_capacity)){
+    free(snapshot);
+    return NULL;
+  }
+  *written=snapshot_writer.pos;
+  return snapshot;
+}
+
 bool engine_state_load(AnygmEngine *engine,const void *d,size_t n){
   if(!engine->loaded || !d) return false;
   AnygmStateHeader target_header={0};
@@ -967,23 +1008,11 @@ bool engine_state_load(AnygmEngine *engine,const void *d,size_t n){
     return true;
   }
 
-  CoreW measure={0}; measure.ok=1;
-  state_write(engine,&measure,NULL);
-  if(!measure.ok || !measure.pos) return false;
-  size_t snapshot_capacity=measure.pos;
-  uint8_t *snapshot=malloc(snapshot_capacity);
-  if(!snapshot) return false;
-  CoreW snapshot_writer={snapshot,snapshot_capacity,0,1};
-  state_write(engine,&snapshot_writer,NULL);
-  if(!snapshot_writer.ok || !snapshot_writer.pos ||
-     snapshot_writer.pos>snapshot_capacity ||
-     (!state_size_is_metadata_only(engine) && snapshot_writer.pos!=snapshot_capacity)){
-    free(snapshot);
-    return false;
-  }
   /* The allocation bound is not a payload length. Rollback consumes only the canonical
    * bytes actually written, never the uninitialised capacity tail of a GPU-sized buffer. */
-  size_t snapshot_size=snapshot_writer.pos;
+  size_t snapshot_size=0;
+  uint8_t *snapshot=state_create_rollback_snapshot(engine,&snapshot_size);
+  if(!snapshot) return false;
   GmlRenderFontCheckpoint *font_checkpoint=NULL;
   if(!gml_render_font_checkpoint_create(&engine->render,&font_checkpoint)){
     free(snapshot);

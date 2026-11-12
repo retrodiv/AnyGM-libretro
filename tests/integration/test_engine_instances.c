@@ -4131,8 +4131,74 @@ static int dispatch_presentation_policy(void){
   return ok;
 }
 
+static int rollback_snapshot_hint_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_content_create(&fixture)) return 0;
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmContentSource source={0};source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;source.path=fixture.path;
+  source.cache_directory=source.save_directory=fixture.directory;
+  AnygmEngine *engine=NULL;
+  uint8_t *baseline=NULL,*after=NULL,*grown=NULL,*damaged=NULL;
+  size_t baseline_size=0,after_size=0,grown_size=0;
+  int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+         anygm_load(engine,&source,NULL)==ANYGM_OK;
+  AnygmInputFrame input={0};input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  AnygmFrameOutput output={0};output.struct_size=sizeof output;
+  ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+     save_state(engine,&baseline,&baseline_size);
+  if(ok && engine->state_written_size_hint!=baseline_size) ok=0;
+  /* Cold, exact, stale-small and oversized private hints must restore the same complete state.
+   * The hint is never a frontend capacity or a serialized length. */
+  for(int policy=0;ok && policy<4;policy++){
+    engine->state_written_size_hint=policy==0?0:policy==1?baseline_size:
+                                    policy==2?1:baseline_size*2;
+    ok=anygm_state_load(engine,baseline,baseline_size)==ANYGM_OK &&
+       save_state(engine,&after,&after_size) && after_size==baseline_size &&
+       !memcmp(after,baseline,baseline_size);
+    free(after);after=NULL;
+  }
+  char growth[8192];unsigned rng=12345;
+  for(size_t i=0;i+1<sizeof growth;i++){
+    rng=rng*1664525u+1013904223u;growth[i]=(char)(32u+(rng>>16)%95u);
+  }
+  growth[sizeof growth-1]=0;
+  if(ok){
+    *gml_varmap_put(&engine->vm.globals,"snapshot_growth")=vstr(growth);
+    ok=save_state(engine,&grown,&grown_size) && grown_size>baseline_size;
+  }
+  if(ok){
+    damaged=malloc(baseline_size);
+    if(!damaged) ok=0;
+  }
+  if(ok){
+    memcpy(damaged,baseline,baseline_size);
+    size_t vm_offset=112+(size_t)read_u64(damaged+64)+(size_t)read_u64(damaged+72);
+    if(vm_offset>baseline_size || baseline_size-vm_offset<8) ok=0;
+    else{
+      write_u32(damaged+vm_offset+4,0);
+      write_u64(damaged+56,state_checksum(damaged+112,baseline_size-112));
+      /* The older hint is smaller than the current state. A rejected target must still roll
+       * back the larger live graph, not a truncated buffer or the target's smaller graph. */
+      engine->state_written_size_hint=baseline_size;
+      ok=expect_rejected_unchanged(engine,damaged,baseline_size,grown,grown_size,
+                                   "grown rollback snapshot with stale size hint");
+    }
+  }
+  if(!ok) fprintf(stderr,"rollback snapshot cold/warm/growth hint policy failed\n");
+  free(damaged);free(grown);free(after);free(baseline);
+  anygm_destroy(engine);anygm_synthetic_content_destroy(&fixture);
+  if(ok) puts("rollback snapshots: cold, exact, stale-small, oversized and rejected growth preserve exact state");
+  return ok;
+}
+
 int main(int argc,char **argv){
   if(argc==3 && !strcmp(argv[1],"--case")){
+    if(!strcmp(argv[2],"rollback_snapshot_hint"))
+      return rollback_snapshot_hint_policy()?0:1;
     if(!strcmp(argv[2],"room_census"))
       return room_census_policy()?0:1;
     if(!strcmp(argv[2],"cold_room_entry"))
@@ -4256,7 +4322,7 @@ int main(int argc,char **argv){
     return 1;
   }
   if(argc!=1){
-    fputs("usage: test_engine_instances [--case room_census|cold_room_entry|dispatch_session|dispatch_narrow_room|dispatch_presentation|screen_refresh_present_latch|"
+    fputs("usage: test_engine_instances [--case rollback_snapshot_hint|room_census|cold_room_entry|dispatch_session|dispatch_narrow_room|dispatch_presentation|screen_refresh_present_latch|"
           "virtual_monitor_geometry|native_raster_window_query|implicit_window_query|implicit_gui_window_query|live_monitor_override|host_canvas_scale|"
           "application_surface_port_scale|"
           "first_generation_application_surface|"
@@ -4299,6 +4365,7 @@ int main(int argc,char **argv){
   if(!room_order_redirect_policy()) return 1;
   if(!room_census_policy()) return 1;
   if(!cold_room_entry_policy()) return 1;
+  if(!rollback_snapshot_hint_policy()) return 1;
   if(!screen_refresh_present_latch_policy()) return 1;
   if(!application_surface_port_scale_policy()) return 1;
   if(!first_generation_application_surface_policy()) return 1;
