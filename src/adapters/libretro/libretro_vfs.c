@@ -168,7 +168,11 @@ static const char *stdio_mode(AnygmFileMode mode){
 static void *host_file_open(void *userdata,const char *path,AnygmFileMode mode){
   (void)userdata;
   if(!path || !(mode&(ANYGM_FILE_READ|ANYGM_FILE_WRITE))) return NULL;
-  libretro_cache_track(path);
+  const char *name=path;
+  for(const char *p=path;*p;p++) if(*p=='/' || *p=='\\') name=p+1;
+  /* Read-only ownership probes must not claim a rejected short-name slot for
+   * unload cleanup. Actual payload access and marker writes still claim it. */
+  if((mode&ANYGM_FILE_WRITE) || strcmp(name,".anygm_cache")) libretro_cache_track(path);
   LibretroFile *file=calloc(1,sizeof *file);
   if(!file) return NULL;
   if(g_libretro.vfs && g_libretro.vfs->open){
@@ -273,7 +277,7 @@ static void host_file_close(void *userdata,void *handle){
 static AnygmResult host_file_stat(void *userdata,const char *path,AnygmFileInfo *info){
   (void)userdata;
   if(!path || !info || info->struct_size<sizeof *info) return ANYGM_ERROR_INVALID_ARGUMENT;
-  libretro_cache_track(path);
+  /* Metadata inspection alone does not establish that content used this cache. */
   memset((char *)info+sizeof info->struct_size,0,sizeof *info-sizeof info->struct_size);
   info->struct_size=sizeof *info;
   if(g_libretro.vfs && g_libretro.vfs->stat){

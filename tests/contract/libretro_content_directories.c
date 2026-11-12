@@ -112,6 +112,15 @@ AnygmResult anygm_load_prepare(AnygmEngine *engine,const AnygmContentSource *sou
       require(!exists(path),"global cleanup includes root dotfiles");
     }
     make_directory(cache_root);
+    /* A candidate short name can belong to another content identity. Inspecting
+     * its directory and marker must not enroll it in current-game cleanup. */
+    snprintf(path,sizeof path,"%s/untouched",cache_root);
+    AnygmFileInfo probed={0};probed.struct_size=sizeof probed;
+    (void)engine_host.file_stat(NULL,path,&probed);
+    snprintf(path,sizeof path,"%s/untouched/.anygm_cache",cache_root);
+    (void)engine_host.file_stat(NULL,path,&probed);
+    void *candidate=engine_host.file_open(NULL,path,ANYGM_FILE_READ);
+    if(candidate) engine_host.file_close(NULL,candidate);
     snprintf(directory,sizeof directory,"%s/%s-anygm-archive",cache_root,source->path);
     make_directory(directory);
     snprintf(held_path,sizeof held_path,"%s/%s-anygm-archive/data.win",cache_root,source->path);
@@ -326,6 +335,7 @@ static void seed_unrelated_cache(void){
   make_directory(cache_root);
   snprintf(path,sizeof path,"%s/untouched",cache_root); make_directory(path);
   snprintf(path,sizeof path,"%s/untouched/.hidden",cache_root); write_file(path);
+  snprintf(path,sizeof path,"%s/untouched/.anygm_cache",cache_root); write_file(path);
   snprintf(path,sizeof path,"%s/.old-marker",cache_root); write_file(path);
 }
 

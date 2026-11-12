@@ -377,6 +377,24 @@ static int resolve_archive(const AnygmHostServices *services,const char *root,
   return 1;
 }
 
+static int resolve_cache_paths(const AnygmHostServices *services,const char *root,const char *path,
+                                char *payload,size_t payload_size,char *marker,size_t marker_size){
+  AnygmContentRouter router={0};router.host=services;router.cache_directory=root;
+  if(!anygm_content_resolve_path(&router,path,payload,payload_size,NULL,0,NULL,0)) return 0;
+  char directory[1024];anygm_content_path_parent(payload,directory,sizeof directory);
+  int written=snprintf(marker,marker_size,"%s/.anygm_cache",directory);
+  return written>0 && (size_t)written<marker_size;
+}
+
+static int short_cache_name(const char *path,const char *suffix){
+  char directory[1536];anygm_content_path_parent(path,directory,sizeof directory);
+  const char *name=strrchr(directory,'/');name=name?name+1:directory;
+  const char *end=suffix?strstr(name,suffix):name+strlen(name);
+  if(!end || end-name<9 || end[-9]!='-') return 0;
+  for(const char *p=end-8;p<end;p++) if(!strchr("0123456789abcdef",*p)) return 0;
+  return !suffix || !end[strlen(suffix)];
+}
+
 static int invalid_case(const AnygmHostServices *services,const char *root,const char *filename,
                         const ZipEntry *entries,size_t count){
   Buffer archive={0};
@@ -1711,7 +1729,8 @@ static int embedded_executable_cases(const AnygmHostServices *services,const cha
   router.log=fixture_log;
   if(!anygm_content_resolve_path(&router,path,resolved,sizeof resolved,NULL,0,NULL,0) ||
      !anygm_content_resolve_path(&router,path,resolved_again,sizeof resolved_again,NULL,0,NULL,0) ||
-     strcmp(resolved,resolved_again) || !strcmp(resolved,path))
+     strcmp(resolved,resolved_again) || !strcmp(resolved,path) ||
+     !short_cache_name(resolved,"-anygm-studio-executable"))
     return fail("embedded executable was not resolved through its stable cache");
   uint8_t *extracted=NULL;
   size_t extracted_size=0;
@@ -1780,7 +1799,8 @@ static int embedded_executable_cases(const AnygmHostServices *services,const cha
     return fail("Classic-plus-Cabinet fixture did not retain its supported Cabinet");
   if(anygm_content_resolve_path(&router,path,resolved,sizeof resolved,classic_asset_root,
                                 sizeof classic_asset_root,NULL,0)!=ANYGM_CONTENT_RESOLVE_OK ||
-     !strstr(resolved,"-anygm-classic/data.win") || classic_asset_root[0])
+     !strstr(resolved,"-anygm-classic/data.win") ||
+     !short_cache_name(resolved,"-anygm-classic") || classic_asset_root[0])
     return fail("Classic executable did not outrank its embedded Cabinet");
   uint8_t classic_magic[4];
   if(!read_prefix(resolved,classic_magic,sizeof classic_magic) ||
@@ -2174,7 +2194,8 @@ static int archive_patch_cases(const AnygmHostServices *services,const char *roo
     ok=anygm_content_resolve_path(&router,path,resolved,sizeof resolved,assets,sizeof assets,
       overrides,sizeof overrides) && read_file(resolved,&observed,&observed_size) &&
       observed_size==sizeof target && !memcmp(observed,target,sizeof target) &&
-      strstr(assets,"-anygm-archive/alt") && strstr(resolved,"/input-");
+      strstr(assets,"-anygm-archive/alt") && strstr(resolved,"/input-") &&
+      short_cache_name(resolved,NULL);
     free(observed);
   }
   if(ok){
@@ -2345,6 +2366,7 @@ static int cache_sample_read_case(const AnygmHostServices *services,const char *
   AnygmContentRouter router={0};router.host=services;router.cache_directory=root;
   if(!ok || !anygm_content_resolve_path(&router,path,resolved,sizeof resolved,NULL,0,NULL,0))
     return fail("sampled cache fixture did not resolve");
+  if(!short_cache_name(resolved,"-anygm-archive")) return fail("archive cache did not use eight hex digits");
   cache_observed_vfs=*services;
   cache_observed_paths[0]=path;cache_observed_paths[1]=resolved;
   memset(cache_observed_files,0,sizeof cache_observed_files);
@@ -2357,6 +2379,33 @@ static int cache_sample_read_case(const AnygmHostServices *services,const char *
   for(unsigned kind=0;kind<2;kind++)
     if(cache_observed_bytes[kind]<49152u || cache_observed_bytes[kind]>49152u+64u)
       return fail("warm cache exceeded its sampled source or payload read budget");
+  return 1;
+}
+
+static int loose_source_cache_case(const AnygmHostServices *services,const char *root){
+  char directory[512],project[600],room[600],resolved[1100],marker[1200],previous[1100]="";
+  snprintf(directory,sizeof directory,"%s/loose-project",root);
+  if(mkdir(directory,0700)) return 0;
+  snprintf(project,sizeof project,"%s/project.yyp",directory);
+  snprintf(room,sizeof room,"%s/room.yy",directory);
+  static const char source[]="{\"name\":\"neutral-project\",\"resources\":[{\"Value\":{"
+    "\"id\":\"room_fixture\",\"resourceType\":\"GMRoom\",\"resourcePath\":\"room.yy\"}}]}";
+  if(!write_file(project,source,sizeof source-1)) return 0;
+  for(unsigned i=0;i<2;i++){
+    char resource[256];unsigned width=320u*(i+1u);
+    int length=snprintf(resource,sizeof resource,"{\"name\":\"room_fixture\","
+      "\"roomSettings\":{\"Width\":%u,\"Height\":180},\"layers\":[]}",width);
+    if(length<0 || !write_file(room,resource,(size_t)length) ||
+       !resolve_cache_paths(services,root,project,resolved,sizeof resolved,marker,sizeof marker) ||
+       !short_cache_name(resolved,"-anygm-source") || (i && strcmp(resolved,previous)))
+      return fail("loose source did not retain its short-name slot");
+    uint8_t *bytes=NULL;size_t size=0;GmlWin win={0};GmlRoom decoded={0};
+    int ok=read_file(resolved,&bytes,&size) && !gml_win_from_mem(&win,bytes,size,0) &&
+      gml_room_count(&win)==1 && !gml_room_get(&win,0,&decoded) && decoded.width==width;
+    gml_win_free(&win);free(bytes);
+    if(!ok) return fail("loose source reused a package after an external room changed");
+    snprintf(previous,sizeof previous,"%s",resolved);
+  }
   return 1;
 }
 
@@ -2715,6 +2764,7 @@ int main(void){
   int ok=lzx_stored_block_alignment_cases() &&
          cache_producer_change_case(&services,root) &&
          cache_sample_read_case(&services,root) &&
+         loose_source_cache_case(&services,root) &&
          embedded_cabinet_cases(&services,root) &&
          embedded_lzx_cabinet_cases(&services,root) &&
          embedded_nsis_cases(&services,root) &&
@@ -2773,16 +2823,13 @@ int main(void){
   }
 
   if(ok){
-    char outdir[1024],marker[1100],payload[1100],archive_path[512];
+    char marker[1100],payload[1100],archive_path[512];
     snprintf(archive_path,sizeof archive_path,"%s/safe.zip",root);
-    uint8_t digest[16];char hex[33];
-    ok=gml_imohash(safe_archive.data,safe_archive.size,digest);
-    for(unsigned i=0;i<16;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
-    snprintf(outdir,sizeof outdir,"%s/safe-%s-anygm-archive",root,hex);
-    snprintf(marker,sizeof marker,"%s/.anygm_cache",outdir);
-    snprintf(payload,sizeof payload,"%s/data.win",outdir);
-    ok=write_file(marker,"broken",6)&&write_file(payload,"FAIL",4)&&
-       resolve_archive(&services,root,"safe.zip",&safe_archive,1);
+    uint8_t digest[16];
+    ok=gml_imohash(safe_archive.data,safe_archive.size,digest) &&
+      resolve_cache_paths(&services,root,archive_path,payload,sizeof payload,marker,sizeof marker);
+    if(ok) ok=write_file(marker,"broken",6)&&write_file(payload,"FAIL",4)&&
+      resolve_cache_paths(&services,root,archive_path,payload,sizeof payload,marker,sizeof marker);
     uint8_t restored[4];
     if(!ok||!read_prefix(payload,restored,sizeof restored)||memcmp(restored,"FORM",4))
       ok=fail("corrupt cache was not regenerated");
@@ -2795,18 +2842,29 @@ int main(void){
     if(!ok) fail("cache marker did not retain complete imohash identities");
     const unsigned offsets[]={39,63};
     for(unsigned i=0;ok && i<2;i++){
+      char occupied[1100];snprintf(occupied,sizeof occupied,"%s",payload);
       record[offsets[i]]^=0x80;
-      ok=write_file(marker,record,record_size) &&
-        resolve_archive(&services,root,"safe.zip",&safe_archive,1);
+      ok=write_file(marker,record,record_size);
+      if(ok && !i) ok=write_file(occupied,"FAIL",4);
+      if(ok) ok=resolve_cache_paths(&services,root,archive_path,payload,sizeof payload,marker,sizeof marker);
+      if(ok && !i && (!strcmp(occupied,payload) ||
+          !read_prefix(occupied,restored,sizeof restored) || memcmp(restored,"FAIL",4)))
+        ok=fail("short-name collision overwrote another complete source identity");
       free(record);record=NULL;
       if(ok) ok=read_file(marker,&record,&record_size) && record_size>=96 &&
         !memcmp(record+24,digest,16) && !memcmp(record+48,payload_digest,16);
+      if(ok && !i){
+        snprintf(occupied,sizeof occupied,"%s",payload);
+        ok=resolve_cache_paths(&services,root,archive_path,payload,sizeof payload,marker,sizeof marker) &&
+          !strcmp(occupied,payload);
+        if(!ok) fail("collision alternative was not stable on warm reuse");
+      }
       if(!ok) fail("cache ignored the upper half of an imohash identity");
     }
     if(ok){
       record[4]=1;
       ok=write_file(marker,record,72) &&
-        resolve_archive(&services,root,"safe.zip",&safe_archive,1);
+        resolve_cache_paths(&services,root,archive_path,payload,sizeof payload,marker,sizeof marker);
       free(record);record=NULL;
       if(ok) ok=read_file(marker,&record,&record_size) && record_size>=96 && record[4]==2;
       if(!ok) fail("old cache marker was not regenerated");

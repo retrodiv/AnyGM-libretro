@@ -86,9 +86,24 @@ Archive extraction CRC checks and exact patch source/result SHA-256 validation
 remain independent of recognition.
 
 The archive-extraction, embedded Studio-image, Classic conversion and source-project
-caches use the same default imohash for source and cached-payload identity. Cache
-names and schema-2 markers retain all 128 bits. Sizes, producer identity and the
-applicable transformation/dependency signatures also participate in reuse. Loose
+caches use the same default imohash for source and cached-payload identity.
+Schema-2 markers retain all 128 bits. Directory names retain their input stem
+and cache-kind suffix, with an eight-digit lowercase hexadecimal locator between
+them, for example `Example-01234567-anygm-archive`. Classic caches also use one
+eight-digit locator, rather than separate source and dependency fields.
+Prepared inputs use `input-01234567`.
+
+Locators hash the complete fingerprint, size, kind and dependency context with
+standard imohash and take the final four digest bytes; they do not truncate the
+encoded-size prefix of the original fingerprint. The complete marker identity
+is checked before selecting an occupied directory. A different identity or an
+unreadable marker selects a deterministic alternative eight-digit locator, with
+a limit of 64 candidates, without overwriting that directory. Invalid unowned
+entries remain disposable and are removed by the normal cache-clearing controls.
+The short locator is never an INI selector or an integrity check.
+
+Sizes, producer identity and the applicable transformation/dependency signatures
+also participate in reuse. Loose
 source projects are rebuilt because their external dependencies can change.
 Prepared input-adapter images likewise use imohash identities after preparation
 and patch validation have completed. Small metadata and dependency signatures

@@ -261,6 +261,7 @@ enum {
   ANYGM_CACHE_SOURCE_PROJECT=2,
   ANYGM_CACHE_CLASSIC_PROJECT=3,
   ANYGM_CACHE_STUDIO_EXECUTABLE=4,
+  ANYGM_CACHE_INPUT_IMAGE=5,
   ANYGM_CACHE_HEADER_SIZE=96
 };
 /* The cache producer combines the structural recipe with a fingerprint of the
@@ -282,6 +283,13 @@ static uint32_t cache_get_u32(const uint8_t *p){
 static uint64_t cache_get_u64(const uint8_t *p){
   return (uint64_t)cache_get_u32(p)|((uint64_t)cache_get_u32(p+4)<<32);
 }
+static int cache_marker_source_matches(const uint8_t *header,uint32_t kind,
+                                       CacheFingerprint source,uint64_t size,uint64_t context){
+  return !memcmp(header,"AGCH",4) && cache_get_u32(header+4)==ANYGM_CACHE_SCHEMA &&
+    cache_get_u32(header+8)==ANYGM_CACHE_HEADER_SIZE && cache_get_u32(header+12)==kind &&
+    !memcmp(header+24,source.bytes,16) && cache_get_u64(header+40)==size &&
+    cache_get_u64(header+88)==context;
+}
 static int cache_marker_read(const AnygmContentRouter *router,const char *path,uint32_t kind,
                              CacheFingerprint source_fingerprint,uint64_t source_size,uint64_t source_context,
                              CacheFingerprint *payload_fingerprint,uint64_t *payload_size,
@@ -293,12 +301,10 @@ static int cache_marker_read(const AnygmContentRouter *router,const char *path,u
   uint8_t *header=contents;
   int ok=contents_size>=ANYGM_CACHE_HEADER_SIZE;
   uint32_t data_len=ok?cache_get_u32(header+20):0;
-  if(!ok || memcmp(header,"AGCH",4) || cache_get_u32(header+4)!=ANYGM_CACHE_SCHEMA ||
-     cache_get_u32(header+8)!=ANYGM_CACHE_HEADER_SIZE || cache_get_u32(header+12)!=kind ||
+  if(!ok || !cache_marker_source_matches(header,kind,source_fingerprint,source_size,source_context) ||
      cache_get_u32(header+16)!=ANYGM_CACHE_PRODUCER_REVISION ||
-     memcmp(header+24,source_fingerprint.bytes,16) || cache_get_u64(header+40)!=source_size ||
      cache_get_u64(header+80)!=cache_producer_fingerprint() ||
-     cache_get_u64(header+88)!=source_context || data_len>=data_cap){
+     data_len>=data_cap){
     free(contents); return 0;
   }
   if(contents_size!=ANYGM_CACHE_HEADER_SIZE+data_len) ok=0;
@@ -353,6 +359,42 @@ static int cache_marker_write(const AnygmContentRouter *router,const char *path,
     return 0;
   }
   return 1;
+}
+/* The short name is only a locator. A complete source identity in the marker
+ * owns an occupied slot; another identity or an unreadable marker is never
+ * overwritten. Bounded deterministic alternatives resolve short-name collisions. */
+static int cache_directory(const AnygmContentRouter *router,const char *base,
+                            const char *stem,const char *suffix,uint32_t kind,
+                            CacheFingerprint source,uint64_t size,uint64_t context,
+                            char *directory,size_t capacity){
+  uint8_t identity[40],digest[16];
+  memcpy(identity,source.bytes,16);
+  cache_put_u64(identity+16,size);cache_put_u64(identity+24,context);
+  cache_put_u32(identity+32,kind);
+  for(uint32_t attempt=0;attempt<64;attempt++){
+    cache_put_u32(identity+36,attempt);
+    if(!gml_imohash(identity,sizeof identity,digest)) return 0;
+    char hex[9];
+    /* Use the tail after hashing the complete identity, not imohash's size prefix. */
+    for(unsigned i=0;i<4;i++) snprintf(hex+i*2,3,"%02x",digest[12+i]);
+    int written=snprintf(directory,capacity,"%s/%s-%s%s%s",base,stem,hex,
+                         suffix?"-":"",suffix?suffix:"");
+    if(written<0 || (size_t)written>=capacity) return 0;
+    AnygmFileInfo info={0};
+    if(!anygm_vfs_stat(router->host,directory,&info)) return 1;
+    if(!(info.flags&ANYGM_FILE_INFO_DIRECTORY)) continue;
+    char marker[1600];uint64_t marker_size=0;
+    if(!path_join_bounded(marker,sizeof marker,directory,".anygm_cache") ||
+       !file_size64(router,marker,&marker_size) || marker_size<ANYGM_CACHE_HEADER_SIZE) continue;
+    void *file=router->host->file_open(router->host->userdata,marker,ANYGM_FILE_READ);
+    if(!file) continue;
+    uint8_t header[ANYGM_CACHE_HEADER_SIZE];
+    int ok=router_read_at(router,file,marker_size,0,header,sizeof header);
+    router->host->file_close(router->host->userdata,file);
+    if(ok && cache_marker_source_matches(header,kind,source,size,context)) return 1;
+  }
+  content_log(router,ANYGM_CONTENT_LOG_ERROR,"cache: no available short-name slot");
+  return 0;
 }
 static int file_size64(const AnygmContentRouter *router,const char *path,uint64_t *size_out){
   AnygmFileInfo info;
@@ -587,11 +629,10 @@ static int load_studio_executable_content(const AnygmContentRouter *router,const
   if(!file_imohash(router,srcpath,&source_hash)) return 0;
 
   const char *base=router->cache_directory?router->cache_directory:"tmp";
-  char stem[256],outdir[768],outwin[900],marker[900],source_hex[33];
-  cache_fingerprint_hex(source_hash,source_hex);
+  char stem[256],outdir[768],outwin[900],marker[900];
   anygm_content_path_stem(srcpath,stem,sizeof stem);
-  if(snprintf(outdir,sizeof outdir,"%s/%s-%s-anygm-studio-executable",base,stem,
-           source_hex)>=(int)sizeof outdir) return -1;
+  if(!cache_directory(router,base,stem,"anygm-studio-executable",ANYGM_CACHE_STUDIO_EXECUTABLE,
+       source_hash,source_size,0,outdir,sizeof outdir)) return -1;
   snprintf(outwin,sizeof outwin,"%s/data.win",outdir);
   snprintf(marker,sizeof marker,"%s/.anygm_cache",outdir);
 
@@ -1439,9 +1480,9 @@ static int load_archive_content_depth(const AnygmContentRouter *router,const cha
   if(!base) base=zdir;
   uint64_t zsz=0;CacheFingerprint zhash;
   if(!file_size64(router,zpath,&zsz) || !file_imohash(router,zpath,&zhash)) return 0;
-  char outdir[1400],source_hex[33];cache_fingerprint_hex(zhash,source_hex);
-  if(snprintf(outdir,sizeof outdir,"%s/%s-%s-anygm-archive",base,stem,
-           source_hex)>=(int)sizeof outdir) return 0;
+  char outdir[1400];
+  if(!cache_directory(router,base,stem,"anygm-archive",ANYGM_CACHE_ARCHIVE,
+       zhash,zsz,0,outdir,sizeof outdir)) return 0;
   char marker[1536]; snprintf(marker,sizeof marker,"%s/.anygm_cache",outdir);
   char kind=0,rel[512]="",marker_data[516]="",existing[2048];
   CacheFingerprint marker_payload_hash;uint64_t marker_payload_size=0;
@@ -1654,10 +1695,10 @@ static int load_input_pipeline(const AnygmContentRouter *router,const char *path
   memcpy(identity+48,image_fingerprint.bytes,16);
   cache_put_u64(identity+64,cache_producer_fingerprint());
   if(!gml_imohash(identity,sizeof identity,key.bytes)) goto done;
-  cache_fingerprint_hex(key,hex);
   char directory[1400],output[1536];
   const char *cache=router->cache_directory?router->cache_directory:"tmp";
-  if(snprintf(directory,sizeof directory,"%s/input-%s",cache,hex)>=(int)sizeof directory ||
+  if(!cache_directory(router,cache,"input",NULL,ANYGM_CACHE_INPUT_IMAGE,
+       key,image_size,0,directory,sizeof directory) ||
      !path_join_bounded(output,sizeof output,directory,kind==2?"payload.zip":"data.win") ||
      !anygm_vfs_mkdirs(router->host,directory)) goto done;
   if(kind==3){
@@ -1671,6 +1712,18 @@ static int load_input_pipeline(const AnygmContentRouter *router,const char *path
     if(!ok) goto done;
   } else if(!publish_input_image(router,output,image,image_size,image_fingerprint,error,sizeof error))
     goto done;
+  char marker[1536];uint64_t output_size=image_size;CacheFingerprint output_fingerprint=image_fingerprint;
+  int output_identity_ok=kind!=3 ||
+    (file_size64(router,output,&output_size) && file_imohash(router,output,&output_fingerprint));
+  CacheFingerprint stored_fingerprint;uint64_t stored_size=0;char marker_data[1];
+  if(!path_join_bounded(marker,sizeof marker,directory,".anygm_cache") ||
+     !output_identity_ok ||
+     (!(cache_marker_read(router,marker,ANYGM_CACHE_INPUT_IMAGE,key,image_size,0,
+                           &stored_fingerprint,&stored_size,marker_data,sizeof marker_data) &&
+         stored_size==output_size && cache_fingerprint_equal(stored_fingerprint,output_fingerprint)) &&
+      !cache_marker_write(router,marker,ANYGM_CACHE_INPUT_IMAGE,key,image_size,0,
+                           output_fingerprint,output_size,NULL)))
+    content_log(router,ANYGM_CONTENT_LOG_WARN,"input pipeline: could not publish cache marker");
   if(kind==2){
     if(!load_archive_content_depth(router,output,content_path,content_size,asset_root,asset_root_size,
                                    overrides,overrides_size,depth)) goto done;
@@ -1713,9 +1766,9 @@ static int load_classic_project_content(const AnygmContentRouter *router,const c
   if(!gmlc_classic_extension_dependency_hash(router->host,source_dir,source_context,&source_context)) return 0;
   if(!gmlc_classic_fidelity_dependency_hash(router->host,srcpath,source_context,&source_context)) return 0;
   if(!gmlc_classic_included_dependency_hash(router->transforms,router->host,srcpath,source_context,&source_context)) return 0;
-  char outdir[768],source_hex[33];cache_fingerprint_hex(src_hash,source_hex);
-  if(snprintf(outdir,sizeof outdir,"%s/%s-%s-%016llx-anygm-classic",base,stem,
-           source_hex,(unsigned long long)source_context)>=(int)sizeof outdir) return 0;
+  char outdir[768];
+  if(!cache_directory(router,base,stem,"anygm-classic",ANYGM_CACHE_CLASSIC_PROJECT,
+       src_hash,src_size,source_context,outdir,sizeof outdir)) return 0;
   char outwin[900], marker[900];
   snprintf(outwin,sizeof outwin,"%s/data.win",outdir);
   snprintf(marker,sizeof marker,"%s/.anygm_cache",outdir);
@@ -1764,9 +1817,9 @@ static int load_source_project_content(const AnygmContentRouter *router,const ch
   if(!file_imohash(router,srcpath,&src_hash)) return 0;
   uint64_t src_size=0;
   if(!file_size64(router,srcpath,&src_size)) return 0;
-  char outdir[768],source_hex[33];cache_fingerprint_hex(src_hash,source_hex);
-  if(snprintf(outdir,sizeof outdir,"%s/%s-%s-anygm-source",base,stem,
-           source_hex)>=(int)sizeof outdir) return 0;
+  char outdir[768];
+  if(!cache_directory(router,base,stem,"anygm-source",ANYGM_CACHE_SOURCE_PROJECT,
+       src_hash,src_size,0,outdir,sizeof outdir)) return 0;
   char outwin[900];
   snprintf(outwin,sizeof outwin,"%s/data.win",outdir);
   char marker[900];
@@ -1812,12 +1865,11 @@ static int load_source_project_content(const AnygmContentRouter *router,const ch
     content_log(router,ANYGM_CONTENT_LOG_ERROR,"source: %s",err[0]?err:"package write failed");
     return 0;
   }
-  if(archive_input){
-    if(file_size64(router,outwin,&actual_size) && file_imohash(router,outwin,&actual_hash) &&
-       !cache_marker_write(router,marker,ANYGM_CACHE_SOURCE_PROJECT,src_hash,src_size,0,
-                           actual_hash,actual_size,NULL))
-      content_log(router,ANYGM_CONTENT_LOG_WARN,"source: could not publish cache marker");
-  }
+  /* Loose projects still rebuild; their marker only owns the short-name slot. */
+  if(file_size64(router,outwin,&actual_size) && file_imohash(router,outwin,&actual_hash) &&
+     !cache_marker_write(router,marker,ANYGM_CACHE_SOURCE_PROJECT,src_hash,src_size,0,
+                         actual_hash,actual_size,NULL))
+    content_log(router,ANYGM_CONTENT_LOG_WARN,"source: could not publish cache marker");
   snprintf(content_path,cpsz,"%s",outwin);
   content_log(router,ANYGM_CONTENT_LOG_INFO,"source: compiled %s -> %s",srcpath,outwin);
   return 1;
