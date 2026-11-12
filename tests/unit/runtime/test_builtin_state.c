@@ -787,10 +787,80 @@ done:
   free(before);free(after);gml_vm_free(&vm);return ok;
 }
 
+static int exception_wait_state_roundtrip(void){
+  GmlCode entry={.name="neutral_parked_exception",.length=128};
+  GmlWin win={.bytecode=17,.code=&entry,.n_code=1};GmlVM vm={0};
+  if(gml_vm_init(&vm,&win,NULL)) return 0;
+  vm.wait.active=1;vm.wait.n_frames=1;
+  GmlWaitFrame *frame=&vm.wait.frames[0];
+  frame->ci=0;
+  frame->exceptions.handler_n=2;
+  frame->exceptions.handlers[0]=(GmlExceptionHandler){24,UINT32_MAX,0,0,0,0};
+  frame->exceptions.handlers[1]=(GmlExceptionHandler){UINT32_MAX,12,0,0,0,1};
+  frame->exceptions.pending=strdup("pending after a nested invocation");
+  frame->exceptions.deferred[0]=strdup("outer deferred exception");
+  frame->exceptions.deferred[1]=strdup("");frame->exceptions.deferred_n=2;
+  int ok=frame->exceptions.pending && frame->exceptions.deferred[0] && frame->exceptions.deferred[1];
+  size_t size=ok?gml_vm_state_size(&vm):0,written=0,used=0,repeated=0;
+  unsigned char *before=malloc(size?size:1),*after=malloc(size?size:1);
+  ok=ok && size && before && after && gml_vm_state_save(&vm,before,size,&written);
+  if(ok){
+    /* Mutation proves a load recovers owned text and control, rather than retaining live pointers. */
+    frame->exceptions.pending[0]='X';frame->exceptions.deferred[0][0]='Y';
+    frame->exceptions.handlers[0].catch_offset=28;
+    ok=gml_vm_state_load(&vm,before,written,&used) && used==written;
+  }
+  if(ok){
+    frame=&vm.wait.frames[0];
+    ok=vm.wait.active && vm.wait.n_frames==1 &&
+      frame->exceptions.handler_n==2 && frame->exceptions.handlers[0].catch_offset==24 &&
+      frame->exceptions.handlers[1].finally_offset==12 && frame->exceptions.handlers[1].dispatched==1 &&
+      frame->exceptions.pending && !strcmp(frame->exceptions.pending,"pending after a nested invocation") &&
+      frame->exceptions.deferred_n==2 && frame->exceptions.deferred[0] &&
+      !strcmp(frame->exceptions.deferred[0],"outer deferred exception") &&
+      frame->exceptions.deferred[1] && !*frame->exceptions.deferred[1] &&
+      gml_vm_state_save(&vm,after,size,&repeated) && repeated==written &&
+      !memcmp(before,after,written);
+  }
+  if(ok){
+    before[4]--;
+    ok=!gml_vm_state_load(&vm,before,written,&used) &&
+       gml_vm_state_save(&vm,after,size,&repeated) && repeated==written;
+    before[4]++;
+    ok=ok && !memcmp(before,after,written);
+  }
+  if(ok){
+    const uint32_t fields[]={2,24,UINT32_MAX,0,0,0,0,UINT32_MAX,12,0,0,0,1};
+    unsigned char pattern[sizeof fields];
+    for(size_t i=0;i<sizeof fields/sizeof *fields;i++) for(unsigned k=0;k<4;k++)
+      pattern[i*4+k]=(unsigned char)(fields[i]>>(8*k));
+    size_t location=0,matches=0;
+    for(size_t i=0;i+sizeof pattern<=written;i++) if(!memcmp(before+i,pattern,sizeof pattern)){
+      location=i;matches++;
+    }
+    ok=matches==1;
+    const struct {size_t word;uint32_t invalid;} faults[]={{0,33},{1,128},{4,1},{6,2}};
+    for(size_t i=0;i<sizeof faults/sizeof *faults && ok;i++){
+      memcpy(after,before,written);
+      for(unsigned k=0;k<4;k++) after[location+faults[i].word*4+k]=
+        (unsigned char)(faults[i].invalid>>(8*k));
+      GmlVM rejected={0};
+      if(gml_vm_init(&rejected,&win,NULL)){ok=0;break;}
+      ok=!gml_vm_state_load(&rejected,after,written,&used);
+      gml_vm_free(&rejected);
+    }
+  }
+  free(before);free(after);gml_vm_free(&vm);
+  if(!ok) fprintf(stderr,"parked exception ownership/state restoration failed\n");
+  else puts("parked exception state: owned handlers/text, exact resave, old-schema and four malformed-control refusals passed");
+  return ok;
+}
+
 int main(void){
 #ifdef ANYGM_TEST_STATE_ALLOC_FAILURE
   if(!writer_allocation_failure_is_bounded()) return 1;
 #endif
+  if(!exception_wait_state_roundtrip()) return 1;
   if(!typed_numeric_state_roundtrip()) return 1;
   if(!array_zero_bits_roundtrip()) return 1;
   if(!ds_owned_string_memo_roundtrip()) return 1;

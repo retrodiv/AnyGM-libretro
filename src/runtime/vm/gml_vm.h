@@ -284,6 +284,23 @@ typedef struct {
 /* A parked direct event run retains its operand stack, locals, arguments, resume point and owned strings across frames. Nested direct calls form an innermost-first bounded chain. */
 #define GML_WAIT_MAX_FRAMES 8
 #define GML_WAIT_MAX_STACK 512   /* the interpreter's operand stack: a parked frame copies as much */
+/* Exception control belongs to each interpreter invocation. Parked invocations own
+ * these messages independently of the temporary-string tracker. */
+#define GML_EXCEPTION_MAX_HANDLERS 32
+typedef struct {
+  uint32_t catch_offset,finally_offset;
+  int stack_n,with_n,array_reference_n;
+  int dispatched;
+} GmlExceptionHandler;
+typedef struct {
+  GmlExceptionHandler handlers[GML_EXCEPTION_MAX_HANDLERS];
+  int handler_n;
+  char *pending;
+  char *deferred[GML_EXCEPTION_MAX_HANDLERS];
+  int deferred_n;
+} GmlExceptionState;
+struct GmlExceptionContext;
+
 typedef struct GmlWaitFrame {
   int       ci;                 /* CODE entry this frame is executing */
   uint32_t  insn_index;         /* resume point in the decoded-instruction cache */
@@ -296,6 +313,7 @@ typedef struct GmlWaitFrame {
   uint32_t  wait_site;          /* the wait call site this run already visited, so the resumed run
                                  * parks on its next visit instead of spinning one extra iteration */
   GmlVarMap locals;
+  GmlExceptionState exceptions;
   void    **strings; int n_strings;   /* the run's owned-string tracker, moved out of the run */
   int       push_child_result;        /* the nested frame below returns a value this frame expects */
   char      event[32];                /* the event suffix in scope, copied: callers spell it into a local */
@@ -362,6 +380,7 @@ typedef struct GmlVM {
   int     *step_free; int step_free_n, step_free_pos, step_free_cap;
   uint32_t step_first_id;     /* Studio fixed snapshot: ids at/above this were created during this step */
   int      step_active;       /* lets alloc reuse only holes that were already free at frame start */
+  struct GmlExceptionContext *exception_context; /* live C frame; never serialized */
   int      execution_depth;   /* per-VM recursion guard for nested script calls */
   /* Blocking input wait (see GmlWait). `wait_requested` is raised by the wait builtins and read by
    * the interpreter at the next instruction boundary; `wait_chain` is the depth of the deepest run
@@ -528,6 +547,14 @@ typedef struct GmlVM {
   long structs_last_gc_frame;
   GmlTileMap *tilemaps; int n_tilemaps, cap_tilemaps, next_tilemap_id;  /* per-room GMS2 tile layers (collision) */
 } GmlVM;
+/* Internal bytecode exception controls use the current invocation owner. */
+int gml_vm_exception_hook(GmlVM *vm,int catch_offset,int finally_offset);
+void gml_vm_exception_unhook(GmlVM *vm);
+void gml_vm_exception_raise(GmlVM *vm,const char *message);
+void gml_vm_exception_finish_finally(GmlVM *vm);
+/* Only an interpreter-named direct script fallback can extend a parked chain. */
+GmlVal gml_vm_run_script_fallback(GmlVM *vm,const char *name,int code,
+                                  GmlVal *arguments,int count);
 GmlTileMap *gml_tilemap_find(GmlVM *vm, int id);
 int gml_tilemap_set_cell(GmlTileMap *tm, int cx, int cy, uint32_t datum);
 void gml_tilemap_set_position(GmlTileMap *tm,double x,double y);

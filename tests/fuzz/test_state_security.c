@@ -81,7 +81,7 @@ static size_t neutral_vm_body_end(const AnygmEngine *engine,const uint8_t *bytes
     start+=(size_t)part;
   }
   uint64_t length=read_u64(bytes+80);
-  if(length<37 || length>size-start || (uint32_t)read_u64(bytes+start+4)!=37)
+  if(length<37 || length>size-start || (uint32_t)read_u64(bytes+start+4)!=38)
     return SIZE_MAX;
   size_t end=start+(size_t)length;
   if(memcmp(bytes+end-4,(const uint8_t[4]){0},4)) return SIZE_MAX;
@@ -100,7 +100,7 @@ static int neutral_vm_body_end_controls(const AnygmEngine *engine,
     return fail("current neutral VM trailer was not located");
   uint8_t *candidate=malloc(size);
   if(!candidate) return fail("neutral trailer control allocation");
-  const uint32_t roots[]={53,54,55,56,57,58,59,60,61,63},vms[]={31,32,33,34,35,36,38};
+  const uint32_t roots[]={53,54,55,56,57,58,59,60,61,62,64},vms[]={31,32,33,34,35,36,37,39};
   size_t vm_start=STATE_HEADER_SIZE+(size_t)read_u64(bytes+64)+
                   (size_t)read_u64(bytes+72);
   int ok=1;

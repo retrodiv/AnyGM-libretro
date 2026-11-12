@@ -31,6 +31,49 @@ enum {
   GML_HASH_CONSTRUCTOR = 0x44f7d3e1u
 };
 
+void gml_vm_exception_state_clear(GmlExceptionState *state){
+  if(!state) return;
+  free(state->pending);
+  for(int i=0;i<state->deferred_n;i++) free(state->deferred[i]);
+  memset(state,0,sizeof *state);
+}
+
+int gml_vm_exception_hook(GmlVM *vm,int catch_offset,int finally_offset){
+  GmlExceptionContext *context=vm?vm->exception_context:NULL;
+  if(!context || context->state.handler_n>=GML_EXCEPTION_MAX_HANDLERS ||
+     catch_offset< -1 || finally_offset< -1 ||
+     (catch_offset<0 && finally_offset<0) ||
+     (catch_offset>=0 && ((uint32_t)catch_offset<context->code_offset ||
+                          (uint32_t)catch_offset>=context->code_length)) ||
+     (finally_offset>=0 && ((uint32_t)finally_offset<context->code_offset ||
+                            (uint32_t)finally_offset>=context->code_length))) return 0;
+  GmlExceptionHandler *handler=&context->state.handlers[context->state.handler_n++];
+  *handler=(GmlExceptionHandler){(uint32_t)catch_offset,(uint32_t)finally_offset,
+    context->stack_n,context->with_n,context->array_reference_n,0};
+  return 1;
+}
+
+void gml_vm_exception_unhook(GmlVM *vm){
+  GmlExceptionContext *context=vm?vm->exception_context:NULL;
+  if(context && context->state.handler_n>0) context->state.handler_n--;
+}
+
+void gml_vm_exception_raise(GmlVM *vm,const char *message){
+  GmlExceptionContext *context=vm?vm->exception_context:NULL;
+  if(!context) return;
+  char *owned=strdup(message?message:"");
+  if(!owned) return;
+  free(context->state.pending);
+  context->state.pending=owned;
+}
+
+void gml_vm_exception_finish_finally(GmlVM *vm){
+  GmlExceptionContext *context=vm?vm->exception_context:NULL;
+  if(!context || context->state.pending || context->state.deferred_n<=0) return;
+  context->state.pending=context->state.deferred[--context->state.deferred_n];
+  context->state.deferred[context->state.deferred_n]=NULL;
+}
+
 /* ---------------- helpers ---------------- */
 static double asnum(GmlVal v){ return gml_val_is_number_or_object(v)? v.d : (v.t==V_STR && v.s? atof(v.s):0); }
 static int    astrue(GmlVal v){ return gml_val_is_number_or_object(v)? (v.d>=0.5) : (v.t==V_STR && v.s&&v.s[0]); } /* GM: real>=0.5 true */
@@ -3077,6 +3120,7 @@ static void wait_frame_release(GmlWaitFrame *frame){
   free(frame->stack); free(frame->stack_type);
   frame->stack=NULL; frame->stack_type=NULL; frame->stack_n=0;
   gml_varmap_free_ex(&frame->locals,1);
+  gml_vm_exception_state_clear(&frame->exceptions);
   frame->ci=-1;
 }
 void gml_vm_wait_cancel(GmlVM *vm){
@@ -3093,6 +3137,18 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
                        GmlVal *args, int n_args){
   return vm_run_code_impl(vm,ci,self,other,args,n_args,NULL,-1);
 }
+GmlVal gml_vm_run_script_fallback(GmlVM *vm,const char *name,int code,
+                                  GmlVal *arguments,int count){
+  GmlExceptionContext *context=vm?vm->exception_context:NULL;
+  if(!vm) return vundef();
+  int previous=vm->wait_direct_marker;
+  if(context && context->direct_fallback_name && name &&
+     !strcmp(context->direct_fallback_name,name)) vm->wait_direct_marker=vm->execution_depth;
+  GmlVal result=gml_vm_run_code(vm,code,vm->cur_self,vm->cur_other,arguments,count);
+  vm->wait_direct_marker=previous;
+  return result;
+}
+
 static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
                                GmlVal *args, int n_args,
                                GmlWaitFrame *resume_frames, int resume_index){
@@ -3205,7 +3261,14 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
    * park is being taken at, and whether this run left its state to a GmlWaitFrame. */
   uint32_t wait_site=UINT32_MAX, park_ip=0, park_pc=0;
   int parked=0;
+  GmlExceptionContext exception_context={0};
+  exception_context.parent=vm->exception_context;
+  exception_context.code_offset=w->code[ci].bytecode_offset;
+  exception_context.code_length=w->code[ci].length+exception_context.code_offset;
+  vm->exception_context=&exception_context;
   if(resume){
+    exception_context.state=resume->exceptions;
+    memset(&resume->exceptions,0,sizeof resume->exceptions);
     /* Move the parked state back in: the locals map, the owned-string tracker and the operand
      * stack are the same allocations the run had when it stopped, not copies of them. */
     locals=resume->locals; memset(&resume->locals,0,sizeof resume->locals);
@@ -3234,7 +3297,60 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
       if(sp<STK){ stk[sp]=child; stkt[sp]=DT_VAR; sp++; }
     }
   }
-  while(use_cache ? ip<cached_n : pc<end){
+  while(exception_context.state.pending || (use_cache ? ip<cached_n : pc<end)){
+    if(exception_context.state.pending){
+      int handler_index=exception_context.state.handler_n-1;
+      while(handler_index>=0 && exception_context.state.handlers[handler_index].dispatched)
+        handler_index--;
+      if(handler_index<0) goto vm_run_teardown;
+      GmlExceptionHandler *handler=&exception_context.state.handlers[handler_index];
+      uint32_t offset=handler->catch_offset!=UINT32_MAX
+        ?handler->catch_offset:handler->finally_offset;
+      if(offset<exception_context.code_offset || offset>=exception_context.code_length ||
+         handler->stack_n<0 || handler->stack_n>sp ||
+         handler->with_n<0 || handler->with_n>withsp ||
+         handler->array_reference_n<0 || handler->array_reference_n>aref_n)
+        goto vm_run_teardown;
+      uint32_t target=start+(offset-exception_context.code_offset),target_index=0;
+      if(use_cache){
+        while(target_index<cached_n && cached_pc[target_index]<target) target_index++;
+        if(target_index>=cached_n || cached_pc[target_index]!=target) goto vm_run_teardown;
+      }else{
+        uint32_t cursor=start;
+        while(cursor<target){
+          GmlInsn checked;
+          int size=gml_decode_bc_bounded(d,w->size,cursor,w->bytecode,&checked);
+          if(size<=0 || (uint32_t)size>target-cursor) goto vm_run_teardown;
+          cursor+=(uint32_t)size;
+        }
+        if(cursor!=target) goto vm_run_teardown;
+      }
+      handler->dispatched=1;
+      while(withsp>handler->with_n){
+        withsp--;
+        vm->cur_self=withstk[withsp].ss;vm->cur_other=withstk[withsp].so;
+        free(withstk[withsp].list);
+      }
+      aref_n=handler->array_reference_n;
+      sp=handler->stack_n;
+      if(handler->catch_offset!=UINT32_MAX){
+        GmlInstance *error=gml_struct_new(vm);
+        GmlVal *message=error?gml_varmap_put(&error->vars,"message"):NULL;
+        if(!message || sp>=STK) goto vm_run_teardown;
+        *message=vstr_owned(exception_context.state.pending);
+        exception_context.state.pending=NULL;
+        stk[sp]=vreal((double)error->id);stkt[sp]=DT_VAR;sp++;
+      }else{
+        if(exception_context.state.deferred_n>=GML_EXCEPTION_MAX_HANDLERS)
+          goto vm_run_teardown;
+        exception_context.state.deferred[exception_context.state.deferred_n++]=
+          exception_context.state.pending;
+        exception_context.state.pending=NULL;
+      }
+      if(use_cache) ip=target_index;
+      pc=target;
+    }
+
     if(++watchdog>WATCHDOG_MAX){
       if(vm->diagnostics.watchdog_warnings<4){ vm->diagnostics.watchdog_warnings++;
         anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[gml] f%ld VM watchdog tripped in '%s' at offset %u (runaway loop) — aborting run\n",
@@ -3695,6 +3811,9 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
         }
         /* GM pushes args in reverse, so arg0 is on top: pop forward -> a[0]=arg0 */
         for(int i=0;i<na;i++) a[i] = sp>0? stk[--sp] : vreal(0);
+        exception_context.stack_n=sp;
+        exception_context.with_n=withsp;
+        exception_context.array_reference_n=aref_n;
         int sci = pin ? pin->funcval_ci : -1;
         if(sci<0){
           sci=payload_compatibility_script_code(vm,nm);
@@ -3740,7 +3859,10 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
         else if(bid>0 && !hp_builtin) rv=gml_builtin_call_fast_id(vm,bid,nm,a,na);
         else {
           vm->call_script_ci=-1;
+          const char *previous_fallback=exception_context.direct_fallback_name;
+          exception_context.direct_fallback_name=nm;
           rv=gml_builtin_call(vm,nm,a,na);
+          exception_context.direct_fallback_name=previous_fallback;
           if(pin && vm->call_script_ci>=0) pin->funcval_ci=vm->call_script_ci;
           vm->call_script_ci=-1;
         }
@@ -4108,6 +4230,8 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
       for(int i=0;i<16;i++){frame->args[i]=vm->script_args[i];frame->array_owner[i]=vm->script_array_owner[i];}
       frame->push_child_result=vm->wait.parking?1:0;
       frame->locals=locals; memset(&locals,0,sizeof locals);
+      frame->exceptions=exception_context.state;
+      memset(&exception_context.state,0,sizeof exception_context.state);
       frame->strings=str_gc; frame->n_strings=str_gc_n;
       str_gc=NULL; str_gc_n=0; str_gc_cap=0;
       frame->stack_n=sp;
@@ -4180,6 +4304,16 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
   gml_arr_mark_escaped(ret);      /* a returned array escapes to the caller */
   gml_varmap_free_ex(&locals,1);      /* keep escaped arrays alive — persistent slots alias them */
  vm_run_restore:
+  if(exception_context.state.pending && exception_context.parent){
+    free(exception_context.parent->state.pending);
+    exception_context.parent->state.pending=exception_context.state.pending;
+    exception_context.state.pending=NULL;
+  }else if(exception_context.state.pending){
+    anygm_host_logf(vm->host,ANYGM_LOG_ERROR,"[gml] unhandled exception: %s\n",
+                    exception_context.state.pending);
+  }
+  gml_vm_exception_state_clear(&exception_context.state);
+  vm->exception_context=exception_context.parent;
   /* A parked run keeps its locals, strings and stack in its GmlWaitFrame; everything else about
    * the invocation is unwound exactly as a completed one is, because it is no longer running. */
   vm->wait_chain=save_wait_chain;

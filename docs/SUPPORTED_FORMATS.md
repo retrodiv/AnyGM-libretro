@@ -371,6 +371,13 @@ without embedding an entire soundtrack or accepting changed bytes.
 Legacy `action_if_question` calls use the same portable dialog policy as `show_question`:
 the native dialog is unavailable and the result is false.
 
+Compiled bytecode exception hooks preserve pending messages across nested calls
+and `finally` dispatch. A `catch` receives a struct with a `message` field.
+Handlers and deferred messages survive supported suspended direct-call chains
+and current-format save states. Unhandled exceptions end their invocation with
+an error diagnostic. This is a bytecode contract; source-project exception syntax
+and additional native exception metadata are not established here.
+
 ## Source projects and packages
 
 The content layer can normalize supported project manifests, project archives,

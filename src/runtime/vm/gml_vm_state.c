@@ -18,7 +18,7 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=37 };
+enum { GML_VM_STATE_SCHEMA=38 };
 enum { STATE_MAX_TILEMAPS=512, STATE_TILEMAP_RECORD_BYTES=56 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 /* IDs are assigned in canonical traversal order, never from addresses. Zero is the null array;
@@ -2460,6 +2460,17 @@ static void sw_vm(StateW *s, GmlVM *vm){
     sw_i32(s,f->stack_n);
     for(int k=0;k<f->stack_n;k++){ sw_u32(s,f->stack_type[k]); sw_val(s,f->stack[k],0); }
     sw_varmap(s,&f->locals);
+    sw_i32(s,f->exceptions.handler_n);
+    for(int k=0;k<f->exceptions.handler_n;k++){
+      const GmlExceptionHandler *handler=&f->exceptions.handlers[k];
+      sw_u32(s,handler->catch_offset);sw_u32(s,handler->finally_offset);
+      sw_i32(s,handler->stack_n);sw_i32(s,handler->with_n);
+      sw_i32(s,handler->array_reference_n);sw_i32(s,handler->dispatched);
+    }
+    sw_u8(s,f->exceptions.pending!=NULL);
+    if(f->exceptions.pending) sw_str(s,f->exceptions.pending);
+    sw_i32(s,f->exceptions.deferred_n);
+    for(int k=0;k<f->exceptions.deferred_n;k++) sw_str(s,f->exceptions.deferred[k]);
   }
   /* Save live grids and runtime-created or edited paths. Authored paths remain in the
    * content and are re-read before these records are applied during restore. */
@@ -2794,6 +2805,34 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
       }
       f->stack_n=stack_n;
       if(!sr_varmap(vm,&s,&f->locals)) break;
+      int handlers=sr_i32(&s);
+      if(handlers<0 || handlers>GML_EXCEPTION_MAX_HANDLERS){ s.ok=0;break; }
+      f->exceptions.handler_n=handlers;
+      for(int k=0;k<handlers && s.ok;k++){
+        GmlExceptionHandler *handler=&f->exceptions.handlers[k];
+        handler->catch_offset=sr_u32(&s);handler->finally_offset=sr_u32(&s);
+        handler->stack_n=sr_i32(&s);handler->with_n=sr_i32(&s);
+        handler->array_reference_n=sr_i32(&s);handler->dispatched=sr_i32(&s);
+        uint32_t offset=vm->win->code[f->ci].bytecode_offset;
+        uint32_t length=vm->win->code[f->ci].length+offset;
+        if((handler->catch_offset!=UINT32_MAX &&
+            (handler->catch_offset<offset || handler->catch_offset>=length)) ||
+           (handler->finally_offset!=UINT32_MAX &&
+            (handler->finally_offset<offset || handler->finally_offset>=length)) ||
+           (handler->catch_offset==UINT32_MAX && handler->finally_offset==UINT32_MAX) ||
+           handler->stack_n<0 || handler->stack_n>stack_n ||
+           handler->with_n!=0 || handler->array_reference_n!=0 ||
+           (handler->dispatched!=0 && handler->dispatched!=1)) s.ok=0;
+      }
+      unsigned pending=sr_u8(&s);
+      if(pending>1){ s.ok=0;break; }
+      if(pending) f->exceptions.pending=sr_str_dup(&s);
+      int deferred=sr_i32(&s);
+      if(deferred<0 || deferred>GML_EXCEPTION_MAX_HANDLERS){ s.ok=0;break; }
+      for(int k=0;k<deferred && s.ok;k++){
+        f->exceptions.deferred_n=k+1;
+        f->exceptions.deferred[k]=sr_str_dup(&s);
+      }
       vm->wait.n_frames=i+1;
     }
     if(s.ok && frames>0){ vm->wait.active=1; vm->wait.n_frames=frames; }

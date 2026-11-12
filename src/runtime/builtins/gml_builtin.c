@@ -1668,7 +1668,7 @@ GmlVal gml_builtin_try_scripts_fallback(GmlVM *vm, const char *nm, GmlVal *a, in
   int declared=0;
   int ci=gml_builtin_resolve_script(vm,nm,&declared);
   if(ci>=0){
-    GmlVal rv=gml_vm_run_code(vm,ci,vm->cur_self,vm->cur_other,a,n);
+    GmlVal rv=gml_vm_run_script_fallback(vm,nm,ci,a,n);
     /* report the resolution for the caller's per-site cache — but never for names the chain
      * above may shadow natively later (the tile_* compat shadows only engage once runtime
      * layers exist, so caching them here would pin the slow bytecode path). Set AFTER the run:

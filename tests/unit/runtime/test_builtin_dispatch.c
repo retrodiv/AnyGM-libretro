@@ -1537,6 +1537,174 @@ static int instance_id_view_contract(void){
   return ok;
 }
 
+typedef struct {
+  GmlWin *win;
+  uint32_t cursor;
+} ExceptionProgram;
+
+static uint32_t exception_emit_word(ExceptionProgram *program,uint32_t word){
+  uint32_t site=program->cursor;
+  store_u32le(program->win->data+site,word);program->cursor+=4;
+  return site;
+}
+static uint32_t exception_emit_integer(ExceptionProgram *program,int value){
+  return exception_emit_word(program,UINT32_C(0x84000000)|(uint16_t)value);
+}
+static void exception_emit_call(ExceptionProgram *program,const char *name,int argc){
+  exception_emit_word(program,(uint32_t)OP_CALL<<24|(uint32_t)DT_VAR<<16|(unsigned)argc);
+  uint32_t reference=exception_emit_word(program,0);
+  int index=program->win->n_refs++;
+  program->win->ref_addr[index]=reference;
+  program->win->ref_name[index]=name;
+  program->win->ref_kind[index]=1;
+}
+static void exception_emit_statement(ExceptionProgram *program,const char *name,int argc){
+  exception_emit_call(program,name,argc);
+  exception_emit_word(program,(uint32_t)OP_POPZ<<24|(uint32_t)DT_VAR<<16);
+}
+
+static int finish_finally_execution_contract(void){
+  int ok=1;
+  for(int paused=0;paused<2;paused++) for(int uncached=0;uncached<2;uncached++)
+  for(int embedded=0;embedded<2;embedded++){
+    if(paused && uncached) continue; /* The established wait owner requires a decoded cache. */
+    GmlWin win={.bytecode=17,.size=2048,.owns=1};GmlVM vm={0};
+    win.data=calloc(win.size,1);win.code=calloc(2,sizeof *win.code);win.n_code=2;
+    win.ref_addr=calloc(32,sizeof *win.ref_addr);win.ref_name=calloc(32,sizeof *win.ref_name);
+    win.ref_kind=calloc(32,sizeof *win.ref_kind);
+    if(!win.data || !win.code || !win.ref_addr || !win.ref_name || !win.ref_kind){
+      gml_win_free(&win);return 0;
+    }
+    const uint32_t start=128,offset=embedded?32:0;
+    ExceptionProgram program={&win,start};
+    exception_emit_integer(&program,-1);
+    uint32_t catch_site=exception_emit_integer(&program,0);
+    exception_emit_statement(&program,"@@try_hook@@",2);
+    exception_emit_statement(&program,"exception_child",0);
+    exception_emit_integer(&program,-101);
+    exception_emit_word(&program,(uint32_t)OP_RET<<24|(uint32_t)DT_VAR<<16);
+    uint32_t catch_offset=program.cursor-start+offset;
+    exception_emit_statement(&program,"@@try_unhook@@",0);
+    if(paused){
+      exception_emit_integer(&program,999);
+      exception_emit_statement(&program,"random_set_seed",1);
+    }
+    exception_emit_word(&program,(uint32_t)OP_RET<<24|(uint32_t)DT_VAR<<16);
+    win.code[0]=(GmlCode){.name="neutral_exception_parent",.start=start,
+      .length=program.cursor-start,.bytecode_offset=offset,.embedded_function=embedded,
+      .cache_bad=uncached};
+    store_u32le(win.data+catch_site,UINT32_C(0x84000000)|catch_offset);
+    uint32_t child_start=program.cursor;
+    uint32_t finally_site=exception_emit_integer(&program,0);
+    exception_emit_integer(&program,-1);
+    exception_emit_statement(&program,"@@try_hook@@",2);
+    exception_emit_integer(&program,42);
+    exception_emit_statement(&program,"@@throw@@",1);
+    exception_emit_integer(&program,-102);
+    exception_emit_word(&program,(uint32_t)OP_RET<<24|(uint32_t)DT_VAR<<16);
+    uint32_t finally_offset=program.cursor-child_start+offset;
+    exception_emit_statement(&program,"@@try_unhook@@",0);
+    exception_emit_integer(&program,777);
+    exception_emit_statement(&program,"random_set_seed",1);
+    if(paused){
+      uint32_t loop=program.cursor;
+      exception_emit_call(&program,"random_get_seed",0);
+      exception_emit_integer(&program,777);
+      exception_emit_word(&program,(uint32_t)OP_CMP<<24|(uint32_t)DT_VAR<<16|
+                                   (uint32_t)CMP_EQ<<8);
+      uint32_t leave=exception_emit_word(&program,(uint32_t)OP_BF<<24);
+      exception_emit_integer(&program,0);
+      exception_emit_statement(&program,"sleep",1);
+      uint32_t back=program.cursor;
+      exception_emit_word(&program,(uint32_t)OP_B<<24|((loop-back)/4u&0x7fffffu));
+      store_u32le(win.data+leave,(uint32_t)OP_BF<<24|((program.cursor-leave)/4u));
+    }
+    exception_emit_statement(&program,"@@finish_finally@@",0);
+    exception_emit_integer(&program,-103);
+    exception_emit_word(&program,(uint32_t)OP_RET<<24|(uint32_t)DT_VAR<<16);
+    win.code[1]=(GmlCode){.name="gml_Script_exception_child",.start=child_start,
+      .length=program.cursor-child_start,.bytecode_offset=offset,.embedded_function=embedded,
+      .cache_bad=uncached};
+    store_u32le(win.data+finally_site,UINT32_C(0x84000000)|finally_offset);
+    if(gml_vm_init(&vm,&win,NULL)){ gml_win_free(&win);return 0; }
+    GmlInstance *self=NULL;
+    if(paused){
+      self=gml_vm_instances_alloc(&vm);
+      if(!self){gml_vm_free(&vm);gml_win_free(&win);return 0;}
+      self->active=1;self->obj=-1;self->id=100001;vm.wait_event_scope=1;
+    }
+    GmlVal result=gml_vm_run_code(&vm,0,self,NULL,NULL,0);
+    int passed=1;
+    if(paused){
+      passed=vm.wait.active && vm.wait.n_frames==2 &&
+        vm.wait.frames[0].exceptions.deferred_n==1 &&
+        vm.wait.frames[0].exceptions.deferred[0] &&
+        !strcmp(vm.wait.frames[0].exceptions.deferred[0],"42") &&
+        vm.wait.frames[1].exceptions.handler_n==1;
+      size_t capacity=passed?gml_vm_state_size(&vm):0,written=0,used=0,repeated=0;
+      unsigned char *state=malloc(capacity?capacity:1),*again=malloc(capacity?capacity:1);
+      passed=passed && state && again &&
+        gml_vm_state_save(&vm,state,capacity,&written) &&
+        gml_vm_state_load(&vm,state,written,&used) && used==written &&
+        gml_vm_state_save(&vm,again,capacity,&repeated) && repeated==written &&
+        !memcmp(state,again,written);
+      free(state);free(again);
+      GmlVal release=vreal(888);
+      (void)gml_builtin_call(&vm,"random_set_seed",&release,1);
+      passed=passed && gml_vm_wait_resume(&vm) && !vm.wait.active && vm.rng_state==999;
+    }
+    GmlInstance *error=paused?(vm.n_structs?vm.structs[vm.n_structs-1]:NULL)
+      :(gml_val_is_number_or_object(result) && GML_IS_STRUCT_ID(result.d)
+        ?gml_struct_find(&vm,(unsigned)result.d):NULL);
+    GmlVal *message=error?gml_varmap_get(&error->vars,"message"):NULL;
+    passed=passed && message && message->t==V_STR && message->s && !strcmp(message->s,"42") &&
+      vm.rng_state==(paused?999u:777u) && !vm.exception_context && vm.execution_depth==0;
+    if(!passed){ fprintf(stderr,"exception route failed: paused=%d uncached=%d embedded=%d result=%g seed=%u\n",
+                         paused,uncached,embedded,result.d,vm.rng_state);ok=0; }
+    gml_vm_free(&vm);gml_win_free(&win);
+  }
+  if(ok) puts("internal finalization: throw/finally/caller catch, cached/raw/shared spans and exact parked-chain resume passed");
+  return ok;
+}
+
+static int finish_finally_contract(GmlVM *vm,LogFixture *logs){
+  int ok=1,id=gml_builtin_fast_id(vm,"@@finish_finally@@");
+  ok &= id>0 && id!=gml_builtin_fast_id(vm,"@@finally@@");
+  uint32_t rng[16],seed=vm->rng_state,classic=vm->rng_classic_state;
+  memcpy(rng,vm->rng_well,sizeof rng);int rng_index=vm->rng_index;
+  int relative=vm->action_relative,wait=vm->wait_requested;
+  GmlExceptionContext *saved=vm->exception_context;
+  for(int cached=0;cached<2;cached++){
+    GmlExceptionContext context={0};context.code_length=128;
+    vm->exception_context=&context;
+    context.state.deferred[0]=strdup("neutral outer exception");
+    context.state.deferred[1]=strdup("neutral inner exception");
+    context.state.deferred_n=2;
+    for(int i=0;i<2;i++){
+      int before=logs->count;
+      GmlVal actual=cached?call_fast(vm,"@@finish_finally@@",NULL,0,&ok)
+                          :gml_builtin_call(vm,"@@finish_finally@@",NULL,0);
+      const char *expected=i==0?"neutral inner exception":"neutral outer exception";
+      ok=actual.t==V_UNDEF && logs->count==before &&
+         context.state.pending && !strcmp(context.state.pending,expected) &&
+         context.state.deferred_n==1-i && ok;
+      free(context.state.pending);context.state.pending=NULL;
+    }
+    GmlVal empty=gml_builtin_call(vm,"@@finish_finally@@",NULL,0);
+    ok=empty.t==V_UNDEF && !context.state.pending && ok;
+    GmlVal thrown=vstr("replacement exception");
+    (void)gml_builtin_call(vm,"@@throw@@",&thrown,1);
+    ok=context.state.pending && !strcmp(context.state.pending,"replacement exception") && ok;
+    gml_vm_exception_state_clear(&context.state);
+  }
+  vm->exception_context=saved;
+  ok=!memcmp(rng,vm->rng_well,sizeof rng) && vm->rng_index==rng_index &&
+     vm->rng_state==seed && vm->rng_classic_state==classic &&
+     vm->action_relative==relative && vm->wait_requested==wait && ok;
+  if(ok) puts("internal finalization: named/cached owned deferred messages and unchanged control state passed");
+  return ok;
+}
+
 static int legacy_question_contract(GmlVM *vm,LogFixture *logs){
   int ok=1,canonical=gml_builtin_fast_id(vm,"show_question");
   ok &= gml_builtin_fast_id(vm,"action_if_question")==canonical && canonical>0;
@@ -1703,6 +1871,8 @@ int main(int argc,char **argv){
   }
   int ok=guid_only ? gamepad_guid_capability_contract(&vm) :
          canonical_registry_resolution(&vm) &&
+         finish_finally_execution_contract() &&
+         finish_finally_contract(&vm,&log_fixture) &&
          legacy_question_contract(&vm,&log_fixture) &&
          unavailable_steam_contract(&vm,&log_fixture) &&
          internal_value_helpers_contract() &&

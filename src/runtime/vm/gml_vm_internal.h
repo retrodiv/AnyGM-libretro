@@ -45,6 +45,15 @@ static inline void gml_vm_prefetch_variable_map(const GmlVarMap *map){
   (void)map;
 #endif
 }
+typedef struct GmlExceptionContext {
+  GmlExceptionState state;
+  struct GmlExceptionContext *parent;
+  uint32_t code_length,code_offset;
+  const char *direct_fallback_name;
+  int stack_n,with_n,array_reference_n;
+} GmlExceptionContext;
+void gml_vm_exception_state_clear(GmlExceptionState *state);
+
 double gml_vm_classic_round_even(double value);
 double gml_vm_value_as_number(GmlVal value);
 int gml_vm_value_is_true(GmlVal value);

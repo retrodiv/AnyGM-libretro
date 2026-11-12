@@ -331,6 +331,7 @@ static int parse_code(GmlWin *w){
     if(w->bytecode>=15){
       uint32_t code_offset=u32(w->data,p+16);
       w->code[i].embedded_function=code_offset!=0;
+      w->code[i].bytecode_offset=code_offset;
       /* An offset past the parent's span leaves no callable suffix. Clamp it to an empty entry so
        * the subtraction cannot wrap and the VM receives a record with nothing to execute. */
       w->code[i].length = code_offset>serialized_length ? 0u

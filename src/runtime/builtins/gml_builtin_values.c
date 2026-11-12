@@ -1466,10 +1466,33 @@ GmlVal gml_builtin_try_values_language(GmlVM *vm, const char *nm, GmlVal *a, int
     }
     return vreal(have && want>=0 && (int)pc->d==want);
   }
+  if(!strcmp(nm,"@@try_hook@@")){
+    double catch_offset=N(a,n,0),finally_offset=N(a,n,1);
+    if(n==2 && isfinite(catch_offset) && isfinite(finally_offset) &&
+       catch_offset>=-1 && catch_offset<=INT_MAX && floor(catch_offset)==catch_offset &&
+       finally_offset>=-1 && finally_offset<=INT_MAX && floor(finally_offset)==finally_offset)
+      (void)gml_vm_exception_hook(vm,(int)catch_offset,(int)finally_offset);
+    return vundef();
+  }
+  if(!strcmp(nm,"@@try_unhook@@")){
+    gml_vm_exception_unhook(vm);
+    return vundef();
+  }
+  if(!strcmp(nm,"@@throw@@")){
+    if(n>0){
+      GmlVal message=gml_builtin_try_values_strings(vm,"@@string@@",a,1);
+      gml_vm_exception_raise(vm,message.t==V_STR?message.s:"");
+      gml_values_release(&message,1);
+    }
+    return vundef();
+  }
+  if(!strcmp(nm,"@@finish_finally@@")){
+    gml_vm_exception_finish_finally(vm);
+    return vundef();
+  }
+  if(!strcmp(nm,"@@finish_catch@@")) return vundef();
   if(!strcmp(nm,"@@SetStatic@@")||!strcmp(nm,"@@GetStatic@@")||!strcmp(nm,"@@CopyStatic@@")||
-     !strcmp(nm,"@@try_hook@@")||!strcmp(nm,"@@try_unhook@@")||
-     !strcmp(nm,"@@finish_catch@@")||!strcmp(nm,"@@finally@@")||
-     !strcmp(nm,"@@throw@@")) return vreal(0);
+     !strcmp(nm,"@@finally@@")) return vreal(0);
   return gml_builtin_try_instances_destroy(vm,nm,a,n);
 }
 /* Values math/arrays implementation. */

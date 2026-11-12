@@ -20,9 +20,16 @@ failed partial reads leave the canonical image unpublished and invalid as a
 current resource. See R03-P9-INCREMENTAL-CHECKPOINT in
 [the renderer map](RENDERER_BACKENDS.md) for owners and controls.
 
-The current AnyGM save-state schema is `62`. It is the format transported by
+The current AnyGM save-state schema is `63`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `63` introduces VM schema `38`. Each suspended interpreter frame retains
+its bounded exception handlers and independently owned pending and deferred error
+messages. Live C invocation pointers remain transient. Each handler records catch
+and finally byte offsets, saved operand/environment/reference depths, and whether
+it has already dispatched. Decoder bounds reject invalid counts, targets and
+non-parkable environments; older public and VM schemas are rejected.
 
 Schema `62` introduces VM schema `37`. A bounded, owned pending game-load
 filename follows the timezone byte. Ordinary file loads commit only after the
