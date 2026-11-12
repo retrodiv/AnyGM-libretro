@@ -151,7 +151,7 @@ static void state_debug(const GmlVM *vm,const char *msg,size_t pos,uint32_t v){
     anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[state] %s pos=%llu v=%u\n",msg,(unsigned long long)pos,v);
 }
 
-static void sw_raw(StateW *s, const void *p, size_t n){
+static inline void sw_raw(StateW *s, const void *p, size_t n){
   if(n>SIZE_MAX-s->pos){ s->ok=0; s->pos=SIZE_MAX; return; }
   if(s->data){
     if(s->pos<=s->cap && n<=s->cap-s->pos) memcpy(s->data+s->pos,p,n);
