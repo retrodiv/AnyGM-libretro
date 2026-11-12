@@ -205,6 +205,12 @@ GmlVal gml_builtin_try_values_math(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"array_map_ext")) return gml_array_map_ext(vm,a,n);
   if(!strcmp(nm,"array_foreach")) return gml_array_foreach(vm,a,n);
   if(!strcmp(nm,"array_create")){ int sz=n>0?(int)N(a,n,0):0; GmlVal fill=n>1?a[1]:vreal(0); return gml_arr_new(sz,fill); }
+  if(!strcmp(nm,"@@array_get@@")){
+    if(n<2) return vundef();
+    double index=N(a,n,1);
+    if(!isfinite(index) || index<INT_MIN || index>INT_MAX) return vundef();
+    return gml_arr_get_owned(a[0],(int)index);
+  }
   if(!strcmp(nm,"array_get")){ return n>1?gml_arr_get(a[0],(int)N(a,n,1)):vreal(0); }
   if(!strcmp(nm,"array_set")){ if(n>2) gml_arr_set(a[0],(int)N(a,n,1),a[2]); return vreal(0); }
   if(!strcmp(nm,"array_get_2D")||!strcmp(nm,"array_get_2d")){
@@ -480,8 +486,12 @@ static int string_trim_matches(const char *set, char ch){
 /* string(template, ...) substitutes numbered placeholders from subsequent arguments.
  * Repeated or reordered indices refer to the same argument positions. A placeholder without
  * an available argument remains unchanged rather than inventing a value. */
-static GmlVal gml_string_format(GmlVM *vm, GmlVal *a, int n){
-  const char *fmt=S(vm,a,n,0);
+static const char *gml_string_argument(GmlVM *vm,GmlVal *a,int n,int index,int internal){
+  if(internal && index<n && a[index].t==V_UNDEF) return "undefined";
+  return S(vm,a,n,index);
+}
+static GmlVal gml_string_format(GmlVM *vm, GmlVal *a, int n,int internal){
+  const char *fmt=gml_string_argument(vm,a,n,0,internal);
   if(!fmt) return vstr_owned(strdup(""));
   size_t cap=strlen(fmt)+64, used=0;
   char *out=malloc(cap);
@@ -499,7 +509,7 @@ static GmlVal gml_string_format(GmlVM *vm, GmlVal *a, int n){
     char one[2];
     size_t len;
     if(index>=0 && index+1<n){
-      piece=S(vm,a,n,index+1);
+      piece=gml_string_argument(vm,a,n,index+1,internal);
       if(!piece) piece="";
       len=strlen(piece);
     } else if(index>=0){
@@ -524,8 +534,11 @@ GmlVal gml_builtin_try_values_strings(GmlVM *vm, const char *nm, GmlVal *a, int 
   GmlRender *R=(GmlRender*)vm->render;
   (void)R;
   /* ---- strings ---- */
-  if(!strcmp(nm,"string"))
-    return n>1 ? gml_string_format(vm,a,n) : vstr_owned(strdup(S(vm,a,n,0)));
+  if(!strcmp(nm,"string")||!strcmp(nm,"@@string@@")){
+    int internal=nm[0]=='@';
+    return n>1 ? gml_string_format(vm,a,n,internal)
+               : vstr_owned(strdup(gml_string_argument(vm,a,n,0,internal)));
+  }
   if(!strcmp(nm,"string_length")) return vreal((double)strlen(S(vm,a,n,0)));
   if(!strcmp(nm,"string_byte_length")) return vreal((double)strlen(S(vm,a,n,0)));
   if(!strcmp(nm,"string_concat")) return gml_string_concat(a,n);

@@ -419,6 +419,17 @@ GmlVal gml_arr_get(GmlVal arr, int idx){
   if(idx<A->len){ GmlVal v=A->data[idx]; if(v.t==V_STR) v.d=0; return v; }   /* d=0: non-owning ref */
   return vreal(0);
 }
+GmlVal gml_arr_get_owned(GmlVal arr,int idx){
+  if(arr.t!=V_ARR || !arr.arr || idx<0) return vundef();
+  GmlArr *array=arr.arr;
+  if(idx>=array->len) return vundef();
+  if(array->is_2d){
+    int row=idx/GML_2D_STRIDE, column=idx%GML_2D_STRIDE;
+    if(row>=array->height2d || !array->row_len || column>=array->row_len[row])
+      return vundef();
+  }
+  return gml_arr_store_clone(gml_arr_get(arr,idx));
+}
 /* A non-terminal pushac in a chained array assignment requires an array container rather
  * than the numeric zero returned by a terminal read. Materialize that container lazily; existing
  * scalar and string values remain observable so malformed chains do not replace user data. */

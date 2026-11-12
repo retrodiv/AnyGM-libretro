@@ -1537,6 +1537,108 @@ static int instance_id_view_contract(void){
   return ok;
 }
 
+static int internal_value_helpers_contract(void){
+  GmlWin win={.bytecode=17};
+  GmlVM vm;
+  if(gml_vm_init(&vm,&win,NULL)) return 0;
+  GmlVal values=gml_arr_new(4,vreal(0));
+  GmlVal *root=gml_varmap_put(&vm.globals,"helper_values");
+  if(values.t!=V_ARR || !root){gml_vm_free(&vm);return 0;}
+  *root=values;
+  gml_arr_set(values,1,vstr("leaf"));
+  gml_arr_set(values,2,vint64(INT64_C(9007199254740993)));
+  gml_arr_set(values,3,gml_arr_new(1,vreal(77)));
+  GmlVal legacy=gml_arr_new(0,vreal(0));
+  GmlVal *legacy_root=gml_varmap_put(&vm.globals,"helper_legacy_values");
+  if(!legacy.arr || !legacy_root){gml_vm_free(&vm);return 0;}
+  *legacy_root=legacy;
+  ((GmlArr *)legacy.arr)->is_2d=1;
+  gml_arr_set_2d(legacy,1,2,vreal(17));
+  int ok=gml_builtin_fast_id(&vm,"@@array_get@@")>0 &&
+         gml_builtin_fast_id(&vm,"@@string@@")>0;
+  for(int cached=0;cached<2;cached++){
+    gml_arr_set(values,0,vreal(31));
+    gml_arr_set(values,1,vstr("leaf"));
+    GmlVal args[]={values,vreal(0)};
+    GmlVal number=cached?call_fast(&vm,"@@array_get@@",args,2,&ok)
+                        :gml_builtin_call(&vm,"@@array_get@@",args,2);
+    ok=expect_real("internal numeric array read",number,31) && ok;
+    args[1]=vreal(1);
+    GmlVal text=cached?call_fast(&vm,"@@array_get@@",args,2,&ok)
+                      :gml_builtin_call(&vm,"@@array_get@@",args,2);
+    gml_arr_set(values,1,vstr("changed"));
+    ok=expect_string("internal string array read",text,"leaf") && ok;
+    args[1]=vreal(2);
+    GmlVal wide=cached?call_fast(&vm,"@@array_get@@",args,2,&ok)
+                      :gml_builtin_call(&vm,"@@array_get@@",args,2);
+    ok=wide.t==V_REAL && gml_val_number_kind(wide)==GML_NUM_INT64 &&
+       wide.integer==INT64_C(9007199254740993) && ok;
+    args[1]=vreal(3);
+    GmlVal nested=cached?call_fast(&vm,"@@array_get@@",args,2,&ok)
+                        :gml_builtin_call(&vm,"@@array_get@@",args,2);
+    ok=nested.t==V_ARR && nested.arr==gml_arr_get(values,3).arr && ok;
+    ok=expect_real("internal nested array read",gml_arr_get(nested,0),77) && ok;
+    gml_arr_set(nested,0,vreal(79));
+    ok=expect_real("internal read retains the nested reference",
+                   gml_arr_get(gml_arr_get(values,3),0),79) && ok;
+    gml_arr_set(nested,0,vreal(77));
+    gml_arr_set(values,0,vreal(61));args[1]=vreal(0);
+    GmlVal changed=cached?call_fast(&vm,"@@array_get@@",args,2,&ok)
+                         :gml_builtin_call(&vm,"@@array_get@@",args,2);
+    ok=expect_real("internal reader observes later writes",changed,61) && ok;
+    GmlVal inputs[]={text,wide,vstr("{0}")};
+    const char *expected[]={"leaf","9007199254740993","{0}"};
+    GmlVal strings[3];
+    for(int i=0;i<3;i++){
+      strings[i]=cached?call_fast(&vm,"@@string@@",&inputs[i],1,&ok)
+                        :gml_builtin_call(&vm,"@@string@@",&inputs[i],1);
+      ok=expect_string("internal scalar conversion",strings[i],expected[i]) && ok;
+    }
+    gml_values_release(strings,3);
+    gml_values_release(&text,1);
+    const GmlVal invalid[][2]={
+      {vreal(0),vreal(0)}, {values,vreal(-1)}, {values,vreal(4)},
+      {values,vreal(NAN)}, {values,vreal(1e30)}
+    };
+    for(size_t i=0;i<sizeof invalid/sizeof invalid[0];i++){
+      GmlVal bad[]={invalid[i][0],invalid[i][1]};
+      GmlVal result=cached?call_fast(&vm,"@@array_get@@",bad,2,&ok)
+                          :gml_builtin_call(&vm,"@@array_get@@",bad,2);
+      ok=result.t==V_UNDEF && ok;
+    }
+    for(int count=0;count<2;count++){
+      GmlVal result=cached?call_fast(&vm,"@@array_get@@",args,count,&ok)
+                          :gml_builtin_call(&vm,"@@array_get@@",args,count);
+      ok=result.t==V_UNDEF && ok;
+    }
+    GmlVal format[]={vstr("{{0}}:{1}"),vstr("leaf"),vreal(9)};
+    GmlVal formatted=cached?call_fast(&vm,"@@string@@",format,3,&ok)
+                           :gml_builtin_call(&vm,"@@string@@",format,3);
+    ok=expect_string("internal interpolation keeps literal outer braces",formatted,"{leaf}:9") && ok;
+    gml_values_release(&formatted,1);
+    GmlVal undefined=vundef();
+    GmlVal converted=cached?call_fast(&vm,"@@string@@",&undefined,1,&ok)
+                           :gml_builtin_call(&vm,"@@string@@",&undefined,1);
+    ok=expect_string("internal undefined conversion",converted,"undefined") && ok;
+    gml_values_release(&converted,1);
+    GmlVal empty=cached?call_fast(&vm,"@@string@@",NULL,0,&ok)
+                       :gml_builtin_call(&vm,"@@string@@",NULL,0);
+    ok=expect_string("internal empty conversion",empty,"") && ok;
+    gml_values_release(&empty,1);
+    GmlVal legacy_args[]={legacy,vreal(GML_2D_STRIDE+2)};
+    GmlVal cell=cached?call_fast(&vm,"@@array_get@@",legacy_args,2,&ok)
+                      :gml_builtin_call(&vm,"@@array_get@@",legacy_args,2);
+    ok=expect_real("internal legacy flattened value",cell,17) && ok;
+    legacy_args[1]=vreal(0);
+    GmlVal hole=cached?call_fast(&vm,"@@array_get@@",legacy_args,2,&ok)
+                      :gml_builtin_call(&vm,"@@array_get@@",legacy_args,2);
+    ok=hole.t==V_UNDEF && ok;
+  }
+  gml_vm_free(&vm);
+  if(ok) puts("internal value helpers: named/cached reads, nested aliases and scalar strings passed");
+  return ok;
+}
+
 int main(int argc,char **argv){
   int guid_only=argc==3 && !strcmp(argv[1],"--case") &&
                 !strcmp(argv[2],"input.gamepad_guid");
@@ -1556,6 +1658,7 @@ int main(int argc,char **argv){
   }
   int ok=guid_only ? gamepad_guid_capability_contract(&vm) :
          canonical_registry_resolution(&vm) &&
+         internal_value_helpers_contract() &&
          instance_id_view_contract() &&
          gamepad_guid_capability_contract(&vm) &&
          gamepad_hat_contract(&vm) &&

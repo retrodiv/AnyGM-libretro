@@ -102,6 +102,8 @@ GmlVal       gml_arr_store_clone(GmlVal v); /* own strings / mark-escape arrays 
 GmlVal       gml_arr_new(int size, GmlVal fill);
 void         gml_arr_set(GmlVal arr, int idx, GmlVal val);
 GmlVal       gml_arr_get(GmlVal arr, int idx);
+/* A checked published read owns returned text and retains nested array aliases. */
+GmlVal       gml_arr_get_owned(GmlVal arr, int idx);
 GmlVal       gml_arr_chain_ensure(GmlVal arr, int idx);
 void         gml_arr_set_2d(GmlVal arr, int row, int column, GmlVal val);
 GmlVal       gml_arr_get_2d(GmlVal arr, int row, int column);
