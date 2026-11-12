@@ -589,6 +589,29 @@ static void crt_adjustment_forces_the_logical_raster(void){
     complain("legacy CRT option declaration differs");
 }
 
+/* The runtime can poll changed values before the menu asks whether to rebuild its list. */
+static void first_crt_disable_refreshes_the_menu(void){
+  for(unsigned version=1;version<=2;version++){
+    begin(version,3);
+    answered_crt_value="On";
+    answered_raster_value="Off";
+    libretro_options_register();
+    libretro_options_apply(true);
+    menu_time_visibility();
+    expect("startup hides raster selector",shown("anygm_render_game_resolution"),0u);
+    answered_crt_value="Off";
+    libretro_options_apply(false);
+    if(!menu_time_visibility())
+      complain("first CRT disable lost the menu refresh after runtime polling");
+    expect("first disable shows raster selector",shown("anygm_render_game_resolution"),1u);
+    if(menu_time_visibility()) complain("menu refresh must be consumed once");
+    answered_crt_value="On";
+    if(!menu_time_visibility()) complain("menu-first CRT enable needs a refresh");
+    libretro_options_apply(false);
+    if(menu_time_visibility()) complain("runtime polling duplicated the menu refresh");
+  }
+}
+
 static void the_forced_shape_follows_the_logical_raster(void){
   begin(2,3);
   if(!menu_time_visibility){
@@ -877,6 +900,7 @@ int main(void){
   monitor_dimensions_follow_the_window_raster();
   the_forced_shape_follows_the_logical_raster();
   crt_adjustment_forces_the_logical_raster();
+  first_crt_disable_refreshes_the_menu();
   culling_names_rise_with_their_thresholds();
   loaded_content_names_its_rooms();
   rooms_past_one_list_stay_reachable();

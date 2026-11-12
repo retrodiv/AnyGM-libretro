@@ -219,6 +219,7 @@ static size_t g_flat_count;
 static int g_published_ranges=-1;
 static int g_published_logical_raster=-1;
 static int g_published_crt=-1;
+static bool g_visibility_refresh_pending;
 
 static int update_option_visibility(void);
 
@@ -559,6 +560,7 @@ static int update_option_visibility(void){
   display.key="anygm_render_game_resolution";
   display.visible=crt?false:true;
   g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
+  g_visibility_refresh_pending=true;
   g_published_crt=crt;
   g_published_ranges=ranges;
   g_published_logical_raster=logical_raster;
@@ -568,7 +570,12 @@ static int update_option_visibility(void){
 /* Hosts ask through this while their menu is open, which is the only moment the answer can reach
  * the player who just changed the setting it depends on. */
 static bool options_update_display(void){
-  return update_option_visibility()?true:false;
+  update_option_visibility();
+  /* Runtime polling may already have published the change. The frontend still needs to
+   * rebuild its menu once, even when this callback has no further display hints to send. */
+  bool changed=g_visibility_refresh_pending;
+  g_visibility_refresh_pending=false;
+  return changed;
 }
 
 /* Put the two room selectors back to the single value each was declared with. The strings are
