@@ -543,23 +543,27 @@ static int update_option_visibility(void){
      crt==g_published_crt)
     return 0;
   struct retro_core_option_display display;
+  bool delivered=true;
   display.key="anygm_start_room_page";
   display.visible=ranges?true:false;
-  g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
+  delivered=g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display) && delivered;
   display.visible=logical_raster?false:true;
   for(size_t i=0;monitor_dimensions[i];i++){
     display.key=monitor_dimensions[i];
-    g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
+    delivered=g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display) && delivered;
   }
   display.key="anygm_aspect_ratio_force";
   display.visible=logical_raster?true:false;
-  g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
+  delivered=g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display) && delivered;
   display.key="anygm_adjust_crt_tv";
   display.visible=true;
-  g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
+  delivered=g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display) && delivered;
   display.key="anygm_render_game_resolution";
   display.visible=crt?false:true;
-  g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
+  delivered=g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display) && delivered;
+  /* Frontends may temporarily ignore environment calls while probing a resident core.
+   * Cache only hints that reached the frontend, so the next live update retries them. */
+  if(!delivered) return 0;
   g_visibility_refresh_pending=true;
   g_published_crt=crt;
   g_published_ranges=ranges;

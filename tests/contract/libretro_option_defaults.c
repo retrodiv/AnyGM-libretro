@@ -26,6 +26,7 @@ static const char *answered_hybrid_gpu_value;
 static const char *answered_scene_gpu_value;
 static const char *answered_game_shaders_value;
 static bool (*menu_time_visibility)(void);
+static bool environment_suspended;
 static const struct retro_core_option_v2_category *declared_categories;
 static const struct retro_core_option_v2_definition *declared_definitions;
 static const struct retro_core_option_definition *declared_v1_definitions;
@@ -57,6 +58,7 @@ static int shown(const char *key){
 }
 
 static bool environment_callback(unsigned command,void *data){
+  if(environment_suspended) return false;
   switch(command){
     case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION:
       *(unsigned*)data=host_options_version;
@@ -612,6 +614,25 @@ static void first_crt_disable_refreshes_the_menu(void){
   }
 }
 
+/* A frontend can probe the resident core while temporarily ignoring environment calls.
+ * Failed display hints must not replace the visibility last delivered to the live menu. */
+static void ignored_environment_probe_preserves_live_visibility(void){
+  begin(2,3);
+  answered_crt_value="On";
+  answered_raster_value="On";
+  libretro_options_register();
+  menu_time_visibility();
+  expect("live CRT hides raster",shown("anygm_render_game_resolution"),0u);
+  environment_suspended=true;
+  libretro_options_register();
+  environment_suspended=false;
+  answered_crt_value="Off";
+  libretro_options_apply(false);
+  menu_time_visibility();
+  expect("first disable after ignored probe shows raster",
+         shown("anygm_render_game_resolution"),1u);
+}
+
 static void the_forced_shape_follows_the_logical_raster(void){
   begin(2,3);
   if(!menu_time_visibility){
@@ -901,6 +922,7 @@ int main(void){
   the_forced_shape_follows_the_logical_raster();
   crt_adjustment_forces_the_logical_raster();
   first_crt_disable_refreshes_the_menu();
+  ignored_environment_probe_preserves_live_visibility();
   culling_names_rise_with_their_thresholds();
   loaded_content_names_its_rooms();
   rooms_past_one_list_stay_reachable();
