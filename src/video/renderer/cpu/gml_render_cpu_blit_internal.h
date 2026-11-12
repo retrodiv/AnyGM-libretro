@@ -5,6 +5,7 @@
 #ifndef GML_RENDER_CPU_BLIT_INTERNAL_H
 #define GML_RENDER_CPU_BLIT_INTERNAL_H
 #include "gml_render_cpu_dispatch_internal.h"
+#include "gml_render_cpu_pixel_internal.h"
 
 #include "gml_render_cpu_sampling_internal.h"
 
@@ -235,6 +236,10 @@ static inline void surf_bi_band(void *p, int py0, int py1, int slot){
       float Gv=((p00>>8)&0xFF)*w00+((p01>>8)&0xFF)*w01+((p10>>8)&0xFF)*w10+((p11>>8)&0xFF)*w11;
       float Bv=(p00&0xFF)*w00+(p01&0xFF)*w01+(p10&0xFF)*w10+(p11&0xFF)*w11;
       float sr=Rv*c->fbRr, sg=Gv*c->fbGg, sb=Bv*c->fbBb; uint32_t *dp=&dprow[tx_];
+      if(gml_render_modern_surface_blends_alpha(r)){
+        *dp=surface_source_over_pixel(r,*dp,sr,sg,sb,ea);
+        continue;
+      }
       if(c->noblend || ea>=1.0f){ *dp=0xFF000000u|((uint32_t)(sr+0.5f)<<16)|((uint32_t)(sg+0.5f)<<8)|(uint32_t)(sb+0.5f); }
       else { float ia=1.0f-ea; int dr=(*dp>>16)&0xFF,dg=(*dp>>8)&0xFF,db=*dp&0xFF;
         *dp=0xFF000000u|((int)(sr*ea+dr*ia+0.5f)<<16)|((int)(sg*ea+dg*ia+0.5f)<<8)|(int)(sb*ea+db*ia+0.5f); }

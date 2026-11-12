@@ -8,6 +8,33 @@
 #include "gml_render_internal.h"
 
 
+static inline uint32_t gml_render_target_source_over_alpha(const GmlRender *r,uint32_t dst,
+                                               unsigned source_alpha){
+  if(!gml_render_target_preserves_alpha(r)) return 0xFF000000u;
+  if(source_alpha>255u) source_alpha=255u;
+  unsigned destination_alpha=dst>>24;
+  unsigned inverse=255u-source_alpha;
+  unsigned output=(source_alpha*source_alpha+destination_alpha*inverse+127u)/255u;
+  if(output>255u) output=255u;
+  return output<<24;
+}
+/* Retain each rounded fixed-function contribution before adding the channels,
+ * as the existing filtered blit kernels do. The caller supplies sampled RGB. */
+static inline uint32_t surface_source_over_pixel(const GmlRender *render,uint32_t dst,
+                                                 double sr,double sg,double sb,double alpha){
+  int dr=(dst>>16)&255,dg=(dst>>8)&255,db=dst&255;
+  double inverse=1.0-alpha;
+  int rr=(int)(sr*alpha+0.5)+(int)(dr*inverse+0.5);
+  int rg=(int)(sg*alpha+0.5)+(int)(dg*inverse+0.5);
+  int rb=(int)(sb*alpha+0.5)+(int)(db*inverse+0.5);
+  if(rr<0) rr=0; else if(rr>255) rr=255;
+  if(rg<0) rg=0; else if(rg>255) rg=255;
+  if(rb<0) rb=0; else if(rb>255) rb=255;
+  unsigned source_alpha=(unsigned)(alpha*255.0+0.5);
+  return gml_render_target_source_over_alpha(render,dst,source_alpha)|
+    ((uint32_t)rr<<16)|((uint32_t)rg<<8)|(uint32_t)rb;
+}
+
 static inline uint32_t color_write_bits(unsigned m){
   uint32_t bits=0;
   if(m&1u) bits|=0x00FF0000u;

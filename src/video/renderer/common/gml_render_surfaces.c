@@ -719,6 +719,16 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
         state->alpha_equation<=GML_RENDER_BLEND_EXACT_DESTINATION_MIN)) && state &&
       (state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
        (state->coverage_policy==0u &&
+        operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST &&
+        operation->payload.quad.sampling.quantisation==0u &&
+        gml_render_modern_surface_blends_alpha(r) &&
+        state->rgb_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
+        state->alpha_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
+        state->rgb_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA &&
+        state->alpha_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA &&
+        state->rgb_equation==GML_RENDER_BLEND_ADD &&
+        state->alpha_equation==GML_RENDER_BLEND_ADD) ||
+       (state->coverage_policy==0u &&
         state->rgb_equation>=GML_RENDER_BLEND_EXACT_DESTINATION_ADD &&
         state->rgb_equation<=GML_RENDER_BLEND_EXACT_DESTINATION_MIN &&
         state->alpha_equation>=GML_RENDER_BLEND_EXACT_DESTINATION_ADD &&
@@ -2980,6 +2990,16 @@ static GmlRenderResource *resident_surface_borrowed_application(GmlRender *r){
        (r->target_stack[index].pending_fill || r->target_stack[index].pending_underlay)) return NULL;
   return resource;
 }
+/* Normal modern sampled targets retain source-over coverage on the device too. */
+static void surface_source_over_alpha_state(const GmlRender *r,
+                                            GmlRenderDrawStateSnapshot *state){
+  if(!gml_render_modern_surface_blends_alpha(r)) return;
+  state->alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+  state->alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+  state->alpha_equation=GML_RENDER_BLEND_ADD;
+  state->coverage_policy=0u;
+}
+
 /* These alpha policies cannot lower an already opaque target,including an
  * empty sampled footprint. Keep the witnessed fact without scanning pixels. */
 static int surface_scene_retains_opaque(const GmlRender *r,
@@ -3299,6 +3319,7 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
     q->span_y[0]=(destination_blend || (r->blendmode==3 && fast_unit))?4.0:0.0;
   }
   state.samplers[0]=q->sampling;state.sampler_count=1u;
+  surface_source_over_alpha_state(r,&state);
   int retains_opaque=surface_scene_retains_opaque(r,&state);
   if(!surface_feedback_enqueue(r,&operation,&state,&source,feedback)) return 0;
   if(write_mask&8u){
@@ -3586,6 +3607,7 @@ static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,do
     state.alpha_test_reference=r->alpha_test_ref;
   }
   state.sampler_count=1u;state.samplers[0]=quad->sampling;
+  surface_source_over_alpha_state(r,&state);
   int retains_opaque=surface_scene_retains_opaque(r,&state);
   if(!surface_feedback_enqueue(r,&operation,&state,&source,feedback)) return 0;
   /* R03-P5-GUI-OPAQUE-SUFFIX: these known-opaque GUI sources write opaque
@@ -4352,6 +4374,7 @@ static int resident_surface_rotated_function(GmlRender *r,int surf,double x,doub
       mode==1?GML_RENDER_BLEND_ONE:GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
   }
+  surface_source_over_alpha_state(r,&state);
   state.samplers[0]=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_NEAREST,GML_RENDER_EDGE_CLAMP_SUBIMAGE,
     {0,0,(uint32_t)sw,(uint32_t)sh},GML_RENDER_QUANTISE_SURFACE_ROTATED_POINT,0u};
   uint32_t tint=((colour&255u)<<16)|(colour&0xFF00u)|((colour>>16)&255u)|((uint32_t)lround(alpha*255)<<24);

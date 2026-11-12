@@ -733,6 +733,13 @@ static inline int gml_render_target_preserves_alpha(const GmlRender *render){
          anygm_policy_uses_first_generation_studio(render->win);
 }
 
+/* Normal sampled-surface draws retain coverage on explicit modern targets. */
+static inline int gml_render_modern_surface_blends_alpha(const GmlRender *render){
+  return render && render->win && render->active_shader<0 && render->alphablend && render->blendmode==0 &&
+    gml_render_target_preserves_alpha(render) &&
+    anygm_policy_blend(render->win)==ANYGM_BLEND_STUDIO_SECOND;
+}
+
 /* Renderer-private cross-unit operations. These are implementation seams, not
  * subsystem-facing APIs; callers outside renderer .c owners must not use them. */
 typedef void (*GmlRowBandFn)(void *ctx,int row_start,int row_end,int slot);

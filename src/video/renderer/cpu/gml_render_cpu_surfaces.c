@@ -342,7 +342,8 @@ static void scaled_band(void *context,int row_start,int row_end,int slot){
         } else if(a){
           double pa = a / 255.0;
           int sr = (s >> 16) & 0xFF, sg = (s >> 8) & 0xFF, sb = s & 0xFF;
-          if(pa >= 1.0) *dp = 0xFF000000u | ((uint32_t)sr << 16) | ((uint32_t)sg << 8) | (uint32_t)sb;
+          if(gml_render_modern_surface_blends_alpha(r)) *dp=surface_source_over_pixel(r,*dp,sr,sg,sb,pa);
+          else if(pa >= 1.0) *dp = 0xFF000000u | ((uint32_t)sr << 16) | ((uint32_t)sg << 8) | (uint32_t)sb;
           else {
             int dr = (*dp >> 16) & 0xFF, dg = (*dp >> 8) & 0xFF, db = *dp & 0xFF;
             int round_target=r->win && anygm_policy_uses_first_generation_studio(r->win) &&
@@ -380,7 +381,8 @@ static void scaled_band(void *context,int row_start,int row_end,int slot){
       if(pa > 0.0){
         gml_render_dispatch_cpu_scope_write(r);
         int sr = (int)(R / n), sg = (int)(G / n), sb = (int)(B / n);
-        if(pa >= 1.0) *dp = 0xFF000000u | ((uint32_t)sr << 16) | ((uint32_t)sg << 8) | (uint32_t)sb;
+        if(gml_render_modern_surface_blends_alpha(r)) *dp=surface_source_over_pixel(r,*dp,sr,sg,sb,pa);
+        else if(pa >= 1.0) *dp = 0xFF000000u | ((uint32_t)sr << 16) | ((uint32_t)sg << 8) | (uint32_t)sb;
         else {
           int dr = (*dp >> 16) & 0xFF, dg = (*dp >> 8) & 0xFF, db = *dp & 0xFF;
           *dp = 0xFF000000u | ((int)(sr * pa + dr * (1.0 - pa)) << 16) |
@@ -654,7 +656,8 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
         } else if(a){
           double pa = a / 255.0;
           int sr = (s >> 16) & 0xFF, sg = (s >> 8) & 0xFF, sb = s & 0xFF;
-          if(pa >= 1.0) *dp = 0xFF000000u | ((uint32_t)sr << 16) | ((uint32_t)sg << 8) | (uint32_t)sb;
+          if(gml_render_modern_surface_blends_alpha(r)) *dp=surface_source_over_pixel(r,*dp,sr,sg,sb,pa);
+          else if(pa >= 1.0) *dp = 0xFF000000u | ((uint32_t)sr << 16) | ((uint32_t)sg << 8) | (uint32_t)sb;
           else {
             int dr = (*dp >> 16) & 0xFF, dg = (*dp >> 8) & 0xFF, db = *dp & 0xFF;
             int round_target=r->win && anygm_policy_uses_first_generation_studio(r->win) &&
@@ -692,7 +695,8 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
       if(pa > 0.0){
         gml_render_dispatch_cpu_scope_write(r);
         int sr = (int)(R / n), sg = (int)(G / n), sb = (int)(B / n);
-        if(pa >= 1.0) *dp = 0xFF000000u | ((uint32_t)sr << 16) | ((uint32_t)sg << 8) | (uint32_t)sb;
+        if(gml_render_modern_surface_blends_alpha(r)) *dp=surface_source_over_pixel(r,*dp,sr,sg,sb,pa);
+        else if(pa >= 1.0) *dp = 0xFF000000u | ((uint32_t)sr << 16) | ((uint32_t)sg << 8) | (uint32_t)sb;
         else {
           int dr = (*dp >> 16) & 0xFF, dg = (*dp >> 8) & 0xFF, db = *dp & 0xFF;
           *dp = 0xFF000000u | ((int)(sr * pa + dr * (1.0 - pa)) << 16) |
@@ -858,6 +862,12 @@ static void white_surface_band_rows(void *context,int row_start,int row_end,int 
           /* Mode 6 copies each source texel, including partial coverage, without
            * destination blending. Zero-coverage runs retain the existing skip. */
           memcpy(dp+xx,sp+xx,(size_t)run*sizeof(uint32_t));
+        } else if(gml_render_modern_surface_blends_alpha(r)){
+          for(int k=0;k<run;k++){
+            uint32_t source=sp[xx+k];
+            dp[xx+k]=surface_source_over_pixel(r,dp[xx+k],
+              (source>>16)&255u,(source>>8)&255u,source&255u,sa8/255.0);
+          }
         } else if(r->classic && r->app_surface==src){
           /* The classic automatic present models an alphaless backbuffer: whatever
            * coverage arithmetic our application surface accumulated, its colour reaches
@@ -1188,6 +1198,7 @@ static void draw_surface_region_impl(GmlRender *r, int surf, double sx0d, double
             int sr=((sv>>16)&0xFF)*bR/255, sg=((sv>>8)&0xFF)*bG/255, sb=(sv&0xFF)*bB/255;
             double ea=alpha*pa; double eia=1.0-ea; (void)ia;
             if(replace) dp[xx]=(sv&0xFF000000u)|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
+            else if(gml_render_modern_surface_blends_alpha(r)) dp[xx]=surface_source_over_pixel(r,dp[xx],sr,sg,sb,ea);
             else if((!r->alphablend || ea>=1.0)) dp[xx]=0xFF000000u|(sr<<16)|(sg<<8)|sb;
             else {
               uint32_t dv=dp[xx];
@@ -1304,6 +1315,7 @@ static void draw_surface_region_impl(GmlRender *r, int surf, double sx0d, double
         uint32_t oa=replace?(uint32_t)lround((A/(double)n)):255u;
         *dp=(oa<<24)|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
       }
+      else if(gml_render_modern_surface_blends_alpha(r)){ *dp=surface_source_over_pixel(r,*dp,sr,sg,sb,ea); }
       else if((!r->alphablend && pa>=1.0) || ea>=1.0){ *dp=0xFF000000u|(sr<<16)|(sg<<8)|sb; }
       else { int dr=(*dp>>16)&0xFF, dg=(*dp>>8)&0xFF, db=*dp&0xFF;
         *dp=0xFF000000u|((int)(sr*ea+dr*(1-ea))<<16)|((int)(sg*ea+dg*(1-ea))<<8)|(int)(sb*ea+db*(1-ea)); }
@@ -1316,6 +1328,10 @@ void draw_surface_region(GmlRender *r,int surf,double sx,double sy,double sw,dou
   GmlRenderDispatchCpuScope scope;
   gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_SURFACE);
   draw_surface_region_impl(r,surf,sx,sy,sw,sh,dx,dy,dw,dh,blend,alpha);
+  if(gml_render_modern_surface_blends_alpha(r) && (alpha<1.0 || !surface_known_opaque(r,surf))){
+    r->fb_opaque_known=0;
+    r->fb_all_opaque=0;
+  }
   gml_render_dispatch_cpu_scope_end(r,&scope);
 }
 /* First-generation GUI composition samples the application-surface quad at destination pixel
@@ -1821,7 +1837,8 @@ static void draw_surface_ext_mapped_impl(GmlRender *r,int surf,double x,double y
         nb=(int)gml_blend_inv_source_u8((unsigned)db,(unsigned)sb);
       }
       out=0xFF000000u|((uint32_t)nr<<16)|((uint32_t)ng<<8)|(uint32_t)nb;
-    } else if(!r->alphablend||sa>=1.0) out=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
+    } else if(gml_render_modern_surface_blends_alpha(r)) out=surface_source_over_pixel(r,old,sr,sg,sb,sa);
+    else if(!r->alphablend||sa>=1.0) out=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
     else if(sa<=0.0) continue;
     else {
       int dr=(old>>16)&255,dg=(old>>8)&255,db=old&255;

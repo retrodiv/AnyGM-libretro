@@ -12743,7 +12743,7 @@ static int resident_filtered_gui_real_font(void){
 static int resident_surface_application_coverage(void){
   const int bytecodes[]={15,17};
   for(unsigned generation=0;generation<2u;generation++)
-  for(unsigned application=0;application<2u;application++)
+  for(unsigned application=0;application<3u;application++)
   for(unsigned interpolation=0;interpolation<2u;interpolation++)
   for(unsigned clipped=0;clipped<2u;clipped++)
   for(unsigned part=0;part<2u;part++){
@@ -12763,10 +12763,16 @@ static int resident_surface_application_coverage(void){
     surface->opaque_known=surface->all_opaque=surface->all_transparent=0;
     device.observe_on_demand=fake_observe_on_demand;
     gml_render_bind_device(render,&device);
-    if(application){
+    if(application==1u){
       CHECK(gml_render_application_surface_ensure_owned(render,8,8));
       CHECK(gml_render_begin_resident_owned_application(render,0,0,0));
-    }else CHECK(gml_render_begin_resident_base(render,screen,8,8,0,0));
+    }else {
+      CHECK(gml_render_begin_resident_base(render,screen,8,8,0,0));
+      if(application==2u){
+        int target=gml_surface_create(render,8,8);
+        CHECK(target>0 && gml_surface_set_target(render,target));
+      }
+    }
     render->interp=(int)interpolation;
     gml_render_set_pending_fill(render,0xFF213243u);
     gml_render_flush_pending_fill(render);
@@ -12776,7 +12782,8 @@ static int resident_surface_application_coverage(void){
     else gml_draw_surface_ext(render,source,-(double)clipped,0,1,1,0,0xFFFFFFu,1);
     CHECK(render->resident_application_pass && fake.submits==submits && !fake.readbacks);
     CHECK(gml_render_scene_submit_pending(render) && fake.submits==submits+1);
-    int preserve=application && bytecodes[generation]==15;
+    int preserve=(application==1u && bytecodes[generation]==15) ||
+      (application==2u && bytecodes[generation]==17);
     if(fake.last_quad_state.alpha_source_factor!=(preserve?
        GML_RENDER_BLEND_SOURCE_ALPHA:GML_RENDER_BLEND_ONE) ||
        fake.last_quad_state.coverage_policy!=(preserve?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA))
@@ -20156,6 +20163,20 @@ static int resident_surface_feedback_authority(void){
     int submits=fake.submits,retires=fake.retires,uploads=fake.uploads;
     double mx=1,my=1;gml_render_draw_map_scale(r,&mx,&my);
     gml_draw_surface_stretched(r,source,2/mx,1/my,W/mx,H/my,0xA8C4E0u,.37);
+    if(!(r->resident_application_pass && !fake.readbacks && !fake.rgb_queries &&
+      !memcmp(shadow,r->fb,sizeof shadow) && fake.submits==submits+4 &&
+      fake.uploads==uploads && fake.retires==retires+1 &&
+      fake.last_retired_image.resource_class==GML_RENDER_RESOURCE_SCRATCH)){
+      fprintf(stderr,"surface feedback: generation=%d kind=%u gui=%u filter=%u pass=%d "
+        "reads=%d queries=%d submits=%d/%d uploads=%d/%d retires=%d/%d class=%u shadow_equal=%d\n",
+        generations[generation],kind,gui,filter,r->resident_application_pass,
+        fake.readbacks,fake.rgb_queries,fake.submits,submits,fake.uploads,uploads,
+        fake.retires,retires,fake.last_retired_image.resource_class,!memcmp(shadow,r->fb,sizeof shadow));
+      for(int trace=submits;trace<fake.submits && trace<8;trace++)
+        fprintf(stderr,"surface feedback submit=%d target=%u/%u operations=%u final_sources=%u quantisation=%u\n",
+          trace,fake.submitted_targets[trace].resource_class,fake.submitted_targets[trace].identity,
+          fake.submitted_counts[trace],fake.last_source_count,fake.last_quantisation);
+    }
     CHECK(r->resident_application_pass && !fake.readbacks && !fake.rgb_queries &&
       !memcmp(shadow,r->fb,sizeof shadow) && fake.submits==submits+4 &&
       fake.uploads==uploads && fake.retires==retires+1 &&

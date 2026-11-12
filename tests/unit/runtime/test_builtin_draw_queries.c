@@ -6,6 +6,7 @@
 #include "gml_particle.h"
 #include "gml_render_internal.h"
 #include "gml_render_state.h"
+#include "gml_render_cpu_surfaces.h"
 #include "gml_software3d_internal.h"
 #include "anygm_test_runner.h"
 #include "memory_vfs.h"
@@ -163,6 +164,51 @@ static int surface_clear_alpha_byte_case(void){
         ok=0;
       }
       ok &= render.alpha==0.375 && render.color==0x123456u;
+    }
+    gml_surface_reset_target(&render);
+    vm.render=NULL;vm.win=NULL;gml_vm_free(&vm);gml_render_free(&render);
+  }
+  return ok;
+}
+
+static int surface_source_over_explicit_target_case(void){
+  const uint32_t colours[]={0xFFFFFFu,0u,0x604020u};
+  const uint32_t expected[]={0xBFA7978Fu,0xBF281810u,0xBF583820u};
+  int ok=1;
+  for(unsigned colour=0;colour<3u;colour++) for(int path=0;path<9;path++){
+    GmlWin win={.bytecode=17};GmlRender render;uint32_t screen[16]={0};
+    if(gml_render_init(&render,&win)) return 0;
+    GmlVM vm={.win=&win,.render=&render};
+    gml_render_begin(&render,screen,4,4,0,0);
+    int source=gml_surface_create(&render,4,4),target=gml_surface_create(&render,4,4);
+    if(source<=0 || target<=0 || !gml_surface_set_target(&render,source)) return 0;
+    GmlVal clear[]={vreal(colours[colour]),vreal(0.5)};
+    query(&vm,"draw_clear_alpha",clear,2,0,&ok);
+    gml_surface_reset_target(&render);
+    if(!gml_surface_set_target(&render,target)) return 0;
+    clear[0]=vreal(0x4F2F1Fu);clear[1]=vreal(1);
+    query(&vm,"draw_clear_alpha",clear,2,0,&ok);
+    if(path==0) gml_draw_surface_ext(&render,source,0,0,1,1,0,0xFFFFFFu,1);
+    else if(path==1) gml_draw_surface_stretched(&render,source,0,0,4,4,0xFFFFFFu,1);
+    else if(path==2) gml_render_cpu_draw_surface_ext_mapped(&render,source,0,0,1,1,0,0xFFFFFFu,1,0);
+    /* The established cardinal-cell anchor subtracts one on a negative axis. */
+    else if(path==3) gml_render_cpu_draw_surface_ext_mapped(&render,source,5,0,-1,1,0,0xFFFFFFu,1,0);
+    else if(path==4) gml_draw_surface_ext(&render,source,0,5,1,1,90,0xFFFFFFu,1);
+    else if(path==5) gml_draw_surface_part_ext(&render,source,0,0,4,4,0,0,1,1,0xFFFFFFu,1);
+    else if(path==6) gml_draw_surface_stretched(&render,source,0,0,8,8,0xFFFFFFu,1);
+    else if(path==7){
+      render.interp=1;
+      gml_draw_surface_stretched(&render,source,0,0,8,8,0xFFFFFFu,1);
+    } else gml_draw_surface_ext(&render,source,-1,-1,1,1,0,0xFFFFFFu,1);
+    for(int y=0;y<4;y++) for(int x=0;x<4;x++){
+      GmlVal pixel[]={vreal(target),vreal(x),vreal(y)};
+      uint32_t wanted=path==8 && (x==3 || y==3)?0xFF4F2F1Fu:expected[colour];
+      GmlVal actual=query(&vm,"surface_getpixel_ext",pixel,3,0,&ok);
+      if(!real_is(actual,wanted)){
+        fprintf(stderr,"explicit surface source-over: colour=%u path=%d x=%d y=%d type=%d got=%08x expected=%08x\n",
+          colour,path,x,y,actual.t,(unsigned)actual.d,wanted);
+        ok=0;
+      }
     }
     gml_surface_reset_target(&render);
     vm.render=NULL;vm.win=NULL;gml_vm_free(&vm);gml_render_free(&render);
@@ -1473,6 +1519,7 @@ int main(int argc,char **argv){
     {"motion_grid_drawing",motion_grid_drawing_case},
     {"surface_pixel_alpha",surface_pixel_alpha_case},
     {"surface_clear_alpha_byte",surface_clear_alpha_byte_case},
+    {"surface_source_over_explicit_target",surface_source_over_explicit_target_case},
     {"buffer_surface_transfer",buffer_surface_transfer_case},
     {"vertex_format_information",vertex_format_information_case},
     {"vertex_resource_existence",vertex_resource_existence_case},
