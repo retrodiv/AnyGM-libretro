@@ -1768,6 +1768,18 @@ capture barrier comparison is
 `tests/unit/video/renderer/test_render_resources.c::resident_layer_filter_capture_barrier`.
 Neither path establishes zero-transfer effect composition.
 
+Uniform rectangles whose complete fragment graph premultiplies a tinted base sample,
+and whose complete vertex main passes colour and texture coordinates through, can
+compute that constant fragment in the existing ordered CPU shaded-plane composition
+when no applicable external executor exists. The bounded parser derives identifiers
+and rejects altered alpha, extra statements and input aliases. Both scene policies
+use that counted CPU fallback; no resident primitive variant is added. Other draws
+using the same program remain unqualified shader debt, and this rectangle subset
+does not change `shader_is_compiled`. External GLSL execution remains preferred.
+`check_uniform_premultiplied_rectangle` covers source refusals, exact placement,
+zero/partial/full alpha and copy composition. This has no original-runner fidelity
+evidence; synthetic controls establish only the bounded shader/transport contract.
+
 `R03-PRIM-CLASSIC-ALPHA-RECT` is `TOLERANCE±2`: filled, uniform-colour rectangles
 with finite partial alpha on the known-opaque borrowed early-classic SCREEN retain
 their inclusive CPU raster bounds and use batched, source-free fixed source-over.

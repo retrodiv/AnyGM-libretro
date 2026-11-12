@@ -480,6 +480,9 @@ typedef struct GmlRender {
    * Parsed data-driven from the SHDR chunk's GLSL at init; shader_set activates one and the
    * surface-composite blit applies the map per pixel. has==0 -> unknown shader, no-op. */
   struct GmlShaderPal {
+    /* Source-proven sampled premultiplication with passthrough vertex colour/UV. Only the
+     * uniform rectangle handoff evaluates this graph in software; it is not a complete family. */
+    int uniform_rectangle_premultiply;
     /* Ten-colour threshold palette. The fragment splits sampled pixels on red, then selects one
      * of five uniform colours from descending green thresholds in either branch. Names,
      * thresholds and values all come from the embedded shader and its uniform calls. */

@@ -114,6 +114,7 @@ static char *glsl_compact_source(const char *src);
 static int glsl_take_text(const char **cursor,const char *text);
 static int glsl_take_float(const char **cursor,float *out);
 static int glsl_token_count(const char *source,const char *token);
+static int glsl_range_identifier(const char *start,const char *end,const char *name);
 
 static int glsl_take_symbol(const char **cursor,char *out,size_t capacity){
   size_t length=0;
@@ -1296,6 +1297,99 @@ static int glsl_grid_uniform(const char *source,const char *begin,const char *en
   return found;
 }
 
+/* Reject preprocessor aliases of anything the accepted main actually reads or writes. The
+ * standard matrix index is the one literal permitted alias in the vertex graph. */
+static int glsl_main_alias_free(const char *source,const char *mainfn){
+  for(const char *line=source;*line;){
+    const char *end=strchr(line,'\n');
+    if(!end) end=line+strlen(line);
+    const char *at=line;
+    while(at<end && isspace((unsigned char)*at)) at++;
+    if(at<end && *at=='#'){
+      at++;while(at<end && isspace((unsigned char)*at)) at++;
+      int define=(size_t)(end-at)>=6 && !strncmp(at,"define",6) &&
+        at+6<end && isspace((unsigned char)at[6]);
+      int undef=(size_t)(end-at)>=5 && !strncmp(at,"undef",5) &&
+        at+5<end && isspace((unsigned char)at[5]);
+      if(define || undef){
+        at+=define?6:5;
+        while(at<end && isspace((unsigned char)*at)) at++;
+        char name[64];
+        if(!glsl_take_symbol(&at,name,sizeof name)) return 0;
+        if(glsl_range_identifier(mainfn,mainfn+strlen(mainfn),name)){
+          if(!define || strcmp(name,"MATRIX_WORLD_VIEW_PROJECTION")) return 0;
+          while(at<end && isspace((unsigned char)*at)) at++;
+          if(at==end || *at++!='4') return 0;
+          while(at<end && isspace((unsigned char)*at)) at++;
+          if(at!=end) return 0;
+        }
+      }
+    }
+    line=*end?end+1:end;
+  }
+  return 1;
+}
+
+/* Recognize the complete two-statement fragment and the ordinary complete vertex main. Locals
+ * and varying names come from the graph; extra assignments, altered alpha, helpers and aliases
+ * are refused. This proves one uniform primitive result, not arbitrary textured execution. */
+static int glsl_uniform_rectangle_premultiply(const char *vertex,const char *fragment){
+  if(!vertex || !fragment || strlen(vertex)>65536 || strlen(fragment)>65536) return 0;
+  char *v=glsl_compact_source(vertex),*f=glsl_compact_source(fragment);
+  int ok=0;
+  if(!v || !f) goto done;
+  const char *vm=strstr(v,"void main()"),*fm=strstr(f,"void main()");
+  if(!vm || !fm || glsl_token_count(v,"void main(")!=1 ||
+     glsl_token_count(f,"void main(")!=1 ||
+     !glsl_main_alias_free(vertex,vm) || !glsl_main_alias_free(fragment,fm)) goto done;
+  const char *at=fm+strlen("void main()");
+  char sample[64],colour[64],uv[64],expression[512];
+  if(!glsl_take_text(&at,"{vec4 ") || !glsl_take_symbol(&at,sample,sizeof sample) ||
+     !glsl_take_text(&at,"=")) goto done;
+  if(!strncmp(at,"texture2D(",10)){
+    if(!glsl_take_text(&at,"texture2D(gm_BaseTexture,") ||
+       !glsl_take_symbol(&at,uv,sizeof uv) || !glsl_take_text(&at,")*") ||
+       !glsl_take_symbol(&at,colour,sizeof colour)) goto done;
+  } else {
+    if(!glsl_take_symbol(&at,colour,sizeof colour) ||
+       !glsl_take_text(&at,"*texture2D(gm_BaseTexture,") ||
+       !glsl_take_symbol(&at,uv,sizeof uv) || !glsl_take_text(&at,")")) goto done;
+  }
+  if(!strcmp(sample,colour) || !strcmp(sample,uv) || !strcmp(colour,uv)) goto done;
+  snprintf(expression,sizeof expression,"varying vec4 %s;",colour);
+  if(!strstr(v,expression) || !strstr(f,expression)) goto done;
+  snprintf(expression,sizeof expression,"varying vec2 %s;",uv);
+  if(!strstr(v,expression) || !strstr(f,expression) ||
+     !strstr(v,"attribute vec4 in_Colour;") ||
+     !strstr(v,"attribute vec3 in_Position;") ||
+     !strstr(v,"attribute vec2 in_TextureCoord;") ||
+     !strstr(f,"uniform sampler2D gm_BaseTexture;")) goto done;
+  snprintf(expression,sizeof expression,";gl_FragColor=vec4(%s.rgb*%s.a,%s.a);}",
+           sample,sample,sample);
+  if(strcmp(at,expression)) goto done;
+  at=vm+strlen("void main()");
+  if(!glsl_take_text(&at,"{")) goto done;
+  if(!strncmp(at,"vec4 ",5)){
+    char position[64];
+    if(!glsl_take_text(&at,"vec4 ") || !glsl_take_symbol(&at,position,sizeof position) ||
+       !glsl_take_text(&at,"=vec4(in_Position.x,in_Position.y,in_Position.z,1.0);")) goto done;
+    if(!strcmp(position,colour) || !strcmp(position,uv) ||
+       !strcmp(position,"in_Colour") || !strcmp(position,"in_Position") ||
+       !strcmp(position,"in_TextureCoord") || !strcmp(position,"gl_Position") ||
+       !strcmp(position,"gm_Matrices")) goto done;
+    snprintf(expression,sizeof expression,
+             "gl_Position=gm_Matrices[MATRIX_WORLD_VIEW_PROJECTION]*%s;",position);
+    if(!glsl_take_text(&at,expression)) goto done;
+  } else if(!glsl_take_text(&at,
+      "gl_Position=gm_Matrices[MATRIX_WORLD_VIEW_PROJECTION]*vec4(in_Position,1.0);")) goto done;
+  snprintf(expression,sizeof expression,"%s=in_Colour;%s=in_TextureCoord;}",colour,uv);
+  if(strcmp(at,expression)) goto done;
+  ok=1;
+done:
+  free(v);free(f);
+  return ok;
+}
+
 static int glsl_parse_grid(const char *source,struct GmlShaderPal *shader){
   char *compact=glsl_compact_source(source);
   if(!compact) return 0;
@@ -1406,6 +1500,9 @@ void parse_shader_palettes(GmlRender *r){
       r->shader_pal[i].source_fragment_es=texts[1];
       r->shader_pal[i].source_vertex_gl=texts[2];
       r->shader_pal[i].source_fragment_gl=texts[3];
+      r->shader_pal[i].uniform_rectangle_premultiply=
+        glsl_uniform_rectangle_premultiply(texts[0],texts[1]) &&
+        ((!texts[2] && !texts[3]) || glsl_uniform_rectangle_premultiply(texts[2],texts[3]));
       /* The samplers the fragment program declares, in declaration order, beyond the base
        * texture the runtime binds itself; these are what shader_get_sampler_index can name. */
       if(texts[1]){

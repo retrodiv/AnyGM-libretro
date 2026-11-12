@@ -106,11 +106,24 @@ int gml_render_shade_target_rect(GmlRender *r,int x1,int y1,int x2,int y2,uint32
   const uint32_t source=UINT32_C(0xFFFFFFFF);
   float saved_colour[4];
   int saved_colour_valid,result;
-  if(!r || r->active_shader<0 || !r->shader_executor ||
-     !gml_render_shader_content_candidate(r,r->active_shader)) return 0;
+  if(!r || r->active_shader<0 || !r->shader_pal ||
+     r->active_shader>=r->n_shader_pal) return 0;
   if(x1>x2){ int t=x1; x1=x2; x2=t; }
   if(y1>y2){ int t=y1; y1=y2; y2=t; }
   if(x2<=x1 || y2<=y1) return 0;
+  if((!r->shader_executor || !gml_render_shader_content_candidate(r,r->active_shader)) &&
+     r->shader_pal[r->active_shader].uniform_rectangle_premultiply && isfinite(alpha)){
+    double coverage=fmax(0.0,fmin(1.0,alpha));
+    uint32_t pixel=(uint32_t)lround(coverage*255.0)<<24;
+    for(unsigned component=0;component<3;component++)
+      pixel|=(uint32_t)lround(((colour>>(component*8))&255u)*coverage)<<(16-component*8);
+    /* Reuse ordered CPU composition and its accounting in either scene policy. An executor
+     * remains preferred when present. Partial rectangle coverage never changes is_compiled. */
+    return gml_render_compose_shaded_plane(r,&pixel,1,1,0,0,1,1,
+      (double)x1+r->cam_x,(double)y1+r->cam_y,
+      (double)x2-x1,(double)y2-y1,0xFFFFFFu,1.0);
+  }
+  if(!r->shader_executor || !gml_render_shader_content_candidate(r,r->active_shader)) return 0;
   /* An untextured primitive samples white and carries its authored RGBA as vertex colour.
    * The program decides whether to consume it; its result must not receive alpha again. */
   saved_colour_valid=r->shade_vertex_colour_valid;

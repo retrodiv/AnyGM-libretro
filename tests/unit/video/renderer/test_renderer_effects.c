@@ -709,6 +709,128 @@ static void check_shader_recognition(void) {
   gml_render_free(&render);
 }
 
+static void check_uniform_premultiplied_rectangle(void) {
+  static const char vertex[] =
+    "attribute vec3 in_Position;attribute vec4 in_Colour;"
+    "attribute vec2 in_TextureCoord;varying vec4 tint;varying vec2 uv;"
+    "void main(){gl_Position=gm_Matrices[MATRIX_WORLD_VIEW_PROJECTION]*vec4(in_Position,1.0);"
+    "tint=in_Colour;uv=in_TextureCoord;}";
+  static const char fragment[] =
+    "varying vec4 tint;varying vec2 uv;uniform sampler2D gm_BaseTexture;"
+    "void main(){vec4 sampled=tint*texture2D(gm_BaseTexture,uv);"
+    "gl_FragColor=vec4(sampled.rgb*sampled.a,sampled.a);}";
+  uint8_t data[2048]={0};
+  GmlWin content={0};
+  GmlRender render;
+  write_u32(data,0,1);
+  write_u32(data,4,64);
+  write_u32(data,72,128);
+  write_u32(data,76,1024);
+  memcpy(data+128,vertex,sizeof vertex);
+  memcpy(data+1024,fragment,sizeof fragment);
+  content.data=data;content.size=sizeof data;content.bytecode=17;
+  content.n_chunks=1;memcpy(content.chunks[0].name,"SHDR",4);
+  content.chunks[0].size=8;
+  expect(gml_render_init(&render,&content)==0,"uniform premultiply fixture initialization");
+  int surface=gml_surface_create(&render,4,4);
+  expect(surface>=0 && gml_surface_set_target(&render,surface),
+         "uniform premultiply fixture target");
+  const uint32_t colours[]={0u,0xFFFFFFu,0x204080u};
+  const double alphas[]={0.0,0.5,1.0};
+  int copy_factors[4]={2,1,2,1};
+  render.blendmode=gml_render_blend_pack_factors(copy_factors);
+  render.shader_report_all_compiled=0;
+  render.blend_equation=render.blend_equation_alpha=1;
+  render.alphablend=1;render.color_write_mask=15;
+  for(unsigned colour=0;colour<3;colour++) for(unsigned alpha=0;alpha<3;alpha++){
+    render.active_shader=-1;gml_render_clear(&render,0x123456u,0.25);
+    gml_render_flush_pending_fill(&render);
+    render.active_shader=0;
+    uint32_t expected=(uint32_t)lround(alphas[alpha]*255.0)<<24;
+    for(unsigned channel=0;channel<3;channel++)
+      expected|=(uint32_t)lround(((colours[colour]>>(channel*8))&255u)*alphas[alpha])
+        <<(16-channel*8);
+    expect(gml_render_shade_target_rect(&render,1,1,3,3,colours[colour],alphas[alpha]),
+           "source-proven uniform premultiply requires a software rectangle result");
+    gml_render_flush_pending_fill(&render);
+    expect(render.fb[5]==expected && render.fb[10]==expected,
+           "uniform premultiply must multiply RGB once and preserve sampled alpha");
+    expect(render.fb[0]==UINT32_C(0x40563412) && render.fb[15]==UINT32_C(0x40563412),
+           "uniform premultiply must preserve rectangle placement");
+    expect(render.active_shader==0 && render.shader_executor==NULL,
+           "uniform premultiply must preserve selected program without a device");
+    expect(!gml_render_shader_is_compiled(&render,0),
+           "rectangle-only software coverage must not advertise complete shader support");
+  }
+  for(int port=0;port<2;port++){
+    render.active_shader=-1;gml_render_clear(&render,0x123456u,0.25);
+    gml_render_flush_pending_fill(&render);
+    render.active_shader=0;render.alpha=0.5;
+    if(port) gml_render_primitive_rectangle_color(&render,1,1,3,3,
+                         0x204080u,0x204080u,0x204080u,0x204080u,0);
+    else gml_render_primitive_rectangle(&render,1,1,3,3,0x204080u,0);
+    gml_render_flush_pending_fill(&render);
+    expect(render.fb[5]==UINT32_C(0x80402010) && render.fb[0]==UINT32_C(0x40563412),
+           "both public uniform rectangle ports must use the source-proven result");
+  }
+  gml_surface_reset_target(&render);
+  gml_render_free(&render);
+
+  static const struct { const char *vertex_prefix,*fragment_prefix,*vertex_body,*fragment_body;
+                        int expected; } graphs[]={
+    {"","",NULL,
+     "vec4 renamed=texture2D(gm_BaseTexture,uv)*tint;"
+     "gl_FragColor=vec4(renamed.rgb*renamed.a,renamed.a);",1},
+    {"#define MATRIX_WORLD_VIEW_PROJECTION 4\n","",
+     "vec4 placement=vec4(in_Position.x,in_Position.y,in_Position.z,1.0);"
+     "gl_Position=gm_Matrices[MATRIX_WORLD_VIEW_PROJECTION]*placement;"
+     "tint=in_Colour;uv=in_TextureCoord;",NULL,1},
+    {"","",NULL,"vec4 sampled=tint*texture2D(gm_BaseTexture,uv);"
+     "gl_FragColor=vec4(sampled.rgb*sampled.a,1.0);",0},
+    {"","",NULL,"vec4 sampled=tint*texture2D(gm_BaseTexture,uv);"
+     "gl_FragColor=vec4(sampled.rgb*sampled.a,sampled.a);gl_FragColor.r=1.0;",0},
+    {"","",NULL,"vec4 sampled=tint*texture2D(gm_BaseTexture,uv);"
+     "gl_FragColor=vec4(sampled.rgb*0.5,sampled.a);",0},
+    {"","","gl_Position=gm_Matrices[MATRIX_WORLD_VIEW_PROJECTION]*vec4(in_Position,1.0);"
+     "tint=in_Colour*vec4(1.0,1.0,1.0,0.5);uv=in_TextureCoord;",NULL,0},
+    {"","","gl_Position=gm_Matrices[MATRIX_WORLD_VIEW_PROJECTION]*vec4(in_Position,1.0);"
+     "tint=vec4(1.0);uv=in_TextureCoord;",NULL,0},
+    {"#define in_Colour vec4(1.0)\n","",NULL,NULL,0},
+    {"","#define tint vec4(1.0)\n",NULL,NULL,0},
+    {"#define MATRIX_WORLD_VIEW_PROJECTION 3\n","",NULL,NULL,0},
+    {"","","vec4 in_Colour=vec4(in_Position.x,in_Position.y,in_Position.z,1.0);"
+     "gl_Position=gm_Matrices[MATRIX_WORLD_VIEW_PROJECTION]*in_Colour;"
+     "tint=in_Colour;uv=in_TextureCoord;",NULL,0}
+  };
+  for(unsigned graph=0;graph<sizeof graphs/sizeof graphs[0];graph++){
+    char v[768],f[768];
+    const char *vmain=strstr(vertex,"void main(){"),*fmain=strstr(fragment,"void main(){");
+    snprintf(v,sizeof v,"%s%.*svoid main(){%s}",graphs[graph].vertex_prefix,
+             (int)(vmain-vertex),vertex,graphs[graph].vertex_body?graphs[graph].vertex_body:
+             "gl_Position=gm_Matrices[MATRIX_WORLD_VIEW_PROJECTION]*vec4(in_Position,1.0);"
+             "tint=in_Colour;uv=in_TextureCoord;");
+    snprintf(f,sizeof f,"%s%.*svoid main(){%s}",graphs[graph].fragment_prefix,
+             (int)(fmain-fragment),fragment,graphs[graph].fragment_body?graphs[graph].fragment_body:
+             "vec4 sampled=tint*texture2D(gm_BaseTexture,uv);"
+             "gl_FragColor=vec4(sampled.rgb*sampled.a,sampled.a);");
+    memset(data+128,0,sizeof data-128);
+    memcpy(data+128,v,strlen(v)+1);memcpy(data+1024,f,strlen(f)+1);
+    expect(gml_render_init(&render,&content)==0,"uniform premultiply graph fixture");
+    expect(render.shader_pal &&
+           render.shader_pal[0].uniform_rectangle_premultiply==graphs[graph].expected,
+           "uniform rectangle graph must reject different source semantics");
+    gml_render_free(&render);
+  }
+  memcpy(data+128,vertex,sizeof vertex);memcpy(data+1024,fragment,sizeof fragment);
+  write_u32(data,80,128);write_u32(data,84,1800);
+  static const char different[]="void main(){gl_FragColor=vec4(1.0);}";
+  memcpy(data+1800,different,sizeof different);
+  expect(gml_render_init(&render,&content)==0,"uniform premultiply desktop pair fixture");
+  expect(render.shader_pal && !render.shader_pal[0].uniform_rectangle_premultiply,
+         "disagreeing desktop program must refuse software graph recognition");
+  gml_render_free(&render);
+}
+
 static void check_channel_mask_pixels(void) {
   uint8_t rgba[4]={120,80,40,255};
   uint32_t target=UINT32_C(0xff102030);
@@ -2793,6 +2915,7 @@ int main(void) {
   check_grid_uniform_dependencies();
   check_opaque_stretched_underlay();
   check_channel_mask_pixels();
+  check_uniform_premultiplied_rectangle();
   check_zero_reference_alpha_test_pixels();
   check_solid_alpha_mask_pixels();
   check_fast_scaled_sample_clamps_to_atlas();
