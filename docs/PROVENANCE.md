@@ -3,6 +3,27 @@
 
 # Generated-data provenance
 
+## imohash recognition
+
+`src/media/gml_hash.c` adapts the default imohash sampling and unsigned LEB128
+size encoding from Jim Kalafut's MIT-licensed implementation at
+[`611245ae8069800035b185d9d43f36829885ab82`](https://github.com/kalafut/imohash/tree/611245ae8069800035b185d9d43f36829885ab82).
+Its published `spec_test.go` vectors define conformance; the full license is in
+`LICENSES/imohash.txt`. The standalone Python recipe implements the same defaults.
+
+The MurmurHash3 x64_128 body follows Peter Scott's public-domain C port at
+[`dae94be0c0f54a399d23ea6cbe54bca5a4e93ce4`](https://github.com/PeterScott/murmur3/tree/dae94be0c0f54a399d23ea6cbe54bca5a4e93ce4).
+Adaptations retain only x64_128 with seed zero, make little-endian block reads
+unaligned-safe, assemble the tail without switch fallthrough and emit big-endian
+64-bit lanes as imohash requires. The public-domain dedication and attribution
+are retained in source and `LICENSES/murmur3.txt`. Neither build downloads code.
+
+Default sampling reads the whole input below 131072 bytes; otherwise it hashes
+16384 bytes at offsets zero, size/2 and size-16384. Unsigned LEB128 size bytes
+overwrite the start of the 16-byte digest. Recognition is deliberately distinct
+from full-input integrity verification. `make check TEST=hash` covers published
+vectors, the sampling boundary, large offsets and transactional read failure.
+
 ## Rigid-body solver
 
 `src/third_party/box2d/` retains the headers and implementation sources of the

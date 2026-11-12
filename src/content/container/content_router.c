@@ -485,7 +485,18 @@ static int router_read_at(const AnygmContentRouter *router,void *file,uint64_t s
   return 1;
 }
 
-/* A versioned recognition hint: hash the LE64 size and three bounded samples.
+typedef struct {
+  const AnygmContentRouter *router;
+  void *file;
+  uint64_t size;
+} RecognitionReader;
+
+static int recognition_read(void *context,uint64_t offset,void *data,size_t size){
+  RecognitionReader *reader=context;
+  return router_read_at(reader->router,reader->file,reader->size,offset,data,size);
+}
+
+/* Standard imohash is a bounded recognition hint.
  * This intentionally does not certify unsampled bytes or replace integrity checks. */
 static int select_fast_configuration(const AnygmContentRouter *router,const char *path){
   ContentConfigResolution *config=router->configuration;
@@ -497,24 +508,14 @@ static int select_fast_configuration(const AnygmContentRouter *router,const char
   if(anygm_content_config_candidate(config->ini,size)){
     void *file=router->host->file_open(router->host->userdata,path,ANYGM_FILE_READ);
     if(!file) return 0;
-    GmlSha256 hash; uint8_t bytes[65536],digest[32],length[8];
-    gml_sha256_init(&hash);
-    gml_sha256_update(&hash,"anygm-sample-v1",15);
-    for(unsigned i=0;i<8;i++) length[i]=(uint8_t)(size>>(i*8));
-    gml_sha256_update(&hash,length,sizeof length);
-    size_t take=size<sizeof bytes?(size_t)size:sizeof bytes;
-    uint64_t offsets[3]={0,(size-take)/2,size-take};
-    int ok=1;
-    for(unsigned i=0;i<3 && ok;i++){
-      ok=router_read_at(router,file,size,offsets[i],bytes,take);
-      if(ok) gml_sha256_update(&hash,bytes,take);
-    }
+    uint8_t digest[16];
+    RecognitionReader reader={router,file,size};
+    int ok=gml_imohash_read(recognition_read,&reader,size,digest);
     router->host->file_close(router->host->userdata,file);
     if(!ok) return 0;
-    gml_sha256_final(&hash,digest);
-    char hex[65];
-    for(unsigned i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
-    snprintf(key,sizeof key,"sample-v1:%llu:%s",(unsigned long long)size,hex);
+    char hex[33];
+    for(unsigned i=0;i<16;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
+    snprintf(key,sizeof key,"imohash:%llu:%s",(unsigned long long)size,hex);
   }
   if(!key[0] && !config->selection_base) return 1;
   if(!config->selection_base){

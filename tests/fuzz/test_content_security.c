@@ -2554,16 +2554,10 @@ static int selected_configuration_cases(const AnygmHostServices *services,const 
 }
 
 static void fixture_sample_key(const uint8_t *bytes,size_t size,char key[112]){
-  GmlSha256 hash;uint8_t digest[32],length[8];char hex[65];
-  gml_sha256_init(&hash);gml_sha256_update(&hash,"anygm-sample-v1",15);
-  for(unsigned i=0;i<8;i++) length[i]=(uint8_t)((uint64_t)size>>(i*8));
-  gml_sha256_update(&hash,length,8);
-  size_t take=size<65536?size:65536;
-  size_t offsets[]={0,(size-take)/2,size-take};
-  for(unsigned i=0;i<3;i++) gml_sha256_update(&hash,bytes+offsets[i],take);
-  gml_sha256_final(&hash,digest);
-  for(unsigned i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
-  snprintf(key,112,"sample-v1:%zu:%s",size,hex);
+  uint8_t digest[16];char hex[33];
+  if(!gml_imohash(bytes,size,digest)) abort();
+  for(unsigned i=0;i<16;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
+  snprintf(key,112,"imohash:%zu:%s",size,hex);
 }
 
 static int fast_configuration_cases(const AnygmHostServices *services,const char *root){

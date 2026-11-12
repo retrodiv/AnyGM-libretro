@@ -30,13 +30,10 @@ static int config_error(char *error,size_t size,const char *message){
 
 static int section_name(const char *name,size_t length,ConfigSection *section){
   memset(section,0,sizeof *section);
-  /* Retired selectors reject rather than silently losing a configured policy. */
-  if((length>=7 && !memcmp(name,"sha256:",7)) ||
-     (length>=4 && !memcmp(name,"zip:",4))) return -1;
-  if(length>=10 && !memcmp(name,"sample-v1:",10)){
+  if(length>=8 && !memcmp(name,"imohash:",8)){
     const char *dot=memchr(name,'.',length);
     if(!dot || (size_t)(dot-name)>=sizeof section->key) return -1;
-    size_t at=10u;
+    size_t at=8u;
     uint64_t size=0;
     if(at>=length || name[at]<'1' || name[at]>'9') return -1;
     while(at<length && name[at]>='0' && name[at]<='9'){
@@ -45,7 +42,7 @@ static int section_name(const char *name,size_t length,ConfigSection *section){
       size=size*10u+digit;
     }
     if(at>=length || name[at++]!=':') return -1;
-    size_t digits=64u;
+    size_t digits=32u;
     if((size_t)(dot-name)!=at+digits) return -1;
     for(size_t i=0;i<at+digits;i++){
       unsigned char c=(unsigned char)name[i];
@@ -54,7 +51,7 @@ static int section_name(const char *name,size_t length,ConfigSection *section){
       section->key[i]=(char)(c>='A' && c<='F'?c+('a'-'A'):c);
     }
     length-=(size_t)(dot+1-name); name=dot+1;
-  }
+  }else if(memchr(name,':',length)) return -1;
   if(length==10 && !memcmp(name,"transforms",10)){ section->transforms=1; return 1; }
   if(length==9 && !memcmp(name,"pipelines",9)){ section->transforms=2; return 1; }
   if(length==7 && !memcmp(name,"patches",7)){ section->transforms=3; return 1; }
@@ -209,8 +206,8 @@ int anygm_content_config_apply(const AnygmContentConfig *config,
 
 int anygm_content_config_candidate(const AnygmContentConfig *config,uint64_t size){
   char prefix[64];
-  snprintf(prefix,sizeof prefix,"sample-v1:%" PRIu64 ":",size);
-  if(!size) snprintf(prefix,sizeof prefix,"sample-v1:");
+  snprintf(prefix,sizeof prefix,"imohash:%" PRIu64 ":",size);
+  if(!size) snprintf(prefix,sizeof prefix,"imohash:");
   for(size_t i=0;config && i<config->count;i++)
     if(!strncmp(config->sections[i].key,prefix,strlen(prefix))) return 1;
   return 0;

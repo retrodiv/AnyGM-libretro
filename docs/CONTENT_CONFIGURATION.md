@@ -30,7 +30,7 @@ Priority runs from lowest to highest:
 6. Matching fast payload sections in `AnyGM.ini`.
 
 Section names and transform keys are case-sensitive. Duplicate recognized sections
-reject the INI. The removed `[sha256:...]` and `[zip:...]` sections also reject the INI rather
+reject the INI. Unknown selector prefixes also reject the INI rather
 than silently losing a content-specific policy. Multiple sibling
 anchors select none; an explicit anchor does not discover another sibling.
 
@@ -57,8 +57,8 @@ Complete-file SHA-256 selectors remain unsupported. Their full input reads were
 removed from ordinary startup. Fast recognition supports one section prefix,
 followed by `.overrides`, `.transforms`, `.pipelines` or `.patches`:
 
-`sample-v1:<size>:<sha256>` identifies a path-backed payload using at most
-three 65536-byte reads. The digest is 64 hexadecimal digits. Sizes are positive
+`imohash:<size>:<digest>` identifies a path-backed payload using standard-default
+[imohash](https://github.com/kalafut/imohash). The digest is 32 hexadecimal digits. Sizes are positive
 decimal integers without leading zeroes; hexadecimal digits are case insensitive.
 
 For Studio, selection follows the actual data image, including an adjacent or
@@ -69,12 +69,15 @@ sampled from their extracted files, including with a warm cache. The archive its
 its compression and unrelated members do not contribute to the key. Nested archives
 select the final payload member. No archive-specific selector exists.
 
-Sampling first filters declared candidates by size; with no candidate, no sample
-is read. The digest input is the 15 ASCII bytes `anygm-sample-v1`, the payload size
-as an unsigned little-endian 64-bit integer, then three samples. For size S, each
-sample has length N=min(S,65536), at offsets 0, floor((S-N)/2) and S-N, in that
-order. Overlapping samples are deliberately repeated. Memory-only loads retain defaults;
-these selectors are path-backed recognition.
+Selection first filters declared candidates by size; with no candidate, no hash
+is calculated. Standard imohash reads the entire payload below 131072 bytes.
+For larger payloads it reads 16384 bytes at offsets 0, floor(size/2) and
+size-16384, in that order: 48 KiB total. MurmurHash3 x64_128 with seed zero
+hashes the selected bytes. Each 64-bit output lane is written big-endian;
+the unsigned LEB128 payload size overwrites the start of the 16-byte digest.
+There is no custom hashing domain or configurable sampling variant.
+Memory-only loads retain defaults; these selectors are path-backed recognition.
+See [provenance and licenses](PROVENANCE.md#imohash-recognition).
 
 These are recognition hints, not proof of complete-file equality. Different
 payloads can share them. Duplicate equivalent sections reject the INI, and every
@@ -88,7 +91,7 @@ or anchors. Other selected transforms and patches retain their ordinary contract
 An illustrative sampled key can select runtime directives:
 
 ```ini
-[sample-v1:123456:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.overrides]
+[imohash:123456:0123456789abcdef0123456789abcdef.overrides]
 ostype|0
 ```
 
@@ -101,49 +104,133 @@ Save it as `content_selector.py`. It reads the selected input and prints a compl
 `[...overrides]` section header; it does not modify the input or `AnyGM.ini`.
 
 ```python
+# imohash adaptation: Jim Kalafut (MIT); license follows.
+# The MIT License (MIT)
+#
+# Copyright (c) 2015 Jim Kalafut
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+# MurmurHash3 was written by Austin Appleby, and is placed in the public
+# domain. The author hereby disclaims copyright to this source code.
+# C port and general tidying by Peter Scott; adapted here to Python.
+
 import argparse
-import hashlib
-import struct
 import zipfile
 from pathlib import Path
+from typing import BinaryIO
 
 
-def sample_key(source, size):
-    if not size:
-        raise ValueError("payload is empty")
-    count = min(size, 65536)
-    digest = hashlib.sha256(b"anygm-sample-v1" + struct.pack("<Q", size))
-    for offset in (0, (size - count) // 2, size - count):
+def _murmur128(data: bytes) -> bytes:
+    """MurmurHash3 x64_128, seed zero, with imohash's big-endian lanes.
+
+    Adapted from Austin Appleby's public-domain algorithm and Peter Scott's C
+    port. See THIRD_PARTY_NOTICES.md for source pins and the original notice.
+    """
+    mask = (1 << 64) - 1
+
+    def rotate(value, count):
+        return ((value << count) | (value >> (64 - count))) & mask
+
+    def mix(value):
+        value = ((value ^ (value >> 33)) * 0xff51afd7ed558ccd) & mask
+        value = ((value ^ (value >> 33)) * 0xc4ceb9fe1a85ec53) & mask
+        return value ^ (value >> 33)
+
+    c1, c2 = 0x87c37b91114253d5, 0x4cf5ad432745937f
+    h1 = h2 = 0
+    end = len(data) // 16 * 16
+    for offset in range(0, end, 16):
+        k1 = int.from_bytes(data[offset:offset + 8], "little")
+        k2 = int.from_bytes(data[offset + 8:offset + 16], "little")
+        h1 ^= (rotate(k1 * c1 & mask, 31) * c2) & mask
+        h1 = ((rotate(h1, 27) + h2) * 5 + 0x52dce729) & mask
+        h2 ^= (rotate(k2 * c2 & mask, 33) * c1) & mask
+        h2 = ((rotate(h2, 31) + h1) * 5 + 0x38495ab5) & mask
+    tail = data[end:]
+    if len(tail) > 8:
+        k2 = int.from_bytes(tail[8:], "little")
+        h2 ^= (rotate(k2 * c2 & mask, 33) * c1) & mask
+    if tail:
+        k1 = int.from_bytes(tail[:8], "little")
+        h1 ^= (rotate(k1 * c1 & mask, 31) * c2) & mask
+    h1 ^= len(data)
+    h2 ^= len(data)
+    h1 = (h1 + h2) & mask
+    h2 = (h2 + h1) & mask
+    h1, h2 = mix(h1), mix(h2)
+    h1 = (h1 + h2) & mask
+    h2 = (h2 + h1) & mask
+    return h1.to_bytes(8, "big") + h2.to_bytes(8, "big")
+
+
+def imohash(source: BinaryIO, size: int) -> str:
+    """Standard default imohash; see Jim Kalafut's MIT grant in LICENSES/."""
+    if not 0 <= size <= (1 << 64) - 1:
+        raise ValueError("payload size is outside the unsigned 64-bit range")
+    count = size if size < 131072 else 16384
+    offsets = (0,) if size < 131072 else (0, size // 2, size - count)
+    samples = []
+    for offset in offsets:
         source.seek(offset)
         sample = source.read(count)
         if len(sample) != count:
-            raise ValueError("could not read a complete sample")
-        digest.update(sample)
-    return f"sample-v1:{size}:{digest.hexdigest()}"
+            raise ValueError("payload changed or a sample could not be read")
+        samples.append(sample)
+    digest = bytearray(_murmur128(b"".join(samples)))
+    remaining, index = size, 0
+    while True:
+        digest[index] = (remaining & 127) | (128 if remaining >= 128 else 0)
+        remaining >>= 7
+        index += 1
+        if not remaining:
+            return digest.hex()
 
 
-def make_key(path, member):
+def _sample_key(source: BinaryIO, size: int) -> str:
+    if not size:
+        raise ValueError("payload is empty")
+    return f"imohash:{size}:{imohash(source, size)}"
+
+
+def make_key(path: Path, member: str | None = None) -> str:
     if member is not None:
         with zipfile.ZipFile(path) as archive:
-            entries = [item for item in archive.infolist()
-                       if item.filename == member]
-            if len(entries) != 1 or entries[0].is_dir() or not entries[0].file_size:
+            matches = [entry for entry in archive.infolist() if entry.filename == member]
+            if len(matches) != 1 or matches[0].is_dir() or matches[0].file_size == 0:
                 raise ValueError("select exactly one nonempty payload member")
-            item = entries[0]
-            with archive.open(item) as source:
-                return sample_key(source, item.file_size)
+            entry = matches[0]
+            with archive.open(entry) as source:
+                return _sample_key(source, entry.file_size)
     if zipfile.is_zipfile(path):
-        raise ValueError("use --member to select the payload inside this archive")
+        raise ValueError("archives require --member naming the actual payload")
     with path.open("rb") as source:
-        size = source.seek(0, 2)
-        key = sample_key(source, size)
-        if source.seek(0, 2) != size:
-            raise ValueError("payload size changed while reading")
+        source.seek(0, 2)
+        size = source.tell()
+        key = _sample_key(source, size)
+        source.seek(0, 2)
+        if source.tell() != size:
+            raise ValueError("payload size changed during sampling")
     return key
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Print a fast payload INI section")
+    parser = argparse.ArgumentParser(description="Print an imohash payload INI section")
     parser.add_argument("path", type=Path)
     parser.add_argument("--member", help="Exact payload member path inside a ZIP")
     args = parser.parse_args()
@@ -163,10 +250,10 @@ python3 content_selector.py "Content.apk" --member "assets/game.droid"
 ```
 
 This mode samples the selected member's uncompressed bytes and produces the same
-`sample-v1` key as the loose payload. Python may need to decompress that member to
+`imohash` key as the loose payload. Python may need to decompress that member to
 reach the samples; this is a one-time authoring operation, not an extra core load
 pass. Other members are not decompressed. For nested archives, run it on the
-innermost archive that contains the selected payload. Do not fingerprint the outer
+innermost archive that contains the selected payload. Do not hash the outer
 archive or an executable that merely launches a Studio data image.
 
 For loose content, select the actual Studio data image or the original Classic
@@ -184,13 +271,13 @@ On Windows, replace `python3` with `py -3` if using the Python launcher. When a
 Studio executable delegates to adjacent data, pass that data file. For an embedded
 Studio image, use the extracted data image identified by the core's cache/load
 logs. A Classic executable is sampled directly. An ordinary whole-file SHA-256
-command does not produce a `sample-v1` key.
+command does not produce an `imohash` key.
 
 Copy the printed header into the frontend system directory's `AnyGM.ini`, then add
 the desired directives below it. For example, an illustrative output and directive:
 
 ```ini
-[sample-v1:123456:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.overrides]
+[imohash:123456:0123456789abcdef0123456789abcdef.overrides]
 ostype|0
 ```
 

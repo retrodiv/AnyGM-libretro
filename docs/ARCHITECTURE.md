@@ -657,11 +657,12 @@ This gives format differences a single reviewable home without multiplying
 the VM, renderer, or frame loop. See `COMPATIBILITY.md` for placement rules.
 
 `src/media/` is a shared leaf below content and video. It owns vendored image
-decode, PNG encode-to-memory, inflate, and TrueType raster implementation, but
+decode, PNG encode-to-memory, inflate, TrueType raster implementation and
+standard-default imohash recognition, but
 it does not know paths, host services, content formats, atlas layout, or
 runtime policy. Callers perform VFS I/O through their own host boundary and
 exchange only explicit byte ranges, owned buffers, opaque font-face lifetimes,
-and value-copy metrics with the media leaf.
+value-copy metrics and bounded read-at callbacks with the media leaf.
 
 ## Performance boundary
 

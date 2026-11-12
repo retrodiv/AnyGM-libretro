@@ -13,7 +13,7 @@ typedef struct AnygmContentConfig AnygmContentConfig;
 
 /* Compile/validate every default and selected transform section.
  * No partial configuration is returned after failure. Unknown INI sections
- * remain uninterpreted; removed sha256 and zip selectors are always rejected. */
+ * remain uninterpreted; unknown selector prefixes are rejected. */
 AnygmContentConfig *anygm_content_config_parse(const void *text,size_t size,
                                              char *error,size_t error_size);
 void anygm_content_config_destroy(AnygmContentConfig *config);

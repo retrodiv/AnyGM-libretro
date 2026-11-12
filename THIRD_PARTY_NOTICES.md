@@ -9,6 +9,8 @@ including their original copyright years.
 
 | Component | Location | Terms |
 | --- | --- | --- |
+| imohash, adapted to C with standard default sampling and size encoding | `src/media/gml_hash.c`, content-selector recipe and conformance vectors | MIT, Jim Kalafut; reproduced in `LICENSES/imohash.txt` |
+| MurmurHash3 x64_128, adapted from Peter Scott's C port | `src/media/gml_hash.c`, content-selector recipe | Austin Appleby's public-domain dedication in `LICENSES/murmur3.txt` |
 | Box2D | `src/third_party/box2d/` | MIT, reproduced in `LICENSES/box2d.txt` |
 | bzip2 | `src/third_party/bzip2/` | bzip2 license in `LICENSES/bzip2.txt` |
 | xdelta3 VCDIFF decoder, with bounded-memory integration changes | `src/third_party/xdelta3/` | Apache-2.0, reproduced in `LICENSES/xdelta3.txt` |
