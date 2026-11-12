@@ -3155,8 +3155,9 @@ static int room_info_layer_elements(GmlVM *vm,GmlVal record,uint32_t entry,uint3
       if(include&16u){
         GmlTileMap *map=NULL;
         for(int m=0;m<map_count;m++) if(maps[m].order==(int)order){map=&maps[m];break;}
-        size_t cells=(size_t)width*height;
-        if(!map || !map->tiles || cells>INT_MAX || map->cols!=(int)width || map->rows!=(int)height) return 0;
+        uint64_t cells=(uint64_t)width*height;
+        if(cells>INT_MAX || (cells && (!map || !map->tiles ||
+           map->cols!=(int)width || map->rows!=(int)height))) return 0;
         GmlVal tiles=room_info_array(vm,element,"tiles",(int)cells);
         if(tiles.t!=V_ARR) return 0;
         for(int cell=0;cell<(int)cells;cell++)

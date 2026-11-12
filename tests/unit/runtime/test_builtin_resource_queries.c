@@ -268,6 +268,13 @@ static int room_information_nested_case(void){
     ok &= expect(gml_builtin_call(&vm,"room_get_info",NULL,0).t==V_UNDEF &&
       query(&vm,"room_get_info",vreal(NAN),cached,&ok).t==V_UNDEF,
       "missing and nonfinite room arguments return no snapshot");
+    group_word(data,1240,0);group_word(data,1244,0);
+    GmlVal empty_grid_room=query(&vm,"room_get_info",vreal(0),cached,&ok);
+    GmlVal empty_grid=gml_arr_get(snapshot_field(&vm,gml_arr_get(snapshot_field(&vm,empty_grid_room,"layers"),1),"elements"),0);
+    ok &= expect(real_is(snapshot_field(&vm,empty_grid,"width"),0) &&
+      real_is(snapshot_field(&vm,empty_grid,"height"),0) && snapshot_field(&vm,empty_grid,"tiles").t==V_ARR &&
+      gml_val_array_length(snapshot_field(&vm,empty_grid,"tiles"))==0,
+      "empty tilemaps retain their metadata without requiring decoded cells");
     gml_vm_free(&vm);all &= ok;
   }
   return all;
