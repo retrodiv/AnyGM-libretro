@@ -136,6 +136,40 @@ static int surface_pixel_alpha_case(void){
   }
   return ok;
 }
+static int surface_clear_alpha_byte_case(void){
+  const uint32_t colours[]={0xFFFFFFu,0u,0x604020u};
+  const double alphas[]={0.0,0.5,1.0};
+  const unsigned alpha_bytes[]={0u,127u,255u};
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlWin win={.bytecode=17};
+    GmlRender render;
+    if(gml_render_init(&render,&win)) return 0;
+    GmlVM vm={.win=&win,.render=&render};
+    uint32_t screen[4]={0};
+    gml_render_begin(&render,screen,2,2,0,0);
+    int surface=gml_surface_create(&render,2,2);
+    if(surface<=0 || !gml_surface_set_target(&render,surface)) return 0;
+    render.alpha=0.375;render.color=0x123456u;
+    for(unsigned colour=0;colour<3u;colour++) for(unsigned alpha=0;alpha<3u;alpha++){
+      GmlVal args[]={vreal(colours[colour]),vreal(alphas[alpha])};
+      query(&vm,"draw_clear_alpha",args,2,cached,&ok);
+      GmlVal pixel[]={vreal(surface),vreal(1),vreal(1)};
+      uint32_t expected=(alpha_bytes[alpha]<<24)|colours[colour];
+      GmlVal actual=query(&vm,"surface_getpixel_ext",pixel,3,cached,&ok);
+      if(!real_is(actual,expected)){
+        fprintf(stderr,"surface clear byte: cached=%d colour=%06x alpha=%g got=%g expected=%08x\n",
+          cached,colours[colour],alphas[alpha],actual.d,expected);
+        ok=0;
+      }
+      ok &= render.alpha==0.375 && render.color==0x123456u;
+    }
+    gml_surface_reset_target(&render);
+    vm.render=NULL;vm.win=NULL;gml_vm_free(&vm);gml_render_free(&render);
+  }
+  return ok;
+}
+
 static int buffer_surface_transfer_case(void){
   int ok=1;
   const unsigned char bytes[]={0x12,0x34,0x56,0x00,0xAB,0xCD,0xEF,0x7F,
@@ -1438,6 +1472,7 @@ int main(int argc,char **argv){
   const AnygmTestCase cases[]={{"motion_grid_edits",motion_grid_edits_case},
     {"motion_grid_drawing",motion_grid_drawing_case},
     {"surface_pixel_alpha",surface_pixel_alpha_case},
+    {"surface_clear_alpha_byte",surface_clear_alpha_byte_case},
     {"buffer_surface_transfer",buffer_surface_transfer_case},
     {"vertex_format_information",vertex_format_information_case},
     {"vertex_resource_existence",vertex_resource_existence_case},

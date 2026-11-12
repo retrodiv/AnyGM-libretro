@@ -1197,9 +1197,13 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       if(builtin_setting(vm,"GML_LOG_SURF"))
         anygm_host_logf(vm?vm->host:NULL,ANYGM_LOG_DEBUG,"[surf] clear colour=%06x\n",
                         (unsigned)(NU32(a,n,0)&0xFFFFFFu));
-      /* Pass the requested alpha through when clearing the target surface. */
       double clear_alpha=!strcmp(nm,"draw_clear_alpha")&&n>=2?
         N(a,n,1):1.0;
+      /* Second-generation GML converts clear alpha to a byte before submitting
+       * the clear. Keep the renderer's normalized-alpha contract unchanged. */
+      if(vm->win && anygm_policy_blend(vm->win)==ANYGM_BLEND_STUDIO_SECOND &&
+         clear_alpha>0.0 && clear_alpha<1.0)
+        clear_alpha=floor(clear_alpha*255.0)/255.0;
       gml_render_clear(R,NU32(a,n,0),clear_alpha);
     } return vreal(0); }
     if(!strcmp(nm,"draw_getpixel")){ if(R){ uint32_t p=0; int x=(int)draw_gui_x(R,N(a,n,0)), y=(int)draw_gui_y(R,N(a,n,1)); if(gml_render_target_pixel(R,x,y,&p)) return vreal(((p>>16)&0xff) | (p&0xff00) | ((p&0xff)<<16)); } return vreal(0); }
