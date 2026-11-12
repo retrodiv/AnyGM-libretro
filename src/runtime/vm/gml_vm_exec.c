@@ -77,6 +77,13 @@ void gml_vm_exception_finish_finally(GmlVM *vm){
 /* ---------------- helpers ---------------- */
 static double asnum(GmlVal v){ return gml_val_is_number_or_object(v)? v.d : (v.t==V_STR && v.s? atof(v.s):0); }
 static int    astrue(GmlVal v){ return gml_val_is_number_or_object(v)? (v.d>=0.5) : (v.t==V_STR && v.s&&v.s[0]); } /* GM: real>=0.5 true */
+/* A primitive i32 store boxes through the variable's real representation.
+ * Already boxed integers and wide integer payloads retain their identity. */
+static GmlVal vm_box_stored_value(GmlVal value,unsigned char source_type){
+  if(source_type==DT_INT32 && gml_val_number_kind(value)==GML_NUM_INT32)
+    return vreal(value.d);
+  return value;
+}
 double gml_vm_value_as_number(GmlVal value){ return asnum(value); }
 int gml_vm_value_is_true(GmlVal value){ return astrue(value); }
 static const char *asstr_cmp(GmlVal v, char *buf, size_t n){
@@ -3004,7 +3011,7 @@ static int vm_try_array_draw_loop(
     GmlVal advanced;
     if(!gml_vm_integer_binary(OP_ADD,*counter_slot,increment,typed_literals,&advanced))
       advanced=vreal(counter_value+1.0);
-    *counter_slot=advanced;
+    *counter_slot=vm_box_stored_value(advanced,instructions[footer+5].type2);
     counter_value=advanced.d;
   }
   *exit_out=(uint32_t)exit;
@@ -3616,6 +3623,7 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
               t=vm_inst_from_ref(vm,iv);
             }
           }
+          val=vm_box_stored_value(val,in.type2);
           GC_PERSIST(val);
           if(classic_implicit_return) ret=val;
           if(t) array_set_inst_field_h(vm,t,nm,nh,idx,val);
@@ -3638,6 +3646,7 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
              if(anygm_policy_has_modern_function_values(w) && sp>0 && stk[sp-1].t==V_REAL && stk[sp-1].d==-9.0) --sp;
              iv=sp>0?stk[--sp]:vreal(0);
            }
+           val=vm_box_stored_value(val,in.type2);
            GC_PERSIST(val);
            if(classic_implicit_return) ret=val;
            int it=(int)asnum(iv);
@@ -3650,6 +3659,7 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
           if(in.inst==0 && in.reftype==0xA0 && prev_conv_v_i32){
             GmlVal iv=sp>0?stk[--sp]:vreal(0);
             GmlVal v=sp>0?stk[--sp]:vreal(0);
+            v=vm_box_stored_value(v,in.type2);
             GC_PERSIST(v);
             if(classic_implicit_return) ret=v;
             int it=(int)asnum(iv);
@@ -3660,7 +3670,8 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
             }
             break;
           }
-          GmlVal v = gml_arr_publish(sp>0?stk[--sp]:vreal(0));
+          GmlVal v = gml_arr_publish(vm_box_stored_value(
+            sp>0?stk[--sp]:vreal(0),in.type2));
           /* locals/arguments die at scope exit, so their owned strings stay tracked and are freed
            * then (str_gc). Only instance/global stores persist beyond the run — untrack those so the
            * var owns the string (else it dangles at scope exit; re-assigning it later leaks it). */

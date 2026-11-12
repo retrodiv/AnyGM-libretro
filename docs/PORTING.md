@@ -419,8 +419,9 @@ false defensively; native coercion for those arguments is unmeasured.
 Integer identity is retained independently of a number's floating projection.
 `is_int32` and `is_int64` inspect that identity; a whole-valued real is not
 therefore an integer value. Studio integer immediates retain their encoded
-kind, while Classic ordinary literals and scalar conversions keep their
-established real-number policy. Explicit `int64`, Studio bitwise results and
+stack kind. A primitive 32-bit store boxes its value as a real variable; a
+store of an already boxed variant retains its numeric kind. Classic ordinary
+literals and scalar conversions keep their established real-number policy. Explicit `int64`, Studio bitwise results and
 `buffer_u64` observations preserve signed 64-bit payloads, including values
 that a double cannot represent exactly.
 

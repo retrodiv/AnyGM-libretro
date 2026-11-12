@@ -17,6 +17,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 GmlVal gml_builtin_call(GmlVM *vm, const char *name, GmlVal *args, int count);
@@ -76,11 +77,80 @@ static int integer_type_queries(GmlVM *vm){
   return ok;
 }
 
+/* A compact integer operand is a VM stack representation. A typed store into
+ * a variable boxes it as a real; an already boxed integer keeps its identity. */
+static int encoded_numeric_store_contract(void){
+  int ok=1;
+  for(int raw=0;raw<2;raw++) for(int local=0;local<2;local++)
+  for(int source=0;source<4;source++){
+    GmlWin win={.bytecode=17,.size=128,.owns=1};
+    GmlVM vm={0};
+    win.data=calloc(win.size,1);
+    win.code=calloc(1,sizeof *win.code);win.n_code=1;
+    win.ref_addr=calloc(3,sizeof *win.ref_addr);
+    win.ref_name=calloc(3,sizeof *win.ref_name);
+    win.ref_kind=calloc(3,sizeof *win.ref_kind);
+    if(!win.data || !win.code || !win.ref_addr || !win.ref_name || !win.ref_kind){
+      gml_win_free(&win);return 0;
+    }
+    uint32_t cursor=0;
+    #define STORE_WORD(word) do{ uint32_t numeric_word=(word); \
+      for(unsigned b=0;b<4;b++)win.data[cursor++]=(uint8_t)(numeric_word>>(8*b)); }while(0)
+    #define STORE_REFERENCE(name) do{ \
+      win.ref_addr[win.n_refs]=cursor;win.ref_name[win.n_refs++]=(name); \
+      STORE_WORD(UINT32_C(0xa0000000)); }while(0)
+    unsigned type=source==0?DT_INT32:source==1?DT_VAR:
+      source==2?DT_INT64:DT_DOUBLE;
+    if(source==0){
+      STORE_WORD(UINT32_C(0x840f0007));
+    }else if(source==1){
+      STORE_WORD((uint32_t)OP_PUSH<<24|(uint32_t)DT_VAR<<16|(uint16_t)IT_LOCAL);
+      STORE_REFERENCE("argument0");
+    }else{
+      STORE_WORD((uint32_t)OP_PUSH<<24|type<<16);
+      uint64_t bits=7;
+      if(source==3){double value=7;memcpy(&bits,&value,sizeof bits);}
+      STORE_WORD((uint32_t)bits);STORE_WORD((uint32_t)(bits>>32));
+    }
+    int scope=local?IT_LOCAL:IT_GLOBAL;
+    STORE_WORD((uint32_t)OP_POP<<24|(type<<4|DT_VAR)<<16|(uint16_t)scope);
+    STORE_REFERENCE("numeric_slot");
+    STORE_WORD((uint32_t)OP_PUSH<<24|(uint32_t)DT_VAR<<16|(uint16_t)scope);
+    STORE_REFERENCE("numeric_slot");
+    if(source==0){
+      STORE_WORD(UINT32_C(0x840f0009));
+      STORE_WORD((uint32_t)OP_CONV<<24|(DT_VAR<<4|DT_INT32)<<16);
+      STORE_WORD((uint32_t)OP_DIV<<24|(DT_VAR<<4|DT_VAR)<<16);
+    }
+    STORE_WORD((uint32_t)OP_RET<<24|(uint32_t)DT_VAR<<16);
+    #undef STORE_REFERENCE
+    #undef STORE_WORD
+    win.code[0].name="gml_Script_numeric_store";
+    win.code[0].length=cursor;
+    win.code[0].cache_bad=raw;
+    int initialized=gml_vm_init(&vm,&win,NULL)==0;
+    GmlVal argument=vint32(7);
+    GmlVal actual=initialized?gml_vm_run_code(&vm,0,NULL,NULL,&argument,1):vundef();
+    GmlNumberKind wanted=source==1?GML_NUM_INT32:
+      source==2?GML_NUM_INT64:GML_NUM_REAL;
+    double number=source==0?7.0/9.0:7.0;
+    if(!initialized || actual.t!=V_REAL ||
+       gml_val_number_kind(actual)!=wanted || fabs(actual.d-number)>1e-12){
+      fprintf(stderr,"numeric store: raw=%d local=%d source=%d kind=%d value=%.17g\n",
+        raw,local,source,(int)gml_val_number_kind(actual),actual.d);ok=0;
+    }
+    gml_vm_free(&vm);gml_win_free(&win);
+  }
+  if(ok) puts("numeric stores: cached/raw local/global primitive boxing and variant integer identity passed");
+  return ok;
+}
+
 int main(void){
   GmlVM vm;
   memset(&vm,0,sizeof vm);
   int ok=1;
   ok&=integer_type_queries(&vm);
+  ok&=encoded_numeric_store_contract();
 
   /* Independent Euclidean-distance controls: all three axes, translation,
    * symmetry, coincidence, and cached dispatch must agree. */

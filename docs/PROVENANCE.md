@@ -385,9 +385,13 @@ interfaces are documented by the publisher's
 and [expression rules](https://manual.gamemaker.io/monthly/en/GameMaker_Language/GML_Overview/Expressions_And_Operators.htm).
 The implementation keeps the existing numeric owner and floating algorithms,
 with an exact integer payload for the integer variants. The same value and
-state owners serve CPU and OpenGL execution. The exercised controls are
-synthetic language and state tests; they do not establish native Studio
-compiler optimization, overflow, invalid coercion or device behavior.
+state owners serve CPU and OpenGL execution. The synthetic language and state controls do not establish native Studio
+compiler optimization, overflow, invalid coercion or device behavior. A separate
+native Studio VM observation selects real boxing at a primitive 32-bit variable
+store. Exact cached and raw instruction controls cover local/global stores,
+fractional arithmetic and preservation of already boxed integer and wide
+integer values. Direct literal-call conversion remains unmeasured by that
+observation; its existing policy is unchanged.
 
 
 ## Legacy object-name query
