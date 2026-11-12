@@ -144,7 +144,7 @@ static void fixture_map(FixtureProjection *p){
  * against the live fixture. Direct state controls cover mutation/restoration of these fields. */
 static int project_fixture_playback(AnygmEngine *engine,uint8_t **data,size_t *written){
   uint8_t *bytes=*data;
-  if(*written<112 || (uint32_t)read_u64(bytes+4)!=64 || engine->render.n_spr<0)return 0;
+  if(*written<112 || (uint32_t)read_u64(bytes+4)!=65 || engine->render.n_spr<0)return 0;
   /* The historical fixture contains no dynamic sprite information or nine-slice.
    * Validate each current metadata word before omitting this new trailer. */
   size_t metadata_start=112+(size_t)read_u64(bytes+64);
@@ -277,7 +277,7 @@ static int project_fixture_vm(AnygmEngine *engine,uint8_t **data,size_t *written
   if((uint32_t)read_u64(p->input+timeline_at)!=0 ||
      (uint32_t)read_u64(p->input+timeline_at+4)!=(uint32_t)engine->vm.n_objects){free(p);return 0;}
   fixture_copy(p,132);
-  if((uint32_t)read_u64(p->output+4)!=39)p->ok=0;
+  if((uint32_t)read_u64(p->output+4)!=40)p->ok=0;
   write_u32(p->output+4,19);
   for(unsigned i=0;i<16;i++)(void)fixture_value(p,0);
   fixture_copy(p,76+26*4+616*8+10*4); /* RNG and unchanged software-3D scalars */
@@ -318,6 +318,8 @@ static int project_fixture_vm(AnygmEngine *engine,uint8_t **data,size_t *written
   if(p->pos>p->size || sizeof neutral_physics_particles>p->size-p->pos ||
      memcmp(p->input+p->pos,neutral_physics_particles,sizeof neutral_physics_particles))p->ok=0;
   if(p->ok)p->pos+=sizeof neutral_physics_particles;
+  /* Only verified empty new particle/connection counts are absent from the historical wire. */
+  if(fixture_read_word(p)!=0 || fixture_read_word(p)!=0)p->ok=0;
   fixture_empty(p);fixture_empty(p); /* empty fixtures/joints */
   fixture_copy(p,4);uint32_t particles=fixture_copy_word(p);fixture_copy(p,particles);
   fixture_copy(p,sizeof engine->vm.key_map);
@@ -415,7 +417,7 @@ static int fixture_projection_controls(AnygmEngine *engine,const uint8_t *baseli
     free(engine->vm.pending_game_load);engine->vm.pending_game_load=NULL;
     free(bytes);
   }
-  const uint32_t unknown_roots[]={50,51,52,53,54,55,56,57,58,59,60,61,62,63,65};
+  const uint32_t unknown_roots[]={50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,66};
   for(unsigned i=0;i<sizeof unknown_roots/sizeof unknown_roots[0] && ok;i++){
     uint8_t *bytes=NULL;size_t count=0;
     ok=save_state(engine,&bytes,&count);
@@ -489,6 +491,25 @@ static int fixture_projection_controls(AnygmEngine *engine,const uint8_t *baseli
     if(ok){
       if(field<4)write_u64(bytes+at+field*8,UINT64_C(0x4000000000000000));
       else write_u32(bytes+at+32,128);
+      write_u64(bytes+56,state_checksum(bytes+112,count-112));
+      ok=!project_fixture_vm(engine,&bytes,&count);
+    }
+    free(bytes);
+  }
+  /* Populated physics particle or connection records cannot be omitted from a historical pin. */
+  for(unsigned field=0;field<2 && ok;field++){
+    uint8_t *bytes=NULL;size_t count=0;ok=save_state(engine,&bytes,&count);
+    size_t start=ok?112+(size_t)read_u64(bytes+64)+(size_t)read_u64(bytes+72):0;
+    size_t length=ok?(size_t)read_u64(bytes+80):0,at=0;int matches=0;
+    const uint8_t defaults[36]={
+      0,0,0,0,0,0,0xf0,0x3f, 0,0,0,0,0,0,0xf0,0x3f,
+      0,0,0,0,0,0,0xf0,0x3f, 0,0,0,0,0,0,0xf0,0x3f, 0,0,0,0
+    };
+    for(size_t i=start;ok && i+sizeof defaults+8<=start+length;i++)
+      if(!memcmp(bytes+i,defaults,sizeof defaults)){at=i;matches++;}
+    ok=ok && matches==1;
+    if(ok){
+      write_u32(bytes+at+36+field*4,1);
       write_u64(bytes+56,state_checksum(bytes+112,count-112));
       ok=!project_fixture_vm(engine,&bytes,&count);
     }

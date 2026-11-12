@@ -5,6 +5,7 @@
 #define GML_PHYSICS_SOLVER_H
 
 #include <stdint.h>
+#include "gml_physics_particles.h"
 
 #define GML_PHYS_FIXTURE_POINTS 16
 #define GML_PHYS_FIXTURE_MAX 2048
@@ -162,7 +163,9 @@ int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,
                             double scale,double gravity_x,double gravity_y,
                             double seconds,int substeps,int iterations,
                             GmlPhysicsFilter filter,void *context,
-                            GmlPhysicsContact *contacts,int contact_capacity);
+                            GmlPhysicsContact *contacts,int contact_capacity,
+                            GmlPhysicsParticleState *particles,
+                            const GmlPhysicsParticleConfig *particle_config);
 #ifdef __cplusplus
 }
 #endif

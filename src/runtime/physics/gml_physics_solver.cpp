@@ -338,8 +338,11 @@ extern "C" int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,
                                          GmlPhysicsJoint *joints,int joint_count,
                                          double scale,double gx,double gy,double seconds,
                                          int substeps,int iterations,GmlPhysicsFilter callback,
-                                         void *context,GmlPhysicsContact *output,int capacity) {
-  if (!bodies || body_count<=0 || !bounded(scale) || scale<=0 || !bounded(gx) ||
+                                         void *context,GmlPhysicsContact *output,int capacity,
+                                         GmlPhysicsParticleState *particles,
+                                         const GmlPhysicsParticleConfig *particle_config) {
+  if (body_count<0 || (body_count>0 && !bodies) ||
+      (!body_count && (!particles || !particles->count)) || !bounded(scale) || scale<=0 || !bounded(gx) ||
       !bounded(gy) || !bounded(seconds) || seconds<=0 || !output || capacity<0) return 0;
   b2World world{b2Vec2(float(gx),float(gy))};
   /* The native world is a disposable solve graph. Disabling hidden contact impulses and sleep
@@ -564,7 +567,11 @@ extern "C" int gml_physics_solver_step(GmlPhysicsBody *bodies,int body_count,
   substeps=std::max(1,std::min(16,substeps));
   iterations=std::max(1,std::min(64,iterations));
   const float time_step=float(seconds/substeps);
-  for (int step=0;step<substeps;step++) world.Step(time_step,iterations,iterations);
+  for (int step=0;step<substeps;step++) {
+    world.Step(time_step,iterations,iterations);
+    if(particles && particle_config)
+      gml_physics_particles_step(particles,particle_config,world,gx,gy,time_step,iterations);
+  }
   for (StepJoint &entry:ordered_joints) sample_joint(entry,1.0f/time_step);
   for (int i=0;i<body_count;i++) {
     b2Body *body=native[size_t(i)]; auto &b=bodies[i];

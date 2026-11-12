@@ -316,6 +316,7 @@ ANYGM_WWISE_SOURCES := \
 
 ANYGM_PHYSICS_SOURCES := \
 	src/runtime/physics/gml_physics_solver.cpp \
+	src/runtime/physics/gml_physics_particles.cpp \
 	src/third_party/box2d/src/collision/b2_broad_phase.cpp \
 	src/third_party/box2d/src/collision/b2_chain_shape.cpp \
 	src/third_party/box2d/src/collision/b2_circle_shape.cpp \

@@ -2023,7 +2023,19 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1920, PHYSICS_PARTICLE_GET_GRAVITY_SCALE, "physics_particle_get_gravity_scale", PHYSICS, PHYSICS, ALWAYS) \
   ENTRY(1921, PHYSICS_PARTICLE_SET_GRAVITY_SCALE, "physics_particle_set_gravity_scale", PHYSICS, PHYSICS, ALWAYS) \
   ENTRY(1922, PHYSICS_PARTICLE_GET_MAX_COUNT, "physics_particle_get_max_count", PHYSICS, PHYSICS, ALWAYS) \
-  ENTRY(1923, PHYSICS_PARTICLE_SET_MAX_COUNT, "physics_particle_set_max_count", PHYSICS, PHYSICS, ALWAYS)
+  ENTRY(1923, PHYSICS_PARTICLE_SET_MAX_COUNT, "physics_particle_set_max_count", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1924, PHYSICS_PARTICLE_CREATE, "physics_particle_create", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1925, PHYSICS_PARTICLE_COUNT, "physics_particle_count", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1926, PHYSICS_PARTICLE_DELETE, "physics_particle_delete", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1927, PHYSICS_PARTICLE_DELETE_REGION_CIRCLE, "physics_particle_delete_region_circle", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1928, PHYSICS_PARTICLE_DELETE_REGION_BOX, "physics_particle_delete_region_box", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1929, PHYSICS_PARTICLE_DELETE_REGION_POLY, "physics_particle_delete_region_poly", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1930, PHYSICS_PARTICLE_SET_FLAGS, "physics_particle_set_flags", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1931, PHYSICS_PARTICLE_SET_CATEGORY_FLAGS, "physics_particle_set_category_flags", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1932, PHYSICS_PARTICLE_GET_DATA, "physics_particle_get_data", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1933, PHYSICS_PARTICLE_GET_DATA_PARTICLE, "physics_particle_get_data_particle", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1934, PHYSICS_PARTICLE_DRAW, "physics_particle_draw", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1935, PHYSICS_PARTICLE_DRAW_EXT, "physics_particle_draw_ext", PHYSICS, PHYSICS, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -2038,7 +2050,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1924
+  GML_BUILTIN_ID_LIMIT = 1936
 } GmlBuiltinId;
 
 #endif

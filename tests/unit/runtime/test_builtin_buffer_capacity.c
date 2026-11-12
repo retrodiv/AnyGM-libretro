@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "gml_builtin_internal.h"
+#include "gml_vm_internal.h"
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,6 +22,12 @@ static double peek(GmlVM *vm,GmlVal buffer,int offset){
 int main(void){
   GmlVM vm={0}; GmlWin win={0};
   CHECK(gml_vm_init(&vm,&win,NULL)==0);
+  const char *const names[]={"buffer_grow","buffer_u32","buffer_s32","buffer_f32","buffer_seek_start"};
+  const double values[]={1,5,6,8,0};
+  for(unsigned i=0;i<sizeof names/sizeof *names;i++){
+    GmlVal value=gml_vm_identifier_get(&vm,names[i]);
+    CHECK(value.t==V_REAL && value.d==values[i]);
+  }
   GmlVal ids[96],size=vreal(32);
   GmlBuiltinBuffer *first=NULL;
   unsigned char *address=NULL;

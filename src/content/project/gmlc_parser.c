@@ -5,6 +5,8 @@
 
 #include "anygm_host.h"
 #include "gml_win.h"
+#include "gml_physics_particles.h"
+#include "gml_builtin.h"
 
 #include <ctype.h>
 #include <inttypes.h>
@@ -214,6 +216,9 @@ static int emit_script_funcval(Compiler *c, int code_index){
 }
 
 static int resolve_const(Compiler *c, const char *name, double *out){
+#define GML_BUFFER_RECORD_CONSTANT(value,label) if(!strcmp(name,label)){*out=value;return 1;}
+  GML_BUFFER_RECORD_CONSTANTS(GML_BUFFER_RECORD_CONSTANT)
+#undef GML_BUFFER_RECORD_CONSTANT
   if(!strcmp(name,"true")){ *out=1; return 1; }
   if(!strcmp(name,"false")){ *out=0; return 1; }
   if(!strcmp(name,"noone")){ *out=IT_NOONE; return 1; }
@@ -263,6 +268,9 @@ static int resolve_const(Compiler *c, const char *name, double *out){
   };
   for(int i=0;i<(int)(sizeof(blend_constants)/sizeof(*blend_constants));i++)
     if(!strcmp(name,blend_constants[i].name)){ *out=blend_constants[i].value; return 1; }
+#define GML_PARTICLE_CONSTANT(value,label) if(!strcmp(name,label)){*out=value;return 1;}
+  GML_PHYS_PARTICLE_CONSTANTS(GML_PARTICLE_CONSTANT)
+#undef GML_PARTICLE_CONSTANT
   static const char *effect_kinds[]={
     "ef_explosion","ef_ring","ef_ellipse","ef_firework","ef_smoke","ef_smokeup",
     "ef_star","ef_spark","ef_flare","ef_cloud","ef_rain","ef_snow"

@@ -999,7 +999,7 @@ static void filtering_and_sensors(void){
     allow=mode>=2;
     if(mode==4) bodies[0].active=0;
     int count=gml_physics_solver_step(bodies,2,fixtures,2,NULL,0,0.1,0,0,
-                                     1.0/60,1,10,allow_contact,&allow,contacts,2);
+                                     1.0/60,1,10,allow_contact,&allow,contacts,2,NULL,NULL);
     assert(count==((mode==1 || mode==3)?1:0));
     if(mode==3) assert(bodies[0].x==0 && bodies[1].x>5.999);
   }
@@ -1214,7 +1214,357 @@ static int particle_configuration(void){
   return 1;
 }
 
+static GmlPhysicsParticleConfig particle_config_for(GmlVM *vm){
+  GmlBuiltinState *s=vm->builtins;
+  GmlPhysicsParticleConfig config={s->phys_particle_radius_m,s->phys_particle_density,
+    s->phys_particle_damping,s->phys_particle_gravity_scale,s->phys_particle_max_count};
+  return config;
+}
+static int kernel_particle(GmlVM *vm,double x,double y,double vx,double vy,
+                           uint32_t flags,int category,uint32_t colour){
+  double scale=gml_physics_world_scale(vm);GmlPhysicsParticleConfig config=particle_config_for(vm);
+  GmlPhysicsParticle particle={x*scale,y*scale,vx*scale,vy*scale,flags,colour,category};
+  return gml_physics_particles_add(&vm->builtins->phys_particles,&config,particle);
+}
+static void particle_kernel_transport(void){
+  GmlVM vm,peer;GmlWin win,peer_win;setup(&vm,&win);setup(&peer,&peer_win);
+  CALL(&vm,"physics_particle_set_radius",1);CALL(&peer,"physics_particle_set_radius",1);
+  CALL(&vm,"physics_particle_set_damping",0);CALL(&peer,"physics_particle_set_damping",0);
+  assert(kernel_particle(&vm,0,0,60,30,0,1,0xff0000ff)==0);
+  assert(kernel_particle(&peer,0,0,60,30,0,1,0xff0000ff)==0);
+  bind_box(&peer,0,1000,1000,5,5,0);
+  step(&vm,60);step(&peer,60);
+  GmlPhysicsParticle *a=&vm.builtins->phys_particles.points[0];
+  GmlPhysicsParticle *b=&peer.builtins->phys_particles.points[0];
+  double elapsed=60/fmax(1,gml_room_speed(&vm));
+  assert(fabs(a->x-6*elapsed)<1e-6 && fabs(a->y-3*elapsed)<1e-6);
+  assert(a->x==b->x && a->y==b->y && a->vx==b->vx && a->vy==b->vy);
+  CALL(&vm,"physics_particle_set_damping",4);step(&vm,1);
+  assert(a->vx==6 && a->vy==3);
+  CALL(&vm,"physics_world_gravity",0,10);step(&vm,60);
+  assert(fabs(a->vy-(3+10*elapsed))<1e-5);
+  assert(kernel_particle(&vm,500,500,10,20,GML_PHYS_PARTICLE_WALL,2,0xffffffff)==1);
+  assert(kernel_particle(&vm,600,600,0,0,GML_PHYS_PARTICLE_ZOMBIE,3,0xffffffff)==2);
+  CALL(&vm,"physics_pause_enable",1);step(&vm,1);assert(vm.builtins->phys_particles.count==3);
+  CALL(&vm,"physics_pause_enable",0);step(&vm,1);assert(vm.builtins->phys_particles.count==2);
+  b=&vm.builtins->phys_particles.points[1];assert(b->x==50 && b->y==50 && b->vx==0 && b->vy==0);
+  assert(gml_physics_particles_flags(&vm.builtins->phys_particles,0,GML_PHYS_PARTICLE_ZOMBIE));
+  step(&vm,1);assert(vm.builtins->phys_particles.count==1);
+  assert(vm.builtins->phys_particles.points[0].category==2);
+  gml_builtin_physics_room_reset(&vm);assert(vm.builtins->phys_particles.count==0);
+  assert(!vm.builtins->phys_particles.points && !vm.builtins->phys_particles.bonds);
+  gml_vm_free(&vm);gml_vm_free(&peer);
+  puts("particle kernel: empty-body world, free motion, distant-fixture invariance, gravity, walls, pause and compaction passed");
+}
+static void particle_kernel_contacts(void){
+  GmlVM vm;GmlWin win;setup(&vm,&win);
+  CALL(&vm,"physics_particle_set_radius",2);CALL(&vm,"physics_particle_set_damping",0);
+  CALL(&vm,"physics_world_gravity",0,10);bind_box(&vm,0,0,50,50,5,0);
+  assert(kernel_particle(&vm,0,0,0,100,0,1,0xffffffff)==0);
+  step(&vm,120);GmlPhysicsParticle *p=&vm.builtins->phys_particles.points[0];
+  assert(p->y<=4.302 && p->y>=4.25 && fabs(p->vy)<0.01);
+  gml_vm_free(&vm);setup(&vm,&win);
+  CALL(&vm,"physics_particle_set_radius",2);CALL(&vm,"physics_particle_set_damping",0);
+  bind_box(&vm,0,100,0,5,5,2);
+  assert(kernel_particle(&vm,80,0,100,0,0,1,0xffffffff)==0);
+  step(&vm,12);p=&vm.builtins->phys_particles.points[0];
+  double rigid_velocity=get(&vm,0,"phy_linear_velocity_x")*0.1;
+  double rigid_mass=get(&vm,0,"phy_mass");
+  assert(rigid_velocity>0 && p->vx<10);
+  assert(fabs(rigid_mass*rigid_velocity+0.09*p->vx-0.9)<1e-4);
+  gml_vm_free(&vm);setup(&vm,&win);
+  CALL(&vm,"physics_particle_set_radius",2);CALL(&vm,"physics_particle_set_damping",0);
+  bind_box(&vm,0,0,50,50,5,0);
+  assert(kernel_particle(&vm,0,0,40,100,0,1,0xffffffff)==0);
+  step(&vm,120);p=&vm.builtins->phys_particles.points[0];
+  assert(fabs(p->vx)<0.01);
+  gml_vm_free(&vm);setup(&vm,&win);
+  CALL(&vm,"physics_particle_set_radius",2);CALL(&vm,"physics_particle_set_damping",0);
+  bind_box(&vm,0,90,0,5,5,2);
+  assert(gml_physics_variable_set(&vm,&vm.inst[0],"phy_linear_velocity_x",vreal(100)));
+  assert(kernel_particle(&vm,100,0,0,0,GML_PHYS_PARTICLE_WALL,1,0xffffffff)==0);
+  step(&vm,12);p=&vm.builtins->phys_particles.points[0];
+  assert(p->x==10 && p->vx==0 && get(&vm,0,"phy_position_x")<=93.02);
+  assert(fabs(get(&vm,0,"phy_linear_velocity_x"))<0.01);
+  gml_vm_free(&vm);setup(&vm,&win);
+  CALL(&vm,"physics_particle_set_radius",2);CALL(&vm,"physics_particle_set_damping",0);
+  double sensor=bind_box(&vm,0,0,50,50,5,0);
+  CALL(&vm,"physics_fixture_set_sensor",sensor,1);
+  assert(kernel_particle(&vm,0,0,0,100,0,1,0xffffffff)==0);
+  step(&vm,60);assert(vm.builtins->phys_particles.points[0].y>10);
+  gml_vm_free(&vm);setup(&vm,&win);
+  CALL(&vm,"physics_particle_set_radius",2);CALL(&vm,"physics_particle_set_damping",0);
+  vm.inst[0].x=100;
+  double fixture=call(&vm,"physics_fixture_create",NULL,0).d;
+  CALL(&vm,"physics_fixture_set_polygon_shape",fixture);
+  CALL(&vm,"physics_fixture_add_point",fixture,10,10);
+  CALL(&vm,"physics_fixture_add_point",fixture,20,10);
+  CALL(&vm,"physics_fixture_add_point",fixture,20,20);
+  CALL(&vm,"physics_fixture_add_point",fixture,10,20);
+  CALL(&vm,"physics_fixture_set_density",fixture,2);
+  CALL(&vm,"physics_fixture_set_friction",fixture,0);
+  CALL(&vm,"physics_fixture_bind",fixture,vm.inst[0].id);
+  CALL(&vm,"physics_fixture_delete",fixture);
+  assert(kernel_particle(&vm,107.9,18,100,0,0,1,0xffffffff)==0);
+  GmlPhysicsBody body=gml_physics_body_pose(&vm.inst[0]);
+  body.id=vm.inst[0].id;
+  gml_physics_solver_mass(&body,vm.builtins->phys_fixture,GML_PHYS_FIXTURE_MAX,0.1);
+  GmlPhysicsParticleConfig config=particle_config_for(&vm);GmlPhysicsContact contacts[1];
+  gml_physics_solver_step(&body,1,vm.builtins->phys_fixture,GML_PHYS_FIXTURE_MAX,
+      NULL,0,0.1,0,0,0.01,1,1,NULL,NULL,contacts,1,&vm.builtins->phys_particles,&config);
+  p=&vm.builtins->phys_particles.points[0];
+  double omega=body.omega*M_PI/180;
+  double centre_y=(body.y+body.center_y)*0.1;
+  double contact_vx=body.vx*0.1-omega*(p->y-centre_y);
+  if(fabs(p->vx-contact_vx)>=0.001)
+    fprintf(stderr,"offset impulse: particle=(%.17g,%.17g) velocity=(%.17g,%.17g) body=(%.17g,%.17g) centre=(%.17g,%.17g) mass=%.17g inertia=%.17g velocity=(%.17g,%.17g) omega=%.17g contact_vx=%.17g\n",
+      p->x,p->y,p->vx,p->vy,body.x,body.y,body.center_x,body.center_y,
+      body.mass,body.inertia,body.vx,body.vy,omega,contact_vx);
+  assert(fabs(p->vx-contact_vx)<0.001);
+  assert(fabs(omega)>0.001);
+  gml_vm_free(&vm);
+  puts("particle kernel: rigid floor, two-way momentum, friction, fixed walls, sensors and offset COM impulses passed");
+}
+static void particle_kernel_flags(void){
+  GmlPhysicsParticleConfig config={0.1,1,0,1,128};
+  GmlPhysicsContact contacts[1];
+  const uint32_t flags[]={GML_PHYS_PARTICLE_VISCOUS,GML_PHYS_PARTICLE_POWDER,
+    GML_PHYS_PARTICLE_TENSILE,GML_PHYS_PARTICLE_SPRING,GML_PHYS_PARTICLE_ELASTIC,
+    GML_PHYS_PARTICLE_COLOUR};
+  for(unsigned mode=0;mode<sizeof flags/sizeof *flags;mode++){
+    GmlPhysicsParticleState state={0};
+    GmlPhysicsParticle a={0,0,mode==0?1:0,0,flags[mode],0xff0000ff,1};
+    GmlPhysicsParticle b={0.15,0,mode==0?-1:0,0,mode==5?0:flags[mode],0xffff0000,1};
+    assert(gml_physics_particles_add(&state,&config,a)==0);
+    assert(gml_physics_particles_add(&state,&config,b)==1);
+    if(mode==3 || mode==4){
+      assert(state.bond_count==1 && state.bonds[0].first==0 && state.bonds[0].second==1);
+      assert(fabs(state.bonds[0].length-0.15)<1e-12);state.points[1].x=0.3;
+    }
+    gml_physics_solver_step(NULL,0,NULL,0,NULL,0,1,0,0,1.0/60,1,1,NULL,NULL,contacts,1,&state,&config);
+    assert(fabs(state.points[0].vx+state.points[1].vx)<1e-12);
+    if(mode==0) assert(fabs(state.points[0].vx-state.points[1].vx)<2);
+    if(mode==1) assert(state.points[0].vx<0 && state.points[1].vx>0);
+    if(mode==2 || mode==3 || mode==4) assert(state.points[0].vx>0 && state.points[1].vx<0);
+    if(mode==5){
+      assert(state.points[0].colour==a.colour && state.points[1].colour==b.colour);
+      assert(gml_physics_particles_flags(&state,1,GML_PHYS_PARTICLE_COLOUR));
+      gml_physics_solver_step(NULL,0,NULL,0,NULL,0,1,0,0,1.0/60,1,10,NULL,NULL,contacts,1,&state,&config);
+      assert(state.points[0].colour!=a.colour && state.points[1].colour!=b.colour);
+    }
+    gml_physics_particles_clear(&state);
+  }
+  GmlPhysicsParticleState state={0};
+  for(int i=0;i<128;i++){
+    GmlPhysicsParticle point={i,0,0,0,0,0xffffffff,1};
+    assert(gml_physics_particles_add(&state,&config,point)==i);
+  }
+  GmlPhysicsParticle extra={0};assert(gml_physics_particles_add(&state,&config,extra)==-1);
+  gml_physics_particles_clear(&state);
+  for(int i=0;i<4;i++){
+    GmlPhysicsParticle point={0,0,0,0,0,0xffffffff,1};
+    assert(gml_physics_particles_add(&state,&config,point)==i);
+  }
+  gml_physics_solver_step(NULL,0,NULL,0,NULL,0,1,0,0,1.0/60,1,1,NULL,NULL,contacts,1,&state,&config);
+  assert(state.points[0].x<state.points[3].x);
+  for(int i=0;i<4;i++) assert(isfinite(state.points[i].x) && isfinite(state.points[i].vx));
+  gml_physics_particles_clear(&state);
+  puts("particle kernel: viscous, powder, tensile, spring, elastic, paired colour mixing, caps and fluid pressure passed");
+}
+
+static GmlVal particle_api(GmlVM *vm,int cached,const char *name,const double *values,int count){
+  GmlVal args[12];assert(count<=12);
+  for(int i=0;i<count;i++) args[i]=vreal(values[i]);
+  return physics_query(vm,cached,name,args,count);
+}
+#define PARTICLE(vm,cached,name,...) particle_api(vm,cached,name,(double[]){__VA_ARGS__},(int)(sizeof((double[]){__VA_ARGS__})/sizeof(double)))
+
+static void particle_api_lifetime(void){
+  for(int cached=0;cached<2;cached++){
+    GmlVM vm;GmlWin win;setup(&vm,&win);
+#define EXPECT_PARTICLE_CONSTANT(value,label) do { GmlVal constant=gml_vm_identifier_get(&vm,label);assert(constant.t==V_REAL && constant.d==value); } while(0);
+    GML_PHYS_PARTICLE_CONSTANTS(EXPECT_PARTICLE_CONSTANT)
+#undef EXPECT_PARTICLE_CONSTANT
+    CALL(&vm,"physics_particle_set_radius",1);
+    assert(particle_api(&vm,cached,"physics_particle_count",NULL,0).d==0);
+    assert(PARTICLE(&vm,cached,"physics_particle_create",0,10,20,30,-40,0x112233,0.5,7).d==0);
+    GmlPhysicsParticle *p=&vm.builtins->phys_particles.points[0];
+    assert(p->x==1 && p->y==2 && p->vx==3 && p->vy==-4);
+    assert(p->colour==0x7f112233u && p->category==7);
+    assert(PARTICLE(&vm,cached,"physics_particle_create",0,0,0,0,0,0xffffff,1,0).d==-1);
+    assert(PARTICLE(&vm,cached,"physics_particle_create",0,NAN,0,0,0,0xffffff,1,1).d==-1);
+    assert(PARTICLE(&vm,cached,"physics_particle_create",NAN,0,0,0,0,0xffffff,1,1).d==-1);
+    assert(PARTICLE(&vm,cached,"physics_particle_create",0,0,0,0,0,0xffffff,INFINITY,1).d==-1);
+    assert(PARTICLE(&vm,cached,"physics_particle_create",0,30,20,0,0,0xffffff,1,8).d==1);
+    assert(PARTICLE(&vm,cached,"physics_particle_create",0,50,20,0,0,0xffffff,1,7).d==2);
+    PARTICLE(&vm,cached,"physics_particle_set_category_flags",7,GML_PHYS_PARTICLE_VISCOUS);
+    assert(p->flags==GML_PHYS_PARTICLE_VISCOUS);
+    assert(vm.builtins->phys_particles.points[1].flags==0);
+    assert(vm.builtins->phys_particles.points[2].flags==GML_PHYS_PARTICLE_VISCOUS);
+    PARTICLE(&vm,cached,"physics_particle_set_flags",0,GML_PHYS_PARTICLE_WALL);
+    assert(p->vx==0 && p->vy==0 && p->flags==GML_PHYS_PARTICLE_WALL);
+    PARTICLE(&vm,cached,"physics_particle_set_flags",-1,GML_PHYS_PARTICLE_ZOMBIE);
+    assert(particle_api(&vm,cached,"physics_particle_count",NULL,0).d==3);
+    PARTICLE(&vm,cached,"physics_particle_delete",1);
+    assert(vm.builtins->phys_particles.points[1].flags==GML_PHYS_PARTICLE_ZOMBIE);
+    assert(particle_api(&vm,cached,"physics_particle_count",NULL,0).d==3);
+    step(&vm,1);assert(particle_api(&vm,cached,"physics_particle_count",NULL,0).d==2);
+    assert(vm.builtins->phys_particles.points[1].category==7);
+    PARTICLE(&vm,cached,"physics_particle_set_category_flags",0,GML_PHYS_PARTICLE_WALL);
+    assert(vm.builtins->phys_particles.points[1].flags==GML_PHYS_PARTICLE_WALL);
+    vm.room_index++;
+    assert(particle_api(&vm,cached,"physics_particle_count",NULL,0).d==-1);
+    assert(PARTICLE(&vm,cached,"physics_particle_create",0,0,0,0,0,0xffffff,1,1).d==-1);
+    gml_vm_free(&vm);
+    for(int shape=0;shape<3;shape++){
+      setup(&vm,&win);CALL(&vm,"physics_particle_set_radius",1);
+      for(int i=0;i<3;i++) assert(PARTICLE(&vm,cached,"physics_particle_create",0,10+10*i,10,0,0,0xffffff,1,i+1).d==i);
+      if(shape==0) PARTICLE(&vm,cached,"physics_particle_delete_region_circle",10,10,3);
+      else if(shape==1) PARTICLE(&vm,cached,"physics_particle_delete_region_box",10,10,3,4);
+      else{
+        double list=call(&vm,"ds_list_create",NULL,0).d;
+        CALL(&vm,"ds_list_add",list,7,6,13,6,13,14,7,14);
+        PARTICLE(&vm,cached,"physics_particle_delete_region_poly",list);
+        CALL(&vm,"ds_list_destroy",list);
+      }
+      assert(vm.builtins->phys_particles.points[0].flags==GML_PHYS_PARTICLE_ZOMBIE);
+      assert(vm.builtins->phys_particles.points[1].flags==0 && vm.builtins->phys_particles.points[2].flags==0);
+      step(&vm,1);assert(vm.builtins->phys_particles.count==2);
+      assert(vm.builtins->phys_particles.points[0].category==2);
+      gml_vm_free(&vm);
+    }
+  }
+  for(int array=0;array<2;array++){
+    GmlVM vm;GmlWin win;setup(&vm,&win);
+    const double polygon[]={0,0,20,0,20,5,5,5,5,20,0,20};
+    for(int i=0;i<3;i++) assert(CALL(&vm,"physics_particle_create",0,i==0?2:i==1?12:30,12,0,0,0xffffff,1,i+1).d==i);
+    GmlVal points=array?gml_arr_new(12,vreal(0)):call(&vm,"ds_list_create",NULL,0);
+    for(int i=0;i<12;i++){
+      if(array) gml_arr_set(points,i,vreal(polygon[i]));
+      else CALL(&vm,"ds_list_add",points.d,polygon[i]);
+    }
+    physics_query(&vm,array,"physics_particle_delete_region_poly",&points,1);
+    assert(vm.builtins->phys_particles.points[0].flags==GML_PHYS_PARTICLE_ZOMBIE);
+    assert(vm.builtins->phys_particles.points[1].flags==0 && vm.builtins->phys_particles.points[2].flags==0);
+    if(array) gml_values_release_owned(&points,1);
+    else CALL(&vm,"ds_list_destroy",points.d);
+    gml_vm_free(&vm);
+  }
+  puts("particle API: named/cached creation, units, invalid inputs, categories, walls, deferred deletion and three regions passed");
+}
+
+static void particle_api_data(void){
+  for(int cached=0;cached<2;cached++){
+    GmlVM vm;GmlWin win;setup(&vm,&win);
+    assert(PARTICLE(&vm,cached,"physics_particle_create",0,12.5,22.5,32.5,-42.5,0x112233,0.5,7).d==0);
+    assert(PARTICLE(&vm,cached,"physics_particle_create",GML_PHYS_PARTICLE_VISCOUS,50,60,70,80,0xabcdef,1,-8).d==1);
+    double id=CALL(&vm,"buffer_create",4,1,1).d;
+    CALL(&vm,"buffer_poke",id,0,1,0x5a);
+    CALL(&vm,"buffer_seek",id,0,4);
+    PARTICLE(&vm,cached,"physics_particle_get_data",id,31);
+    assert(CALL(&vm,"buffer_tell",id).d==4);
+    assert(CALL(&vm,"buffer_peek",id,0,1).d==0x5a);
+    assert(CALL(&vm,"buffer_get_size",id).d>=60);
+    assert(CALL(&vm,"buffer_peek",id,4,5).d==0);
+    assert(CALL(&vm,"buffer_peek",id,8,8).d==12.5);
+    assert(CALL(&vm,"buffer_peek",id,12,8).d==22.5);
+    assert(CALL(&vm,"buffer_peek",id,16,8).d==32.5);
+    assert(CALL(&vm,"buffer_peek",id,20,8).d==-42.5);
+    assert(CALL(&vm,"buffer_peek",id,24,5).d==0x7f332211u);
+    assert(CALL(&vm,"buffer_peek",id,28,5).d==7);
+    assert(CALL(&vm,"buffer_peek",id,32,5).d==GML_PHYS_PARTICLE_VISCOUS);
+    assert(CALL(&vm,"buffer_peek",id,56,6).d==-8);
+    PARTICLE(&vm,cached,"physics_particle_get_data_particle",1,id,18);
+    assert(CALL(&vm,"buffer_peek",id,4,8).d==50);
+    assert(CALL(&vm,"buffer_peek",id,8,8).d==60);
+    assert(CALL(&vm,"buffer_peek",id,12,6).d==-8);
+    assert(CALL(&vm,"buffer_tell",id).d==4);
+    assert(CALL(&vm,"buffer_peek",id,0,1).d==0x5a);
+    PARTICLE(&vm,cached,"physics_particle_get_data_particle",-1,id,31);
+    assert(CALL(&vm,"buffer_peek",id,4,8).d==50);
+    PARTICLE(&vm,cached,"physics_particle_get_data",-1,31);
+    gml_vm_free(&vm);
+  }
+  puts("particle API: named/cached packed records, selected fields, growth, units, colour/alpha, signed categories and cursor preservation passed");
+}
+
+static void particle_api_drawing(void){
+  for(int cached=0;cached<2;cached++) for(int extended=0;extended<2;extended++){
+    GmlVM vm;GmlWin win;setup(&vm,&win);win.bytecode=17;
+    GmlRender render;assert(!gml_render_init(&render,&win));vm.render=&render;
+    uint8_t *rgba=malloc(16);assert(rgba);memset(rgba,255,16);
+    int sprite=gml_sprite_append_from_rgba(&render,rgba,2,2,0,0,NULL);assert(sprite>=0);
+    uint32_t actual[32*32]={0},expected[32*32]={0};
+    assert(PARTICLE(&vm,cached,"physics_particle_create",GML_PHYS_PARTICLE_VISCOUS,5,6,0,0,0xff,0.5,7).d==0);
+    assert(PARTICLE(&vm,cached,"physics_particle_create",0,15,6,0,0,0xff00,1,8).d==1);
+    assert(PARTICLE(&vm,cached,"physics_particle_create",GML_PHYS_PARTICLE_VISCOUS|GML_PHYS_PARTICLE_ZOMBIE,25,6,0,0,0xffffff,1,7).d==2);
+    gml_render_begin(&render,actual,32,32,0,0);
+    render.color=0x123456;render.alpha=0.25;
+    if(extended) PARTICLE(&vm,cached,"physics_particle_draw_ext",GML_PHYS_PARTICLE_VISCOUS,7,sprite,0,2,3,90,0x445566,0.75);
+    else PARTICLE(&vm,cached,"physics_particle_draw",GML_PHYS_PARTICLE_VISCOUS,7,sprite,0);
+    gml_render_prepare_draw(&render);
+    assert(render.color==0x123456 && render.alpha==0.25);
+    int drawn=0;for(int i=0;i<32*32;i++) drawn+=actual[i]!=0;assert(drawn>0);
+    gml_render_begin(&render,expected,32,32,0,0);
+    CALL(&vm,"draw_sprite_ext",sprite,0,5,6,extended?2:1,extended?3:1,extended?90:0,extended?0x445566:0xff,extended?0.75:127.0/255);
+    CALL(&vm,"draw_sprite_ext",sprite,0,25,6,extended?2:1,extended?3:1,extended?90:0,extended?0x445566:0xffffff,extended?0.75:1);
+    gml_render_prepare_draw(&render);assert(!memcmp(actual,expected,sizeof actual));
+    memset(actual,0,sizeof actual);memset(expected,0,sizeof expected);
+    gml_render_begin(&render,actual,32,32,0,0);
+    PARTICLE(&vm,cached,"physics_particle_draw",0,0,sprite,0);
+    gml_render_prepare_draw(&render);
+    gml_render_begin(&render,expected,32,32,0,0);
+    CALL(&vm,"draw_sprite_ext",sprite,0,15,6,1,1,0,0xff00,1);
+    gml_render_prepare_draw(&render);assert(!memcmp(actual,expected,sizeof actual));
+    assert(vm.builtins->phys_particles.points[0].colour==0x7f0000ffu);
+    assert(vm.builtins->phys_particles.points[0].x==0.5 && fabs(vm.builtins->phys_particles.points[0].y-0.6)<1e-12);
+    vm.render=NULL;gml_vm_free(&vm);gml_render_free(&render);
+  }
+  puts("particle API: named/cached sprite facade, water/mask/category filtering, pending zombie visibility, stored/override styles and simulation invariance passed");
+}
+
+static void particle_api_state(void){
+  GmlVM vm;GmlWin win;setup(&vm,&win);
+  CALL(&vm,"physics_particle_set_radius",1);
+  CALL(&vm,"physics_particle_set_damping",0.25);
+  CALL(&vm,"physics_world_gravity",0,4);
+  assert(CALL(&vm,"physics_particle_create",GML_PHYS_PARTICLE_SPRING,10,20,2,3,0x112233,0.5,7).d==0);
+  assert(CALL(&vm,"physics_particle_create",GML_PHYS_PARTICLE_SPRING,12,20,-2,-3,0xabcdef,1,8).d==1);
+  assert(CALL(&vm,"physics_particle_create",GML_PHYS_PARTICLE_ZOMBIE,50,50,0,0,0xffffff,1,9).d==2);
+  GmlPhysicsParticleState *particles=&vm.builtins->phys_particles;
+  assert(particles->count==3 && particles->bond_count==1);
+  double rest=particles->bonds[0].length;particles->points[1].x+=0.15;
+  size_t capacity=gml_vm_state_size(&vm),written=0,used=0,first_size=0;
+  unsigned char *before=malloc(capacity),*first=malloc(capacity),*second=malloc(capacity);
+  assert(before && first && second && gml_vm_state_save(&vm,before,capacity,&written));
+  for(int replay=0;replay<2;replay++){
+    CALL(&vm,"physics_particle_set_category_flags",0,GML_PHYS_PARTICLE_ZOMBIE);step(&vm,1);
+    assert(particles->count==0);
+    assert(gml_vm_state_load(&vm,before,written,&used) && used==written);
+    particles=&vm.builtins->phys_particles;
+    assert(particles->count==3 && particles->bond_count==1 && particles->bonds[0].length==rest);
+    size_t resaved=0;assert(gml_vm_state_save(&vm,second,capacity,&resaved));
+    assert(resaved==written && !memcmp(before,second,written));
+    step(&vm,30);assert(particles->count==2 && particles->bond_count==1);
+    assert(particles->points[0].y>2 && particles->points[1].y>2);
+    assert(gml_vm_state_save(&vm,second,capacity,&resaved));
+    if(!replay){first_size=resaved;memcpy(first,second,resaved);}
+    else assert(first_size==resaved && !memcmp(first,second,resaved));
+  }
+  gml_builtin_physics_room_reset(&vm);
+  assert(!particles->count && !particles->bond_count && !particles->points && !particles->bonds);
+  free(before);free(first);free(second);gml_vm_free(&vm);
+  puts("particle state: live points, persistent rest lengths, pending zombies, exact resave/replay and room cleanup passed");
+}
+
 int main(void){
+  particle_api_state();
+  particle_api_lifetime();
+  particle_api_data();
+  particle_api_drawing();
+  particle_kernel_transport();
+  particle_kernel_contacts();
+  particle_kernel_flags();
   if(!particle_configuration()) return EXIT_FAILURE;
   error_output_control();
   units_and_ownership(); offset_and_rotation(); binding_origin_and_phase(); floor_joints_and_restore(); filtering_and_sensors(); malformed_geometry_and_mass();

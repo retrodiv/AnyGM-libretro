@@ -417,8 +417,8 @@ void gml_physics_step(GmlVM *vm){
   for(int i=0;i<vm->inst_count;i++)
     if(!vm->inst[i].marked && (vm->inst[i].active || vm->inst[i].deactivated) &&
        gml_physics_body_enabled(vm,&vm->inst[i])) count++;
-  if(!count) return;
-  GmlPhysicsBody *bodies=calloc((size_t)count,sizeof(*bodies));
+  if(!count && !vm->builtins->phys_particles.count) return;
+  GmlPhysicsBody *bodies=calloc((size_t)(count?count:1),sizeof(*bodies));
   int contact_capacity=GML_PHYS_FIXTURE_MAX*4;
   GmlPhysicsContact *contacts=calloc((size_t)contact_capacity,sizeof(*contacts));
   if(!bodies || !contacts){ free(bodies); free(contacts); return; }
@@ -432,10 +432,16 @@ void gml_physics_step(GmlVM *vm){
   double hz=fmax(1,gml_room_speed(vm));
   int substeps=(int)fmin(16,fmax(1,ceil(vm->builtins->phys_update_speed/hz)));
   int iterations=vm->builtins->phys_update_iterations>0?vm->builtins->phys_update_iterations:10;
+  GmlPhysicsParticleConfig particle_config={
+    vm->builtins->phys_particle_radius_m,vm->builtins->phys_particle_density,
+    vm->builtins->phys_particle_damping,vm->builtins->phys_particle_gravity_scale,
+    vm->builtins->phys_particle_max_count
+  };
   int contact_count=gml_physics_solver_step(bodies,count,vm->builtins->phys_fixture,
       GML_PHYS_FIXTURE_MAX,vm->builtins->phys_joint,GML_PHYS_JOINT_MAX,scale,
       vm->builtins->phys_gravity_x,vm->builtins->phys_gravity_y,1.0/hz,substeps,
-      iterations,filter,vm,contacts,contact_capacity);
+      iterations,filter,vm,contacts,contact_capacity,
+      vm->builtins->phys_particles.count?&vm->builtins->phys_particles:NULL,&particle_config);
   for(int i=0;i<count;i++){
     GmlPhysicsBody *b=&bodies[i]; GmlInstance *in=gml_vm_instance_by_id(vm,b->id);
     if(!in) continue;

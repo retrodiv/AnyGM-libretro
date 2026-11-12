@@ -178,6 +178,7 @@ struct GmlBuiltinState {
   double phys_particle_radius_m, phys_particle_density;
   double phys_particle_damping, phys_particle_gravity_scale;
   int phys_particle_max_count;
+  GmlPhysicsParticleState phys_particles;
   char *file_find_name[GML_FF_MAX];
   int file_find_count;
   int file_find_index;
@@ -251,6 +252,7 @@ void gml_physics_initialize_joint(GmlVM *vm,GmlPhysicsJoint *joint);
 int gml_physics_capture_gear_pose(GmlVM *vm,const GmlPhysicsJoint *source,int shared_ground,double pose[6]);
 void gml_physics_drop_joint(GmlVM *vm,GmlPhysicsJoint *joint);
 GmlPhysicsJoint *gml_physics_find_joint(GmlVM *vm,double id);
+int gml_builtin_point_in_polygon(double x,double y,const double *xs,const double *ys,int count);
 void gml_physics_report_error(GmlVM *vm,const char *message);
 double gml_physics_joint_geometry(GmlVM *vm,const GmlPhysicsJoint *joint,int field);
 GmlPhysicsBody gml_physics_body_pose(const GmlInstance *instance);

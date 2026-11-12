@@ -14,7 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-static int point_in_poly(double px, double py, const double *vx, const double *vy, int n){
+int gml_builtin_point_in_polygon(double px, double py, const double *vx, const double *vy, int n){
   int inside=0;
   for(int i=0,j=n-1;i<n;j=i++){
     int crosses=((vy[i]>py)!=(vy[j]>py));
@@ -190,7 +190,7 @@ GmlVal gml_builtin_try_values_math(GmlVM *vm, const char *nm, GmlVal *a, int n){
       int hasNeg=(d1<0)||(d2<0)||(d3<0), hasPos=(d1>0)||(d2>0)||(d3>0);
       if(!(hasNeg&&hasPos)) return vreal(1);
     }
-    return vreal(point_in_poly(x1,y1,px,py,4)||point_in_poly(x2,y2,px,py,4)||point_in_poly(x3,y3,px,py,4));
+    return vreal(gml_builtin_point_in_polygon(x1,y1,px,py,4)||gml_builtin_point_in_polygon(x2,y2,px,py,4)||gml_builtin_point_in_polygon(x3,y3,px,py,4));
   }
   if(!strcmp(nm,"angle_difference")){ double d=fmod(N(a,n,0)-N(a,n,1),360.0); if(d<-180.0)d+=360.0; if(d>180.0)d-=360.0; return vreal(d); }
   if(!strcmp(nm,"frac")) { double v=N(a,n,0); return vreal(v-floor(v)); }   /* fractional part */

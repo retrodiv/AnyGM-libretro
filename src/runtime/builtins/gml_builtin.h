@@ -7,6 +7,14 @@
 
 #include "gml_vm.h"
 
+/* Typed particle records share these buffer names with ordinary GML accesses. */
+#define GML_BUFFER_RECORD_CONSTANTS(ENTRY) \
+  ENTRY(1,"buffer_grow") \
+  ENTRY(5,"buffer_u32") \
+  ENTRY(6,"buffer_s32") \
+  ENTRY(8,"buffer_f32") \
+  ENTRY(0,"buffer_seek_start")
+
 typedef struct GmlBuiltinState GmlBuiltinState;
 typedef struct GmlVmStateWriter GmlVmStateWriter;
 typedef struct GmlVmStateReader GmlVmStateReader;

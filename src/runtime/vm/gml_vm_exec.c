@@ -570,6 +570,9 @@ static const char *const g_special_var_names[]={
   "transition_kind","transition_steps",
   "application_surface","debug_mode","display_aa","browser_width","browser_height",
   "pointer_null","dll_cdecl","dll_stdcall","ty_real","ty_string","NaN","fps_real",
+#define GML_BUFFER_RECORD_SPECIAL(value,label) label,
+  GML_BUFFER_RECORD_CONSTANTS(GML_BUFFER_RECORD_SPECIAL)
+#undef GML_BUFFER_RECORD_SPECIAL
 };
 #define N_SPECIAL_VAR (int)(sizeof g_special_var_names/sizeof *g_special_var_names)
 /* Open-addressed set of the special-name hashes.  A 64-bit bloom cannot gate 109 names — it
@@ -701,10 +704,18 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   /* Argument names cannot match the global constants below. Keep dynamic
    * global and Classic policies above, then use the established argument reader. */
   if(argument_get(vm,name,&out)) return out;
+#define GML_BUFFER_RECORD_READ(value,label) if(!strcmp(name,label)) return vreal(value);
+  GML_BUFFER_RECORD_CONSTANTS(GML_BUFFER_RECORD_READ)
+#undef GML_BUFFER_RECORD_READ
   if(!strncmp(name,"phy_joint_",10)){
 #define GML_JOINT_FIELD_READ(symbol, value, label) if(!strcmp(name,label)) return vreal(value);
     GML_PHYS_JOINT_FIELDS(GML_JOINT_FIELD_READ)
 #undef GML_JOINT_FIELD_READ
+  }
+  if(!strncmp(name,"phy_particle_",13)){
+#define GML_PARTICLE_CONSTANT_READ(value,label) if(!strcmp(name,label)) return vreal(value);
+    GML_PHYS_PARTICLE_CONSTANTS(GML_PARTICLE_CONSTANT_READ)
+#undef GML_PARTICLE_CONSTANT_READ
   }
   if(!strcmp(name,"undefined")) return vundef();   /* GMS2.3 builtin literal used by optional-arg prologues */
   if(!strcmp(name,"game_id")) return vreal(vm->win?vm->win->gameid:0);

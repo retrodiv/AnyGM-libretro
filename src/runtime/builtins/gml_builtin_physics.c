@@ -390,6 +390,127 @@ static GmlVal physics_draw_debug(GmlVM *vm){
   return vundef();
 }
 
+static int particle_integer(double value,int *out){
+  if(!isfinite(value) || value<INT_MIN || value>INT_MAX) return 0;
+  *out=(int)value;return 1;
+}
+static int particle_mask(double value,uint32_t *out){
+  if(!isfinite(value) || value<INT32_MIN || value>UINT32_MAX) return 0;
+  *out=(uint32_t)(int64_t)value;return 1;
+}
+static GmlVal physics_particle_create(GmlVM *vm,GmlVal *args,int count){
+  double scale=gml_physics_world_scale(vm);uint32_t flags,colour;int category;
+  if(count<8 || scale<=0 || !particle_mask(N(args,count,0),&flags) ||
+     !particle_mask(N(args,count,5),&colour) ||
+     !particle_integer(N(args,count,7),&category) || !category) return vreal(-1);
+  double alpha=N(args,count,6);
+  if(!isfinite(alpha)) return vreal(-1);
+  alpha=fmax(0,fmin(1,alpha));
+  GmlPhysicsParticle particle={N(args,count,1)*scale,N(args,count,2)*scale,
+    N(args,count,3)*scale,N(args,count,4)*scale,flags,
+    (colour&0xffffffu)|((uint32_t)(alpha*255)<<24),category};
+  GmlBuiltinState *state=vm->builtins;
+  GmlPhysicsParticleConfig config={state->phys_particle_radius_m,state->phys_particle_density,
+    state->phys_particle_damping,state->phys_particle_gravity_scale,state->phys_particle_max_count};
+  return vreal(gml_physics_particles_add(&state->phys_particles,&config,particle));
+}
+static GmlVal physics_particle_remove(GmlVM *vm,GmlVal *args,int count,int shape){
+  double scale=gml_physics_world_scale(vm);GmlPhysicsParticleState *state=&vm->builtins->phys_particles;
+  if(scale<=0) return vundef();
+  if(!shape){
+    int index;
+    if(count>0 && particle_integer(N(args,count,0),&index) && index>=0 && index<state->count)
+      state->points[index].flags|=GML_PHYS_PARTICLE_ZOMBIE;
+    return vundef();
+  }
+  double xs[8],ys[8],cx=0,cy=0,rx=0,ry=0;int vertices=0;
+  if(shape==1 || shape==2){
+    if(count<(shape==1?3:4)) return vundef();
+    cx=N(args,count,0);cy=N(args,count,1);rx=fabs(N(args,count,2));
+    ry=shape==1?rx:fabs(N(args,count,3));
+    if(!isfinite(cx) || !isfinite(cy) || !isfinite(rx) || !isfinite(ry)) return vundef();
+  }else{
+    int id=0,array=count>0 && args[0].t==V_ARR;
+    if(count<1 || (!array && !particle_integer(N(args,count,0),&id))) return vundef();
+    int size=array?gml_val_array_length(args[0]):gml_ds_list_size_direct(vm,id);
+    if(size<6 || size>16 || size%2) return vundef();
+    vertices=size/2;
+    for(int i=0;i<vertices;i++){
+      GmlVal x=array?gml_arr_get(args[0],i*2):gml_ds_list_find_value_direct(vm,id,i*2);
+      GmlVal y=array?gml_arr_get(args[0],i*2+1):gml_ds_list_find_value_direct(vm,id,i*2+1);
+      xs[i]=N(&x,1,0);ys[i]=N(&y,1,0);
+      if(!isfinite(xs[i]) || !isfinite(ys[i]) || fabs(xs[i])>1e12 || fabs(ys[i])>1e12) return vundef();
+    }
+  }
+  for(int i=0;i<state->count;i++){
+    GmlPhysicsParticle *point=&state->points[i];double x=point->x/scale,y=point->y/scale;
+    int inside=shape==1?hypot(x-cx,y-cy)<=rx:
+      shape==2?(fabs(x-cx)<=rx && fabs(y-cy)<=ry):gml_builtin_point_in_polygon(x,y,xs,ys,vertices);
+    if(inside) point->flags|=GML_PHYS_PARTICLE_ZOMBIE;
+  }
+  return vundef();
+}
+static GmlVal physics_particle_flags(GmlVM *vm,GmlVal *args,int count,int category){
+  int target;uint32_t flags;
+  if(count<2 || gml_physics_world_scale(vm)<=0 ||
+     !particle_integer(N(args,count,0),&target) || !particle_mask(N(args,count,1),&flags)) return vundef();
+  GmlPhysicsParticleState *state=&vm->builtins->phys_particles;
+  if(!category) gml_physics_particles_flags(state,target,flags);
+  else for(int i=0;i<state->count;i++)
+    if(!target || state->points[i].category==target) gml_physics_particles_flags(state,i,flags);
+  return vundef();
+}
+static void particle_data_word(unsigned char *bytes,int *offset,uint32_t value){
+  for(unsigned i=0;i<4;i++) bytes[(*offset)++]=(unsigned char)(value>>(8*i));
+}
+static void particle_data_real(unsigned char *bytes,int *offset,double value){
+  float number=(float)value;uint32_t bits;memcpy(&bits,&number,sizeof bits);
+  particle_data_word(bytes,offset,bits);
+}
+static GmlVal physics_particle_data(GmlVM *vm,GmlVal *args,int count,int single){
+  double scale=gml_physics_world_scale(vm);int id,index=0;uint32_t flags;
+  if(count<(single?3:2) || scale<=0 ||
+     !particle_integer(N(args,count,single?1:0),&id) ||
+     !particle_mask(N(args,count,single?2:1),&flags) ||
+     (single && !particle_integer(N(args,count,0),&index))) return vundef();
+  GmlPhysicsParticleState *state=&vm->builtins->phys_particles;
+  if(single && (index<0 || index>=state->count)) return vundef();
+  int slot=vm_buffer_slot(vm,id);GmlBuiltinBuffer *buffer=slot>=0?buffer_at(vm,slot):NULL;
+  if(!buffer) return vundef();
+  int previous=buffer->pos;
+  for(int i=single?index:0;i<(single?index+1:state->count);i++){
+    const GmlPhysicsParticle *point=&state->points[i];unsigned char bytes[28];int offset=0;
+    if(flags&1u) particle_data_word(bytes,&offset,point->flags);
+    if(flags&2u){particle_data_real(bytes,&offset,point->x/scale);particle_data_real(bytes,&offset,point->y/scale);}
+    if(flags&4u){particle_data_real(bytes,&offset,point->vx/scale);particle_data_real(bytes,&offset,point->vy/scale);}
+    if(flags&8u) particle_data_word(bytes,&offset,(point->colour&0xff00ff00u)|
+      ((point->colour&0xffu)<<16)|((point->colour>>16)&0xffu));
+    if(flags&16u) particle_data_word(bytes,&offset,(uint32_t)point->category);
+    if(offset>INT_MAX-buffer->pos) break;
+    int expected=buffer->pos+offset;buffer_write_raw(vm,slot,bytes,offset);
+    if(buffer->pos!=expected) break;
+  }
+  buffer->pos=previous;return vundef();
+}
+static GmlVal physics_particle_draw(GmlVM *vm,GmlVal *args,int count,int extended){
+  double scale=gml_physics_world_scale(vm);int category,sprite;uint32_t mask;
+  if(!vm->render || scale<=0 || count<(extended?9:4) ||
+     !particle_mask(N(args,count,0),&mask) || !particle_integer(N(args,count,1),&category) ||
+     !particle_integer(N(args,count,2),&sprite)) return vundef();
+  double subimage=N(args,count,3);
+  if(!isfinite(subimage) || subimage<INT_MIN || subimage>INT_MAX) return vundef();
+  if(extended) for(int i=4;i<9;i++) if(!isfinite(N(args,count,i))) return vundef();
+  GmlPhysicsParticleState *state=&vm->builtins->phys_particles;
+  for(int i=0;i<state->count;i++){
+    const GmlPhysicsParticle *point=&state->points[i];
+    if((point->flags && !(point->flags&mask)) || (category && point->category!=category)) continue;
+    gml_draw_sprite_ext(vm->render,sprite,gml_draw_subimg(vm,subimage),point->x/scale,point->y/scale,
+      extended?N(args,count,4):1,extended?N(args,count,5):1,extended?N(args,count,6):0,
+      extended?NU32(args,count,7):(point->colour&0xffffffu),extended?N(args,count,8):(point->colour>>24)/255.0);
+  }
+  return vundef();
+}
+
 static GmlVal particle_configuration(GmlVM *vm,int property,int write,
                                     GmlVal *arguments,int count){
   double scale=gml_physics_world_scale(vm);
@@ -419,6 +540,19 @@ static GmlVal particle_configuration(GmlVM *vm,int property,int write,
 }
 
 GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
+  if(!strcmp(nm,"physics_particle_create")) return physics_particle_create(vm,a,n);
+  if(!strcmp(nm,"physics_particle_count"))
+    return vreal(gml_physics_world_scale(vm)>0?vm->builtins->phys_particles.count:-1);
+  if(!strcmp(nm,"physics_particle_delete")) return physics_particle_remove(vm,a,n,0);
+  if(!strcmp(nm,"physics_particle_delete_region_circle")) return physics_particle_remove(vm,a,n,1);
+  if(!strcmp(nm,"physics_particle_delete_region_box")) return physics_particle_remove(vm,a,n,2);
+  if(!strcmp(nm,"physics_particle_delete_region_poly")) return physics_particle_remove(vm,a,n,3);
+  if(!strcmp(nm,"physics_particle_set_flags")) return physics_particle_flags(vm,a,n,0);
+  if(!strcmp(nm,"physics_particle_set_category_flags")) return physics_particle_flags(vm,a,n,1);
+  if(!strcmp(nm,"physics_particle_get_data")) return physics_particle_data(vm,a,n,0);
+  if(!strcmp(nm,"physics_particle_get_data_particle")) return physics_particle_data(vm,a,n,1);
+  if(!strcmp(nm,"physics_particle_draw")) return physics_particle_draw(vm,a,n,0);
+  if(!strcmp(nm,"physics_particle_draw_ext")) return physics_particle_draw(vm,a,n,1);
   if(!strcmp(nm,"physics_particle_get_radius"))
     return particle_configuration(vm,0,0,a,n);
   if(!strcmp(nm,"physics_particle_set_radius"))
