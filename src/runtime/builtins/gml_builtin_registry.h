@@ -2008,7 +2008,8 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1906, STEAM_FILE_READ, "steam_file_read", ANIMATION, ANIMATION, ALWAYS) \
   ENTRY(1907, STEAM_FILE_WRITE, "steam_file_write", ANIMATION, ANIMATION, ALWAYS) \
   ENTRY(1908, STEAM_GET_PERSONA_NAME, "steam_get_persona_name", ANIMATION, ANIMATION, ALWAYS) \
-  ENTRY(1909, STEAM_STATS_READY, "steam_stats_ready", ANIMATION, ANIMATION, ALWAYS)
+  ENTRY(1909, STEAM_STATS_READY, "steam_stats_ready", ANIMATION, ANIMATION, ALWAYS) \
+  ENTRY(1910, ROOM_GET_INFO, "room_get_info", INSTANCES, INSTANCES_ROOMS, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -2023,7 +2024,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1910
+  GML_BUILTIN_ID_LIMIT = 1911
 } GmlBuiltinId;
 
 #endif

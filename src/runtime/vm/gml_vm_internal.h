@@ -97,6 +97,7 @@ void gml_vm_instances_prepare_step(GmlVM *vm, int extent);
 GmlInstance *gml_vm_instances_alloc(GmlVM *vm);
 void gml_vm_instances_initialize(GmlVM *vm, GmlInstance *instance,
                                  double x, double y, int object);
+int gml_vm_room_instance_stride(GmlVM *vm);
 void gml_vm_instances_apply_room_transform(GmlVM *vm,
                                            GmlInstance *instance,
                                            uint32_t record_offset);

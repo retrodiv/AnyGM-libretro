@@ -3004,3 +3004,228 @@ void gml_tile_layer_hide(GmlVM *vm, int depth, int hidden){ int i=tile_mut_idx(v
     if(anygm_host_development_setting(vm->host,"GML_LOG_RTL")){ 
       anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[rtl] f%ld tile layer depth=%d hidden=%d flags=%d\n",
               vm->frame,depth,hidden,vm->tile_mut[i].flags); } } }
+
+/* Stored-room information shares the room's existing layout, instance-stride and tile-grid
+ * owners. Only the returned structs, arrays and strings are new; no room is entered to query it. */
+static int room_info_has(const GmlWin *win,uint32_t offset,size_t bytes){
+  const GmlChunk *chunk=gml_chunk(win,"ROOM");
+  return chunk && offset>=chunk->off && (uint64_t)offset+bytes<=UINT64_C(0x100000000) &&
+         (uint64_t)chunk->off+chunk->size<=win->size &&
+         (uint64_t)offset+bytes<=(uint64_t)chunk->off+chunk->size;
+}
+static GmlVal room_info_record(GmlVM *vm){
+  GmlInstance *record=gml_struct_new(vm);
+  return record?vobject(record->id):vundef();
+}
+static int room_info_value(GmlVM *vm,GmlVal record,const char *name,GmlVal value){
+  GmlInstance *object=gml_struct_find(vm,(unsigned)record.d);
+  GmlVal *slot=object?gml_varmap_put(&object->vars,name):NULL;
+  if(!slot){ gml_values_release_owned(&value,1); return 0; }
+  *slot=value;return 1;
+}
+static int room_info_numbers(GmlVM *vm,GmlVal record,const char *const *names,
+                              const double *values,int count){
+  for(int i=0;i<count;i++)
+    if(!isfinite(values[i]) || !room_info_value(vm,record,names[i],vreal(values[i]))) return 0;
+  return 1;
+}
+static int room_info_text(GmlVM *vm,GmlVal record,const char *name,const char *text){
+  char *owned=strdup(text?text:"");
+  return owned && room_info_value(vm,record,name,vstr_owned(owned));
+}
+static GmlVal room_info_array(GmlVM *vm,GmlVal record,const char *name,int count){
+  GmlVal array=gml_arr_new(count,vundef());
+  if(array.t!=V_ARR || gml_val_array_length(array)!=count){
+    gml_values_release_owned(&array,1);return vundef();
+  }
+  return room_info_value(vm,record,name,array)?array:vundef();
+}
+static int room_info_list(const GmlWin *win,uint32_t list,uint32_t *count){
+  *count=0;
+  if(!list) return 1;
+  if(!room_info_has(win,list,4)) return 0;
+  *count=gml_vm_read_u32_le(win->data,list);
+  return *count<=INT_MAX && room_info_has(win,list,4u+(size_t)*count*4u);
+}
+static int room_info_views(GmlVM *vm,int room_index,GmlRoom *room,GmlVal root){
+  uint32_t count=0;
+  if(!room_info_list(vm->win,room->view_ptr,&count) || count>8) return 0;
+  if(!room->view_ptr) return 1;
+  static const char *const fields[]={"visible","xview","yview","wview","hview",
+    "xport","yport","wport","hport","hborder","vborder","hspeed","vspeed","object","cameraID"};
+  GmlVal views=room_info_array(vm,root,"views",8);
+  if(views.t!=V_ARR) return 0;
+  for(unsigned i=0;i<8;i++){
+    double values[15]={0};values[13]=-1;values[14]=-1;
+    if(i<count){
+      uint32_t entry=gml_vm_read_u32_le(vm->win->data,room->view_ptr+4+i*4);
+      if(!room_info_has(vm->win,entry,56)) return 0;
+      for(int j=0;j<14;j++) values[j]=(int32_t)gml_vm_read_u32_le(vm->win->data,entry+j*4);
+      values[0]=values[0]!=0;
+    }
+    int slot=room_index*8+(int)i;
+    struct GmlViewOvr *override=vm->view_ovr && slot<vm->n_view_ovr?&vm->view_ovr[slot]:NULL;
+    if(override && (override->set || override->full)){
+      values[0]=override->vis;values[5]=override->x;values[6]=override->y;
+      values[7]=override->w;values[8]=override->h;
+      if(override->full){
+        values[1]=override->view_x;values[2]=override->view_y;
+        values[3]=override->view_w;values[4]=override->view_h;
+        values[9]=override->hborder;values[10]=override->vborder;
+        values[11]=override->hspeed;values[12]=override->vspeed;values[13]=override->object;
+      }
+    }
+    GmlVal record=room_info_record(vm);
+    if(record.t==V_UNDEF || !room_info_numbers(vm,record,fields,values,15)) return 0;
+    gml_arr_set(views,(int)i,record);
+  }
+  return 1;
+}
+static int room_info_instances(GmlVM *vm,int room_index,GmlRoom *room,GmlVal root){
+  uint32_t count=0;
+  if(!room_info_list(vm->win,room->obj_ptr,&count)) return 0;
+  if(gml_vm_room_placements_cleared(vm,room_index)) count=0;
+  GmlVal instances=room_info_array(vm,root,"instances",(int)count);
+  if(instances.t!=V_ARR) return 0;
+  static const char *const fields[]={"id","x","y","xscale","yscale","angle",
+    "image_speed","image_index","colour","creation_code","pre_creation_code"};
+  const uint8_t *data=vm->win->data;
+  int wide=count && gml_vm_room_instance_stride(vm)>=48;
+  for(uint32_t i=0;i<count;i++){
+    uint32_t entry=gml_vm_read_u32_le(data,room->obj_ptr+4+i*4);
+    if(!room_info_has(vm->win,entry,wide?48:36)) return 0;
+    int object=(int32_t)gml_vm_read_u32_le(data,entry+8);
+    const char *name=object>=0 && object<vm->n_objects?vm->objects[object].name:"";
+    double values[]={gml_vm_read_u32_le(data,entry+12),
+      (int32_t)gml_vm_read_u32_le(data,entry),(int32_t)gml_vm_read_u32_le(data,entry+4),
+      gml_vm_read_f32_le(data,entry+20),gml_vm_read_f32_le(data,entry+24),
+      gml_vm_read_f32_le(data,entry+(wide?40:32)),
+      wide?gml_vm_read_f32_le(data,entry+28):1,
+      wide?gml_vm_read_f32_le(data,entry+32):0,
+      gml_vm_read_u32_le(data,entry+(wide?36:28))&0xFFFFFFu,
+      (int32_t)gml_vm_read_u32_le(data,entry+16),gml_room_instance_precreate_code(vm,entry)};
+    GmlVal record=room_info_record(vm);
+    if(record.t==V_UNDEF || !room_info_numbers(vm,record,fields,values,11) ||
+       !room_info_text(vm,record,"object_index",name)) return 0;
+    gml_arr_set(instances,(int)i,record);
+  }
+  return 1;
+}
+typedef struct { uint32_t record,order; int32_t depth; } RoomInfoLayer;
+static int room_info_layer_order(const void *left,const void *right){
+  const RoomInfoLayer *a=left,*b=right;
+  if(a->depth!=b->depth) return a->depth<b->depth?-1:1;
+  return a->order==b->order?0:a->order<b->order?-1:1;
+}
+static int room_info_layer_elements(GmlVM *vm,GmlVal record,uint32_t entry,uint32_t order,
+                                     unsigned include,GmlTileMap *maps,int map_count){
+  const uint8_t *data=vm->win->data;
+  uint32_t type=gml_vm_read_u32_le(data,entry+8),body=gml_room_layer_type_off(vm,entry);
+  int count=type==1 || type==4?1:0;
+  if(type==2){
+    if(!room_info_has(vm->win,body,4)) return 0;
+    uint32_t instances=gml_vm_read_u32_le(data,body);
+    if(instances>INT_MAX || !room_info_has(vm->win,body,4u+(size_t)instances*4u)) return 0;
+    count=(int)instances;
+  }
+  GmlVal elements=room_info_array(vm,record,"elements",count);
+  if(elements.t!=V_ARR) return 0;
+  for(int i=0;i<count;i++){
+    GmlVal element=room_info_record(vm);
+    if(element.t==V_UNDEF) return 0;
+    if(type==1){
+      if(!room_info_has(vm->win,body,40)) return 0;
+      static const char *const fields[]={"type","visible","foreground","sprite_index","htiled",
+        "vtiled","stretch","image_index","image_speed","speed_type"};
+      double values[]={1,gml_vm_read_u32_le(data,body)!=0,gml_vm_read_u32_le(data,body+4)!=0,
+        (int32_t)gml_vm_read_u32_le(data,body+8),gml_vm_read_u32_le(data,body+12)!=0,
+        gml_vm_read_u32_le(data,body+16)!=0,gml_vm_read_u32_le(data,body+20)!=0,
+        gml_vm_read_f32_le(data,body+28),gml_vm_read_f32_le(data,body+32),
+        gml_vm_read_u32_le(data,body+36)};
+      if(!room_info_numbers(vm,element,fields,values,10)) return 0;
+    }else if(type==2){
+      if(!room_info_value(vm,element,"type",vreal(GML_LAYER_ELEMENT_INSTANCE)) ||
+         !room_info_value(vm,element,"inst_id",vreal(gml_vm_read_u32_le(data,body+4+(uint32_t)i*4)))) return 0;
+    }else if(type==4){
+      if(!room_info_has(vm->win,body,12)) return 0;
+      uint32_t width=gml_vm_read_u32_le(data,body+4),height=gml_vm_read_u32_le(data,body+8);
+      static const char *const fields[]={"type","x","y","width","height","tileset_index"};
+      double values[]={GML_LAYER_ELEMENT_TILEMAP,0,0,width,height,(int32_t)gml_vm_read_u32_le(data,body)};
+      if(!room_info_numbers(vm,element,fields,values,6)) return 0;
+      if(include&16u){
+        GmlTileMap *map=NULL;
+        for(int m=0;m<map_count;m++) if(maps[m].order==(int)order){map=&maps[m];break;}
+        size_t cells=(size_t)width*height;
+        if(!map || !map->tiles || cells>INT_MAX || map->cols!=(int)width || map->rows!=(int)height) return 0;
+        GmlVal tiles=room_info_array(vm,element,"tiles",(int)cells);
+        if(tiles.t!=V_ARR) return 0;
+        for(int cell=0;cell<(int)cells;cell++)
+          gml_arr_set(tiles,cell,vreal(gml_vm_read_u32_le(map->tiles,(uint32_t)cell*4u)));
+      }
+    }
+    gml_arr_set(elements,i,element);
+  }
+  return 1;
+}
+static int room_info_layers(GmlVM *vm,int room_index,GmlVal root,unsigned include){
+  uint32_t count=0,list=gml_vm_rooms_layer_list(vm,room_index,&count);
+  if(!list) return 1;
+  if(count>INT_MAX || !room_info_has(vm->win,list,4u+(size_t)count*4u)) return 0;
+  RoomInfoLayer *order=count?calloc(count,sizeof *order):NULL;
+  if(count && !order) return 0;
+  GmlTileMap *maps=NULL;int map_count=0,capacity=0,next_id=2000001,ok=1;
+  if((include&24u)==24u)
+    ok=gml_vm_rooms_load_maps(vm,room_index,&maps,&map_count,&capacity,&next_id);
+  for(uint32_t i=0;ok && i<count;i++){
+    uint32_t entry=gml_vm_read_u32_le(vm->win->data,list+4+i*4);
+    if(!room_info_has(vm->win,entry,36)){ok=0;break;}
+    order[i]=(RoomInfoLayer){entry,i,(int32_t)gml_vm_read_u32_le(vm->win->data,entry+12)};
+  }
+  if(ok && count>1) qsort(order,count,sizeof *order,room_info_layer_order);
+  GmlVal layers=ok?room_info_array(vm,root,"layers",(int)count):vundef();
+  if(layers.t!=V_ARR) ok=0;
+  static const char *const fields[]={"id","type","depth","xoffset","yoffset","hspeed","vspeed","visible"};
+  const uint8_t *data=vm->win->data;
+  for(uint32_t i=0;ok && i<count;i++){
+    uint32_t entry=order[i].record;
+    GmlVal record=room_info_record(vm);
+    double values[]={gml_vm_read_u32_le(data,entry+4),gml_vm_read_u32_le(data,entry+8),
+      (int32_t)gml_vm_read_u32_le(data,entry+12),gml_vm_read_f32_le(data,entry+16),
+      gml_vm_read_f32_le(data,entry+20),gml_vm_read_f32_le(data,entry+24),
+      gml_vm_read_f32_le(data,entry+28),gml_vm_read_u32_le(data,entry+32)!=0};
+    ok=record.t!=V_UNDEF && room_info_numbers(vm,record,fields,values,8) &&
+       room_info_text(vm,record,"name",gml_str_by_ptr(vm->win,gml_vm_read_u32_le(data,entry)));
+    if(ok && (include&8u)) ok=room_info_layer_elements(vm,record,entry,order[i].order,include,maps,map_count);
+    if(ok) gml_arr_set(layers,(int)i,record);
+  }
+  room_tilemaps_clear(maps,map_count);free(maps);free(order);
+  return ok;
+}
+GmlVal gml_vm_room_information(GmlVM *vm,int room_index,unsigned include){
+  GmlRoom room;
+  if(!vm || gml_vm_room_get(vm,room_index,&room)) return vundef();
+  const GmlChunk *chunk=gml_chunk(vm->win,"ROOM");
+  uint32_t entry=gml_vm_read_u32_le(vm->win->data,chunk->off+4+(uint32_t)room_index*4);
+  int world=room_info_has(vm->win,entry,88) && gml_vm_read_u32_le(vm->win->data,entry+56)==1;
+  GmlVal root=room_info_record(vm);
+  if(root.t==V_UNDEF) return root;
+  int views_enabled=room.view_enabled!=0,slot=room_index*8;
+  if(vm->view_ovr && slot<vm->n_view_ovr && vm->view_ovr[slot].room_enabled_set)
+    views_enabled=vm->view_ovr[slot].room_enabled;
+  static const char *const fields[]={"width","height","persistent","enableViews","clearDisplayBuffer",
+    "clearViewportBackground","colour","creationCode","physicsWorld"};
+  double values[]={room.width,room.height,room.persistent!=0,views_enabled,
+    !(room.flags&GML_ROOM_FLAG_DO_NOT_CLEAR_DISPLAY_BUFFER),
+    (room.flags&GML_ROOM_FLAG_CLEAR_VIEW_BACKGROUND)!=0,room.bgcolor&0xFFFFFFu,room.creation_code,world};
+  if(!room_info_numbers(vm,root,fields,values,9)) return vundef();
+  if(world){
+    static const char *const physics[]={"physicsGravityX","physicsGravityY","physicsPixToMeters"};
+    double gravity[]={gml_vm_read_f32_le(vm->win->data,entry+76),
+      gml_vm_read_f32_le(vm->win->data,entry+80),gml_vm_read_f32_le(vm->win->data,entry+84)};
+    if(!room_info_numbers(vm,root,physics,gravity,3)) return vundef();
+  }
+  if((include&1u) && !room_info_views(vm,room_index,&room,root)) return vundef();
+  if((include&2u) && !room_info_instances(vm,room_index,&room,root)) return vundef();
+  if((include&4u) && !room_info_layers(vm,room_index,root,include)) return vundef();
+  return root;
+}

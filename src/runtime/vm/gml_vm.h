@@ -719,6 +719,8 @@ void gml_fire_async_http(GmlVM *vm);      /* drain queued Other_62 (async HTTP, 
 void gml_fire_async_audio(GmlVM *vm);     /* drain PCM queue completion notices (Other_74) */
 void         gml_room_enter(GmlVM *vm, int room_index);      /* instantiate + Create events */
 int          gml_vm_room_get(GmlVM *vm, int room_index, GmlRoom *out);
+/* Detached stored-room metadata; include bits select views, placements, layers, elements, cells. */
+GmlVal       gml_vm_room_information(GmlVM *vm,int room_index,unsigned include);
 int          gml_vm_room_set_dimension(GmlVM *vm, int room_index, int height, double value);
 int          gml_vm_room_set_background_colour(GmlVM *vm, int room_index, uint32_t colour, int show);
 int          gml_vm_room_instances_clear(GmlVM *vm, int room_index);

@@ -195,10 +195,19 @@ static GmlVal time_source_builtin(GmlVM *vm, const char *name, GmlVal *args, int
   return vundef();
 }
 
+static GmlVal room_information(GmlVM *vm,GmlVal *args,int count){
+  double index=N(args,count,0);
+  if(count<1 || !isfinite(index) || index<0 || index>INT_MAX) return vundef();
+  unsigned include=0;
+  for(int i=1;i<=5;i++) if(count<=i || N(args,count,i)>=0.5) include|=1u<<(i-1);
+  return gml_vm_room_information(vm,(int)index,include);
+}
+
 GmlVal gml_builtin_try_instances_rooms(GmlVM *vm, const char *nm, GmlVal *a, int n){
   GmlRender *R=(GmlRender*)vm->render;
   (void)R;
   /* ---- rooms / flow ---- */
+  if(!strcmp(nm,"room_get_info")) return room_information(vm,a,n);
   if(!strcmp(nm,"room_get_name")){ GmlRoom rr; int ri=(int)N(a,n,0);
     return vstr(gml_room_get(vm->win,ri,&rr)==0 && rr.name ? rr.name : ""); }
   if(!strcmp(nm,"room_exists")){ int ri=(int)N(a,n,0); return vreal(ri>=0 && ri<gml_room_count(vm->win)); }

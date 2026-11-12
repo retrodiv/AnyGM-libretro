@@ -718,7 +718,7 @@ void gml_vm_instances_initialize(GmlVM *vm, GmlInstance *in, double x, double y,
  * +28 on 48-byte records grabs ImageSpeed=1.0f (0x3F800000), whose low 24 bits are 0x800000 —
  * a phantom dark-blue tint on every placed instance. Detect the stride once
  * from any room with two consecutive records. */
-static int room_inst_stride(GmlVM *vm){
+int gml_vm_room_instance_stride(GmlVM *vm){
   if(vm->room_rec_stride) return vm->room_rec_stride;
   int stride=36;
   const GmlChunk *c=gml_chunk(vm->win,"ROOM");
@@ -740,13 +740,13 @@ int gml_room_instance_precreate_code(GmlVM *vm, uint32_t ip){
    * run first, placement overrides run next, then Create observes the resulting values. Earlier
    * record layouts end before this field. */
   if(!vm || !vm->win || anygm_policy_uses_classic_runtime(vm->win) || !anygm_policy_has_modern_function_values(vm->win) ||
-     room_inst_stride(vm)<48 || ip>vm->win->size || vm->win->size-ip<48) return -1;
+     gml_vm_room_instance_stride(vm)<48 || ip>vm->win->size || vm->win->size-ip<48) return -1;
   return (int32_t)gml_vm_read_u32_le(vm->win->data,ip+44);
 }
 void gml_vm_instances_apply_room_transform(
     GmlVM *vm, GmlInstance *in, uint32_t ip){
   if(!vm || !vm->win || !in) return;
-  int wide = room_inst_stride(vm)>=48;   /* ImageSpeed/ImageIndex present; color/rot shifted +8 */
+  int wide = gml_vm_room_instance_stride(vm)>=48;   /* ImageSpeed/ImageIndex present; color/rot shifted +8 */
   size_t needed=wide?44u:36u;
   if(ip > vm->win->size || vm->win->size-ip < needed) return;
   const uint8_t *d=vm->win->data;

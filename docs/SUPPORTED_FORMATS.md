@@ -436,3 +436,13 @@ Unknown revisions, contradictory structural facts, malformed chunks,
 unsupported archive features, missing executable code, and invalid references
 return a stable error. They never select another engine or enable behavior
 based on content identity.
+
+## Stored room information
+
+`room_get_info` returns a detached snapshot of stored room metadata, with optional view,
+placement, layer, element and tile-cell collections. It reads the same editable room template,
+placement layout and decoded tile grids that ordinary room loading uses, without entering the
+queried room. Changing returned strings, structs or cells does not change the source resource.
+Empty collections use zero-length arrays. Layer records follow increasing depth, and tilemap
+cells preserve their unsigned packed values. The later optional live-room argument is not
+implemented; this API reports stored data.
