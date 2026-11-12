@@ -12,6 +12,7 @@ enum {
   GML_PHYS_PARTICLE_VISCOUS=32, GML_PHYS_PARTICLE_POWDER=64,
   GML_PHYS_PARTICLE_TENSILE=128, GML_PHYS_PARTICLE_COLOUR=256
 };
+enum { GML_PHYS_GROUP_SOLID=1, GML_PHYS_GROUP_RIGID=2 };
 
 #define GML_PHYS_PARTICLE_CONSTANTS(ENTRY) \
   ENTRY(0,"phy_particle_flag_water") \
@@ -45,7 +46,11 @@ enum {
   ENTRY(4,"phy_particle_data_velocity") \
   ENTRY(8,"phy_particle_data_colour") \
   ENTRY(8,"phy_particle_data_color") \
-  ENTRY(16,"phy_particle_data_category")
+  ENTRY(16,"phy_particle_data_category") \
+  ENTRY(1,"phy_particle_group_flag_solid") \
+  ENTRY(2,"phy_particle_group_flag_rigid") \
+  ENTRY(1,"phy_particle_group_solid") \
+  ENTRY(2,"phy_particle_group_rigid")
 
 /* Positions, velocities and connection lengths use metres and seconds.
  * Indices are compacted together at the next simulated step after deletion. */
@@ -53,6 +58,8 @@ typedef struct {
   double x,y,vx,vy;
   uint32_t flags,colour;
   int32_t category;
+  uint32_t group;
+  double local_x,local_y,depth;
 } GmlPhysicsParticle;
 
 typedef struct {
@@ -61,9 +68,31 @@ typedef struct {
 } GmlPhysicsParticleBond;
 
 typedef struct {
+  uint32_t id,flags;
+  double x,y,angle,strength;
+} GmlPhysicsParticleGroup;
+
+typedef struct {
+  int active,shape,count;
+  uint32_t flags,group_flags,colour;
+  int32_t category;
+  double x,y,angle,vx,vy,omega,strength,rx,ry;
+  double px[8],py[8];
+} GmlPhysicsParticleGroupDefinition;
+
+typedef struct {
+  int count;
+  double mass,inertia,cx,cy,vx,vy,omega;
+} GmlPhysicsParticleGroupStatistics;
+
+typedef struct {
   GmlPhysicsParticle *points;
   GmlPhysicsParticleBond *bonds;
   int count,capacity,bond_count,bond_capacity;
+  GmlPhysicsParticleGroup *groups;
+  int group_count,group_capacity;
+  uint32_t next_group;
+  GmlPhysicsParticleGroupDefinition definition;
 } GmlPhysicsParticleState;
 
 typedef struct {
@@ -81,6 +110,15 @@ int gml_physics_particles_add(GmlPhysicsParticleState *state,
 int gml_physics_particles_flags(GmlPhysicsParticleState *state,int index,uint32_t flags);
 void gml_physics_particles_compact(GmlPhysicsParticleState *state);
 int gml_physics_particles_config_valid(const GmlPhysicsParticleConfig *config);
+GmlPhysicsParticleGroup *gml_physics_particle_group_find(GmlPhysicsParticleState *state,uint32_t id);
+int gml_physics_particle_group_create(GmlPhysicsParticleState *state,
+                                    const GmlPhysicsParticleConfig *config);
+void gml_physics_particle_group_statistics(const GmlPhysicsParticleState *state,
+                                         const GmlPhysicsParticleConfig *config,uint32_t id,
+                                         GmlPhysicsParticleGroupStatistics *statistics);
+void gml_physics_particle_group_flags(GmlPhysicsParticleState *state,uint32_t id,uint32_t flags);
+int gml_physics_particle_group_join(GmlPhysicsParticleState *state,
+                                  const GmlPhysicsParticleConfig *config,uint32_t to,uint32_t from);
 #ifdef __cplusplus
 }
 class b2World;

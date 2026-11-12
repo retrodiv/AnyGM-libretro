@@ -1223,7 +1223,7 @@ static GmlPhysicsParticleConfig particle_config_for(GmlVM *vm){
 static int kernel_particle(GmlVM *vm,double x,double y,double vx,double vy,
                            uint32_t flags,int category,uint32_t colour){
   double scale=gml_physics_world_scale(vm);GmlPhysicsParticleConfig config=particle_config_for(vm);
-  GmlPhysicsParticle particle={x*scale,y*scale,vx*scale,vy*scale,flags,colour,category};
+  GmlPhysicsParticle particle={x*scale,y*scale,vx*scale,vy*scale,flags,colour,category,0,0,0,0};
   return gml_physics_particles_add(&vm->builtins->phys_particles,&config,particle);
 }
 static void particle_kernel_transport(void){
@@ -1333,8 +1333,8 @@ static void particle_kernel_flags(void){
     GML_PHYS_PARTICLE_COLOUR};
   for(unsigned mode=0;mode<sizeof flags/sizeof *flags;mode++){
     GmlPhysicsParticleState state={0};
-    GmlPhysicsParticle a={0,0,mode==0?1:0,0,flags[mode],0xff0000ff,1};
-    GmlPhysicsParticle b={0.15,0,mode==0?-1:0,0,mode==5?0:flags[mode],0xffff0000,1};
+    GmlPhysicsParticle a={0,0,mode==0?1:0,0,flags[mode],0xff0000ff,1,0,0,0,0};
+    GmlPhysicsParticle b={0.15,0,mode==0?-1:0,0,mode==5?0:flags[mode],0xffff0000,1,0,0,0,0};
     assert(gml_physics_particles_add(&state,&config,a)==0);
     assert(gml_physics_particles_add(&state,&config,b)==1);
     if(mode==3 || mode==4){
@@ -1356,13 +1356,13 @@ static void particle_kernel_flags(void){
   }
   GmlPhysicsParticleState state={0};
   for(int i=0;i<128;i++){
-    GmlPhysicsParticle point={i,0,0,0,0,0xffffffff,1};
+    GmlPhysicsParticle point={i,0,0,0,0,0xffffffff,1,0,0,0,0};
     assert(gml_physics_particles_add(&state,&config,point)==i);
   }
   GmlPhysicsParticle extra={0};assert(gml_physics_particles_add(&state,&config,extra)==-1);
   gml_physics_particles_clear(&state);
   for(int i=0;i<4;i++){
-    GmlPhysicsParticle point={0,0,0,0,0,0xffffffff,1};
+    GmlPhysicsParticle point={0,0,0,0,0,0xffffffff,1,0,0,0,0};
     assert(gml_physics_particles_add(&state,&config,point)==i);
   }
   gml_physics_solver_step(NULL,0,NULL,0,NULL,0,1,0,0,1.0/60,1,1,NULL,NULL,contacts,1,&state,&config);
@@ -1557,7 +1557,209 @@ static void particle_api_state(void){
   puts("particle state: live points, persistent rest lengths, pending zombies, exact resave/replay and room cleanup passed");
 }
 
+static double group_begin_box(GmlVM *vm,int cached,int flags,int group_flags,
+                              double x,double y,double half,double strength){
+  PARTICLE(vm,cached,"physics_particle_group_begin",flags,group_flags,x,y,0,0,0,0,0x123456,0.5,strength,7);
+  PARTICLE(vm,cached,"physics_particle_group_box",half,half);
+  return particle_api(vm,cached,"physics_particle_group_end",NULL,0).d;
+}
+static void particle_group_api(void){
+  for(int cached=0;cached<2;cached++){
+    GmlVM vm,peer;GmlWin win,peer_win;setup(&vm,&win);setup(&peer,&peer_win);
+    CALL(&vm,"physics_particle_set_radius",1);CALL(&vm,"physics_particle_set_density",2);
+    CALL(&vm,"physics_world_gravity",0,0);CALL(&vm,"physics_particle_set_damping",0);
+    PARTICLE(&vm,cached,"physics_particle_group_begin",0,2,10,20,90,30,-40,120,0x112233,0.5,0.6,7);
+    assert(vm.builtins->phys_particles.definition.active);
+    assert(vm.builtins->phys_particles.group_count==0 && vm.builtins->phys_particles.count==0);
+    PARTICLE(&vm,cached,"physics_particle_group_box",1.5,1.5);
+    double first=particle_api(&vm,cached,"physics_particle_group_end",NULL,0).d;assert(first>0);
+    assert(!vm.builtins->phys_particles.definition.active);
+    assert(PARTICLE(&vm,cached,"physics_particle_group_count",first).d==9);
+    assert(PARTICLE(&vm,cached,"physics_particle_group_count",NAN).d==-1);
+    assert(PARTICLE(&peer,cached,"physics_particle_group_count",first).d==-1);
+    assert(PARTICLE(&vm,cached,"physics_particle_get_group_flags",first).d==2);
+    const char *queries[]={"physics_particle_group_get_x","physics_particle_group_get_y",
+      "physics_particle_group_get_angle","physics_particle_group_get_centre_x",
+      "physics_particle_group_get_centre_y","physics_particle_group_get_vel_x",
+      "physics_particle_group_get_vel_y","physics_particle_group_get_ang_vel",
+      "physics_particle_group_get_mass","physics_particle_group_get_inertia"};
+    const double expected[]={10,20,-90,10,20,30,-40,120,0.405,0.01215};
+    for(int i=0;i<10;i++){
+      double value=PARTICLE(&vm,cached,queries[i],first).d;
+      assert(fabs(value-expected[i])<1e-10);
+      assert(PARTICLE(&vm,cached,queries[i],first+1000).d==-1);
+    }
+    assert(PARTICLE(&vm,cached,"physics_particle_create",0,500,500,0,0,0xffffff,1,8).d==9);
+    double buffer=CALL(&vm,"buffer_create",4,1,1).d;
+    CALL(&vm,"buffer_poke",buffer,0,1,0x5a);CALL(&vm,"buffer_poke",buffer,256,5,0x6a);
+    CALL(&vm,"buffer_seek",buffer,0,4);
+    PARTICLE(&vm,cached,"physics_particle_group_get_data",first,buffer,31);
+    assert(CALL(&vm,"buffer_tell",buffer).d==4);
+    assert(CALL(&vm,"buffer_peek",buffer,0,1).d==0x5a);
+    assert(CALL(&vm,"buffer_peek",buffer,8,8).d==8.5);
+    assert(CALL(&vm,"buffer_peek",buffer,12,8).d==21.5);
+    assert(CALL(&vm,"buffer_peek",buffer,24,5).d==0x7f332211u);
+    assert(CALL(&vm,"buffer_peek",buffer,252,6).d==7);
+    assert(CALL(&vm,"buffer_peek",buffer,256,5).d==0x6a);
+    PARTICLE(&vm,cached,"physics_particle_group_get_data",first+1000,buffer,31);
+    assert(CALL(&vm,"buffer_peek",buffer,256,5).d==0x6a);
+    PARTICLE(&vm,cached,"physics_particle_group_begin",0,1,12,20,0,0,0,0,0xffffff,1,0.5,-9);
+    PARTICLE(&vm,cached,"physics_particle_group_circle",2);
+    double second=particle_api(&vm,cached,"physics_particle_group_end",NULL,0).d;
+    assert(second>first && PARTICLE(&vm,cached,"physics_particle_group_count",second).d==5);
+    PARTICLE(&vm,cached,"physics_particle_set_group_flags",second,3);
+    assert(PARTICLE(&vm,cached,"physics_particle_get_group_flags",second).d==3);
+    PARTICLE(&vm,cached,"physics_particle_group_join",first,second);
+    assert(PARTICLE(&vm,cached,"physics_particle_group_count",first).d==14);
+    assert(PARTICLE(&vm,cached,"physics_particle_group_count",second).d==-1);
+    assert(PARTICLE(&vm,cached,"physics_particle_get_group_flags",first).d==3);
+    PARTICLE(&vm,cached,"physics_particle_group_begin",0,0,100,100,0,0,0,0,0xffffff,1,1,2);
+    particle_api(&vm,cached,"physics_particle_group_polygon",NULL,0);
+    const double polygon[][2]={{-3,-3},{3,-3},{0,0},{3,3},{-3,3}};
+    for(int i=0;i<5;i++) PARTICLE(&vm,cached,"physics_particle_group_add_point",polygon[i][0],polygon[i][1]);
+    double third=particle_api(&vm,cached,"physics_particle_group_end",NULL,0).d;
+    assert(third>second && PARTICLE(&vm,cached,"physics_particle_group_count",third).d==25);
+    PARTICLE(&vm,cached,"physics_particle_group_join",first,third);
+    assert(PARTICLE(&vm,cached,"physics_particle_group_count",first).d==39);
+    assert(PARTICLE(&vm,cached,"physics_particle_group_count",third).d==-1);
+    PARTICLE(&vm,cached,"physics_particle_group_delete",first);
+    assert(PARTICLE(&vm,cached,"physics_particle_group_count",first).d==39);
+    CALL(&vm,"physics_pause_enable",1);step(&vm,1);
+    assert(PARTICLE(&vm,cached,"physics_particle_group_count",first).d==39);
+    CALL(&vm,"physics_pause_enable",0);step(&vm,1);
+    assert(PARTICLE(&vm,cached,"physics_particle_group_count",first).d==-1);
+    assert(PARTICLE(&vm,cached,"physics_particle_group_count",third).d==-1);
+    PARTICLE(&vm,cached,"physics_particle_group_delete",third);step(&vm,1);
+    assert(vm.builtins->phys_particles.count==1 && vm.builtins->phys_particles.group_count==0);
+    CALL(&vm,"physics_particle_set_max_count",128);
+    uint32_t next=vm.builtins->phys_particles.next_group;
+    assert(group_begin_box(&vm,cached,0,0,0,0,100,1)==-1);
+    assert(vm.builtins->phys_particles.count==1 && vm.builtins->phys_particles.next_group==next);
+    assert(group_begin_box(&vm,cached,0,0,0,0,1e7,1)==-1);
+    PARTICLE(&vm,cached,"physics_particle_group_begin",0,0,NAN,0,0,0,0,0,0,1,1,2);
+    assert(particle_api(&vm,cached,"physics_particle_group_end",NULL,0).d==-1);
+    PARTICLE(&vm,cached,"physics_particle_group_begin",0,0,0,0,0,0,0,0,0,1,1,2);
+    particle_api(&vm,cached,"physics_particle_group_polygon",NULL,0);
+    PARTICLE(&vm,cached,"physics_particle_group_add_point",0,0);
+    PARTICLE(&vm,cached,"physics_particle_group_add_point",1,1);
+    assert(particle_api(&vm,cached,"physics_particle_group_end",NULL,0).d==-1);
+    assert(group_begin_box(&vm,cached,0,0,0,0,1,1)>third);
+    PARTICLE(&vm,cached,"physics_particle_group_begin",0,0,50,50,0,0,0,0,0,1,1,7);
+    PARTICLE(&vm,cached,"physics_particle_group_circle",-1.5);
+    double boundary=particle_api(&vm,cached,"physics_particle_group_end",NULL,0).d;
+    assert(boundary>third && PARTICLE(&vm,cached,"physics_particle_group_count",boundary).d==3);
+    assert(PARTICLE(&vm,cached,"physics_particle_group_get_centre_x",boundary).d==49.5);
+    assert(PARTICLE(&vm,cached,"physics_particle_group_get_x",boundary).d==50);
+    gml_builtin_physics_room_reset(&vm);
+    assert(!vm.builtins->phys_particles.groups && !vm.builtins->phys_particles.definition.active);
+    gml_vm_free(&vm);gml_vm_free(&peer);
+  }
+  puts("particle groups: all22 named/cached APIs, shapes/hull, live statistics, records, flags, joins, deferred lifetime, stale handles and bounded refusal passed");
+}
+static void particle_group_motion(void){
+  GmlVM vm;GmlWin win;setup(&vm,&win);
+  CALL(&vm,"physics_particle_set_radius",1);CALL(&vm,"physics_particle_set_damping",0);
+  CALL(&vm,"physics_world_gravity",0,0);
+  CALL(&vm,"physics_particle_group_begin",0,2,100,100,0,30,0,120,0xffffff,1,1,7);
+  CALL(&vm,"physics_particle_group_box",1.5,1.5);
+  double id=call(&vm,"physics_particle_group_end",NULL,0).d;assert(id>0);
+  double inertia=CALL(&vm,"physics_particle_group_get_inertia",id).d;
+  assert(gml_room_speed(&vm)==30);
+  const double elapsed=60*(double)(float)(1.0/30);
+  double angle=120*elapsed*0.017453292519943295;
+  step(&vm,60);
+  assert(fabs(CALL(&vm,"physics_particle_group_get_centre_x",id).d-(100+30*elapsed))<1e-8);
+  assert(fabs(CALL(&vm,"physics_particle_group_get_centre_y",id).d-100)<1e-8);
+  assert(fabs(CALL(&vm,"physics_particle_group_get_angle",id).d-remainder(120*elapsed,360))<1e-7);
+  assert(fabs(CALL(&vm,"physics_particle_group_get_ang_vel",id).d-120)<1e-7);
+  assert(fabs(CALL(&vm,"physics_particle_group_get_inertia",id).d-inertia)<1e-10);
+  for(int i=0;i<vm.builtins->phys_particles.count;i++){
+    const GmlPhysicsParticle *p=&vm.builtins->phys_particles.points[i];
+    assert(fabs(p->x-(10+3*elapsed)-(cos(angle)*p->local_x-sin(angle)*p->local_y))<1e-8);
+    assert(fabs(p->y-10-(sin(angle)*p->local_x+cos(angle)*p->local_y))<1e-8);
+  }
+  CALL(&vm,"physics_particle_set_group_flags",id,0);
+  step(&vm,10);
+  double x=vm.builtins->phys_particles.points[0].x;
+  CALL(&vm,"physics_particle_set_group_flags",id,2);
+  assert(vm.builtins->phys_particles.points[0].x==x);
+  step(&vm,1);assert(isfinite(CALL(&vm,"physics_particle_group_get_angle",id).d));
+  gml_vm_free(&vm);
+  double separation[2],position[2];
+  for(int solid=0;solid<2;solid++){
+    setup(&vm,&win);CALL(&vm,"physics_particle_set_radius",1);CALL(&vm,"physics_world_gravity",0,0);
+    CALL(&vm,"physics_particle_set_damping",0);
+    assert(group_begin_box(&vm,0,GML_PHYS_PARTICLE_WALL,solid?GML_PHYS_GROUP_SOLID:0,0,0,3,1)>0);
+    int index=(int)CALL(&vm,"physics_particle_create",0,2.25,0,0,0,0xffffff,1,9).d;assert(index>=0);
+    GmlPhysicsParticle original=vm.builtins->phys_particles.points[index];
+    GmlPhysicsParticleConfig config=particle_config_for(&vm);GmlPhysicsContact contact[1];
+    gml_physics_solver_step(NULL,0,NULL,0,NULL,0,0.1,0,0,0.0001,1,1,NULL,NULL,
+                           contact,1,&vm.builtins->phys_particles,&config);
+    separation[solid]=vm.builtins->phys_particles.points[index].vx;
+    vm.builtins->phys_particles.points[index]=original;
+    step(&vm,1);position[solid]=vm.builtins->phys_particles.points[index].x;
+    gml_vm_free(&vm);
+  }
+  assert(separation[1]>separation[0]);
+  assert(position[1]>position[0]);
+  for(int material=0;material<3;material++){
+  double error[2];
+  for(int strength=0;strength<2;strength++){
+    setup(&vm,&win);CALL(&vm,"physics_particle_set_radius",1);CALL(&vm,"physics_world_gravity",0,0);
+    CALL(&vm,"physics_particle_set_damping",0);
+    int flag=material==0?GML_PHYS_PARTICLE_SPRING:material==1?GML_PHYS_PARTICLE_ELASTIC:0;
+    assert(group_begin_box(&vm,0,flag,0,0,0,1.5,strength)>0);
+    if(material==2){
+      CALL(&vm,"physics_particle_set_flags",8,GML_PHYS_PARTICLE_ELASTIC);
+      assert(vm.builtins->phys_particles.bond_count==0);
+    }
+    vm.builtins->phys_particles.points[8].x+=0.03;
+    GmlPhysicsParticleConfig config=particle_config_for(&vm);GmlPhysicsContact contact[1];
+    gml_physics_solver_step(NULL,0,NULL,0,NULL,0,0.1,0,0,0.001,1,1,NULL,NULL,
+                           contact,1,&vm.builtins->phys_particles,&config);
+    error[strength]=fabs(vm.builtins->phys_particles.points[8].x-
+                        vm.builtins->phys_particles.points[7].x-0.15);
+    gml_vm_free(&vm);
+  }
+  assert(error[1]<error[0]);
+  }
+  puts("particle groups: exact rigid pose/spin/shape, live flags, positive solid force/displacement and actual cohesion strength passed");
+}
+
+static void particle_group_state(void){
+  GmlVM vm;GmlWin win;setup(&vm,&win);
+  CALL(&vm,"physics_particle_set_radius",1);CALL(&vm,"physics_world_gravity",0,0);
+  double first=group_begin_box(&vm,0,GML_PHYS_PARTICLE_SPRING,GML_PHYS_GROUP_RIGID,10,20,1.5,0.4);
+  double second=group_begin_box(&vm,0,0,0,100,100,1.5,1);assert(first>0 && second>first);
+  CALL(&vm,"physics_particle_delete",0);
+  CALL(&vm,"physics_particle_group_begin",0,1,200,200,30,0,0,0,0x123456,0.5,0.75,9);
+  call(&vm,"physics_particle_group_polygon",NULL,0);
+  CALL(&vm,"physics_particle_group_add_point",-3,-3);
+  CALL(&vm,"physics_particle_group_add_point",3,-3);
+  size_t capacity=gml_vm_state_size(&vm),written=0,used=0,repeated=0;
+  unsigned char *snapshot=malloc(capacity),*again=malloc(capacity);assert(snapshot && again);
+  assert(gml_vm_state_save(&vm,snapshot,capacity,&written));
+  CALL(&vm,"physics_particle_group_delete",second);step(&vm,1);
+  assert(CALL(&vm,"physics_particle_group_count",second).d==-1);
+  assert(gml_vm_state_load(&vm,snapshot,written,&used) && used==written);
+  assert(CALL(&vm,"physics_particle_group_count",first).d==9);
+  assert(CALL(&vm,"physics_particle_group_count",second).d==9);
+  assert(vm.builtins->phys_particles.points[0].flags&GML_PHYS_PARTICLE_ZOMBIE);
+  assert(vm.builtins->phys_particles.definition.active && vm.builtins->phys_particles.definition.count==2);
+  assert(gml_vm_state_save(&vm,again,capacity,&repeated));
+  assert(repeated==written && !memcmp(again,snapshot,written));
+  CALL(&vm,"physics_particle_group_add_point",0,3);
+  double third=call(&vm,"physics_particle_group_end",NULL,0).d;assert(third>second);
+  assert(CALL(&vm,"physics_particle_group_count",third).d>0);
+  step(&vm,1);assert(CALL(&vm,"physics_particle_group_count",first).d==8);
+  free(snapshot);free(again);gml_vm_free(&vm);
+  puts("particle groups: live members/bonds, pending deletion and unfinished polygon restore and exact resave passed");
+}
+
 int main(void){
+  particle_group_api();
+  particle_group_motion();
+  particle_group_state();
   particle_api_state();
   particle_api_lifetime();
   particle_api_data();

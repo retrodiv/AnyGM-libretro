@@ -2035,7 +2035,29 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1932, PHYSICS_PARTICLE_GET_DATA, "physics_particle_get_data", PHYSICS, PHYSICS, ALWAYS) \
   ENTRY(1933, PHYSICS_PARTICLE_GET_DATA_PARTICLE, "physics_particle_get_data_particle", PHYSICS, PHYSICS, ALWAYS) \
   ENTRY(1934, PHYSICS_PARTICLE_DRAW, "physics_particle_draw", PHYSICS, PHYSICS, ALWAYS) \
-  ENTRY(1935, PHYSICS_PARTICLE_DRAW_EXT, "physics_particle_draw_ext", PHYSICS, PHYSICS, ALWAYS)
+  ENTRY(1935, PHYSICS_PARTICLE_DRAW_EXT, "physics_particle_draw_ext", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1936, PHYSICS_PARTICLE_GET_GROUP_FLAGS, "physics_particle_get_group_flags", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1937, PHYSICS_PARTICLE_GROUP_ADD_POINT, "physics_particle_group_add_point", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1938, PHYSICS_PARTICLE_GROUP_BEGIN, "physics_particle_group_begin", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1939, PHYSICS_PARTICLE_GROUP_BOX, "physics_particle_group_box", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1940, PHYSICS_PARTICLE_GROUP_CIRCLE, "physics_particle_group_circle", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1941, PHYSICS_PARTICLE_GROUP_COUNT, "physics_particle_group_count", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1942, PHYSICS_PARTICLE_GROUP_DELETE, "physics_particle_group_delete", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1943, PHYSICS_PARTICLE_GROUP_END, "physics_particle_group_end", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1944, PHYSICS_PARTICLE_GROUP_GET_ANG_VEL, "physics_particle_group_get_ang_vel", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1945, PHYSICS_PARTICLE_GROUP_GET_ANGLE, "physics_particle_group_get_angle", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1946, PHYSICS_PARTICLE_GROUP_GET_CENTRE_X, "physics_particle_group_get_centre_x", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1947, PHYSICS_PARTICLE_GROUP_GET_CENTRE_Y, "physics_particle_group_get_centre_y", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1948, PHYSICS_PARTICLE_GROUP_GET_DATA, "physics_particle_group_get_data", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1949, PHYSICS_PARTICLE_GROUP_GET_INERTIA, "physics_particle_group_get_inertia", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1950, PHYSICS_PARTICLE_GROUP_GET_MASS, "physics_particle_group_get_mass", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1951, PHYSICS_PARTICLE_GROUP_GET_VEL_X, "physics_particle_group_get_vel_x", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1952, PHYSICS_PARTICLE_GROUP_GET_VEL_Y, "physics_particle_group_get_vel_y", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1953, PHYSICS_PARTICLE_GROUP_GET_X, "physics_particle_group_get_x", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1954, PHYSICS_PARTICLE_GROUP_GET_Y, "physics_particle_group_get_y", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1955, PHYSICS_PARTICLE_GROUP_JOIN, "physics_particle_group_join", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1956, PHYSICS_PARTICLE_GROUP_POLYGON, "physics_particle_group_polygon", PHYSICS, PHYSICS, ALWAYS) \
+  ENTRY(1957, PHYSICS_PARTICLE_SET_GROUP_FLAGS, "physics_particle_set_group_flags", PHYSICS, PHYSICS, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -2050,7 +2072,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1936
+  GML_BUILTIN_ID_LIMIT = 1958
 } GmlBuiltinId;
 
 #endif

@@ -41,6 +41,18 @@ independent of native pointer identities and hidden contact impulse caches.
 `make check TEST=builtin_physics` covers dimensional units, fixture ownership,
 contacts, articulation and identical continuation after restoration.
 
+The first-party particle owner retains physical points, connections and groups.
+Group geometry uses the existing Box2D convex-hull shape API, and grouped points
+use the same sprite facade as individual points. Group flags and data fields are
+interface facts from the publisher's soft-body API reference. The zero-anchored
+sampling lattice and unconditional group membership merge are consistent with the
+upstream LiquidFun particle-system interfaces; no upstream implementation body is
+imported. Shape rasterization is bounded to 1,048,576 candidate sites per creation.
+The fluid, contact and shape-constraint coefficients are selected numerical policy,
+not measurements of an original runner. Native controls distinguish real rigid
+shape preservation, strength-weighted elastic correction, solid repulsion and
+canonical group/unfinished-definition restoration.
+
 ## Queue and stack text formats
 
 The sequence text codecs are first-party implementations over the existing DS
@@ -134,8 +146,8 @@ release evidence. The following SHA-256 directives pin only the two
 first-party files in this repository; `make provenance-check` verifies
 their current bytes.
 
-<!-- PROVENANCE-CHECK: src/runtime/builtins/gml_builtin_registry.h = 1f1f5f382ec70c666d0ce126b6d01b88cb13c7b8050bdde94aba54f22b95979f -->
-<!-- PROVENANCE-CHECK: src/generated/gml_builtin_registry_index.h = 274d0cb5b712869605e67447b4ecde9d8bb3be3d1ec4f0a5df1529086ff500e6 -->
+<!-- PROVENANCE-CHECK: src/runtime/builtins/gml_builtin_registry.h = d654dd02f8202bb2c4b07a8b19e0c9fbe996b6c295e0f06ebe11519399efdb96 -->
+<!-- PROVENANCE-CHECK: src/generated/gml_builtin_registry_index.h = 48200fdb7fd3c3cdfd6560fa7a5ee07179a9c6a3dfc9aa3fab51e4c63a72fdd9 -->
 
 ## Audio setup packets
 

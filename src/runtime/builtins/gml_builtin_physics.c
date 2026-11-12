@@ -408,7 +408,7 @@ static GmlVal physics_particle_create(GmlVM *vm,GmlVal *args,int count){
   alpha=fmax(0,fmin(1,alpha));
   GmlPhysicsParticle particle={N(args,count,1)*scale,N(args,count,2)*scale,
     N(args,count,3)*scale,N(args,count,4)*scale,flags,
-    (colour&0xffffffu)|((uint32_t)(alpha*255)<<24),category};
+    (colour&0xffffffu)|((uint32_t)(alpha*255)<<24),category,0,0,0,0};
   GmlBuiltinState *state=vm->builtins;
   GmlPhysicsParticleConfig config={state->phys_particle_radius_m,state->phys_particle_density,
     state->phys_particle_damping,state->phys_particle_gravity_scale,state->phys_particle_max_count};
@@ -474,12 +474,14 @@ static GmlVal physics_particle_data(GmlVM *vm,GmlVal *args,int count,int single)
      !particle_mask(N(args,count,single?2:1),&flags) ||
      (single && !particle_integer(N(args,count,0),&index))) return vundef();
   GmlPhysicsParticleState *state=&vm->builtins->phys_particles;
-  if(single && (index<0 || index>=state->count)) return vundef();
+  if(single==1 && (index<0 || index>=state->count)) return vundef();
+  if(single==2 && !gml_physics_particle_group_find(state,(uint32_t)index)) return vundef();
   int slot=vm_buffer_slot(vm,id);GmlBuiltinBuffer *buffer=slot>=0?buffer_at(vm,slot):NULL;
   if(!buffer) return vundef();
   int previous=buffer->pos;
-  for(int i=single?index:0;i<(single?index+1:state->count);i++){
+  for(int i=single==1?index:0;i<(single==1?index+1:state->count);i++){
     const GmlPhysicsParticle *point=&state->points[i];unsigned char bytes[28];int offset=0;
+    if(single==2 && point->group!=(uint32_t)index) continue;
     if(flags&1u) particle_data_word(bytes,&offset,point->flags);
     if(flags&2u){particle_data_real(bytes,&offset,point->x/scale);particle_data_real(bytes,&offset,point->y/scale);}
     if(flags&4u){particle_data_real(bytes,&offset,point->vx/scale);particle_data_real(bytes,&offset,point->vy/scale);}
@@ -491,6 +493,93 @@ static GmlVal physics_particle_data(GmlVM *vm,GmlVal *args,int count,int single)
     if(buffer->pos!=expected) break;
   }
   buffer->pos=previous;return vundef();
+}
+
+static GmlPhysicsParticleConfig particle_group_config(GmlVM *vm){
+  GmlBuiltinState *s=vm->builtins;
+  GmlPhysicsParticleConfig config={s->phys_particle_radius_m,s->phys_particle_density,
+    s->phys_particle_damping,s->phys_particle_gravity_scale,s->phys_particle_max_count};
+  return config;
+}
+static GmlVal particle_group_definition(GmlVM *vm,const char *nm,GmlVal *args,int count){
+  double scale=gml_physics_world_scale(vm);
+  if(scale<=0) return !strcmp(nm,"physics_particle_group_end")?vreal(-1):vundef();
+  GmlPhysicsParticleState *state=&vm->builtins->phys_particles;
+  GmlPhysicsParticleGroupDefinition *definition=&state->definition;
+  const double radians=0.017453292519943295;
+  if(!strcmp(nm,"physics_particle_group_begin")){
+    *definition=(GmlPhysicsParticleGroupDefinition){0};
+    uint32_t flags,group_flags,colour;int category;
+    if(count<12 || !particle_mask(N(args,count,0),&flags) ||
+       !particle_mask(N(args,count,1),&group_flags) || !particle_mask(N(args,count,8),&colour) ||
+       !particle_integer(N(args,count,11),&category) || !category) return vundef();
+    for(int i=2;i<11;i++) if(!isfinite(N(args,count,i))) return vundef();
+    definition->flags=flags;definition->group_flags=group_flags;definition->category=category;
+    definition->x=N(args,count,2)*scale;definition->y=N(args,count,3)*scale;
+    definition->angle=-N(args,count,4)*radians;
+    definition->vx=N(args,count,5)*scale;definition->vy=N(args,count,6)*scale;
+    definition->omega=N(args,count,7)*radians;
+    definition->colour=(colour&0xffffffu)|((uint32_t)(fmax(0,fmin(1,N(args,count,9)))*255)<<24);
+    definition->strength=fmax(0,fmin(1,N(args,count,10)));
+    if(!isfinite(definition->x) || !isfinite(definition->y) ||
+       !isfinite(definition->vx) || !isfinite(definition->vy) ||
+       fabs(definition->x)>1e6 || fabs(definition->y)>1e6 ||
+       fabs(definition->vx)>1e6 || fabs(definition->vy)>1e6) return vundef();
+    definition->active=1;return vundef();
+  }
+  if(!strcmp(nm,"physics_particle_group_end")){
+    GmlPhysicsParticleConfig config=particle_group_config(vm);
+    return vreal(gml_physics_particle_group_create(state,&config));
+  }
+  if(!definition->active) return vundef();
+  if(!strcmp(nm,"physics_particle_group_polygon")){
+    definition->shape=3;definition->count=0;definition->rx=definition->ry=0;
+    memset(definition->px,0,sizeof definition->px);memset(definition->py,0,sizeof definition->py);
+  }else if(!strcmp(nm,"physics_particle_group_add_point")){
+    double x=N(args,count,0)*scale,y=N(args,count,1)*scale;
+    if(count>=2 && definition->shape==3 && definition->count<8 &&
+       isfinite(x) && isfinite(y) && fabs(x)<=1e6 && fabs(y)<=1e6){
+      definition->px[definition->count]=x;definition->py[definition->count++]=y;
+    }
+  }else if(!strcmp(nm,"physics_particle_group_circle") || !strcmp(nm,"physics_particle_group_box")){
+    int shape=!strcmp(nm,"physics_particle_group_circle")?1:2;
+    double x=fabs(N(args,count,0)*scale),y=shape==1?x:fabs(N(args,count,1)*scale);
+    if(count>=(shape==1?1:2) && isfinite(x) && isfinite(y) && x>0 && y>0 && x<=1e6 && y<=1e6){
+      definition->shape=shape;definition->rx=x;definition->ry=y;definition->count=0;
+      memset(definition->px,0,sizeof definition->px);memset(definition->py,0,sizeof definition->py);
+    }
+  }
+  return vundef();
+}
+static GmlVal particle_group_value(GmlVM *vm,const char *nm,GmlVal *args,int count){
+  int id;double scale=gml_physics_world_scale(vm);int write=!strcmp(nm,"physics_particle_set_group_flags");
+  if(count<1 || scale<=0 || !particle_integer(N(args,count,0),&id) || id<=0)
+    return write?vundef():vreal(-1);
+  GmlPhysicsParticleState *state=&vm->builtins->phys_particles;
+  GmlPhysicsParticleGroup *group=gml_physics_particle_group_find(state,(uint32_t)id);
+  if(!group) return write?vundef():vreal(-1);
+  if(write){
+    uint32_t flags;
+    if(count>=2 && particle_mask(N(args,count,1),&flags))
+      gml_physics_particle_group_flags(state,(uint32_t)id,flags);
+    return vundef();
+  }
+  if(!strcmp(nm,"physics_particle_get_group_flags")) return vreal(group->flags);
+  if(!strcmp(nm,"physics_particle_group_get_x")) return vreal(group->x/scale);
+  if(!strcmp(nm,"physics_particle_group_get_y")) return vreal(group->y/scale);
+  if(!strcmp(nm,"physics_particle_group_get_angle"))
+    return vreal(remainder(group->angle,6.2831853071795864769)/0.017453292519943295);
+  GmlPhysicsParticleConfig config=particle_group_config(vm);GmlPhysicsParticleGroupStatistics stats;
+  gml_physics_particle_group_statistics(state,&config,(uint32_t)id,&stats);
+  if(!strcmp(nm,"physics_particle_group_count")) return vreal(stats.count);
+  if(!strcmp(nm,"physics_particle_group_get_mass")) return vreal(stats.mass);
+  if(!strcmp(nm,"physics_particle_group_get_inertia")) return vreal(stats.inertia);
+  if(!strcmp(nm,"physics_particle_group_get_centre_x")) return vreal(stats.cx/scale);
+  if(!strcmp(nm,"physics_particle_group_get_centre_y")) return vreal(stats.cy/scale);
+  if(!strcmp(nm,"physics_particle_group_get_vel_x")) return vreal(stats.vx/scale);
+  if(!strcmp(nm,"physics_particle_group_get_vel_y")) return vreal(stats.vy/scale);
+  if(!strcmp(nm,"physics_particle_group_get_ang_vel")) return vreal(stats.omega/0.017453292519943295);
+  return vundef();
 }
 static GmlVal physics_particle_draw(GmlVM *vm,GmlVal *args,int count,int extended){
   double scale=gml_physics_world_scale(vm);int category,sprite;uint32_t mask;
@@ -540,6 +629,32 @@ static GmlVal particle_configuration(GmlVM *vm,int property,int write,
 }
 
 GmlVal gml_builtin_try_physics(GmlVM *vm, const char *nm, GmlVal *a, int n){
+  if(!strcmp(nm,"physics_particle_get_group_flags") || !strcmp(nm,"physics_particle_set_group_flags") ||
+     !strcmp(nm,"physics_particle_group_count") || !strcmp(nm,"physics_particle_group_get_data") ||
+     !strcmp(nm,"physics_particle_group_get_inertia") || !strcmp(nm,"physics_particle_group_get_mass") ||
+     !strcmp(nm,"physics_particle_group_get_centre_x") || !strcmp(nm,"physics_particle_group_get_centre_y") ||
+     !strcmp(nm,"physics_particle_group_get_vel_x") || !strcmp(nm,"physics_particle_group_get_vel_y") ||
+     !strcmp(nm,"physics_particle_group_get_ang_vel") || !strcmp(nm,"physics_particle_group_get_x") ||
+     !strcmp(nm,"physics_particle_group_get_y") || !strcmp(nm,"physics_particle_group_get_angle"))
+    return !strcmp(nm,"physics_particle_group_get_data")?physics_particle_data(vm,a,n,2):particle_group_value(vm,nm,a,n);
+  if(!strcmp(nm,"physics_particle_group_join") || !strcmp(nm,"physics_particle_group_delete")){
+    int id,from;
+    if(gml_physics_world_scale(vm)<=0 || n<1 || !particle_integer(N(a,n,0),&id) || id<=0) return vundef();
+    GmlPhysicsParticleState *state=&vm->builtins->phys_particles;
+    if(!strcmp(nm,"physics_particle_group_delete")){
+      if(gml_physics_particle_group_find(state,(uint32_t)id))
+        for(int i=0;i<state->count;i++) if(state->points[i].group==(uint32_t)id)
+          state->points[i].flags|=GML_PHYS_PARTICLE_ZOMBIE;
+    }else if(n>=2 && particle_integer(N(a,n,1),&from) && from>0){
+      GmlPhysicsParticleConfig config=particle_group_config(vm);
+      gml_physics_particle_group_join(state,&config,(uint32_t)id,(uint32_t)from);
+    }
+    return vundef();
+  }
+  if(!strcmp(nm,"physics_particle_group_begin") || !strcmp(nm,"physics_particle_group_circle") ||
+     !strcmp(nm,"physics_particle_group_box") || !strcmp(nm,"physics_particle_group_polygon") ||
+     !strcmp(nm,"physics_particle_group_add_point") || !strcmp(nm,"physics_particle_group_end"))
+    return particle_group_definition(vm,nm,a,n);
   if(!strcmp(nm,"physics_particle_create")) return physics_particle_create(vm,a,n);
   if(!strcmp(nm,"physics_particle_count"))
     return vreal(gml_physics_world_scale(vm)>0?vm->builtins->phys_particles.count:-1);

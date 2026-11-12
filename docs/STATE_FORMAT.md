@@ -20,9 +20,33 @@ failed partial reads leave the canonical image unpublished and invalid as a
 current resource. See R03-P9-INCREMENTAL-CHECKPOINT in
 [the renderer map](RENDERER_BACKENDS.md) for owners and controls.
 
-The current AnyGM save-state schema is `63`. It is the format transported by
+The current AnyGM save-state schema is `66`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `66` introduces VM schema `41`. Particle records now carry group identity,
+local reference coordinates and interior depth in addition to the existing
+position, velocity, flags, colour and category. Each point occupies 72 wire bytes;
+connections retain their 20-byte layout. Sorted live group records carry identity,
+flags, frame position, angle and cohesion strength in 40 bytes. The identity
+allocator and the unfinished group definition are also canonical. An active
+definition retains its selected shape, all supplied vertices and initial particle
+properties, so saving between `physics_particle_group_begin` and
+`physics_particle_group_end` does not lose the operation.
+
+The decoder bounds counts before allocation, rejects missing, duplicate or empty
+live group identities, validates point membership and finite group/reference
+values, and validates the pending definition separately. It replaces the particle
+owner only after the complete candidate is valid; the public state transaction
+still protects the whole engine. Older root and VM schemas reject. The public API,
+audio and graphics resource schema numbers are unchanged.
+
+Schema `65` introduced VM schema `40` for individual particles and persistent
+spring/elastic connections. Its 44-byte particle records retained physical
+position and velocity, material flags, stored colour and category; distinct
+connection endpoints and nonnegative finite rest lengths were checked. Schema
+`64` introduced VM schema `39` for world-scoped particle radius, density, damping,
+gravity scale and count limit. These remain shared state for both drawing modes.
 
 Schema `63` introduces VM schema `38`. Each suspended interpreter frame retains
 its bounded exception handlers and independently owned pending and deferred error

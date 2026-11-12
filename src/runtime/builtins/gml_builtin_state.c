@@ -1020,16 +1020,64 @@ static int particle_bond_key_compare(const void *left,const void *right){
   return a<b?-1:a>b;
 }
 
+static int particle_group_definition_read(GmlPhysicsParticleGroupDefinition *definition,
+                                          GmlVmStateReader *reader){
+  definition->active=gml_vm_state_read_i32(reader);
+  if(definition->active!=0 && definition->active!=1) return 0;
+  if(!definition->active) return gml_vm_state_reader_ok(reader);
+  definition->shape=gml_vm_state_read_i32(reader);definition->count=gml_vm_state_read_i32(reader);
+  definition->flags=gml_vm_state_read_u32(reader);definition->group_flags=gml_vm_state_read_u32(reader);
+  definition->colour=gml_vm_state_read_u32(reader);definition->category=gml_vm_state_read_i32(reader);
+  double *values[]={&definition->x,&definition->y,&definition->angle,&definition->vx,&definition->vy,
+                    &definition->omega,&definition->strength,&definition->rx,&definition->ry};
+  for(int i=0;i<9;i++){
+    *values[i]=gml_vm_state_read_real(reader);
+    if(!isfinite(*values[i])) return 0;
+  }
+  for(int i=0;i<8;i++){
+    definition->px[i]=gml_vm_state_read_real(reader);definition->py[i]=gml_vm_state_read_real(reader);
+    if(!isfinite(definition->px[i]) || !isfinite(definition->py[i]) ||
+       fabs(definition->px[i])>1e6 || fabs(definition->py[i])>1e6) return 0;
+    if(i>=definition->count && (definition->px[i]!=0 || definition->py[i]!=0)) return 0;
+  }
+  if(definition->shape<0 || definition->shape>3 || definition->count<0 || definition->count>8 ||
+     !definition->category || definition->strength<0 || definition->strength>1 ||
+     fabs(definition->x)>1e6 || fabs(definition->y)>1e6 ||
+     fabs(definition->vx)>1e6 || fabs(definition->vy)>1e6 ||
+     definition->rx<0 || definition->rx>1e6 || definition->ry<0 || definition->ry>1e6 ||
+     (definition->shape!=3 && definition->count!=0) ||
+     ((definition->shape==1 || definition->shape==2) && (definition->rx<=0 || definition->ry<=0))) return 0;
+  return gml_vm_state_reader_ok(reader);
+}
+static void particle_group_definition_write(const GmlPhysicsParticleGroupDefinition *definition,
+                                             GmlVmStateWriter *writer){
+  gml_vm_state_write_i32(writer,definition->active);
+  if(!definition->active) return;
+  gml_vm_state_write_i32(writer,definition->shape);gml_vm_state_write_i32(writer,definition->count);
+  gml_vm_state_write_u32(writer,definition->flags);gml_vm_state_write_u32(writer,definition->group_flags);
+  gml_vm_state_write_u32(writer,definition->colour);gml_vm_state_write_i32(writer,definition->category);
+  const double values[]={definition->x,definition->y,definition->angle,definition->vx,definition->vy,
+                         definition->omega,definition->strength,definition->rx,definition->ry};
+  for(int i=0;i<9;i++) gml_vm_state_write_real(writer,values[i]);
+  for(int i=0;i<8;i++){
+    gml_vm_state_write_real(writer,definition->px[i]);gml_vm_state_write_real(writer,definition->py[i]);
+  }
+}
+
 static int builtin_state_read_physics_particles(GmlBuiltinState *state,GmlVmStateReader *reader){
-  GmlPhysicsParticleState particles={0};uint64_t *keys=NULL;
+  GmlPhysicsParticleState particles={0};uint64_t *keys=NULL;int *members=NULL;
   int count=gml_vm_state_read_i32(reader),bonds=gml_vm_state_read_i32(reader);
+  int groups=gml_vm_state_read_i32(reader);particles.next_group=gml_vm_state_read_u32(reader);
   const char *error="bad physics particle counts";
-  if(!gml_vm_state_reader_ok(reader) || count<0 || bonds<0 ||
+  if(!gml_vm_state_reader_ok(reader) || count<0 || bonds<0 || groups<0 || groups>count ||
+     particles.next_group>(uint32_t)INT_MAX+1u ||
      (uint64_t)(unsigned)bonds>(uint64_t)(unsigned)count*(count?((unsigned)count-1):0)/2 ||
-     (uint64_t)(unsigned)count*44+(uint64_t)(unsigned)bonds*20>gml_vm_state_reader_remaining(reader) ||
+     (uint64_t)(unsigned)count*72+(uint64_t)(unsigned)bonds*20+
+       (uint64_t)(unsigned)groups*40+4>gml_vm_state_reader_remaining(reader) ||
      (size_t)count>SIZE_MAX/sizeof(*particles.points) ||
      (size_t)bonds>SIZE_MAX/sizeof(*particles.bonds) ||
-     (size_t)bonds>SIZE_MAX/sizeof(*keys)) goto failed;
+     (size_t)bonds>SIZE_MAX/sizeof(*keys) || (size_t)groups>SIZE_MAX/sizeof(*particles.groups) ||
+     (size_t)groups>SIZE_MAX/sizeof(*members)) goto failed;
   error="cannot allocate physics particles";
   if(count){
     particles.points=calloc((size_t)count,sizeof(*particles.points));
@@ -1042,6 +1090,12 @@ static int builtin_state_read_physics_particles(GmlBuiltinState *state,GmlVmStat
     if(!particles.bonds || !keys) goto failed;
   }
   particles.bond_count=particles.bond_capacity=bonds;
+  if(groups){
+    particles.groups=calloc((size_t)groups,sizeof(*particles.groups));
+    members=calloc((size_t)groups,sizeof(*members));
+    if(!particles.groups || !members) goto failed;
+  }
+  particles.group_count=particles.group_capacity=groups;
   error="bad physics particle values";
   for(int i=0;i<count;i++){
     GmlPhysicsParticle *point=&particles.points[i];
@@ -1049,8 +1103,12 @@ static int builtin_state_read_physics_particles(GmlBuiltinState *state,GmlVmStat
     point->vx=gml_vm_state_read_real(reader);point->vy=gml_vm_state_read_real(reader);
     point->flags=gml_vm_state_read_u32(reader);point->colour=gml_vm_state_read_u32(reader);
     point->category=gml_vm_state_read_i32(reader);
+    point->group=gml_vm_state_read_u32(reader);point->local_x=gml_vm_state_read_real(reader);
+    point->local_y=gml_vm_state_read_real(reader);point->depth=gml_vm_state_read_real(reader);
     if(!gml_vm_state_reader_ok(reader) || !isfinite(point->x) || !isfinite(point->y) ||
        !isfinite(point->vx) || !isfinite(point->vy) || !point->category ||
+       !isfinite(point->local_x) || !isfinite(point->local_y) || !isfinite(point->depth) || point->depth<0 ||
+       (!point->group && (point->local_x!=0 || point->local_y!=0 || point->depth!=0)) ||
        ((point->flags&GML_PHYS_PARTICLE_WALL) && (point->vx!=0 || point->vy!=0))) goto failed;
   }
   error="bad physics particle connection";
@@ -1067,10 +1125,28 @@ static int builtin_state_read_physics_particles(GmlBuiltinState *state,GmlVmStat
     qsort(keys,(size_t)bonds,sizeof(*keys),particle_bond_key_compare);
     for(int i=1;i<bonds;i++) if(keys[i]==keys[i-1]) goto failed;
   }
-  free(keys);gml_physics_particles_clear(&state->phys_particles);
+  error="bad physics particle group";
+  for(int i=0;i<groups;i++){
+    GmlPhysicsParticleGroup *group=&particles.groups[i];
+    group->id=gml_vm_state_read_u32(reader);group->flags=gml_vm_state_read_u32(reader);
+    group->x=gml_vm_state_read_real(reader);group->y=gml_vm_state_read_real(reader);
+    group->angle=gml_vm_state_read_real(reader);group->strength=gml_vm_state_read_real(reader);
+    if(!group->id || group->id>=particles.next_group || (i && group->id<=particles.groups[i-1].id) ||
+       !isfinite(group->x) || !isfinite(group->y) || !isfinite(group->angle) ||
+       !isfinite(group->strength) || group->strength<0 || group->strength>1) goto failed;
+  }
+  for(int i=0;i<count;i++) if(particles.points[i].group){
+    GmlPhysicsParticleGroup *group=gml_physics_particle_group_find(&particles,particles.points[i].group);
+    if(!group) goto failed;
+    members[group-particles.groups]++;
+  }
+  for(int i=0;i<groups;i++) if(!members[i]) goto failed;
+  error="bad pending physics particle group";
+  if(!particle_group_definition_read(&particles.definition,reader)) goto failed;
+  free(keys);free(members);gml_physics_particles_clear(&state->phys_particles);
   state->phys_particles=particles;return 1;
 failed:
-  free(keys);gml_physics_particles_clear(&particles);
+  free(keys);free(members);gml_physics_particles_clear(&particles);
   gml_vm_state_reader_fail(reader,error,0);return 0;
 }
 
@@ -1091,18 +1167,29 @@ void gml_builtin_state_write_physics(const GmlBuiltinState *state,
   const GmlPhysicsParticleState *particles=&state->phys_particles;
   gml_vm_state_write_i32(writer,particles->count);
   gml_vm_state_write_i32(writer,particles->bond_count);
+  gml_vm_state_write_i32(writer,particles->group_count);
+  gml_vm_state_write_u32(writer,particles->next_group);
   for(int i=0;i<particles->count;i++){
     const GmlPhysicsParticle *point=&particles->points[i];
     gml_vm_state_write_real(writer,point->x);gml_vm_state_write_real(writer,point->y);
     gml_vm_state_write_real(writer,point->vx);gml_vm_state_write_real(writer,point->vy);
     gml_vm_state_write_u32(writer,point->flags);gml_vm_state_write_u32(writer,point->colour);
     gml_vm_state_write_i32(writer,point->category);
+    gml_vm_state_write_u32(writer,point->group);gml_vm_state_write_real(writer,point->local_x);
+    gml_vm_state_write_real(writer,point->local_y);gml_vm_state_write_real(writer,point->depth);
   }
   for(int i=0;i<particles->bond_count;i++){
     const GmlPhysicsParticleBond *bond=&particles->bonds[i];
     gml_vm_state_write_u32(writer,bond->first);gml_vm_state_write_u32(writer,bond->second);
     gml_vm_state_write_u32(writer,bond->flags);gml_vm_state_write_real(writer,bond->length);
   }
+  for(int i=0;i<particles->group_count;i++){
+    const GmlPhysicsParticleGroup *group=&particles->groups[i];
+    gml_vm_state_write_u32(writer,group->id);gml_vm_state_write_u32(writer,group->flags);
+    gml_vm_state_write_real(writer,group->x);gml_vm_state_write_real(writer,group->y);
+    gml_vm_state_write_real(writer,group->angle);gml_vm_state_write_real(writer,group->strength);
+  }
+  particle_group_definition_write(&particles->definition,writer);
   int fixture_live=0;
   for(int i=0;i<GML_PHYS_FIXTURE_MAX;i++)
     if(state->phys_fixture[i].live) fixture_live++;
