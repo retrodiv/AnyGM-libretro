@@ -379,17 +379,11 @@ static GmlVal gml_builtin_call_fast_id_impl(GmlVM *vm, int id, const char *nm, G
       return vreal(n>0 && a[0].t==V_STR);
     case BID_IS_REAL:
       return vreal(n>0 && a[0].t==V_REAL);
-    case BID_STRING_ORD_AT:{
-      const unsigned char*s=(const unsigned char*)S(vm,a,n,0); int idx=(int)N(a,n,1), len=(int)strlen((const char*)s);
-      return vreal((idx>=1&&idx<=len)?s[idx-1]:0); }
-    case BID_STRING_CHAR_AT:{
-      const char*s=S(vm,a,n,0); int idx=(int)N(a,n,1), len=(int)strlen(s);
-      if(idx<1||idx>len) return vstr("");
-      return vstr_owned(dup_n(s+idx-1,1)); }
+    case BID_STRING_ORD_AT:
+    case BID_STRING_CHAR_AT:
     case BID_STRING_LENGTH:
-      return vreal((double)strlen(S(vm,a,n,0)));
-    case BID_ORD:{
-      const unsigned char*s=(const unsigned char*)S(vm,a,n,0); return vreal(s[0]); }
+    case BID_ORD:
+      return gml_builtin_try_values_strings(vm,nm,a,n);
     case BID_FILE_TEXT_EOF:{
       int i=vm_file_slot(vm,(int)N(a,n,0)); if(i<0) return vreal(1);
       int c=vm_file_getc(vm,i); if(c==EOF) return vreal(1); vm_file_ungetc(vm,i,c); return vreal(0); }

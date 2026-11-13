@@ -530,6 +530,21 @@ static GmlVal gml_string_format(GmlVM *vm, GmlVal *a, int n,int internal){
   return vstr_owned(out);
 }
 
+/* Character indices address complete UTF-8 scalars; byte APIs remain independent. */
+static const char *string_character_offset(const char *text,int count){
+  const unsigned char *p=(const unsigned char*)text;
+  while(count>0 && *p){ p+=gml_utf8_character_bytes(p); count--; }
+  return (const char*)p;
+}
+static unsigned string_character_code(const char *text){
+  const unsigned char *p=(const unsigned char*)text;
+  int width=gml_utf8_character_bytes(p);
+  if(width<=1) return p[0];
+  unsigned code=p[0]&((1u<<(7-width))-1);
+  for(int i=1;i<width;i++) code=(code<<6)|(p[i]&63);
+  return code;
+}
+
 GmlVal gml_builtin_try_values_strings(GmlVM *vm, const char *nm, GmlVal *a, int n){
   GmlRender *R=(GmlRender*)vm->render;
   (void)R;
@@ -539,7 +554,11 @@ GmlVal gml_builtin_try_values_strings(GmlVM *vm, const char *nm, GmlVal *a, int 
     return n>1 ? gml_string_format(vm,a,n,internal)
                : vstr_owned(strdup(gml_string_argument(vm,a,n,0,internal)));
   }
-  if(!strcmp(nm,"string_length")) return vreal((double)strlen(S(vm,a,n,0)));
+  if(!strcmp(nm,"string_length")){
+    const unsigned char *p=(const unsigned char*)S(vm,a,n,0); size_t count=0;
+    while(*p){ p+=gml_utf8_character_bytes(p); count++; }
+    return vreal((double)count);
+  }
   if(!strcmp(nm,"string_byte_length")) return vreal((double)strlen(S(vm,a,n,0)));
   if(!strcmp(nm,"string_concat")) return gml_string_concat(a,n);
   if(!strcmp(nm,"string_concat_ext")) return gml_string_concat_ext(a,n);
@@ -651,13 +670,29 @@ GmlVal gml_builtin_try_values_strings(GmlVM *vm, const char *nm, GmlVal *a, int 
     }
     return out;
   }
-  if(!strcmp(nm,"string_copy")){ const char*s=S(vm,a,n,0); int idx=(int)N(a,n,1), cnt=(int)N(a,n,2);
-    int len=strlen(s); if(idx<1)idx=1; if(idx>len)return vstr("");
-    if(cnt<0) cnt=0;
-    if(idx-1+cnt>len) cnt=len-(idx-1);
-    char*o=malloc(cnt+1); memcpy(o,s+idx-1,cnt); o[cnt]=0; return vstr_owned(o); }
-  if(!strcmp(nm,"chr")){ int c=(int)N(a,n,0); char b[2]={(char)(c&0xff),0}; return vstr_owned(strdup(b)); }
-  if(!strcmp(nm,"ord")){ const unsigned char*s=(const unsigned char*)S(vm,a,n,0); return vreal(s[0]); }
+  if(!strcmp(nm,"string_copy")){
+    const char *s=S(vm,a,n,0); int index=(int)N(a,n,1), count=(int)N(a,n,2);
+    if(index<1) index=1;
+    if(count<0) count=0;
+    const char *start=string_character_offset(s,index-1);
+    const char *end=string_character_offset(start,count);
+    return vstr_owned(dup_n(start,(int)(end-start)));
+  }
+  if(!strcmp(nm,"chr")){
+    double raw=N(a,n,0); unsigned cp;
+    if(!isfinite(raw) || raw<0 || raw>0x10ffff) return vstr("");
+    cp=(unsigned)raw;
+    if(cp>=0xd800 && cp<=0xdfff) return vstr("");
+    char text[5]={0};
+    if(cp<0x80) text[0]=(char)cp;
+    else if(cp<0x800){ text[0]=(char)(0xc0|(cp>>6)); text[1]=(char)(0x80|(cp&63)); }
+    else if(cp<0x10000){ text[0]=(char)(0xe0|(cp>>12));
+      text[1]=(char)(0x80|((cp>>6)&63)); text[2]=(char)(0x80|(cp&63)); }
+    else { text[0]=(char)(0xf0|(cp>>18)); text[1]=(char)(0x80|((cp>>12)&63));
+      text[2]=(char)(0x80|((cp>>6)&63)); text[3]=(char)(0x80|(cp&63)); }
+    return vstr_owned(strdup(text));
+  }
+  if(!strcmp(nm,"ord")) return vreal(string_character_code(S(vm,a,n,0)));
   /* base64_encode(str)/base64_decode(str): standard RFC-4648 (was hitting the catch-all -> 0).
    * Operates on the string's bytes; decode stops a returned C-string at the first NUL, so it is for
    * text/base64 payloads (binary blobs use the buffer_* API). */
@@ -678,13 +713,18 @@ GmlVal gml_builtin_try_values_strings(GmlVM *vm, const char *nm, GmlVal *a, int 
     if(!o) return vstr("");
     o[len]=0; return vstr_owned((char*)o);
   }
-  if(!strcmp(nm,"string_char_at")){ const char*s=S(vm,a,n,0); int idx=(int)N(a,n,1), len=(int)strlen(s);
-    if(idx<1||idx>len) return vstr("");
-    return vstr_owned(dup_n(s+idx-1,1)); }
+  if(!strcmp(nm,"string_char_at")){
+    const char *s=S(vm,a,n,0); int index=(int)N(a,n,1);
+    if(index<1) return vstr("");
+    const char *p=string_character_offset(s,index-1);
+    return vstr_owned(dup_n(p,gml_utf8_character_bytes((const unsigned char*)p)));
+  }
   if(!strcmp(nm,"string_byte_at")){ const unsigned char*s=(const unsigned char*)S(vm,a,n,0); int idx=(int)N(a,n,1), len=(int)strlen((const char*)s);
     return vreal((idx>=1&&idx<=len)?s[idx-1]:0); }
-  if(!strcmp(nm,"string_ord_at")){ const unsigned char*s=(const unsigned char*)S(vm,a,n,0); int idx=(int)N(a,n,1), len=(int)strlen((const char*)s);
-    return vreal((idx>=1&&idx<=len)?s[idx-1]:0); }
+  if(!strcmp(nm,"string_ord_at")){
+    const char *s=S(vm,a,n,0); int index=(int)N(a,n,1);
+    return vreal(index<1?0:string_character_code(string_character_offset(s,index-1)));
+  }
   if(!strcmp(nm,"string_delete")){ const char*s=S(vm,a,n,0); int idx=(int)N(a,n,1), cnt=(int)N(a,n,2), len=(int)strlen(s);
     if(idx<1) idx=1;
     if(cnt<0) cnt=0;
