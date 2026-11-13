@@ -421,6 +421,10 @@ static int view_texture_quad_valid(const GmlRenderDrawOp *op,
   }else if(state->coverage_policy || state->alpha_source_factor!=GML_RENDER_BLEND_SOURCE_ALPHA) return 0;
   const GmlRenderQuad *q=&op->payload.quad;
   const GmlRenderSamplingPolicy *p=&q->sampling,*a=&state->samplers[0];
+  if(!isfinite(q->font_sdf_width) || q->font_sdf_width<0.0 || q->font_sdf_width>255.0 ||
+     (q->font_sdf_width!=0.0 &&
+      (family!=GML_RENDER_SCENE_TEXT || q->font_sdf_width<1.0 ||
+       p->filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR))) return 0;
   if(q->shape!=GML_RENDER_QUAD_GENERAL || q->span_active || q->source_endpoint_rgb_mask ||
      p->quantisation!=quantisation ||
      (p->filter!=GML_RENDER_FILTER_NEAREST && p->filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR) ||

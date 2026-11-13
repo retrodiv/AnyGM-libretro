@@ -851,6 +851,16 @@
   "    o_color=vec4(vec3(rgb)/255.0,float(sampled.a)/255.0); return;\n" \
   "  }\n" \
   "#endif\n" \
+  "  // Selected-view distance fields use the shared coverage policy after hardware sampling.\n" \
+  "  if(u_filter>=174 && u_filter<=176){\n" \
+  "    vec2 extent=vec2(textureSize(u_image,0));\n" \
+  "    vec2 uv=clamp(v_texcoord,(v_clamp.xy+vec2(0.5))/extent,(v_clamp.zw+vec2(0.5))/extent);\n" \
+  "    float distance=source_texture(uv).a*255.0;\n" \
+  "    float amount=clamp((distance-(128.0-v_map.x*0.5))/v_map.x,0.0,1.0);\n" \
+  "    float coverage=amount*amount*(3.0-2.0*amount);\n" \
+  "    if(coverage<=0.0 || v_colour.a<=0.0) discard;\n" \
+  "    o_color=u_filter==176?vec4(0.0,0.0,0.0,1.0):vec4(v_colour.rgb,coverage*v_colour.a);return;\n" \
+  "  }\n" \
   "  // R03_SHADER_HARDWARE_FILTERED_SURFACE: hardware sampling and batched coverage.\n" \
   "  if(u_filter>=147 && u_filter<=158){\n" \
   "    if(u_filter==150 || u_filter==154){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \

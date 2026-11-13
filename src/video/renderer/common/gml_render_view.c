@@ -303,6 +303,8 @@ static int resident_view_texture_quad(GmlRender *r,const GmlRenderResourceSource
   op.target.image.content_version++;
   GmlRenderQuad *q=&op.payload.quad;
   q->shape=GML_RENDER_QUAD_GENERAL;q->filtered_draw_alpha=alpha;
+  if(family==GML_RENDER_SCENE_TEXT && r->font_sdf_active)
+    q->font_sdf_width=r->font_sdf_width;
   q->sampling=(GmlRenderSamplingPolicy){r->interp && !(family==GML_RENDER_SCENE_TILE && r->classic)
       ?GML_RENDER_FILTER_HARDWARE_BILINEAR:GML_RENDER_FILTER_NEAREST,
     GML_RENDER_EDGE_CLAMP_SUBIMAGE,region,

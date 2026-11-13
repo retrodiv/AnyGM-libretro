@@ -2868,6 +2868,16 @@ int gml_sprite_alpha(GmlRender *r, int sprite, int frame, int lx, int ly){
   if(ax<0||ay<0||ax>=a->w||ay>=a->h) return 0;
   return a->px[((size_t)ay*a->w+ax)*4+3];
 }
+static void font_distance_sample(const GmlRender *r,double *red,double *green,
+                                 double *blue,double *alpha){
+  if(!r->font_sdf_active) return;
+  double low=128.0-r->font_sdf_width*0.5;
+  double amount=(*alpha-low)/r->font_sdf_width;
+  if(amount<=0.0) *alpha=0.0;
+  else if(amount>=1.0) *alpha=255.0;
+  else *alpha=(amount*amount*(3.0-2.0*amount))*255.0;
+  *red=*green=*blue=255.0;
+}
 static void blit_interp_sample(GmlRender *r, uint32_t *dp, const GmlAtlas *atlas,
                                const GmlTpag *t, int ua, int ub, int va, int vb,
                                double fx, double fy, int logical_margin,
@@ -4426,14 +4436,7 @@ static void blit_interp_sample(GmlRender *r, uint32_t *dp, const GmlAtlas *atlas
   double fsr,fsg,fsb,faa;
   interp_tpag_filtered_sample(
     atlas,t,ua,ub,va,vb,fx,fy,logical_margin,&fsr,&fsg,&fsb,&faa);
-  if(r->font_sdf_active){
-    double low=128.0-r->font_sdf_width*0.5;
-    double amount=(faa-low)/r->font_sdf_width;
-    if(amount<=0.0) faa=0.0;
-    else if(amount>=1.0) faa=255.0;
-    else faa=(amount*amount*(3.0-2.0*amount))*255.0;
-    fsr=fsg=fsb=255.0;
-  }
+  font_distance_sample(r,&fsr,&fsg,&fsb,&faa);
   if(shader_discards_alpha_value(r,faa) &&
      !((r->blendmode==2 || (r->alphablend && r->blendmode==6) ||
         destination_colour_blend_active(r)) && !shader_alpha_test_active(r))) return;
@@ -7405,6 +7408,7 @@ static void blit_sprite_general_coloured_impl(GmlRender *r, GmlSprite *sprite,
     sprite_pos_sample(rgba,stride,offset_x,offset_y,source_width,source_height,
                       (source_x-logical_x)/source_width,
                       (source_y-logical_y)/source_height,interpolate,sample);
+    font_distance_sample(r,&sample[0],&sample[1],&sample[2],&sample[3]);
     /* The authored rectangle is two triangles, not a bilinear four-corner gradient. */
     double weight[4];
     if(u>=v){ weight[0]=1.0-u; weight[1]=u-v; weight[2]=v; weight[3]=0.0; }

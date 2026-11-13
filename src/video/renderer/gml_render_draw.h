@@ -404,6 +404,9 @@ typedef struct GmlRenderQuad {
    * visible red/green/blue samples are endpoints. Used only by whole-texel
    * numbered sprite parts; never a shader instruction or canonical state. */
   uint32_t source_endpoint_rgb_mask;
+  /* Selected-view distance glyph coverage; zero selects ordinary texture colour.
+   * This per-operation value is transient, never canonical state or CPU geometry. */
+  double font_sdf_width;
 } GmlRenderQuad;
 
 enum {

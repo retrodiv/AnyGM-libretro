@@ -313,6 +313,8 @@ static uint32_t scene_filter(const GmlRenderQuad *quad,
      quad->sampling.quantisation==GML_RENDER_QUANTISE_VIEW_TEXT ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_VIEW_TILE){
     int opaque=state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+    if(quad->sampling.quantisation==GML_RENDER_QUANTISE_VIEW_TEXT && quad->font_sdf_width>0.0)
+      return opaque?GL_SCENE_VIEW_SDF_OPAQUE_FILTER:GL_SCENE_VIEW_SDF_FILTER;
     return quad->sampling.filter==GML_RENDER_FILTER_NEAREST
       ?(opaque?GL_SCENE_NATIVE_POINT_OPAQUE_FILTER:GL_SCENE_NATIVE_POINT_FILTER)
       :(opaque?148u:147u);
@@ -1843,6 +1845,12 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       GlSceneImage *source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
       const GmlRenderSamplingPolicy *sampling=&op->payload.quad.sampling;
       int blend=qualified_blend(state);
+      if(op->payload.quad.font_sdf_width!=0.0 &&
+         (op->scene_family!=GML_RENDER_SCENE_TEXT ||
+          sampling->quantisation!=GML_RENDER_QUANTISE_VIEW_TEXT ||
+          sampling->filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR ||
+          !isfinite(op->payload.quad.font_sdf_width) ||
+          op->payload.quad.font_sdf_width<1.0 || op->payload.quad.font_sdf_width>255.0)) return 0;
       if(sampling->quantisation==GML_RENDER_QUANTISE_VIEW_SURFACE ||
          sampling->quantisation==GML_RENDER_QUANTISE_VIEW_BACKGROUND ||
          sampling->quantisation==GML_RENDER_QUANTISE_VIEW_TILE ||
@@ -2774,7 +2782,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
     filter==GL_SCENE_NATIVE_TEXTURE_SURFACE_LINEAR_FILTER || (filter>=106u && filter<=108u) || filter==99u || filter==100u || filter==77u || filter==18u || filter==19u || filter==20u || filter==21u || filter==22u ||
     (filter>=65u && filter<=74u) || (filter>=79u && filter<=82u) ||
     filter==112u || filter==114u || filter==115u || (filter>=137u && filter<=158u) ||
-    filter==160u || filter==162u || filter==164u || filter==166u
+    filter==160u || filter==162u || filter==164u || filter==166u || filter==GL_SCENE_VIEW_SDF_FILTER || filter==GL_SCENE_VIEW_SDF_OPAQUE_FILTER
     ?GL_LINEAR:GL_NEAREST;
   GLsizei stride=GL_SCENE_INSTANCE_FLOATS*(GLsizei)sizeof(float);
   size_t bytes=(size_t)count*GL_SCENE_INSTANCE_FLOATS*sizeof(float),offset;
@@ -2928,7 +2936,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
                   filter==66u || filter==69u || filter==71u || filter==80u ||
                   filter==86u || filter==93u || filter==110u || filter==112u ||
                   filter==138u || filter==141u || filter==143u || filter==148u || filter==152u ||
-                  filter==156u || filter==158u || filter==161u || filter==162u || filter==168u;
+                  filter==156u || filter==158u || filter==161u || filter==162u || filter==168u || filter==GL_SCENE_VIEW_SDF_OPAQUE_FILTER;
   int skip_alpha=opaque && (native_texture_stamp || filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==40u || filter==21u || filter==25u || filter==32u || filter==35u || filter==66u || filter==80u);
   target->alpha_opaque=0;
   backend->gl.ColorMask((write_mask&1u)!=0u,(write_mask&2u)!=0u,(write_mask&4u)!=0u,
@@ -3009,7 +3017,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
      * the same sampler and cutout in an alpha-only pass, preserving that recipe's coverage. */
     backend->gl.ColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_TRUE);
     backend->gl.Disable(GL_BLEND);
-    backend->gl.Uniform1i(program->u_filter,native_texture_stamp?(GLint)filter+2:filter==168u?169:filter==161u || filter==162u?(GLint)filter+2:filter==148u || filter==156u?150:filter==152u || filter==158u?154:filter>=137u && filter<=146u?(filter==141u?146:144):filter==133u?134:filter==130u?131:filter==112u?113:filter==110u?111:filter==104u || filter==107u?(GLint)filter+1:filter==99u?100:filter==93u?95:filter==86u?88:filter==80u?82:filter==77u?78:filter==75u?76:filter==69u?74:filter>=65u?72:filter==60u?62:filter==53u?55:(filter==46u || filter==47u)?48:(filter==39u || filter==40u)?41:filter==35u?36:filter==32u?33:filter==25u?26:
+    backend->gl.Uniform1i(program->u_filter,native_texture_stamp?(GLint)filter+2:filter==GL_SCENE_VIEW_SDF_OPAQUE_FILTER?GL_SCENE_VIEW_SDF_STAMP_FILTER:filter==168u?169:filter==161u || filter==162u?(GLint)filter+2:filter==148u || filter==156u?150:filter==152u || filter==158u?154:filter>=137u && filter<=146u?(filter==141u?146:144):filter==133u?134:filter==130u?131:filter==112u?113:filter==110u?111:filter==104u || filter==107u?(GLint)filter+1:filter==99u?100:filter==93u?95:filter==86u?88:filter==80u?82:filter==77u?78:filter==75u?76:filter==69u?74:filter>=65u?72:filter==60u?62:filter==53u?55:(filter==46u || filter==47u)?48:(filter==39u || filter==40u)?41:filter==35u?36:filter==32u?33:filter==25u?26:
                          filter==23u?24:filter==21u?22:filter==9u?10:13);
     backend->gl.DrawArraysInstanced(GL_TRIANGLES,0,6,(GLsizei)count);
   }

@@ -127,6 +127,12 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
      quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION ||
      (op->scene_family==GML_RENDER_SCENE_SURFACE &&
       quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC));
+  if(quad->font_sdf_width!=0.0 &&
+     (!native_uv || op->scene_family!=GML_RENDER_SCENE_TEXT ||
+      quad->sampling.quantisation!=GML_RENDER_QUANTISE_VIEW_TEXT ||
+      quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR ||
+      !isfinite(quad->font_sdf_width) || quad->font_sdf_width<1.0 ||
+      quad->font_sdf_width>255.0)) return 0;
   rotated=!native_uv &&
     (quad->shape==GML_RENDER_QUAD_CARDINAL || quad->shape==GML_RENDER_QUAD_GENERAL);
   warped=quad->shape==GML_RENDER_QUAD_WARPED;
@@ -279,7 +285,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     vertex[9]=(float)region_storage_y;
     vertex[10]=(float)((uint32_t)region.x+region.width-1u);
     vertex[11]=(float)(region_storage_y+region.height-1u);
-    vertex[12]=native_uv?0.0f:rotated?(float)quad->inverse_anchor[0]:(float)quad->x[0];
+    vertex[12]=native_uv?(float)quad->font_sdf_width:rotated?(float)quad->inverse_anchor[0]:(float)quad->x[0];
     vertex[13]=native_uv?0.0f:rotated?(float)quad->inverse_anchor[1]:(float)quad->y[0];
     vertex[14]=warped || native_uv?0.0f:rotated?(float)quad->inverse_x[0]
                       :(float)(quad->u[0]*source_width-region.x);

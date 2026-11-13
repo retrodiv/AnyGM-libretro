@@ -18,6 +18,19 @@
 #include <stdlib.h>
 #include <string.h>
 
+static void text_sdf_begin(GmlRender *r,const GmlFont *font,double xs,double ys){
+  if(font->sdf_spread<=0) return;
+  double scale=fmin(fabs(xs),fabs(ys));
+  if(scale<1.0/1024.0) scale=1.0/1024.0;
+  r->font_sdf_active=1;
+  r->font_sdf_width=255.0/(2.0*(double)font->sdf_spread*scale);
+  if(r->font_sdf_width<1.0) r->font_sdf_width=1.0;
+  else if(r->font_sdf_width>255.0) r->font_sdf_width=255.0;
+  /* Distance fields need a filtered distance sample even when ordinary textures are
+   * point sampled; coverage is still reconstructed at each output pixel. */
+  r->interp=1;
+}
+
 /* A local text turn precedes the selected view's nonuniform projection.
  * The ordinary unturned-view layout retains its established physical policy. */
 static void text_rotated_offset(const GmlRender *r,double dx,double dy,
@@ -327,6 +340,16 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
         if(!f->subpixel && f->sdf_spread<=0)
           resident_glyph=view_text_glyph(r,&gt,glyph_x,glyph_y,g->w,g->h,
                                          xs,ys,use_rot?rotation:0.0,glyph_blend,alpha);
+        else if(!f->subpixel && f->sdf_spread>0 &&
+                gml_render_view_rotation_active(r) && !gml_d3_is_active(r)){
+          int saved_interp=r->interp,saved_active=r->font_sdf_active;
+          double saved_width=r->font_sdf_width;
+          text_sdf_begin(r,f,xs,ys);
+          resident_glyph=view_text_glyph(r,&gt,glyph_x,glyph_y,g->w,g->h,
+                                         xs,ys,use_rot?rotation:0.0,glyph_blend,alpha);
+          r->interp=saved_interp;r->font_sdf_active=saved_active;
+          r->font_sdf_width=saved_width;
+        }
         if(!resident_glyph && r->resident_application_pass && !f->subpixel && f->sdf_spread<=0){
           GmlSprite cell={.w=g->w,.h=g->h};
           resident_glyph=resident_text_glyph_outside(r,&cell,&gt,glyph_x,glyph_y,
@@ -372,17 +395,7 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
           int saved_interp=r->interp;
           int saved_sdf_active=r->font_sdf_active;
           double saved_sdf_width=r->font_sdf_width;
-          if(f->sdf_spread>0){
-            double scale=fmin(fabs(xs),fabs(ys));
-            if(scale<1.0/1024.0) scale=1.0/1024.0;
-            r->font_sdf_active=1;
-            r->font_sdf_width=255.0/(2.0*(double)f->sdf_spread*scale);
-            if(r->font_sdf_width<1.0) r->font_sdf_width=1.0;
-            else if(r->font_sdf_width>255.0) r->font_sdf_width=255.0;
-            /* Distance fields need a filtered distance sample even when ordinary textures are
-             * point sampled; coverage is still reconstructed at each output pixel. */
-            r->interp=1;
-          }
+          text_sdf_begin(r,f,xs,ys);
           if(use_rot){
             GmlRenderCpuBackendDispatchScope glyph_scope;
             gml_render_cpu_backend_dispatch_begin(r,&glyph_scope,GML_RENDER_SCENE_TEXT,0);
