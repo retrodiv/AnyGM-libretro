@@ -1452,7 +1452,7 @@ static const char *const room_background_fields[]={
 static const char *const room_view_fields[]={
   "view_visible","view_xview","view_yview","view_wview","view_hview","view_xport","view_yport",
   "view_wport","view_hport","view_hborder","view_vborder","view_hspeed","view_vspeed","view_object",
-  "view_camera"
+  "view_camera","view_angle"
 };
 
 /* Whether a global array is one the room owns: entering a room rewrites every element of these
@@ -2552,6 +2552,11 @@ void gml_room_enter(GmlVM *vm, int room_index){
       gml_vm_global_array_set(vm,"view_surface_id",i,-1);
     }
   }
+  /* The room record has no stored rotation. Legacy Studio views also start
+   * unrotated, including slots not present in the authored view list. */
+  if(!anygm_policy_uses_classic_runtime(vm->win) &&
+     !anygm_policy_has_modern_layer_semantics(vm->win))
+    for(int i=0;i<8;i++) gml_vm_global_array_set(vm,"view_angle",i,0);
   /* Background scales belong to the room, including slots without a resource.
    * Instance creation may assign them before the first background draw. */
   if(!anygm_policy_has_modern_layer_semantics(vm->win)){

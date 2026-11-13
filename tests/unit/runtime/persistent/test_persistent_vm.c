@@ -4875,10 +4875,23 @@ static int expect_persistent_lifecycle_exit_code(void){
   gml_set_global_arr(&vm,"background_yscale",7,0.5);
   gml_set_global_arr(&vm,"background_x",0,123);
   gml_set_global_arr(&vm,"view_xview",0,77);
+  if(!gml_room_owned_global("view_angle") ||
+     global_array_value(&vm,"view_angle",0)!=0 ||
+     global_array_value(&vm,"view_angle",7)!=0){
+    fprintf(stderr,"view angles lack room ownership or zero defaults\n"); return 1;
+  }
+  gml_set_global_arr(&vm,"view_angle",0,37.5);
+  gml_set_global_arr(&vm,"view_angle",7,-450);
   *gml_varmap_put(&vm.globals,"room_speed")=vreal(55);
   gml_tile_layer_shift(&vm,300,8,9);
   uint32_t id=created->id; *gml_varmap_put(&created->vars,"value")=vreal(42);
   gml_room_enter(&vm,1);
+  if(global_array_value(&vm,"view_angle",0)!=0 ||
+     global_array_value(&vm,"view_angle",7)!=0){
+    fprintf(stderr,"fresh room inherited another room's view angles\n"); return 1;
+  }
+  gml_set_global_arr(&vm,"view_angle",0,-12.5);
+  gml_set_global_arr(&vm,"view_angle",7,719.25);
   if(global_array_value(&vm,"background_xscale",0)!=1 ||
      global_array_value(&vm,"background_yscale",7)!=1){
     fprintf(stderr,"fresh room inherited another room's background scales\n"); return 1;
@@ -4936,6 +4949,10 @@ static int expect_persistent_lifecycle_exit_code(void){
   vm.code_static_init[static_ci]=0;
   *gml_varmap_put(&vm.code_static[static_ci],"fixture_static")=vreal(99);
   if(!gml_vm_state_load(&vm,state,written,&used)||used!=written)return 1;
+  if(global_array_value(&vm,"view_angle",0)!=-12.5 ||
+     global_array_value(&vm,"view_angle",7)!=719.25){
+    fprintf(stderr,"active room view angles did not restore\n"); return 1;
+  }
   if(global_array_value(&vm,"background_xscale",0)!=3 ||
      global_array_value(&vm,"background_yscale",7)!=4){
     fprintf(stderr,"active room background scales did not restore\n"); return 1;
@@ -4952,6 +4969,8 @@ static int expect_persistent_lifecycle_exit_code(void){
     gml_builtin_call(&vm,"time_source_get_reps_remaining",timer_handle,1):vundef();
   GmlVal *restored_timer_total=gml_varmap_get(&vm.globals,"time_source_fixture");
   int ok=slot&&slot->active&&!slot->room_dormant&&value&&value->t==V_REAL&&value->d==42 &&
+    global_array_value(&vm,"view_angle",0)==37.5 &&
+    global_array_value(&vm,"view_angle",7)==-450 &&
     global_array_value(&vm,"background_xscale",0)==-2 &&
     global_array_value(&vm,"background_yscale",7)==0.5 &&
     global_array_value(&vm,"background_x",0)==123 && global_array_value(&vm,"view_xview",0)==77 &&

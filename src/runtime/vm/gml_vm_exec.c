@@ -1067,7 +1067,7 @@ static int is_room_global_array(const char *n){
            !strcmp(s,"yport") || !strcmp(s,"wport") || !strcmp(s,"hport") ||
            !strcmp(s,"hborder") || !strcmp(s,"vborder") || !strcmp(s,"hspeed") ||
            !strcmp(s,"vspeed") || !strcmp(s,"object") || !strcmp(s,"camera") ||
-           !strcmp(s,"surface_id");
+           !strcmp(s,"surface_id") || !strcmp(s,"angle");
   }
   return 0;
 }
