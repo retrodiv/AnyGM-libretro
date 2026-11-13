@@ -42,6 +42,9 @@ void gml_render_cpu_blit_sprite_pos_resolved(GmlRender *render, int sprite, int 
   const double x[4], const double y[4],uint32_t colour,double alpha);
 void gml_render_cpu_blit_view_sprite(GmlRender *render,int sprite,int subimage,
   const double x[4],const double y[4],uint32_t colour,double alpha);
+void gml_render_cpu_blit_view_sprite_region(GmlRender *render,GmlSprite *sprite,int subimage,
+  double sx,double sy,double sw,double sh,const double x[4],const double y[4],
+  double rotation,const uint32_t colour[4],double alpha);
 
 /* Existing coarse sprite-region raster entries; sources remain borrowed. */
 void gml_render_cpu_blit_rgba_region(GmlRender *r, const uint8_t *source, int width, int height,

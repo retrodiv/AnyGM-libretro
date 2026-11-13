@@ -5776,8 +5776,15 @@ static int resident_positioned_axis_sprite(GmlRender *r,int sprite,int subimg,
 
 /* The CPU's two-triangle barycentric UVs reduce to one affine inverse for a
  * parallelogram. A convex warped quad carries those UVs at its four corners. */
+typedef struct {
+  double left,top,width,height;
+  uint32_t colour[4];
+  int interpolate;
+} GmlViewSpriteRegion;
+
 static int resident_positioned_quad_sprite(GmlRender *r,int sprite,int subimg,
-  const double x[4],const double y[4],double alpha,uint32_t colour,int view_mapped){
+  const double x[4],const double y[4],double alpha,uint32_t colour,int view_mapped,
+  const GmlViewSpriteRegion *selection){
   GmlRenderSpritePosGeometry geometry;
   GmlRenderResourceSource source={0};
   GmlRenderResource *target;
@@ -5826,6 +5833,11 @@ static int resident_positioned_quad_sprite(GmlRender *r,int sprite,int subimg,
   }
   if(!view_mapped && anygm_policy_has_modern_layer_semantics(r->win) &&
      (!r->fb_opaque_known || !r->fb_all_opaque)) return 0;
+  int interpolate=selection?selection->interpolate:r->interp;
+  double source_width=selection?selection->width:page->sw;
+  double source_height=selection?selection->height:page->sh;
+  double source_x=selection?selection->left-page->tx:0.0;
+  double source_y=selection?selection->top-page->ty:0.0;
   for(int corner=0;corner<4;corner++){
     if(!isfinite(x[corner]) || !isfinite(y[corner])) return 0;
     mapped_x[corner]=x[corner]; mapped_y[corner]=y[corner];
@@ -5836,6 +5848,7 @@ static int resident_positioned_quad_sprite(GmlRender *r,int sprite,int subimg,
   if(geometry_kind!=2 && !(view_mapped && geometry_kind==1)) return 0;
   affine=fabs(geometry.qx[2]-(geometry.qx[1]+geometry.qx[3]-geometry.qx[0]))<=1e-9 &&
          fabs(geometry.qy[2]-(geometry.qy[1]+geometry.qy[3]-geometry.qy[0]))<=1e-9;
+  if(selection && !affine) return 0;
   for(int corner=0;corner<4;corner++){
     if(!affine && (geometry.qx[corner]!=floor(geometry.qx[corner]) ||
                    geometry.qy[corner]!=floor(geometry.qy[corner]))) return 0;
@@ -5875,15 +5888,20 @@ static int resident_positioned_quad_sprite(GmlRender *r,int sprite,int subimg,
   operation.target.region=(GmlRenderRect){0,0,(uint32_t)r->fbw,(uint32_t)r->fbh};
   GmlRenderQuad *quad=&operation.payload.quad;
   quad->shape=affine?GML_RENDER_QUAD_GENERAL:GML_RENDER_QUAD_WARPED;
-  quad->sampling.filter=r->interp?GML_RENDER_FILTER_BILINEAR:GML_RENDER_FILTER_NEAREST;
+  quad->sampling.filter=interpolate?GML_RENDER_FILTER_BILINEAR:GML_RENDER_FILTER_NEAREST;
   quad->sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+  if(selection && interpolate){
+    quad->sampling.edge_rule=GML_RENDER_EDGE_LOGICAL_TPAG;
+    quad->sampling.logical_margin_mask=GML_RENDER_MARGIN_VISIBLE_CENTRE;
+  }
+  if(view_mapped) quad->filtered_draw_alpha=alpha;
   quad->sampling.source_region=(GmlRenderRect){page->sx,page->sy,
                                              (uint32_t)page->sw,(uint32_t)page->sh};
   for(int corner=0;corner<4;corner++){
     quad->x[corner]=geometry.qx[corner];
     quad->y[corner]=geometry.qy[corner];
     quad->corner_colour[corner]=((uint32_t)lround(alpha*255.0)<<24)|
-      (gml_render_cpu_backend_color_to_xrgb(colour)&0xFFFFFFu);
+      (gml_render_cpu_backend_color_to_xrgb(selection?selection->colour[corner]:colour)&0xFFFFFFu);
   }
   if(!affine){
     quad->u[0]=quad->u[3]=0.0;
@@ -5893,11 +5911,12 @@ static int resident_positioned_quad_sprite(GmlRender *r,int sprite,int subimg,
   }
   quad->inverse_anchor[0]=geometry.qx[0];
   quad->inverse_anchor[1]=geometry.qy[0];
-  quad->inverse_x[0]=by*page->sw/det;
-  quad->inverse_y[0]=-bx*page->sw/det;
-  quad->inverse_x[1]=-ay*page->sh/det;
-  quad->inverse_y[1]=ax*page->sh/det;
-  quad->inverse_offset[0]=quad->inverse_offset[1]=r->interp?-0.5:0.0;
+  quad->inverse_x[0]=by*source_width/det;
+  quad->inverse_y[0]=-bx*source_width/det;
+  quad->inverse_x[1]=-ay*source_height/det;
+  quad->inverse_y[1]=ax*source_height/det;
+  quad->inverse_offset[0]=source_x+(interpolate?-0.5:0.0);
+  quad->inverse_offset[1]=source_y+(interpolate?-0.5:0.0);
   state.write_mask=15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
@@ -6347,7 +6366,7 @@ int gml_render_resident_view_sprite(GmlRender *r,int sprite,int subimg,
   }
   GmlRenderSpritePosGeometry geometry;
   if(!gml_render_sprite_pos_geometry(r,mx,my,&geometry)) return 1;
-  if(!resident_positioned_quad_sprite(r,sprite,subimg,mx,my,alpha,colour,1))
+  if(!resident_positioned_quad_sprite(r,sprite,subimg,mx,my,alpha,colour,1,NULL))
     gml_render_cpu_blit_view_sprite(r,sprite,subimg,mx,my,colour,alpha);
   view_sprite_invalidate_opaque_target(r,alpha,source_opaque);
   return 1;
@@ -6379,13 +6398,13 @@ void gml_draw_sprite_pos(GmlRender *r,int sprite,int subimg,
       if(!isfinite(mapped_x[corner]) || !isfinite(mapped_y[corner])) return;
     }
     if(!resident_positioned_quad_sprite(r,sprite,subimg,mapped_x,mapped_y,
-                                        alpha,0xFFFFFFu,1))
+                                        alpha,0xFFFFFFu,1,NULL))
       gml_render_cpu_blit_view_sprite(r,sprite,subimg,mapped_x,mapped_y,0xFFFFFFu,alpha);
     view_sprite_invalidate_opaque_target(r,alpha,source_opaque);
     return;
   }
   if(resident_positioned_axis_sprite(r,sprite,subimg,x,y,alpha)) return;
-  if(resident_positioned_quad_sprite(r,sprite,subimg,x,y,alpha,0xFFFFFFu,0)) return;
+  if(resident_positioned_quad_sprite(r,sprite,subimg,x,y,alpha,0xFFFFFFu,0,NULL)) return;
   if(resident_positioned_function(r,sprite,subimg,x,y,alpha)) return;
   if(!gml_render_cpu_draw_barrier(r)) return;
   double mapped_x[4],mapped_y[4];
@@ -6607,9 +6626,86 @@ static int resident_modern_unit_sprite_part(GmlRender *r,GmlTpag *page,const Gml
   return 1;
 }
 
+static int resident_view_sprite_region(GmlRender *r,int sprite,int subimg,
+  double sx,double sy,double sw,double sh,double x,double y,double xs,double ys,
+  double rotation,const uint32_t colour[4],double alpha,int part){
+  if(!gml_render_view_rotation_active(r) || gml_d3_is_active(r)) return 0;
+  if(sprite<0 || sprite>=r->n_spr || !colour ||
+     !isfinite(sx) || !isfinite(sy) || !isfinite(sw) || !isfinite(sh) ||
+     !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
+     !isfinite(rotation) || !isfinite(alpha)) return 1;
+  GmlSprite *record=&r->spr[sprite];
+  if(!part && (record->spine || record->ns_enabled)) return 0;
+  if(record->n_frames<=0 || sw<=0.0 || sh<=0.0 || xs==0.0 || ys==0.0 ||
+     (alpha<=0.0 && !(r->alphablend &&
+       gml_render_blend_uses_destination_colour(r->blendmode)))) return 1;
+  gml_render_warm_sprite(r,sprite);
+  alpha=fmax(0.0,fmin(1.0,alpha));
+  GmlViewSpriteRegion selection={.left=sx,.top=sy,.width=sw,.height=sh};
+  memcpy(selection.colour,colour,sizeof selection.colour);
+  selection.interpolate=r->interp && (fabs(fmod(rotation,360.0))<.001 ||
+    (r->win && anygm_policy_has_modern_layer_semantics(r->win)));
+  double geometry_width=sw,geometry_height=sh;
+  int source_opaque=record->runtime_opaque;
+  double source_left=0.0,source_top=0.0,source_width=record->w,source_height=record->h;
+  GmlTpag *page=NULL;
+  if(!record->runtime_rgba){
+    if(!record->frame) return 1;
+    int index=record->frame[gml_render_runtime_frame_index(record,subimg)];
+    if(index<0 || index>=r->n_tpag) return 1;
+    page=&r->tpag[index];source_opaque=page->scene_fully_opaque;
+    source_left=page->tx;source_top=page->ty;
+    source_width=page->sw;source_height=page->sh;
+  }
+  if(source_width<=0.0 || source_height<=0.0 ||
+     sx>=source_left+source_width || sy>=source_top+source_height ||
+     sx+sw<=source_left || sy+sh<=source_top) return 1;
+  if(part && page){
+    GmlTpag selected;
+    int source_x=0,source_y=0;
+    double x0=0.0,y0=0.0,x1=0.0,y1=0.0;
+    if(!gml_render_tpag_part_view(page,sx,sy,sw,sh,&selected,&source_x,&source_y,
+                                 &x0,&y0,&x1,&y1)) return 1;
+    double anchor_x=selected.sw==1?x0:source_x;
+    double anchor_y=selected.sh==1?y0:source_y;
+    x+=(anchor_x-sx)*xs;y+=(anchor_y-sy)*ys;
+    geometry_width=selected.sw==1?x1-x0:selected.sw;
+    geometry_height=selected.sh==1?y1-y0:selected.sh;
+    selection.left=source_x;selection.top=source_y;
+    selection.width=selected.sw;selection.height=selected.sh;
+  }
+  double radians=remainder(rotation,360.0)*(M_PI/180.0);
+  double cosine=cos(radians),sine=sin(radians),mx[4],my[4];
+  int native_bounds=1;
+  for(unsigned corner=0;corner<4;corner++){
+    double lx=((corner==1 || corner==2)?geometry_width:0.0)*xs;
+    double ly=(corner>=2?geometry_height:0.0)*ys;
+    mx[corner]=x+lx*cosine+ly*sine;my[corner]=y-lx*sine+ly*cosine;
+    gml_render_draw_map_point(r,&mx[corner],&my[corner]);
+    mx[corner]-=r->cam_x;my[corner]-=r->cam_y;
+    gml_render_view_rotate_point(r,&mx[corner],&my[corner]);
+    if(!isfinite(mx[corner]) || !isfinite(my[corner])) return 1;
+    if(fabs(mx[corner])>65536.0 || fabs(my[corner])>65536.0) native_bounds=0;
+    mx[corner]+=r->cam_x;my[corner]+=r->cam_y;
+    if(!isfinite(mx[corner]) || !isfinite(my[corner])) return 1;
+  }
+  if(!native_bounds || !resident_positioned_quad_sprite(r,sprite,subimg,mx,my,
+                                      alpha,colour[0],1,&selection))
+    gml_render_cpu_blit_view_sprite_region(r,record,subimg,
+      selection.left,selection.top,selection.width,selection.height,mx,my,
+      rotation,colour,alpha);
+  view_sprite_invalidate_opaque_target(r,alpha,source_opaque);
+  return 1;
+}
+
 void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, double sy,
                               double sw, double sh, double x, double y,
                               double xs, double ys, uint32_t blend, double alpha){
+  if(gml_render_view_rotation_active(r)){
+    const uint32_t colour[4]={blend,blend,blend,blend};
+    if(resident_view_sprite_region(r,sprite,subimg,sx,sy,sw,sh,x,y,xs,ys,
+                                   0.0,colour,alpha,1)) return;
+  }
   /* R03-SPR-PART-INVALID-RESOURCE: the unchanged CPU suffix rejects the
    * resource before any pixel writer. Keep that no-op ahead of authority
    * acquisition,including the uniform unrotated general alias. */
@@ -6806,6 +6902,8 @@ void gml_draw_sprite_general(GmlRender *r, int sprite, int subimg,
                              double x, double y, double xs, double ys, double rotation,
                              const uint32_t corner_colour[4], double alpha){
   if(!r || !corner_colour) return;
+  if(resident_view_sprite_region(r,sprite,subimg,sx,sy,sw,sh,x,y,xs,ys,
+                                 rotation,corner_colour,alpha,0)) return;
   if(corner_colour[0]!=corner_colour[1] ||
      corner_colour[0]!=corner_colour[2] ||
      corner_colour[0]!=corner_colour[3]){

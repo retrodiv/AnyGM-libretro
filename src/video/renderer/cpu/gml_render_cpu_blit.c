@@ -7302,7 +7302,9 @@ static void blit_sprite_general_coloured_impl(GmlRender *r, GmlSprite *sprite,
                                                   double y, double xs, double ys,
                                                   double rotation,
                                                   const uint32_t corner_colour[4],
-                                                  double alpha){
+                                                  double alpha,
+                                                  const double placed_x[4],
+                                                  const double placed_y[4]){
   if(!r || !r->fb || !sprite || !corner_colour || sprite->n_frames<=0 ||
      !isfinite(sx) || !isfinite(sy) || !isfinite(sw) || !isfinite(sh) ||
      !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
@@ -7348,6 +7350,11 @@ static void blit_sprite_general_coloured_impl(GmlRender *r, GmlSprite *sprite,
     double local_y=corner>=2?sh*ys:0.0;
     qx[corner]=anchor_x+local_x*cosine+local_y*sine;
     qy[corner]=anchor_y-local_x*sine+local_y*cosine;
+    if(placed_x && placed_y){
+      double shift=r->classic?-.5:0.0;
+      qx[corner]=placed_x[corner]-r->cam_x+shift;
+      qy[corner]=placed_y[corner]-r->cam_y+shift;
+    }
     if(!isfinite(qx[corner]) || !isfinite(qy[corner])) return;
     min_x=fmin(min_x,qx[corner]); max_x=fmax(max_x,qx[corner]);
     min_y=fmin(min_y,qy[corner]); max_y=fmax(max_y,qy[corner]);
@@ -7432,7 +7439,19 @@ void gml_render_cpu_blit_sprite_general_coloured(GmlRender *r,GmlSprite *sprite,
                                                 const uint32_t colour[4],double alpha){
   GmlRenderDispatchCpuScope scope;
   gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_SPRITE);
-  blit_sprite_general_coloured_impl(r,sprite,subimg,sx,sy,sw,sh,x,y,xs,ys,rotation,colour,alpha);
+  blit_sprite_general_coloured_impl(r,sprite,subimg,sx,sy,sw,sh,x,y,xs,ys,rotation,
+                                    colour,alpha,NULL,NULL);
+  gml_render_dispatch_cpu_scope_end(r,&scope);
+}
+
+void gml_render_cpu_blit_view_sprite_region(GmlRender *r,GmlSprite *sprite,int subimg,
+  double sx,double sy,double sw,double sh,const double x[4],const double y[4],
+  double rotation,const uint32_t colour[4],double alpha){
+  if(!gml_render_cpu_draw_barrier(r)) return;
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_SPRITE);
+  blit_sprite_general_coloured_impl(r,sprite,subimg,sx,sy,sw,sh,0.0,0.0,1.0,1.0,
+                                    rotation,colour,alpha,x,y);
   gml_render_dispatch_cpu_scope_end(r,&scope);
 }
 

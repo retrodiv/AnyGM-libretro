@@ -606,6 +606,19 @@ static void check_view_sprite_nonuniform_scale_and_mirroring(void){
          (frame[154*WIDTH+99]&0xFFFFFFu)==0x0000FFu,
          "view rotates all positioned sprite corners before nonuniform projection");
   memset(frame,0,sizeof frame);
+  gml_draw_sprite_part_ext(&render,0,0,2,0,2,2,75,25,1,1,0xFFFFFFu,1.0);
+  expect(covered_pixels()==24 &&
+         (frame[151*WIDTH+97]&0xFFFFFFu)==0x0000FFu &&
+         !(frame[151*WIDTH+95]&0xFFFFFFu),
+         "view part geometry samples only its selected source region");
+  memset(frame,0,sizeof frame);
+  const uint32_t corners[4]={0xFFFFFFu,0u,0xFFFFFFu,0u};
+  gml_draw_sprite_general(&render,0,0,2,0,2,2,75,25,1,1,90,corners,1.0);
+  expect(covered_pixels()==24 &&
+         (frame[151*WIDTH+101]&0xFFFFFFu)==0x0000DFu &&
+         !(frame[151*WIDTH+99]&0xFFFFFFu),
+         "view general sprites retain local rotation, selection and triangle colours");
+  memset(frame,0,sizeof frame);
   gml_draw_sprite_ext(&render,0,0,75,25,-1,1,90,0xFFFFFFu,1.0);
   expect(covered_pixels()==48 &&
          (frame[148*WIDTH+96]&0xFFFFFFu)==0x0000FFu &&
@@ -648,6 +661,11 @@ static void check_view_sprite_nonuniform_scale_and_mirroring(void){
          (frame[153*WIDTH+113]&0xFFFFFFu)==0x0000FFu &&
          !(frame[152*WIDTH+98]&0xFFFFFFu),
          "view sprite projects the authored crop size independently of texture size");
+  memset(frame,0,sizeof frame);
+  gml_draw_sprite_part_ext(&render,0,0,2.2,2.1,.2,.2,75,25,10,10,0xFFFFFFu,1.0);
+  expect(covered_pixels()==24 &&
+         (frame[151*WIDTH+97]&0xFFFFFFu)==0xFF0000u,
+         "rotated packaged one-cell crop retains its continuous selected extent");
   gml_render_free(&render);
 }
 
