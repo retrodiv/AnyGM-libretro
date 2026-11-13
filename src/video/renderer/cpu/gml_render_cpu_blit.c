@@ -7468,7 +7468,8 @@ void gml_render_cpu_blit_view_sprite_region(GmlRender *r,GmlSprite *sprite,int s
 void gml_render_cpu_blit_view_atlas(GmlRender *r,const GmlTpag *page,
   double sx,double sy,double sw,double sh,const double x[4],const double y[4],
   uint32_t colour,double alpha,GmlRenderSceneFamily family){
-  if(!page || (family!=GML_RENDER_SCENE_BACKGROUND && family!=GML_RENDER_SCENE_TILE) ||
+  if(!page || (family!=GML_RENDER_SCENE_BACKGROUND && family!=GML_RENDER_SCENE_TILE &&
+                family!=GML_RENDER_SCENE_TEXT) ||
      !gml_render_cpu_draw_barrier(r)) return;
   GmlRenderDispatchCpuScope scope;
   const uint32_t corners[4]={colour,colour,colour,colour};

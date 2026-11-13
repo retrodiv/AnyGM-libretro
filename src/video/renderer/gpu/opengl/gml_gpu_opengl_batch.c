@@ -310,6 +310,7 @@ static uint32_t scene_filter(const GmlRenderQuad *quad,
                              const GmlRenderDrawStateSnapshot *state,uint32_t family){
   if(quad->sampling.quantisation==GML_RENDER_QUANTISE_VIEW_SURFACE ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_VIEW_BACKGROUND ||
+     quad->sampling.quantisation==GML_RENDER_QUANTISE_VIEW_TEXT ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_VIEW_TILE){
     int opaque=state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
     return quad->sampling.filter==GML_RENDER_FILTER_NEAREST
@@ -1844,7 +1845,8 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       int blend=qualified_blend(state);
       if(sampling->quantisation==GML_RENDER_QUANTISE_VIEW_SURFACE ||
          sampling->quantisation==GML_RENDER_QUANTISE_VIEW_BACKGROUND ||
-         sampling->quantisation==GML_RENDER_QUANTISE_VIEW_TILE){
+         sampling->quantisation==GML_RENDER_QUANTISE_VIEW_TILE ||
+         sampling->quantisation==GML_RENDER_QUANTISE_VIEW_TEXT){
         int atlas=sampling->quantisation!=GML_RENDER_QUANTISE_VIEW_SURFACE;
         if(!source || (source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 &&
                        source->pixel_format!=GML_RENDER_PIXEL_XRGB8888 &&
@@ -1852,7 +1854,9 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
            same_logical(op->sources[0],target->image) ||
            !backend->gl.BlendFuncSeparate || !backend->gl.BlendEquationSeparate ||
            (atlas ? source->rendered_origin ||
-             (sampling->quantisation==GML_RENDER_QUANTISE_VIEW_TILE
+             (sampling->quantisation==GML_RENDER_QUANTISE_VIEW_TEXT
+               ?!gml_render_view_text_quad_valid(op,state,source->width,source->height)
+               :sampling->quantisation==GML_RENDER_QUANTISE_VIEW_TILE
                ?!gml_render_view_tile_quad_valid(op,state,source->width,source->height)
                :!gml_render_view_background_quad_valid(op,state,source->width,source->height)) :
              !gml_render_view_surface_quad_valid(op,state,source->width,source->height)) ||

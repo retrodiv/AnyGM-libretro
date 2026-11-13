@@ -9,6 +9,7 @@
 #include "memory_vfs.h"
 #include "../../media/font_test_fixture.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -638,11 +639,71 @@ static int dispatch_glyph_family_case(void){
   return ok;
 }
 
+static int selected_view_glyph_case(void){
+  FontFixture *f=fixture_create();
+  if(!f) return 0;
+  GmlRender *r=&f->render;
+  r->color_write_mask=0x0F;
+  r->atlas=calloc(1,sizeof *r->atlas);r->spr=calloc(1,sizeof *r->spr);
+  r->tpag=calloc(1,sizeof *r->tpag);
+  if(!r->atlas || !r->spr || !r->tpag){fixture_destroy(f);return 0;}
+  r->n_atlas=r->n_spr=r->n_tpag=1;
+  r->atlas[0].px=calloc(8u*4u,4u);r->atlas[0].w=8;r->atlas[0].h=4;
+  r->spr[0].frame=calloc(1,sizeof(int));r->spr[0].n_frames=1;
+  r->spr[0].w=8;r->spr[0].h=4;
+  r->tpag[0]=(GmlTpag){.atlas=0,.sw=8,.sh=4,.tw=8,.th=4,.bw=8,.bh=4};
+  GmlFont *font=&r->fonts[0];font->glyphs=calloc(1,sizeof *font->glyphs);
+  if(!r->atlas[0].px || !r->spr[0].frame || !font->glyphs){fixture_destroy(f);return 0;}
+  const uint32_t rgb[4]={0xFF0000u,0x00FF00u,0x0000FFu,0xFFFFFFu};
+  for(int y=0;y<4;y++) for(int x=0;x<8;x++){
+    uint32_t c=rgb[(x>=4)+2*(y>=2)];
+    uint8_t *pixel=r->atlas[0].px+(y*8+x)*4;
+    pixel[0]=c>>16;pixel[1]=c>>8;pixel[2]=c;pixel[3]=255;
+  }
+  font->atlas=0;font->n_glyphs=1;font->line_height=font->align_height=4;
+  font->glyphs[0]=(GmlGlyph){.ch='A',.w=8,.h=4,.shift=8};
+  for(unsigned i=0;i<256u;i++) font->glyph_by_char[i]=-1;
+  font->glyph_by_char['A']=0;r->font=0;r->n_fonts=1;
+  int ok=1;
+  const double angles[4]={0,90,-90,45},local[3]={0,90,-30};
+  for(unsigned kind=0;kind<2u;kind++) for(unsigned v=0;v<4u;v++)
+  for(unsigned l=0;l<3u;l++){
+    font->real=kind==0;font->sprite=kind==0?-1:0;font->first='A';
+    memset(f->frame,0,sizeof f->frame);
+    gml_render_begin(r,f->frame,96,48,0,0);
+    r->world_transform_active=1;r->world_scale_x=2.0;r->world_scale_y=1.5;
+    gml_render_world_set_view_rotation(r,angles[v],48,32);
+    gml_draw_text_transformed(r,30,12,"A",1.5,1.5,local[l],0xFFFFFFu,1);
+    /* The old zero-view local rotation has a distinct physical-space policy.
+     * Its existing controls remain unchanged; this probes new selected views. */
+    if(v==0 && l!=0) continue;
+    double c=cos(angles[v]*M_PI/180.0),sn=sin(angles[v]*M_PI/180.0);
+    double lc=cos(local[l]*M_PI/180.0),ls=sin(local[l]*M_PI/180.0);
+    int ink=0,outside=0,matched=1;
+    for(int y=0;y<48;y++) for(int x=0;x<96;x++){
+      double dx=(x+.5)/2.0-24,dy=(y+.5)/1.5-16;
+      double wx=24+c*dx+sn*dy-30,wy=16-sn*dx+c*dy-12;
+      double u=(lc*wx-ls*wy)/1.5,w=(ls*wx+lc*wy)/1.5;
+      uint32_t got=f->frame[y*96+x]&0xFFFFFFu;
+      if(u>.15 && u<7.85 && w>.15 && w<3.85 && fabs(u-4)>.15 && fabs(w-2)>.15){
+        matched &=got==rgb[(u>=4)+2*(w>=2)];ink++;
+      }else if(u<-.5 || u>8.5 || w<-.5 || w>4.5){matched &=got==0;outside++;}
+    }
+    if(!matched || ink<8 || outside<100){
+      fprintf(stderr,"selected glyph kind=%u view=%g local=%g match=%d ink=%d outside=%d\n",
+              kind,angles[v],local[l],matched,ink,outside);ok=0;
+    }
+  }
+  fixture_destroy(f);
+  return ok;
+}
+
 int main(int argc,char **argv){
   const char *filter=NULL;
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2];
   else if(argc!=1){ fprintf(stderr,"usage: %s [--case filter]\n",argv[0]); return 2; }
   const AnygmTestCase cases[]={
+    {"selected_view_glyph_cells",selected_view_glyph_case},
     {"dispatch_glyph_family",dispatch_glyph_family_case},
     {"classic_subpixel_channels",classic_subpixel_case},
     {"runtime_sprite_font_mapping",runtime_sprite_font_mapping_case},

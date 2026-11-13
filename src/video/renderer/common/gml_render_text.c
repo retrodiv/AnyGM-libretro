@@ -7,6 +7,7 @@
 #include "gml_render_surfaces_internal.h"
 #include "gml_render_sprites_internal.h"
 #include "gml_render_cpu_text.h"
+#include "gml_render_cpu_blit.h"
 #include "gml_render_cpu_backend.h"
 
 #include "anygm_compatibility.h"
@@ -16,6 +17,47 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* A local text turn precedes the selected view's nonuniform projection.
+ * The ordinary unturned-view layout retains its established physical policy. */
+static void text_rotated_offset(const GmlRender *r,double dx,double dy,
+                                double cosine,double sine,double *x,double *y){
+  double sx=1.0,sy=1.0;
+  if(gml_render_view_rotation_active(r) && r->world_transform_active){
+    sx=r->world_scale_x;sy=r->world_scale_y;
+  }
+  *x=(dx/sx*cosine+dy/sy*sine)*sx;
+  *y=(-dx/sx*sine+dy/sy*cosine)*sy;
+}
+
+/* Layout supplies the actual glyph cell and its mapped anchor. Neither font
+ * metrics nor glyph ownership is reconstructed as a synthetic sprite. */
+static int view_text_glyph(GmlRender *r,const GmlTpag *page,double x,double y,
+  double width,double height,double xs,double ys,double rotation,uint32_t colour,double alpha){
+  if(!gml_render_view_rotation_active(r) || gml_d3_is_active(r)) return 0;
+  if(!page || width<=0.0 || height<=0.0 || !isfinite(x) || !isfinite(y) ||
+     !isfinite(xs) || !isfinite(ys) || !isfinite(rotation) || !isfinite(alpha)) return 1;
+  double cosine,sine,px[4],py[4];
+  render_rotation_sincos(rotation,&cosine,&sine);
+  for(unsigned i=0;i<4u;i++){
+    double dx=(i==1u || i==2u)?width*xs:0.0,dy=i>=2u?height*ys:0.0;
+    text_rotated_offset(r,dx,dy,cosine,sine,&px[i],&py[i]);
+    px[i]+=x-r->cam_x;py[i]+=y-r->cam_y;
+    gml_render_view_rotate_point(r,&px[i],&py[i]);
+    if(!isfinite(px[i]) || !isfinite(py[i])) return 1;
+  }
+  if(!gml_render_resident_view_atlas_quad(r,page,page->tx,page->ty,page->sw,page->sh,
+                                        px,py,colour,alpha,GML_RENDER_SCENE_TEXT)){
+    for(unsigned i=0;i<4u;i++){px[i]+=r->cam_x;py[i]+=r->cam_y;}
+    gml_render_cpu_blit_view_atlas(r,page,page->tx,page->ty,page->sw,page->sh,
+                                  px,py,colour,alpha,GML_RENDER_SCENE_TEXT);
+  }
+  if(gml_render_target_preserves_alpha(r)){
+    r->fb_opaque_known=r->fb_all_opaque=0;
+    if(r->fb==r->app_surface) r->app_surface_opaque=0;
+  }
+  return 1;
+}
 
 /* Layout resolves mapping before admission. The bounded nearest glyph owner
  * accepts signed scales without changing either font's placement policy. */
@@ -164,6 +206,7 @@ static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const c
   uint32_t *saved_fb=NULL;
   int saved_shader=-1;
   if(gml_render_shaded_run_wanted(r) && !use_rot &&
+     !gml_render_view_rotation_active(r) &&
      gml_render_shaded_run_begin(r,&saved_fb,&saved_shader)){
     /* The rectangle the run can reach: its own extent, grown by a line either way so a glyph that
      * hangs above or below its cell is inside it, and clipped to the target. */
@@ -230,6 +273,10 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
         double dy=(base_y-f->ascender_offset-packing_spread)*ys;
         double glyph_x=use_rot?x+dx*ca+dy*sa:x+dx;
         double glyph_y=use_rot?y-dx*sa+dy*ca:y+dy;
+        if(use_rot && gml_render_view_rotation_active(r)){
+          text_rotated_offset(r,dx,dy,ca,sa,&glyph_x,&glyph_y);
+          glyph_x+=x;glyph_y+=y;
+        }
         /* The runner places a glyph at whole pixels of the destination. A sub-pixel draw offset
          * therefore moves the letter by one pixel when it crosses the rounding boundary and never
          * changes the glyph's own shape. Sampling the cell at a fractional phase instead trims or
@@ -247,7 +294,10 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
         }
         uint32_t glyph_blend=f->subpixel?0xFFFFFFu:blend;
         int resident_glyph=0;
-        if(r->resident_application_pass && !f->subpixel && f->sdf_spread<=0){
+        if(!f->subpixel && f->sdf_spread<=0)
+          resident_glyph=view_text_glyph(r,&gt,glyph_x,glyph_y,g->w,g->h,
+                                         xs,ys,use_rot?rotation:0.0,glyph_blend,alpha);
+        if(!resident_glyph && r->resident_application_pass && !f->subpixel && f->sdf_spread<=0){
           GmlSprite cell={.w=g->w,.h=g->h};
           resident_glyph=resident_text_glyph_outside(r,&cell,&gt,glyph_x,glyph_y,
                                                    xs,ys,use_rot?rotation:0.0);
@@ -460,8 +510,24 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
         double glyph_x=use_rot?x+glyph_ox*ca+glyph_oy*sa:x+glyph_ox;
         double glyph_y=use_rot?y-glyph_ox*sa+glyph_oy*ca:y+glyph_oy;
         int resident_glyph=0;
+        if(gml_render_view_rotation_active(r) && !s->runtime_rgba && s->frame){
+          int page_index=s->frame[fr];
+          if(page_index>=0 && page_index<r->n_tpag){
+            const GmlTpag *page=&r->tpag[page_index];
+            double ox=(-s->originx+(use_rot || !f->prop?page->tx:0))*xs;
+            double oy=(-s->originy+page->ty)*ys;
+            double left,top;
+            if(use_rot){
+              text_rotated_offset(r,glyph_ox+ox,glyph_oy+oy,ca,sa,&left,&top);
+              left+=x;top+=y;
+            }else{left=glyph_x+ox;top=glyph_y+oy;}
+            resident_glyph=view_text_glyph(r,page,left,top,
+              use_rot?page->tw:page->sw,use_rot?page->th:page->sh,
+              xs,ys,use_rot?rr:0.0,blend,alpha);
+          }
+        }
         /* Prove an empty cell before a visible owner can compose its underlay. */
-        if(r->resident_application_pass && !s->runtime_rgba && s->frame){
+        if(!resident_glyph && r->resident_application_pass && !s->runtime_rgba && s->frame){
           int page_index=s->frame[fr];
           if(page_index>=0 && page_index<r->n_tpag){
             const GmlTpag *page=&r->tpag[page_index];

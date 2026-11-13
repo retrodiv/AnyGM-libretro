@@ -1025,4 +1025,8 @@ int gml_render_classic_phase_spans(GmlRender *render,GmlTpag *page,
   double left,double top,double xscale,double yscale,int phase_mode,
   GmlRenderClassicPhaseSpanFn visitor,void *context);
 
+int gml_render_resident_view_atlas_quad(GmlRender *render,const GmlTpag *page,
+  double sx,double sy,double sw,double sh,const double x[4],const double y[4],
+  uint32_t colour,double alpha,GmlRenderSceneFamily family);
+
 #endif

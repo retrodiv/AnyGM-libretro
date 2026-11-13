@@ -783,6 +783,18 @@ static void check_view_background_quad_contract(void){
   invalid=op;invalid.payload.quad.v[0]=0;
   expect(!gml_render_view_tile_quad_valid(&invalid,&state,16,8),
          "view tile rejects UVs outside the source crop");
+  op.scene_family=GML_RENDER_SCENE_TEXT;
+  q->sampling.quantisation=GML_RENDER_QUANTISE_VIEW_TEXT;state.samplers[0]=q->sampling;
+  expect(gml_render_view_text_quad_valid(&op,&state,16,8) &&
+         !gml_render_view_tile_quad_valid(&op,&state,16,8),
+         "view glyph has a distinct typed atlas packet and native UV geometry");
+  invalid=op;invalid.scene_family=GML_RENDER_SCENE_SPRITE;
+  expect(!gml_render_view_text_quad_valid(&invalid,&state,16,8),
+         "view glyph rejects an incorrectly classified sprite packet");
+  invalid=op;invalid.payload.quad.sampling.quantisation=GML_RENDER_QUANTISE_VIEW_TILE;
+  expect(!gml_render_view_text_quad_valid(&invalid,&state,16,8),
+         "view glyph rejects tile sampling policy");
+
 }
 
 static void check_view_world_visible_bounds(void){

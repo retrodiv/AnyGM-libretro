@@ -480,6 +480,14 @@ int gml_render_view_tile_quad_valid(const GmlRenderDrawOp *op,
                                  GML_RENDER_QUANTISE_VIEW_TILE);
 }
 
+int gml_render_view_text_quad_valid(const GmlRenderDrawOp *op,
+  const GmlRenderDrawStateSnapshot *state,uint32_t width,uint32_t height){
+  if(!op || !op->sources || op->source_count!=1u ||
+     op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS) return 0;
+  return view_texture_quad_valid(op,state,width,height,GML_RENDER_SCENE_TEXT,
+                                 GML_RENDER_QUANTISE_VIEW_TEXT);
+}
+
 int gml_render_rectangle_valid(const GmlRenderDrawOp *operation){
   if(!operation || operation->opcode!=GML_RENDER_OP_COLOURED_PRIMITIVE ||
      operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
