@@ -6302,6 +6302,13 @@ done:
   free(operations);return accepted;
 }
 
+static void view_sprite_invalidate_opaque_target(GmlRender *r,double alpha,int source_opaque){
+  if(gml_render_target_preserves_alpha(r) && (alpha<1.0 || !source_opaque)){
+    r->fb_opaque_known=r->fb_all_opaque=0;
+    if(r->fb==r->app_surface) r->app_surface_opaque=0;
+  }
+}
+
 int gml_render_resident_view_sprite(GmlRender *r,int sprite,int subimg,
   double x,double y,double xs,double ys,double rotation,uint32_t colour,double alpha){
   if(!gml_render_view_rotation_active(r) || gml_d3_is_active(r)) return 0;
@@ -6342,15 +6349,41 @@ int gml_render_resident_view_sprite(GmlRender *r,int sprite,int subimg,
   if(!gml_render_sprite_pos_geometry(r,mx,my,&geometry)) return 1;
   if(!resident_positioned_quad_sprite(r,sprite,subimg,mx,my,alpha,colour,1))
     gml_render_cpu_blit_view_sprite(r,sprite,subimg,mx,my,colour,alpha);
-  if(gml_render_target_preserves_alpha(r) && (alpha<1.0 || !source_opaque)){
-    r->fb_opaque_known=r->fb_all_opaque=0;
-    if(r->fb==r->app_surface) r->app_surface_opaque=0;
-  }
+  view_sprite_invalidate_opaque_target(r,alpha,source_opaque);
   return 1;
 }
 
 void gml_draw_sprite_pos(GmlRender *r,int sprite,int subimg,
                          const double x[4],const double y[4],double alpha){
+  if(gml_render_view_rotation_active(r) && !gml_d3_is_active(r)){
+    if(sprite<0 || sprite>=r->n_spr || !x || !y || !isfinite(alpha)) return;
+    GmlSprite *record=&r->spr[sprite];
+    if(record->n_frames<=0 || (alpha<=0.0 && !(r->alphablend &&
+       gml_render_blend_uses_destination_colour(r->blendmode)))) return;
+    gml_render_warm_sprite(r,sprite);
+    alpha=fmax(0.0,fmin(1.0,alpha));
+    int source_opaque=record->runtime_opaque;
+    if(!record->runtime_rgba){
+      if(!record->frame) return;
+      int page=record->frame[gml_render_runtime_frame_index(record,subimg)];
+      if(page<0 || page>=r->n_tpag) return;
+      source_opaque=r->tpag[page].scene_fully_opaque;
+    }
+    double mapped_x[4],mapped_y[4];
+    for(unsigned corner=0;corner<4;corner++){
+      mapped_x[corner]=x[corner];mapped_y[corner]=y[corner];
+      gml_render_draw_map_point(r,&mapped_x[corner],&mapped_y[corner]);
+      mapped_x[corner]-=r->cam_x;mapped_y[corner]-=r->cam_y;
+      gml_render_view_rotate_point(r,&mapped_x[corner],&mapped_y[corner]);
+      mapped_x[corner]+=r->cam_x;mapped_y[corner]+=r->cam_y;
+      if(!isfinite(mapped_x[corner]) || !isfinite(mapped_y[corner])) return;
+    }
+    if(!resident_positioned_quad_sprite(r,sprite,subimg,mapped_x,mapped_y,
+                                        alpha,0xFFFFFFu,1))
+      gml_render_cpu_blit_view_sprite(r,sprite,subimg,mapped_x,mapped_y,0xFFFFFFu,alpha);
+    view_sprite_invalidate_opaque_target(r,alpha,source_opaque);
+    return;
+  }
   if(resident_positioned_axis_sprite(r,sprite,subimg,x,y,alpha)) return;
   if(resident_positioned_quad_sprite(r,sprite,subimg,x,y,alpha,0xFFFFFFu,0)) return;
   if(resident_positioned_function(r,sprite,subimg,x,y,alpha)) return;
