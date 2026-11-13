@@ -6690,6 +6690,7 @@ static int resident_view_sprite_region(GmlRender *r,int sprite,int subimg,
   }
   double radians=remainder(rotation,360.0)*(M_PI/180.0);
   double cosine=cos(radians),sine=sin(radians),mx[4],my[4];
+  double min_x=INFINITY,min_y=INFINITY,max_x=-INFINITY,max_y=-INFINITY;
   int native_bounds=1;
   for(unsigned corner=0;corner<4;corner++){
     double lx=((corner==1 || corner==2)?geometry_width:0.0)*xs;
@@ -6699,10 +6700,17 @@ static int resident_view_sprite_region(GmlRender *r,int sprite,int subimg,
     mx[corner]-=r->cam_x;my[corner]-=r->cam_y;
     gml_render_view_rotate_point(r,&mx[corner],&my[corner]);
     if(!isfinite(mx[corner]) || !isfinite(my[corner])) return 1;
+    min_x=fmin(min_x,mx[corner]);min_y=fmin(min_y,my[corner]);
+    max_x=fmax(max_x,mx[corner]);max_y=fmax(max_y,my[corner]);
     if(fabs(mx[corner])>65536.0 || fabs(my[corner])>65536.0) native_bounds=0;
     mx[corner]+=r->cam_x;my[corner]+=r->cam_y;
     if(!isfinite(mx[corner]) || !isfinite(my[corner])) return 1;
   }
+  /* A complete offscreen cell is a no-op, not an unsupported CPU draw.
+   * Keep the established Classic half-pixel placement in this bounds test. */
+  double shift=r->classic?-.5:0.0;
+  if(max_x+shift<=0.0 || max_y+shift<=0.0 ||
+     min_x+shift>=r->fbw || min_y+shift>=r->fbh) return 1;
   if(!native_bounds || !resident_positioned_quad_sprite(r,sprite,subimg,mx,my,
                                       alpha,colour[0],1,&selection))
     gml_render_cpu_blit_view_sprite_region(r,record,subimg,

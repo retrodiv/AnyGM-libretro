@@ -4,6 +4,7 @@
 /* Shared world and GUI coordinate transforms. */
 #include "gml_render_internal.h"
 #include <math.h>
+#include <limits.h>
 
 int gml_render_view_surface_begin(GmlRender *r,int surface,double cx,double cy){
   if(!gml_surface_set_target(r,surface)) return 0;
@@ -38,6 +39,38 @@ void gml_render_view_rotate_point(const GmlRender *r,double *x,double *y){
   double dx=(*x-r->view_centre_x)/sx,dy=(*y-r->view_centre_y)/sy;
   *x=r->view_centre_x+(r->view_cosine*dx-r->view_sine*dy)*sx;
   *y=r->view_centre_y+(r->view_sine*dx+r->view_cosine*dy)*sy;
+}
+
+int gml_render_view_tile_grid(const GmlRender *r,double x,double y,
+                             double width,double height,GmlRenderViewTileGrid *grid){
+  if(!grid || !gml_render_view_rotation_active(r) || r->fbw<=0 || r->fbh<=0 ||
+     !isfinite(x) || !isfinite(y) || !isfinite(width) || !isfinite(height) ||
+     width<=0.0 || height<=0.0) return 0;
+  double sx=r->world_transform_active?r->world_scale_x:1.0;
+  double sy=r->world_transform_active?r->world_scale_y:1.0;
+  if(!isfinite(sx) || !isfinite(sy) || sx<=0.0 || sy<=0.0) return 0;
+  double min_x=INFINITY,min_y=INFINITY,max_x=-INFINITY,max_y=-INFINITY;
+  for(unsigned corner=0;corner<4u;corner++){
+    double px=(corner&1u)?r->fbw:0.0,py=(corner&2u)?r->fbh:0.0;
+    double dx=(px-r->view_centre_x)/sx,dy=(py-r->view_centre_y)/sy;
+    px=r->view_centre_x+(r->view_cosine*dx+r->view_sine*dy)*sx;
+    py=r->view_centre_y+(-r->view_sine*dx+r->view_cosine*dy)*sy;
+    if(!isfinite(px) || !isfinite(py)) return 0;
+    min_x=fmin(min_x,px);min_y=fmin(min_y,py);
+    max_x=fmax(max_x,px);max_y=fmax(max_y,py);
+  }
+  /* Reduce distant phases before indexing. Integer counters cannot stall when
+   * a floating-point increment is smaller than the original supplied anchor. */
+  double phase_x=fmod(x,width),phase_y=fmod(y,height);
+  double first_x=phase_x+floor((min_x-phase_x)/width)*width;
+  double first_y=phase_y+floor((min_y-phase_y)/height)*height;
+  double columns=ceil((max_x-first_x)/width)+1.0;
+  double rows=ceil((max_y-first_y)/height)+1.0;
+  if(!isfinite(first_x) || !isfinite(first_y) || !isfinite(columns) || !isfinite(rows) ||
+     columns<1.0 || rows<1.0 || columns>INT_MAX || rows>INT_MAX) return 0;
+  /* The trailing anchors also cover negative scales, whose cells extend left/up. */
+  *grid=(GmlRenderViewTileGrid){first_x,first_y,width,height,(int64_t)columns,(int64_t)rows};
+  return 1;
 }
 
 void gml_render_world_set_logical_extent(GmlRender *r,int width,int height){

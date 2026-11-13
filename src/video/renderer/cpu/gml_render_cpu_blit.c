@@ -7620,6 +7620,32 @@ void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double 
 
 void gml_draw_sprite_tiled_ext(GmlRender *r, int sprite, int subimg, double x, double y,
                                double xs, double ys, uint32_t blend, double alpha){
+  if(gml_render_view_rotation_active(r) && !gml_d3_is_active(r)){
+    if(sprite<0 || sprite>=r->n_spr || !isfinite(alpha) ||
+       !isfinite(xs) || !isfinite(ys)) return;
+    if(alpha<=0.0 && !(r->alphablend &&
+         gml_render_blend_uses_destination_colour(r->blendmode))) return;
+    GmlSprite *source=&r->spr[sprite];
+    if(source->n_frames<=0 || source->w<=0 || source->h<=0) return;
+    double map_x=1.0,map_y=1.0,mapped_x=x,mapped_y=y;
+    gml_render_draw_map_scale(r,&map_x,&map_y);
+    gml_render_draw_map_point(r,&mapped_x,&mapped_y);
+    if(map_x<=0.0 || map_y<=0.0) return;
+    double anchor_x=floor(mapped_x-r->cam_x),anchor_y=floor(mapped_y-r->cam_y);
+    if(!source->runtime_rgba && r->win &&
+       anygm_policy_uses_first_generation_studio(r->win) &&
+       fabs(r->cam_x-nearbyint(r->cam_x))>1e-9) anchor_x+=1.0;
+    GmlRenderViewTileGrid grid;
+    if(!gml_render_view_tile_grid(r,anchor_x,anchor_y,
+         source->w*fabs(xs*map_x),source->h*fabs(ys*map_y),&grid)) return;
+    for(int64_t row=0;row<grid.rows;row++) for(int64_t col=0;col<grid.columns;col++){
+      double dx=(grid.x+col*grid.width+r->cam_x)/map_x;
+      double dy=(grid.y+row*grid.height+r->cam_y)/map_y;
+      gml_draw_sprite_part_ext(r,sprite,subimg,0,0,source->w,source->h,
+                               dx,dy,xs,ys,blend,alpha);
+    }
+    return;
+  }
   if(gml_render_resident_tiled_sprite(r,sprite,subimg,x,y,xs,ys,blend,alpha)) return;
   if(!gml_render_cpu_draw_barrier(r)) return;
   GmlMaskedSpriteDraw masked=masked_sprite_draw_begin(r);

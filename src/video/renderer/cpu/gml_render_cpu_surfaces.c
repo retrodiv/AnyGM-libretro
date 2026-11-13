@@ -1830,8 +1830,22 @@ static void draw_surface_ext_mapped_impl(GmlRender *r,int surf,double x,double y
                      src[(size_t)vb*sw+ua],src[(size_t)vb*sw+ub]};
       double w[4]={(1-tx)*(1-ty),tx*(1-ty),(1-tx)*ty,tx*ty};
       int cr=0,cg=0,cb=0,ca=0;
-      for(int k=0;k<4;k++){ cr+=(int)(((p[k]>>16)&255)*w[k]); cg+=(int)(((p[k]>>8)&255)*w[k]);
-        cb+=(int)((p[k]&255)*w[k]); ca+=(int)((p[k]>>24)*w[k]); }
+      if(placed){
+        /* Interpolate before quantizing. Identical source texels must retain
+         * their exact channels, including opacity, at every subtexel phase. */
+        int channel[4];
+        for(unsigned c=0;c<4u;c++){
+          unsigned shift=c*8u;
+          double a=(p[0]>>shift)&255u,b=(p[1]>>shift)&255u;
+          double c0=(p[2]>>shift)&255u,d=(p[3]>>shift)&255u;
+          double top=a+(b-a)*tx,bottom=c0+(d-c0)*tx;
+          channel[c]=(int)lround(top+(bottom-top)*ty);
+        }
+        cb=channel[0];cg=channel[1];cr=channel[2];ca=channel[3];
+      }else{
+        for(int k=0;k<4;k++){ cr+=(int)(((p[k]>>16)&255)*w[k]); cg+=(int)(((p[k]>>8)&255)*w[k]);
+          cb+=(int)((p[k]&255)*w[k]); ca+=(int)((p[k]>>24)*w[k]); }
+      }
       sv=((uint32_t)ca<<24)|((uint32_t)cr<<16)|((uint32_t)cg<<8)|(uint32_t)cb;
     } else sv=src[(size_t)(int)floor(v)*sw+(int)floor(u)];
     if(sremap) sv=mapped_texture_pixel(r,sv);
@@ -1927,6 +1941,26 @@ void gml_draw_surface_tiled_ext(GmlRender *r,int surf,double x,double y,
   if(!r || !r->fb || r->fbw<=0 || r->fbh<=0 ||
      !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
      !isfinite(alpha) || alpha<=0) return;
+  if(gml_render_view_rotation_active(r) && !gml_d3_is_active(r)){
+    int sw=gml_surface_width(r,surf),sh=gml_surface_height(r,surf);
+    int slot=surface_slot(surf);
+    const uint32_t *source=surf==0?r->app_surface:
+      slot>=0 && r->surface[slot].live?r->surface[slot].px:NULL;
+    if(sw<=0 || sh<=0 || source==r->fb) return;
+    double map_x=1.0,map_y=1.0,mapped_x=x,mapped_y=y;
+    gml_render_draw_map_scale(r,&map_x,&map_y);
+    gml_render_draw_map_point(r,&mapped_x,&mapped_y);
+    if(map_x<=0.0 || map_y<=0.0) return;
+    GmlRenderViewTileGrid grid;
+    if(!gml_render_view_tile_grid(r,mapped_x-r->cam_x,mapped_y-r->cam_y,
+         sw*fabs(xs*map_x),sh*fabs(ys*map_y),&grid)) return;
+    for(int64_t row=0;row<grid.rows;row++) for(int64_t col=0;col<grid.columns;col++){
+      double dx=(grid.x+col*grid.width+r->cam_x)/map_x;
+      double dy=(grid.y+row*grid.height+r->cam_y)/map_y;
+      gml_draw_surface_part_ext(r,surf,0,0,sw,sh,dx,dy,xs,ys,blend,alpha);
+    }
+    return;
+  }
   if(gml_render_resident_surface_tiled(r,surf,x,y,xs,ys,blend,alpha)) return;
   if(!gml_render_cpu_draw_barrier(r)) return;
   int sw=0,sh=0;

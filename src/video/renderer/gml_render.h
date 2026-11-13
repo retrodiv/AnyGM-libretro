@@ -751,6 +751,13 @@ void gml_render_world_set_logical_extent(GmlRender *r,int width,int height);
 void gml_render_world_set_view_rotation(GmlRender *r,double angle,double width,double height);
 int gml_render_view_rotation_active(const GmlRender *r);
 void gml_render_view_rotate_point(const GmlRender *r,double *x,double *y);
+typedef struct {
+  double x,y,width,height;
+  int64_t columns,rows;
+} GmlRenderViewTileGrid;
+/* Mapped camera-relative anchors; include cells outside the unturned viewport. */
+int gml_render_view_tile_grid(const GmlRender *r,double x,double y,
+                             double width,double height,GmlRenderViewTileGrid *grid);
 void gml_render_gui_begin(GmlRender *r, int logical_w, int logical_h);
 void gml_render_gui_set_size(GmlRender *r, int logical_w, int logical_h);
 void gml_render_gui_set_maximise(GmlRender *r, int active, double xscale, double yscale,

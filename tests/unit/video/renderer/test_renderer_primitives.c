@@ -763,7 +763,61 @@ static void check_view_surface_nonuniform_projection(void){
   gml_render_free(&render);
 }
 
+static void check_view_tiling_visible_corners(void){
+  GmlRender render;
+  reset_render(&render,24);
+  GmlRenderViewTileGrid grid;
+  gml_render_world_set_view_rotation(&render,45.0,WIDTH,HEIGHT);
+  expect(gml_render_view_tile_grid(&render,1e100,-1e100,8,4,&grid),
+         "view tiling reduces remote anchors before integer enumeration");
+  expect(grid.x<0.0 && grid.y<0.0 && grid.x+grid.columns*8>WIDTH &&
+         grid.y+grid.rows*4>HEIGHT,
+         "diagonal tiling includes world cells outside the axis viewport");
+  GmlRenderViewTileGrid unchanged=grid;
+  expect(!gml_render_view_tile_grid(&render,NAN,0,8,4,&grid) &&
+         !gml_render_view_tile_grid(&render,0,0,0,4,&grid) &&
+         !gml_render_view_tile_grid(&render,0,0,1e-100,4,&grid) &&
+         memcmp(&grid,&unchanged,sizeof grid)==0,
+         "invalid or unrepresentable tile grids leave the caller untouched");
+  int source=gml_surface_create(&render,8,4);
+  uint8_t pixels[8*4*4];
+  for(unsigned i=0;i<8u*4u;i++){
+    pixels[i*4u]=255;pixels[i*4u+1u]=255;pixels[i*4u+2u]=255;pixels[i*4u+3u]=255;
+  }
+  expect(source>0 && gml_surface_write_rgba8(&render,source,pixels,sizeof pixels),
+         "tiled view control owns a non-square opaque source");
+  if(source<=0){gml_render_free(&render);return;}
+  const double angles[]={45,-45,135,90,-90};
+  for(unsigned i=0;i<sizeof angles/sizeof angles[0];i++){
+    for(unsigned signs=0;signs<4u;signs++){
+      memset(frame,0,sizeof frame);
+      render.cam_x=7;render.cam_y=9;
+      gml_render_world_set_view_rotation(&render,angles[i],WIDTH,HEIGHT);
+      gml_draw_surface_tiled_ext(&render,source,8,11,signs&1u?-1:1,
+                                 signs&2u?-1:1,0xFFFFFFu,1.0);
+      expect(covered_pixels()==WIDTH*HEIGHT,
+             "turned repeated surface cells cover every visible pixel for each mirror");
+    }
+  }
+  set_world_scale(&render,2,3);
+  memset(frame,0,sizeof frame);
+  gml_render_world_set_view_rotation(&render,45.0,100,HEIGHT/3.0);
+  gml_draw_surface_tiled_ext(&render,source,8,11,1,1,0xFFFFFFu,1.0);
+  expect(covered_pixels()==WIDTH*HEIGHT,
+         "inverse visible bounds retain coverage under nonuniform world scaling");
+  memset(frame,0,sizeof frame);
+  render.interp=1;
+  gml_draw_surface_tiled_ext(&render,source,8,11,1,1,0xFFFFFFu,1.0);
+  int unchanged_colour=1;
+  for(unsigned i=0;i<WIDTH*HEIGHT;i++)
+    if(frame[i]!=0xFFFFFFFFu){unchanged_colour=0;break;}
+  expect(unchanged_colour,
+         "filtered view cells preserve uniform source channels and opacity exactly");
+  gml_render_free(&render);
+}
+
 int main(void){
+  check_view_tiling_visible_corners();
   check_view_sprite_nonuniform_scale_and_mirroring();
   check_view_surface_nonuniform_projection();
   check_view_surface_quad_contract();
