@@ -1014,7 +1014,7 @@ static int screen_raster_part_case(void){
   return 0;
 }
 
-static int first_generation_point_sampling_case(void){
+static int first_generation_point_sampling_case(int partial){
   enum { SOURCE_WIDTH=4,SOURCE_HEIGHT=3,TARGET_WIDTH=13,TARGET_HEIGHT=10 };
   uint32_t source[SOURCE_WIDTH*SOURCE_HEIGHT];
   uint32_t target[TARGET_WIDTH*TARGET_HEIGHT];
@@ -1023,7 +1023,7 @@ static int first_generation_point_sampling_case(void){
   memset(&render,0,sizeof render);
   for(int y=0;y<SOURCE_HEIGHT;y++) for(int x=0;x<SOURCE_WIDTH;x++)
     source[(size_t)y*SOURCE_WIDTH+x]=
-      0xFF000000u|((uint32_t)(31+x*41+y*17)<<16)|
+      (partial?0x80000000u:0xFF000000u)|((uint32_t)(31+x*41+y*17)<<16)|
       ((uint32_t)(23+x*13+y*47)<<8)|(uint32_t)(11+x*29+y*19);
   memset(target,0,sizeof target);
   content.bytecode=14;
@@ -1031,8 +1031,8 @@ static int first_generation_point_sampling_case(void){
   render.app_surface=source;
   render.app_w=SOURCE_WIDTH;
   render.app_h=SOURCE_HEIGHT;
-  render.app_surface_opaque=1;
-  render.alphablend=1;
+  render.app_surface_opaque=!partial;
+  render.alphablend=!partial;
   render.color_write_mask=0x0F;
   render.blend_equation=1;
   render.blend_equation_alpha=1;
@@ -1042,13 +1042,14 @@ static int first_generation_point_sampling_case(void){
   gml_render_begin(&render,target,TARGET_WIDTH,TARGET_HEIGHT,0.0,0.0);
   gml_render_gui_begin(&render,TARGET_WIDTH,TARGET_HEIGHT);
   gml_render_gui_set_size(&render,TARGET_WIDTH,TARGET_HEIGHT);
+  render.alphablend=!partial;
   gml_draw_surface_stretched(&render,0,0.0,0.0,
                              TARGET_WIDTH,TARGET_HEIGHT,0xFFFFFFu,1.0);
   gml_render_gui_end(&render);
   for(int y=0;y<TARGET_HEIGHT;y++) for(int x=0;x<TARGET_WIDTH;x++){
     int source_x=(int)(((int64_t)(2*x+1)*SOURCE_WIDTH)/(2*TARGET_WIDTH));
     int source_y=(int)(((int64_t)(2*y+1)*SOURCE_HEIGHT)/(2*TARGET_HEIGHT));
-    uint32_t expected=source[(size_t)source_y*SOURCE_WIDTH+source_x];
+    uint32_t expected=source[(size_t)source_y*SOURCE_WIDTH+source_x]|0xFF000000u;
     if(target[(size_t)y*TARGET_WIDTH+x]!=expected){
       fprintf(stderr,"renderer first-generation point sample mismatch at %d,%d: %08x != %08x\n",
               x,y,target[(size_t)y*TARGET_WIDTH+x],expected);
@@ -1995,6 +1996,47 @@ static int world_raster_scale_case(void){
   return 0;
 }
 
+static int disabled_blend_partial_surface_case(void){
+  GmlRender render={0};
+  uint32_t frame[132*100]={0};
+  GmlWin win={0}; win.bytecode=16;
+  render.win=&win;
+  render.fb=render.base_fb=frame;
+  render.fbw=render.base_fbw=132; render.fbh=render.base_fbh=100;
+  render.target_id=-1; render.next_surface_id=1;
+  render.alpha=1.0; render.color_write_mask=15;
+  render.blend_equation=render.blend_equation_alpha=1;
+  render.active_shader=render.lut_pal_sprite=-1;
+  int source=gml_surface_create(&render,4,3);
+  REQUIRE(source>0,"disabled-blend source allocation");
+  uint32_t *pixels=surface_pixels(&render,source,NULL,NULL);
+  REQUIRE(pixels!=NULL,"disabled-blend source pixels");
+  for(int i=0;i<12;i++) pixels[i]=0x80406080u;
+  render.surface[0].opaque_known=0;
+  render.surface[0].all_opaque=render.surface[0].all_transparent=0;
+  const int widths[]={4,6,128},heights[]={3,5,96};
+  for(int generation=0;generation<2;generation++)
+  for(int application=0;application<2;application++)
+  for(int scale=0;scale<3;scale++){
+    win.bytecode=generation?17:16;
+    render.app_surface=application?pixels:NULL;
+    for(int i=0;i<132*100;i++) frame[i]=0xFF102030u;
+    render.alphablend=0;
+    gml_draw_surface_stretched(&render,source,1,1,widths[scale],heights[scale],0xFFFFFFu,1.0);
+    REQUIRE(frame[1*132+1]==(scale?0xFF406080u:0x80406080u),
+            "disabled blending copies resolved partial-coverage colour and alpha");
+    REQUIRE(frame[0]==0xFF102030u,"disabled-blend copy preserves the outside");
+    render.alphablend=1;
+    frame[1*132+1]=0xFF102030u;
+    gml_draw_surface_stretched(&render,source,1,1,widths[scale],heights[scale],0xFFFFFFu,1.0);
+    REQUIRE((frame[1*132+1]&0xFFFFFFu)!=0x406080u,
+            "enabled blending still consumes source coverage");
+  }
+  render.app_surface=NULL;
+  gml_surface_free(&render,source);
+  return 0;
+}
+
 static int replace_and_classic_present_case(void){
   /* The base canvas is wider than the surface so the whole-frame copy fast paths stand down
    * and the per-run kernel — the one the defect lived in — is what this case exercises. */
@@ -2414,8 +2456,10 @@ int main(void){
   REQUIRE(destination_colour_factor_case()==0,"destination-colour factor case");
   REQUIRE(destination_colour_sprite_case()==0,"destination-colour sprite case");
   REQUIRE(screen_raster_part_case()==0,"screen raster part case");
-  REQUIRE(first_generation_point_sampling_case()==0,
+  REQUIRE(first_generation_point_sampling_case(0)==0,
           "first-generation point sampling case");
+  REQUIRE(first_generation_point_sampling_case(1)==0,
+          "first-generation disabled-blend point sampling case");
   REQUIRE(first_generation_high_magnification_case()==0,
           "first-generation high magnification case");
   REQUIRE(opaque_integer_scale_case()==0,"opaque integer scale case");
@@ -2440,6 +2484,7 @@ int main(void){
   REQUIRE(masked_sprite_channels_case()==0,"all sprite channel masks and restore tails");
   REQUIRE(world_raster_scale_case()==0,"world raster scale case");
   REQUIRE(replace_and_classic_present_case()==0,"replace and classic present case");
+  REQUIRE(disabled_blend_partial_surface_case()==0,"disabled-blend partial surface case");
   REQUIRE(suspended_clear_read_back_case()==0,"suspended clear read-back case");
   REQUIRE(dispatch_surface_coverage_case()==0,"resolved CPU surface dispatch coverage");
   REQUIRE(mapped_multiply_exact_case()==0,"mapped surface multiply exact fast/general control");

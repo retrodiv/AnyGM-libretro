@@ -342,7 +342,8 @@ static void scaled_band(void *context,int row_start,int row_end,int slot){
         } else if(a){
           double pa = a / 255.0;
           int sr = (s >> 16) & 0xFF, sg = (s >> 8) & 0xFF, sb = s & 0xFF;
-          if(gml_render_modern_surface_blends_alpha(r)) *dp=surface_source_over_pixel(r,*dp,sr,sg,sb,pa);
+          if(!r->alphablend) *dp=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
+          else if(gml_render_modern_surface_blends_alpha(r)) *dp=surface_source_over_pixel(r,*dp,sr,sg,sb,pa);
           else if(pa >= 1.0) *dp = 0xFF000000u | ((uint32_t)sr << 16) | ((uint32_t)sg << 8) | (uint32_t)sb;
           else {
             int dr = (*dp >> 16) & 0xFF, dg = (*dp >> 8) & 0xFF, db = *dp & 0xFF;
@@ -381,7 +382,8 @@ static void scaled_band(void *context,int row_start,int row_end,int slot){
       if(pa > 0.0){
         gml_render_dispatch_cpu_scope_write(r);
         int sr = (int)(R / n), sg = (int)(G / n), sb = (int)(B / n);
-        if(gml_render_modern_surface_blends_alpha(r)) *dp=surface_source_over_pixel(r,*dp,sr,sg,sb,pa);
+        if(!r->alphablend) *dp=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
+        else if(gml_render_modern_surface_blends_alpha(r)) *dp=surface_source_over_pixel(r,*dp,sr,sg,sb,pa);
         else if(pa >= 1.0) *dp = 0xFF000000u | ((uint32_t)sr << 16) | ((uint32_t)sg << 8) | (uint32_t)sb;
         else {
           int dr = (*dp >> 16) & 0xFF, dg = (*dp >> 8) & 0xFF, db = *dp & 0xFF;
@@ -656,7 +658,8 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
         } else if(a){
           double pa = a / 255.0;
           int sr = (s >> 16) & 0xFF, sg = (s >> 8) & 0xFF, sb = s & 0xFF;
-          if(gml_render_modern_surface_blends_alpha(r)) *dp=surface_source_over_pixel(r,*dp,sr,sg,sb,pa);
+          if(!r->alphablend) *dp=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
+          else if(gml_render_modern_surface_blends_alpha(r)) *dp=surface_source_over_pixel(r,*dp,sr,sg,sb,pa);
           else if(pa >= 1.0) *dp = 0xFF000000u | ((uint32_t)sr << 16) | ((uint32_t)sg << 8) | (uint32_t)sb;
           else {
             int dr = (*dp >> 16) & 0xFF, dg = (*dp >> 8) & 0xFF, db = *dp & 0xFF;
@@ -695,7 +698,8 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
       if(pa > 0.0){
         gml_render_dispatch_cpu_scope_write(r);
         int sr = (int)(R / n), sg = (int)(G / n), sb = (int)(B / n);
-        if(gml_render_modern_surface_blends_alpha(r)) *dp=surface_source_over_pixel(r,*dp,sr,sg,sb,pa);
+        if(!r->alphablend) *dp=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
+        else if(gml_render_modern_surface_blends_alpha(r)) *dp=surface_source_over_pixel(r,*dp,sr,sg,sb,pa);
         else if(pa >= 1.0) *dp = 0xFF000000u | ((uint32_t)sr << 16) | ((uint32_t)sg << 8) | (uint32_t)sb;
         else {
           int dr = (*dp >> 16) & 0xFF, dg = (*dp >> 8) & 0xFF, db = *dp & 0xFF;
@@ -858,9 +862,9 @@ static void white_surface_band_rows(void *context,int row_start,int row_end,int 
       if(sa8==255){
         memcpy(dp+xx,sp+xx,(size_t)run*sizeof(uint32_t));
       } else if(sa8){
-        if(replace){
-          /* Mode 6 copies each source texel, including partial coverage, without
-           * destination blending. Zero-coverage runs retain the existing skip. */
+        if(replace || !r->alphablend){
+          /* Replacement factors and disabled blending copy resolved colour,
+           * including partial coverage. Zero-coverage runs retain the existing skip. */
           memcpy(dp+xx,sp+xx,(size_t)run*sizeof(uint32_t));
         } else if(gml_render_modern_surface_blends_alpha(r)){
           for(int k=0;k<run;k++){
@@ -1348,7 +1352,7 @@ static int draw_first_generation_gui_app_surface(GmlRender *r,int surf,
      !gml_render_gui_transform_active(r) || r->target_sp!=0 || r->target_id>=0 ||
      r->interp || r->blendmode!=0 || r->color_write_mask!=0x0F ||
      alpha<1.0 || (blend&0xFFFFFFu)!=0xFFFFFFu ||
-     !surface_known_opaque(r,surf) || src!=r->app_surface || src==r->fb ||
+     (r->alphablend && !surface_known_opaque(r,surf)) || src!=r->app_surface || src==r->fb ||
      dw<=0.0 || dh<=0.0) return 0;
   int transformed_gui_quad=
     fabs(dw-(double)sw*r->gui_scale_x)<=0.001 &&

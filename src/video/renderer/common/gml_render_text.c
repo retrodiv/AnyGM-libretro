@@ -102,7 +102,9 @@ static int line_width(GmlRender *r, GmlFont *f, const char *p, const char **end,
     else cp=text_next_cp(&p);
     w += glyph_w(r,f,glyph_frame(f,cp),cp) + f->sep;
   }
-  if(w>0) w-=f->sep;
+  /* First-generation Studio width queries retain the last glyph separation.
+   * Drawing alignment still removes it from the line's effective width. */
+  if(w>0 && (drawing || !anygm_policy_uses_first_generation_studio(r->win))) w-=f->sep;
   *end=p; return w;
 }
 /* Advance width of one policy-delimited line; escaped hashes retain their existing reading. */
@@ -423,6 +425,15 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
   if(f->sprite<0 || f->sprite>=r->n_spr) return;
   GmlSprite *s=&r->spr[f->sprite];
   if(s->n_frames<=0) return;
+  /* First-generation Studio cancels the sprite origin for a registered font.
+   * Offset the shared anchor so every executor keeps the original sprite
+   * metadata and raster body, including rotated and mutable-source draws. */
+  if(family!=ANYGM_TEXT_LAYOUT_SPRITE &&
+     anygm_policy_uses_first_generation_studio(r->win)){
+    double ox=s->originx*xs,oy=s->originy*ys;
+    x+=ox*ca+oy*sa;
+    y+=-ox*sa+oy*ca;
+  }
   /* line height = sprite cell height (GM uses the sprite's declared h, not the
    * glyph's trimmed sub-rect sh — otherwise text lines collapse when glyphs are cropped). */
   int lh=s->h; if(lh<=0) lh=8;

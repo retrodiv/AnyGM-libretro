@@ -3171,7 +3171,7 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
   if(!selection && !resolved_canvas && surf==0 && r->win && anygm_policy_uses_first_generation_studio(r->win) &&
      gml_render_gui_transform_active(r) && !r->target_sp && r->target_id<0 &&
      !r->interp && !r->blendmode && r->color_write_mask==15u &&
-     surface_known_opaque(r,0) && alpha>=1.0 &&
+     (surface_known_opaque(r,0) || !r->alphablend) && alpha>=1.0 &&
      (colour&0xFFFFFFu)==0xFFFFFFu && !r->app_draw_enable) return 0;
   /* The queued application prefix precedes any ordinary surface suffix,
    * regardless of which independent source that suffix samples. */
@@ -3218,12 +3218,16 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
   int ordinary_full=whole && signed_width>0 && signed_height>0 &&
     (!r->blendmode || (r->blendmode==6 && opaque)) && alpha>=1.0 &&
     (colour&0xFFFFFFu)==0xFFFFFFu && (!requires_filter || (opaque && r->alpha_test_ref<255u));
+  /* Disabled blending copies resolved colour in both the white unit kernel
+   * and the full-source scaled kernel. The latter stamps opaque output alpha. */
+  int disabled_copy=!r->alphablend && (fast_white || (!unit && ordinary_full));
+  if(disabled_copy) replace=1;
   /* Full-source public parts and resolved canvases enter the same scaled
    * normal leaf as automatic presentation, before the Classic generic copy. */
   int classic_scaled_copy=r->classic && r->win &&
     anygm_policy_classic_modern_presentation(r->win) && r->win->classic_scaling<0;
   if((selection || resolved_canvas || (!automatic && !classic_scaled_copy)) &&
-     !unit && ordinary_full) replace=0;
+     !unit && ordinary_full && !disabled_copy) replace=0;
   int selected=selection && !fast_unit && !ordinary_full &&
     (selection->x!=0.0 || selection->y!=0.0 || selection->width!=sw || selection->height!=sh);
   gml_render_flush_pending_fill(r);
@@ -3254,7 +3258,8 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
   q->y[0]=q->y[1]=top;q->y[2]=q->y[3]=top+height;
   q->inverse_anchor[0]=left;q->inverse_anchor[1]=top;
   q->inverse_x[0]=signed_width;q->inverse_y[1]=signed_height;
-  int copy_source_alpha=replace && (!(r->classic && surf==0 && !masked_unit) ||
+  int copy_source_alpha=replace && (!disabled_copy || fast_unit) &&
+    (!(r->classic && surf==0 && !masked_unit) ||
     r->blendmode==6);
   q->span_y[0]=copy_source_alpha?2.0:0.0;
   if(automatic && r->blendmode==6 && !masked_unit) q->span_y[0]=2.0;
@@ -3441,14 +3446,14 @@ static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,do
     classic_point=1;
   }
   /* The preserved first-generation GUI leaf selects pixel-centre point samples
-   * for opaque, white content-owned application presentation. Other ordinary
-   * surface requests keep their floor/lround geometry and filter selection. */
+   * for white content-owned application presentation with opaque source or disabled
+   * blending. Other ordinary surface requests keep their floor/lround geometry and filter selection. */
   point_presentation=resolved_canvas==RESIDENT_SURFACE_MANUAL_POINT ||
     (resolved_canvas!=2 && surf==0 && r->win &&
     anygm_policy_uses_first_generation_studio(r->win) &&
     gml_render_gui_transform_active(r) && !r->target_sp && r->target_id<0 &&
     !r->interp && !destination_blend && alpha>=1.0 &&
-    (blend&0xFFFFFFu)==0xFFFFFFu && surface_known_opaque(r,0) &&
+    (blend&0xFFFFFFu)==0xFFFFFFu && (surface_known_opaque(r,0) || !r->alphablend) &&
     (!r->app_draw_enable ||
      (fabs(dw-(double)source_width*r->gui_scale_x)<=.001 &&
       fabs(dh-(double)source_height*r->gui_scale_y)<=.001 &&

@@ -131,6 +131,89 @@ static int runtime_sprite_font_mapping_case(void){
   return ok;
 }
 
+static int sprite_font_origin_policy_case(void){
+  int ok=1;
+  for(int generation=0;generation<3;generation++){
+    for(int runtime=0;runtime<2;runtime++){
+      FontFixture *f=fixture_create();
+      if(!f) return 0;
+      GmlRender *r=&f->render;
+      f->win.classic_version=generation==0?810:0;
+      f->win.bytecode=generation==1?16:17;
+      r->spr=calloc(1,sizeof *r->spr); r->n_spr=1;
+      if(!r->spr){fixture_destroy(f);return 0;}
+      GmlSprite *s=r->spr;
+      s->w=s->h=4; s->n_frames=1;
+      if(runtime){
+        s->runtime_rgba=calloc(64,1);
+        if(!s->runtime_rgba){fixture_destroy(f);return 0;}
+        memset(s->runtime_rgba,255,4);
+      }else{
+        s->frame=calloc(1,sizeof *s->frame);
+        r->tpag=calloc(1,sizeof *r->tpag); r->n_tpag=1;
+        r->atlas=calloc(1,sizeof *r->atlas); r->n_atlas=1;
+        if(!s->frame||!r->tpag||!r->atlas){fixture_destroy(f);return 0;}
+        *r->tpag=(GmlTpag){.sw=1,.sh=1,.tx=1,.ty=1,.bw=4,.bh=4,.atlas=0};
+        r->atlas->px=malloc(4); r->atlas->w=r->atlas->h=1;
+        r->atlas->decode_attempted=1;
+        if(!r->atlas->px){fixture_destroy(f);return 0;}
+        memset(r->atlas->px,255,4);
+      }
+      int font=gml_font_add_sprite(r,0,'A',0,0);
+      r->font=font; r->halign=1; r->valign=1;
+      r->fonts[font].sep=-1;
+      int fixed_width=gml_text_width(r,"AA");
+      if(fixed_width!=(generation==1?6:7)){
+        fprintf(stderr,"sprite font final separation generation=%d width=%d\n",generation,fixed_width);
+        ok=0;
+      }
+      /* Query advances and drawing alignment are separate contracts. A right
+       * aligned pair excludes its trailing separation in every generation. */
+      memset(f->frame,0,sizeof f->frame);
+      gml_render_begin(r,f->frame,96,48,0,0);
+      r->halign=2; r->valign=0;
+      gml_draw_text_transformed(r,40,24,"AA",1,1,0,0xFFFFFF,1);
+      int left=96;
+      for(int yy=0;yy<48;yy++) for(int xx=0;xx<96;xx++)
+        if(f->frame[yy*96+xx] && xx<left) left=xx;
+      if(left!=(runtime?34:35)){
+        fprintf(stderr,"sprite font drawing separation generation=%d runtime=%d left=%d\n",
+                generation,runtime,left);
+        ok=0;
+      }
+      r->halign=1; r->valign=1;
+      r->fonts[font].sep=0;
+      for(int prop=0;prop<2;prop++) for(int rotation=0;rotation<2;rotation++){
+        for(int scale=-1;scale<=2;scale++){
+          if(!scale) continue;
+          uint32_t images[2][96*48];
+          r->fonts[font].prop=prop;
+          for(int origin=0;origin<2;origin++){
+            s->originx=origin; s->originy=2*origin;
+            memset(f->frame,0,sizeof f->frame);
+            gml_render_begin(r,f->frame,96,48,0,0);
+            gml_draw_text_transformed(r,40,24,"A\nA",scale,scale,
+                                      rotation?90:0,0xFFFFFF,1);
+            memcpy(images[origin],f->frame,sizeof f->frame);
+            ok &=s->originx==origin && s->originy==2*origin &&
+                 gml_text_height(r,"A\nA")==8;
+          }
+          int ink=0;
+          for(int i=0;i<96*48;i++) ink+=images[0][i]!=0;
+          int equal=!memcmp(images[0],images[1],sizeof images[0]);
+          if(!ink || equal!=(generation==1)){
+            fprintf(stderr,"sprite font origin generation=%d runtime=%d prop=%d rotation=%d scale=%d ink=%d equal=%d\n",
+                    generation,runtime,prop,rotation,scale,ink,equal);
+            ok=0;
+          }
+        }
+      }
+      fixture_destroy(f);
+    }
+  }
+  return ok;
+}
+
 static int runtime_renderer_reinit_generation_case(void){
   FontFixture *f=fixture_create();
   if(!f) return 0;
@@ -563,6 +646,7 @@ int main(int argc,char **argv){
     {"dispatch_glyph_family",dispatch_glyph_family_case},
     {"classic_subpixel_channels",classic_subpixel_case},
     {"runtime_sprite_font_mapping",runtime_sprite_font_mapping_case},
+    {"sprite_font_origin_policy",sprite_font_origin_policy_case},
     {"runtime_renderer_reinit_generation",runtime_renderer_reinit_generation_case},
     {"runtime_lifecycle",lifecycle_case},
     {"restore_deleted_runtime_font",restore_deleted_case},
