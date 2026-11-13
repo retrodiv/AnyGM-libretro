@@ -1479,6 +1479,13 @@ static const char *const room_view_fields[]={
   "view_camera","view_angle"
 };
 
+/* The angle getter supplies zero until content writes it. A fresh room need not
+ * create the array; retained room snapshots keep their existing complete fields. */
+static int room_view_field_materialized(GmlVM *vm,size_t field){
+  return strcmp(room_view_fields[field],"view_angle") ||
+         gml_varmap_get(&vm->globals,"view_angle")!=NULL;
+}
+
 /* Whether a global array is one the room owns: entering a room rewrites every element of these
  * from the room's own record, so a value read out of one room says nothing about any other. A
  * caller that overwrites one and later has to put it back has to re-read it per room rather than
@@ -2563,13 +2570,15 @@ void gml_room_enter(GmlVM *vm, int room_index){
     gml_vm_global_array_set(vm,"background_vspeed",i,0); gml_vm_global_array_set(vm,"background_stretch",i,0);
     gml_vm_global_array_set(vm,"background_alpha",i,1); gml_vm_global_array_set(vm,"background_blend",i,0xFFFFFF);
     for(size_t field=0;field<sizeof(room_view_fields)/sizeof(room_view_fields[0]);field++)
-      gml_vm_global_array_set(vm,room_view_fields[field],i,0);
+      if(room_view_field_materialized(vm,field))
+        gml_vm_global_array_set(vm,room_view_fields[field],i,0);
     gml_vm_global_array_set(vm,"view_object",i,-1);
   }
   if(anygm_policy_has_modern_layer_semantics(vm->win)){
     for(int i=0;i<GML_ROOM_CAMERA_COUNT;i++){
       for(size_t field=0;field<sizeof(room_view_fields)/sizeof(room_view_fields[0]);field++)
-        gml_vm_global_array_set(vm,room_view_fields[field],i,0);
+        if(room_view_field_materialized(vm,field))
+          gml_vm_global_array_set(vm,room_view_fields[field],i,0);
       gml_vm_global_array_set(vm,"view_object",i,-1);
       /* A view target belongs to its room, not to the allocated surface. A
        * fresh room starts unbound even when the previous target remains live.
@@ -2580,7 +2589,8 @@ void gml_room_enter(GmlVM *vm, int room_index){
   /* The room record has no stored rotation. Legacy Studio views also start
    * unrotated, including slots not present in the authored view list. */
   if(!anygm_policy_uses_classic_runtime(vm->win) &&
-     !anygm_policy_has_modern_layer_semantics(vm->win))
+     !anygm_policy_has_modern_layer_semantics(vm->win) &&
+     gml_varmap_get(&vm->globals,"view_angle"))
     for(int i=0;i<8;i++) gml_vm_global_array_set(vm,"view_angle",i,0);
   /* Background scales belong to the room, including slots without a resource.
    * Instance creation may assign them before the first background draw. */

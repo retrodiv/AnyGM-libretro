@@ -4876,9 +4876,9 @@ static int expect_persistent_lifecycle_exit_code(void){
   gml_set_global_arr(&vm,"background_x",0,123);
   gml_set_global_arr(&vm,"view_xview",0,77);
   if(!gml_room_owned_global("view_angle") ||
-     global_array_value(&vm,"view_angle",0)!=0 ||
-     global_array_value(&vm,"view_angle",7)!=0){
-    fprintf(stderr,"view angles lack room ownership or zero defaults\n"); return 1;
+     gml_vm_view_angle(&vm,0)!=0 || gml_vm_view_angle(&vm,7)!=0 ||
+     gml_varmap_get(&vm.globals,"view_angle")){
+    fprintf(stderr,"view angles lack lazy room ownership or zero defaults\n"); return 1;
   }
   gml_vm_view_angle_set(&vm,0,37.5);
   gml_vm_view_angle_set(&vm,7,-450);
