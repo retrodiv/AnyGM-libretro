@@ -958,7 +958,38 @@ static void check_view_tiling_visible_corners(void){
   gml_render_free(&render);
 }
 
+static void check_selected_view_point_and_triangles(void){
+  for(unsigned primitive=0;primitive<3u;primitive++)
+  for(unsigned turn=0;turn<2u;turn++){
+    GmlRender render;
+    reset_render(&render,24);
+    gml_render_world_set_view_rotation(&render,turn?90:0,WIDTH,HEIGHT);
+    if(!primitive) gml_render_primitive_point(&render,140,80,0xFFFFFFu);
+    else gml_render_primitive_triangle_alpha(&render,130,70,150,70,130,90,
+                                              0xFFFFFFu,1.0,primitive==2u);
+    int left,top,right,bottom;
+    covered_bounds(&left,&top,&right,&bottom);
+    int ink=covered_pixels(),outside=0;
+    for(int y=0;y<HEIGHT;y++) for(int x=0;x<WIDTH;x++){
+      if(!(frame[y*WIDTH+x]&0xFFFFFFu)) continue;
+      if(turn && (!primitive?(x<118 || x>121 || y<138 || y>141):
+                              (x<109 || x>131 || y<129 || y>151))) outside++;
+    }
+    int ok=ink>0 && !outside;
+    if(!primitive) ok=ok && ink==1;
+    else if(turn) ok=ok && (primitive==2u?
+      !(frame[137*WIDTH+123]&0xFFFFFFu):(frame[137*WIDTH+123]&0xFFFFFFu)!=0);
+    else ok=ok && (primitive==2u?
+      !(frame[77*WIDTH+137]&0xFFFFFFu):(frame[77*WIDTH+137]&0xFFFFFFu)!=0);
+    fprintf(stderr,"selected primitive=%u turn=%u ink=%d outside=%d bounds=%d,%d..%d,%d pass=%d\n",
+      primitive,turn,ink,outside,left,top,right,bottom,ok);
+    expect(ok,"selected view places point and triangle geometry without filling the outline interior");
+    gml_render_free(&render);
+  }
+}
+
 int main(void){
+  check_selected_view_point_and_triangles();
   check_view_world_visible_bounds();
   check_view_background_quad_contract();
   check_view_background_nonuniform_projection();
