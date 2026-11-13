@@ -1008,9 +1008,12 @@ static void check_selected_view_lines(void){
          turn==2u?(x<66 || x>74 || y<48 || y>72):
                    (x<128 || x>152 || y<66 || y>74)) outside++;
     }
-    int ax=turn==1u?130:turn==2u?70:134;
+    /* Integer endpoints refer to physical pixel centres; the quarter turn maps
+     * their 70.5 ordinate to 129.5. Subpixel entries retain the authored 70. */
+    int centre=mode==2u?130:129;
+    int ax=turn==1u?centre:turn==2u?70:134;
     int ay=turn==1u?134:turn==2u?66:70;
-    int bx=turn==1u?130:turn==2u?70:146;
+    int bx=turn==1u?centre:turn==2u?70:146;
     int by=turn==1u?146:turn==2u?54:70;
     uint32_t first=frame[ay*WIDTH+ax],second=frame[by*WIDTH+bx];
     int gradient=!mode || (((first>>16)&255u)>(first&255u) &&

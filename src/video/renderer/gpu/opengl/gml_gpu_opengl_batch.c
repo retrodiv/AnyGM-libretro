@@ -1689,6 +1689,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT ||
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_STUDIO_ALPHA_RECT ||
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_NATIVE_TRIANGLE ||
+         op->payload.primitive.kind==GML_RENDER_PRIMITIVE_NATIVE_COLOURED_TRIANGLE ||
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_NATIVE_TEXTURED_TRIANGLE ||
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_RECTANGLE ||
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_TEXTURED_VERTEX_ROW ||
@@ -3651,7 +3652,8 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     int native_textured=op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_NATIVE_TEXTURED_TRIANGLE;
     int native_triangle=native_textured || (op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
-      op->payload.primitive.kind==GML_RENDER_PRIMITIVE_NATIVE_TRIANGLE);
+      (op->payload.primitive.kind==GML_RENDER_PRIMITIVE_NATIVE_TRIANGLE ||
+       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_NATIVE_COLOURED_TRIANGLE));
     int native_source_alpha=native_triangle && !native_textured &&
       (op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA);
     int native_opaque_surface=native_triangle && !native_textured && !native_source_alpha &&

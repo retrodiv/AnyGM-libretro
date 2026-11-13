@@ -7470,6 +7470,24 @@ void gml_render_cpu_blit_view_sprite_region(GmlRender *r,GmlSprite *sprite,int s
   gml_render_dispatch_cpu_scope_end(r,&scope);
 }
 
+void gml_render_cpu_primitive_quad(GmlRender *r,const double x[4],const double y[4],
+                                  const uint32_t colour[4],double alpha){
+  if(!r || !x || !y || !colour || !gml_render_cpu_draw_barrier(r)) return;
+  uint8_t white[4]={255,255,255,255};
+  GmlSprite source={.w=1,.h=1,.n_frames=1,.runtime_rgba=white};
+  double placed_x[4],placed_y[4];
+  double shift=r->classic?0.5:0.0;
+  for(unsigned i=0;i<4u;i++){
+    placed_x[i]=x[i]+r->cam_x+shift;
+    placed_y[i]=y[i]+r->cam_y+shift;
+  }
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_PRIMITIVE);
+  blit_sprite_general_coloured_impl(r,&source,0,0,0,1,1,0,0,1,1,0,
+                                    colour,alpha,placed_x,placed_y,NULL,1);
+  gml_render_dispatch_cpu_scope_end(r,&scope);
+}
+
 void gml_render_cpu_blit_view_atlas(GmlRender *r,const GmlTpag *page,
   double sx,double sy,double sw,double sh,const double x[4],const double y[4],
   uint32_t colour,double alpha,GmlRenderSceneFamily family){

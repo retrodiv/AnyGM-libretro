@@ -361,7 +361,8 @@ int gml_render_native_triangle_valid(const GmlRenderDrawOp *operation){
   int source_over=(p->rectangle_flags&GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA)!=0u;
   int alpha_target=surface ||
     (t->image.resource_class==GML_RENDER_RESOURCE_APPLICATION && source_over);
-  if(p->kind!=GML_RENDER_PRIMITIVE_NATIVE_TRIANGLE ||
+  int coloured=p->kind==GML_RENDER_PRIMITIVE_NATIVE_COLOURED_TRIANGLE;
+  if((p->kind!=GML_RENDER_PRIMITIVE_NATIVE_TRIANGLE && !coloured) ||
      (t->image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
       t->image.resource_class!=GML_RENDER_RESOURCE_APPLICATION && !surface) ||
      t->pixel_format!=GML_RENDER_PIXEL_ARGB8888 || !t->width || !t->height ||
@@ -376,7 +377,7 @@ int gml_render_native_triangle_valid(const GmlRenderDrawOp *operation){
   for(unsigned v=0;v<3u;v++) for(unsigned c=0;c<6u;c++){
     double value=p->triangle[v][c];
     if(!isfinite(value) || (c<2u?fabs(value)>32766.0:value<0.0 || value>1.0) ||
-       (c>=2u && c<5u && value!=p->triangle[0][c])) return 0;
+       (!coloured && c>=2u && c<5u && value!=p->triangle[0][c])) return 0;
   }
   if(surface && !source_over)
     for(unsigned v=0;v<3u;v++) if(p->triangle[v][5]!=1.0) return 0;

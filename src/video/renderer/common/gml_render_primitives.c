@@ -5,6 +5,7 @@
 #include "gml_render.h"
 #include "gml_render_internal.h"
 #include "gml_render_cpu_primitives.h"
+#include "gml_render_cpu_blit.h"
 #include "gml_render_cpu_backend.h"
 #include "gml_render_surfaces_internal.h"
 #include "gml_render_shaders.h"
@@ -536,6 +537,9 @@ static int resident_native_triangles(GmlRender *r,
       p->rectangle_flags=GML_RENDER_RECTANGLE_TARGET_ALPHA|GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA;
     p->alpha=1.0;p->alpha_blend=1u;p->pixel_write_mask=15u;
     memcpy(p->triangle,triangles[i].vertex,sizeof p->triangle);
+    if(view_rotation) for(unsigned v=1;v<3u;v++) for(unsigned c=2;c<5u;c++)
+      if(p->triangle[v][c]!=p->triangle[0][c])
+        p->kind=GML_RENDER_PRIMITIVE_NATIVE_COLOURED_TRIANGLE;
     if(surface || preserving_application) for(unsigned v=0;v<3u;v++) if(p->triangle[v][5]<1.0){
       p->rectangle_flags|=GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA;
       fractional_surface=1;
@@ -1520,9 +1524,41 @@ static int resident_primitive_alpha_noop(GmlRender *render){
     !(render->alphablend && gml_render_blend_uses_destination_colour(render->blendmode));
 }
 
+static int world_view_line(GmlRender *r,double x1,double y1,double x2,double y2,
+                           uint32_t first,uint32_t second,int width,int subpixel){
+  if(!gml_render_view_rotation_active(r) || gml_d3_is_active(r)) return 0;
+  if(!isfinite(x1) || !isfinite(y1) || !isfinite(x2) || !isfinite(y2)) return 1;
+  if(width<1) width=1;
+  double dx=x2-x1,dy=y2-y1,length=hypot(dx,dy);
+  if(!isfinite(length)) return 1;
+  if(!length && subpixel) return 1;
+  double ux=length?dx/length:1.0,uy=length?dy/length:0.0;
+  double half=width*0.5,cap=subpixel?0.0:0.5;
+  double phase=subpixel?0.0:0.5;
+  x1+=phase-ux*cap;y1+=phase-uy*cap;
+  x2+=phase+ux*cap;y2+=phase+uy*cap;
+  if(!length){x1-=half-cap;x2+=half-cap;}
+  double x[4]={x1-uy*half,x2-uy*half,x2+uy*half,x1+uy*half};
+  double y[4]={y1+ux*half,y2+ux*half,y2-ux*half,y1-ux*half};
+  uint32_t colours[4]={first,second,second,first};
+  for(unsigned i=0;i<4u;i++) gml_render_view_rotate_point(r,&x[i],&y[i]);
+  const unsigned corners[2][3]={{0,1,2},{0,2,3}};
+  GmlRenderCpuBackendTriangle triangles[2]={0};
+  for(unsigned i=0;i<2u;i++) for(unsigned v=0;v<3u;v++){
+    unsigned c=corners[i][v];double *vertex=triangles[i].vertex[v];
+    vertex[0]=x[c];vertex[1]=y[c];
+    vertex[2]=(colours[c]&255u)/255.0;vertex[3]=((colours[c]>>8)&255u)/255.0;
+    vertex[4]=((colours[c]>>16)&255u)/255.0;vertex[5]=r->alpha;
+  }
+  if(!resident_native_triangles(r,triangles,2,1))
+    gml_render_cpu_primitive_quad(r,x,y,colours,r->alpha);
+  return 1;
+}
+
 void gml_render_primitive_line(GmlRender *render,int x1,int y1,int x2,int y2,
                                uint32_t color,int width){
   if(resident_primitive_alpha_noop(render)) return;
+  if(world_view_line(render,x1,y1,x2,y2,color,color,width,0)) return;
   if(resident_line_function(render,x1,y1,x2,y2,color,color,width,0)) return;
   if(resident_axis_line(render,x1,y1,x2,y2,color,width)) return;
   if(resident_line_integer(render,x1,y1,x2,y2,color,color,width)) return;
@@ -1532,6 +1568,7 @@ void gml_render_primitive_line(GmlRender *render,int x1,int y1,int x2,int y2,
 void gml_render_primitive_line_color(GmlRender *render,int x1,int y1,int x2,int y2,
                                      uint32_t color1,uint32_t color2,int width){
   if(resident_primitive_alpha_noop(render)) return;
+  if(world_view_line(render,x1,y1,x2,y2,color1,color2,width,0)) return;
   if(resident_line_function(render,x1,y1,x2,y2,color1,color2,width,0)) return;
   if(color1==color2 && resident_axis_line(render,x1,y1,x2,y2,color1,width)) return;
   if(resident_line_integer(render,x1,y1,x2,y2,color1,color2,width)) return;
@@ -1544,6 +1581,7 @@ void gml_render_primitive_line_color_subpixel(GmlRender *render,
                                               uint32_t color1,uint32_t color2,
                                               int width){
   if(resident_primitive_alpha_noop(render)) return;
+  if(world_view_line(render,x1,y1,x2,y2,color1,color2,width,1)) return;
   if(resident_line_function(render,x1,y1,x2,y2,color1,color2,width,1)) return;
   if(resident_line_subpixel(render,x1,y1,x2,y2,color1,color2,width)) return;
   gml_render_cpu_line_color_subpixel(render,x1,y1,x2,y2,color1,color2,width);
