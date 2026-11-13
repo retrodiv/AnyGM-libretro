@@ -581,6 +581,37 @@ static int dense_struct_heap_roundtrip(void){
     memcpy(before+4,schema,sizeof schema);
   }
   if(ok){
+    stage="changed maps in a later snapshot";
+    for(int i=0;i<count && ok;i+=31){
+      GmlInstance *node=gml_struct_find(&source,(unsigned)gml_arr_get(heap,i).d);
+      GmlVal *value=node?gml_varmap_put(&node->vars,"value"):NULL;
+      ok=value!=NULL;
+      if(ok)*value=vreal(-i-1);
+      GmlVal *added=ok?gml_varmap_put(&node->vars,"added"):NULL;
+      ok=ok && added;
+      if(ok)*added=vint64(INT64_C(0x123456789abcdef));
+    }
+    size_t previous=written;
+    measured=ok?gml_vm_state_size(&source):0;
+    ok=ok && measured && measured<=capacity &&
+      gml_vm_state_save(&source,before,capacity,&written) && written==measured &&
+      (written!=previous || memcmp(before,after,written)) &&
+      gml_vm_state_load(&restored,before,written,&used) && used==written &&
+      gml_vm_state_save(&restored,after,capacity,&repeated) && repeated==written &&
+      !memcmp(before,after,written);
+    restored_heap=ok?gml_varmap_get(&restored.globals,"retained_heap"):NULL;
+    if(ok)ok=restored_heap && restored_heap->t==V_ARR;
+    for(int i=0;i<count && ok;i++){
+      GmlInstance *node=gml_struct_find(&restored,(unsigned)gml_arr_get(*restored_heap,i).d);
+      GmlVal *value=node?gml_varmap_get(&node->vars,"value"):NULL;
+      GmlVal *added=node?gml_varmap_get(&node->vars,"added"):NULL;
+      ok=value && value->t==V_REAL && value->d==(i%31?i:-i-1);
+      if(i%31)ok=ok && !added;
+      else ok=ok && added && added->t==V_REAL && added->number_kind==GML_NUM_INT64 &&
+        added->integer==INT64_C(0x123456789abcdef);
+    }
+  }
+  if(ok){
     stage="allocator order";
     GmlInstance *a=gml_struct_new(&source),*b=gml_struct_new(&restored);
     ok=a && b && a->id==b->id;

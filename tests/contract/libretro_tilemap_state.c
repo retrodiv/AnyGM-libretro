@@ -338,12 +338,16 @@ static int run_ds_case(int response){
   /* This neutral fixture has neither reordered instances nor array ownership. Validate both
    * trailers and every original object word before corrupting the count, not a property. */
   const size_t trailer_bytes=33; /* order, empty member names/ownership, local mode/request */
-  REQUIRE(vm_end>=object_bytes+trailer_bytes && vm_end<=saved_size &&
+  REQUIRE(vm_end>=4 && vm_end<=saved_size && !g_libretro.engine->vm.wait.broadcast_map &&
+          !memcmp(saved+vm_end-4,(const unsigned char[4]){0},4),
+          "verify empty parked broadcast owner after the request trailer");
+  size_t table_end=vm_end-4;
+  REQUIRE(table_end>=object_bytes+trailer_bytes && table_end<=saved_size &&
           !g_libretro.engine->vm.next_array_owner &&
           !g_libretro.engine->vm.pending_game_load &&
-          !memcmp(saved+vm_end-trailer_bytes,(const unsigned char[33]){0},trailer_bytes),
+          !memcmp(saved+table_end-trailer_bytes,(const unsigned char[33]){0},trailer_bytes),
           "locate VM object table before empty order and ownership trailers");
-  size_t object_at=vm_end-trailer_bytes-object_bytes;
+  size_t object_at=table_end-trailer_bytes-object_bytes;
   REQUIRE((uint32_t)read_word64(saved+object_at)==(uint32_t)g_libretro.engine->vm.n_objects,
           "verify original object-table count before corruption");
   for(int object=0;object<g_libretro.engine->vm.n_objects;object++){
