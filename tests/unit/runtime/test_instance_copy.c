@@ -283,10 +283,11 @@ static int copied_arrays_fork_on_named_writes(int mode,int cached){
   /* Two keyed bindings and one owned array occupy this fixture's exact trailer.
    * Malformed ownership must fail in a separate reader, without leaking partial
    * arrays or changing the still-live original VM. */
-  /* Verify both absent parked owners and absent video before locating the request. */
-  REQUIRE(written>=12 && !vm.wait.broadcast_map && !vm.wait.async_map &&
-          !memcmp(state+written-12,(const unsigned char[12]){0},12));
-  size_t ownership_end=written-12;
+  /* Verify absent parked owners, video and account requests before locating the request. */
+  REQUIRE(written>=16 && !vm.wait.broadcast_map && !vm.wait.async_map &&
+          !gml_builtin_account_picker_pending_count(&vm) &&
+          !memcmp(state+written-16,(const unsigned char[16]){0},16));
+  size_t ownership_end=written-16;
   REQUIRE(!vm.pending_game_load && ownership_end>=77 &&
           !memcmp(state+ownership_end-4,(const unsigned char[4]){0},4) &&
           state[ownership_end-5]==0 && copy_test_u64(state+ownership_end-77)==2);
@@ -378,9 +379,10 @@ static int argument_and_view_owners_survive_state(void){
   REQUIRE(resaved==written && !memcmp(state,again,written));
   /* Three lvalues, three arrays and one writable view occupy this exact fixture
    * trailer. Exercise every new selector plus the old-schema refusal. */
-  REQUIRE(written>=12 && !vm.wait.broadcast_map && !vm.wait.async_map &&
-          !memcmp(state+written-12,(const unsigned char[12]){0},12));
-  size_t ownership_end=written-12;
+  REQUIRE(written>=16 && !vm.wait.broadcast_map && !vm.wait.async_map &&
+          !gml_builtin_account_picker_pending_count(&vm) &&
+          !memcmp(state+written-16,(const unsigned char[16]){0},16));
+  size_t ownership_end=written-16;
   REQUIRE(!vm.pending_game_load && ownership_end>=137 &&
           !memcmp(state+ownership_end-4,(const unsigned char[4]){0},4) &&
           state[ownership_end-5]==0 && copy_test_u64(state+ownership_end-137)==3);

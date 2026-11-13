@@ -765,6 +765,54 @@ static int colliding_map_slots_roundtrip(void){
   gml_vm_free(&source);gml_vm_free(&restored);return ok;
 }
 
+/* Identical valid slots can share a wire record. A rejected definition must never become a
+ * reusable record, and a failed writer must not poison the next independent snapshot. */
+static int identical_slot_map_writer_boundaries(void){
+  GmlCode codes[2];memset(codes,0,sizeof codes);
+  codes[0].name="gml_Script_identical_slots_0";
+  codes[1].name="gml_Script_identical_slots_1";
+  GmlWin win={0};win.code=codes;win.n_code=2;
+  GmlVM source={0},restored={0};
+  int ok=!gml_vm_init(&source,&win,NULL) && !gml_vm_init(&restored,&win,NULL);
+  const char *key="retained_value";
+  GmlVarMap *first=ok?&source.code_static[0]:NULL;
+  GmlVarMap *second=ok?&source.code_static[1]:NULL;
+  GmlVal value=vint64(INT64_C(0x123456789abcdef));
+  if(ok){
+    source.code_static_init[0]=source.code_static_init[1]=1;
+    *gml_varmap_put(first,key)=value;
+    size_t bytes=(size_t)first->cap*sizeof(*first->slots);
+    GmlVarSlot *slots=malloc(bytes);
+    ok=slots!=NULL;
+    if(ok){
+      memcpy(slots,first->slots,bytes);
+      second->slots=slots;second->cap=first->cap;second->len=first->len;
+      ok=!memcmp(first->slots,second->slots,bytes);
+    }
+  }
+  size_t size=ok?gml_vm_state_size(&source):0,written=0,repeated=0,used=0;
+  unsigned char *before=malloc(size?size:1),*after=malloc(size?size:1);
+  ok=ok && size && before && after &&
+    gml_vm_state_save(&source,before,size,&written) && written==size;
+  if(ok){
+    GmlVal invalid=value;invalid.t=(GmlValType)4;
+    *gml_varmap_get(first,key)=invalid;
+    *gml_varmap_get(second,key)=invalid;
+    ok=!gml_vm_state_size(&source) &&
+      !gml_vm_state_save(&source,after,size,&repeated);
+    *gml_varmap_get(first,key)=value;
+    *gml_varmap_get(second,key)=value;
+  }
+  if(ok)ok=gml_vm_state_size(&source)==size &&
+    gml_vm_state_save(&source,after,size,&repeated) && repeated==size &&
+    !memcmp(before,after,size) &&
+    gml_vm_state_load(&restored,before,size,&used) && used==size &&
+    gml_vm_state_save(&restored,after,size,&repeated) && repeated==size &&
+    !memcmp(before,after,size);
+  if(!ok)fputs("identical slot records bypassed value rejection or changed canonical bytes\n",stderr);
+  free(before);free(after);gml_vm_free(&source);gml_vm_free(&restored);return ok;
+}
+
 static int array_zero_bits_roundtrip(void){
   GmlWin win={0}; GmlVM source={0},restored={0};
   int ok=!gml_vm_init(&source,&win,NULL) && !gml_vm_init(&restored,&win,NULL);
@@ -1030,6 +1078,7 @@ int main(void){
   if(!ds_owned_string_memo_roundtrip()) return 1;
   if(!repeated_map_heap_roundtrip(0) || !repeated_map_heap_roundtrip(1)) return 1;
   if(!colliding_map_slots_roundtrip()) return 1;
+  if(!identical_slot_map_writer_boundaries()) return 1;
   if(!boxed_object_state_roundtrip()) return 1;
   if(!dense_struct_heap_roundtrip()) return 1;
   if(!many_grids_roundtrip()) return 1;

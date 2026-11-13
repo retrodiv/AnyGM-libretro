@@ -338,11 +338,12 @@ static int run_ds_case(int response){
   /* This neutral fixture has neither reordered instances nor array ownership. Validate both
    * trailers and every original object word before corrupting the count, not a property. */
   const size_t trailer_bytes=33; /* order, empty member names/ownership, local mode/request */
-  REQUIRE(vm_end>=12 && vm_end<=saved_size && !g_libretro.engine->vm.wait.broadcast_map &&
+  REQUIRE(vm_end>=16 && vm_end<=saved_size && !g_libretro.engine->vm.wait.broadcast_map &&
           !g_libretro.engine->vm.wait.async_map &&
-          !memcmp(saved+vm_end-12,(const unsigned char[12]){0},12),
-          "verify absent parked owners and video after the request trailer");
-  size_t table_end=vm_end-12;
+          !gml_builtin_account_picker_pending_count(&g_libretro.engine->vm) &&
+          !memcmp(saved+vm_end-16,(const unsigned char[16]){0},16),
+          "verify absent parked owners, video and account requests after the request trailer");
+  size_t table_end=vm_end-16;
   REQUIRE(table_end>=object_bytes+trailer_bytes && table_end<=saved_size &&
           !g_libretro.engine->vm.next_array_owner &&
           !g_libretro.engine->vm.pending_game_load &&
