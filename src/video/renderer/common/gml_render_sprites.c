@@ -6316,12 +6316,14 @@ int gml_render_resident_view_sprite(GmlRender *r,int sprite,int subimg,
   alpha=fmax(0.0,fmin(1.0,alpha));
   double left=-record->originx,top=-record->originy;
   double width=record->w,height=record->h;
+  int source_opaque=record->runtime_opaque;
   if(!record->runtime_rgba){
     if(!record->frame) return 1;
     int page_id=record->frame[gml_render_runtime_frame_index(record,subimg)];
     if(page_id<0 || page_id>=r->n_tpag) return 1;
     GmlTpag *page=&r->tpag[page_id];
     left+=page->tx;top+=page->ty;width=page->tw;height=page->th;
+    source_opaque=page->scene_fully_opaque;
   }
   if(width<=0 || height<=0) return 1;
   double radians=remainder(rotation,360.0)*(M_PI/180.0);
@@ -6338,6 +6340,10 @@ int gml_render_resident_view_sprite(GmlRender *r,int sprite,int subimg,
   }
   GmlRenderSpritePosGeometry geometry;
   if(!gml_render_sprite_pos_geometry(r,mx,my,&geometry)) return 1;
+  if(gml_render_target_preserves_alpha(r) && (alpha<1.0 || !source_opaque)){
+    r->fb_opaque_known=r->fb_all_opaque=0;
+    if(r->fb==r->app_surface) r->app_surface_opaque=0;
+  }
   if(resident_positioned_quad_sprite(r,sprite,subimg,mx,my,alpha,colour,1)) return 1;
   gml_render_cpu_blit_view_sprite(r,sprite,subimg,mx,my,colour,alpha);
   return 1;

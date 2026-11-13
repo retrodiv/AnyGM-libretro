@@ -604,6 +604,16 @@ static void check_view_sprite_nonuniform_scale_and_mirroring(void){
          (frame[148*WIDTH+96]&0xFFFFFFu)==0x0000FFu &&
          (frame[148*WIDTH+103]&0xFFFFFFu)==0xFF0000u,
          "view sprite retains mirrored texture coordinates and extent");
+  for(unsigned i=0;i<WIDTH*HEIGHT;i++) frame[i]=0xFF000000u;
+  render.target_sp=1;
+  render.fb_opaque_known=render.fb_all_opaque=1;
+  gml_render_world_set_view_rotation(&render,90.0,100.0,50.0);
+  gml_draw_sprite_ext(&render,0,0,75,25,1,1,90,0xFFFFFFu,128.0/255.0);
+  expect((frame[148*WIDTH+96]>>24)==191u && !render.fb_opaque_known &&
+         !render.fb_all_opaque,
+         "partial-alpha view sprites invalidate opaque target certificates");
+  render.target_sp=0;
+  gml_render_world_set_view_rotation(&render,90.0,100.0,50.0);
   render.atlas=calloc(1,sizeof *render.atlas);
   render.tpag=calloc(1,sizeof *render.tpag);
   sprite->frame=calloc(1,sizeof *sprite->frame);
