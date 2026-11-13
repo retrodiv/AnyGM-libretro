@@ -728,6 +728,77 @@ static void check_view_surface_quad_contract(void){
   }
 }
 
+static void check_view_background_quad_contract(void){
+  GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,1u,1u,1u};
+  GmlRenderDrawOp op={.opcode=GML_RENDER_OP_TEXTURED_QUAD,.scene_family=GML_RENDER_SCENE_BACKGROUND,
+    .reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT,.source_count=1u,.sources=&source};
+  op.target.width=op.target.height=32;op.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  op.target.region=(GmlRenderRect){0,0,32,32};
+  GmlRenderQuad *q=&op.payload.quad;q->shape=GML_RENDER_QUAD_GENERAL;q->filtered_draw_alpha=1;
+  q->sampling=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_NEAREST,
+    GML_RENDER_EDGE_CLAMP_SUBIMAGE,{4,2,8,4},GML_RENDER_QUANTISE_VIEW_BACKGROUND,0u};
+  for(unsigned i=0;i<4u;i++){
+    q->x[i]=(i==1 || i==2)?8:4;q->y[i]=i>=2?8:6;
+    q->u[i]=(i==1 || i==2)?10.0/16:6.0/16;q->v[i]=i>=2?5.0/8:3.0/8;
+    q->corner_colour[i]=0xFFFFFFFFu;
+  }
+  GmlRenderDrawStateSnapshot state={.colour=0xFFFFFFFFu,.alpha=255u,.write_mask=15u,.sampler_count=1u,
+    .rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA,.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
+    .alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA,.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
+    .rgb_equation=GML_RENDER_BLEND_ADD,.alpha_equation=GML_RENDER_BLEND_ADD};
+  state.samplers[0]=q->sampling;
+  expect(gml_render_view_background_quad_valid(&op,&state,16,8),
+         "view background accepts selected UVs inside its own atlas rectangle");
+  for(unsigned i=0;i<4u;i++) q->x[i]=32-q->x[i];
+  q->sampling.filter=GML_RENDER_FILTER_HARDWARE_BILINEAR;state.samplers[0]=q->sampling;
+  expect(gml_render_view_background_quad_valid(&op,&state,16,8),
+         "view background retains mirrored hardware-filtered geometry");
+  for(unsigned test=0;test<8u;test++){
+    GmlRenderDrawOp invalid=op;GmlRenderDrawStateSnapshot broken=state;GmlRenderImageRef bad_source=source;
+    switch(test){
+      case 0:invalid.scene_family=GML_RENDER_SCENE_SURFACE;break;
+      case 1:bad_source.resource_class=GML_RENDER_RESOURCE_SURFACE;invalid.sources=&bad_source;break;
+      case 2:invalid.payload.quad.u[0]=0.0;break;
+      case 3:invalid.payload.quad.sampling.source_region.width=32;break;
+      case 4:invalid.payload.quad.sampling.quantisation=GML_RENDER_QUANTISE_VIEW_SURFACE;break;
+      case 5:broken.samplers[0].source_region.x=0;break;
+      case 6:invalid.payload.quad.x[2]+=1;break;
+      case 7:broken.source_palette.enabled=1;break;
+    }
+    expect(!gml_render_view_background_quad_valid(&invalid,&broken,16,8),
+           "view background rejects cross-family resources and malformed source geometry");
+  }
+}
+
+static void check_view_background_nonuniform_projection(void){
+  GmlRender render;reset_render(&render,24);
+  GmlBg background={.tpag=0};GmlAtlas atlas={0};GmlTpag page={0};
+  uint8_t rgba[8*4*4];
+  for(unsigned i=0;i<8u*4u;i++){
+    unsigned white=i%8>=2 && i%8<6 && i/8>=1 && i/8<3;
+    rgba[i*4u]=rgba[i*4u+1u]=white?255:0;rgba[i*4u+2u]=rgba[i*4u+3u]=255;
+  }
+  atlas.px=rgba;atlas.w=8;atlas.h=4;
+  page.sw=page.tw=page.bw=8;page.sh=page.th=page.bh=4;page.atlas=0;
+  render.bg=&background;render.n_bg=1;render.atlas=&atlas;render.n_atlas=1;
+  render.tpag=&page;render.n_tpag=1;
+  set_world_scale(&render,2,3);
+  gml_render_world_set_view_rotation(&render,90,100,50);
+  gml_draw_background(&render,0,75,25);
+  expect(covered_pixels()==192 && (frame[151*WIDTH+99]&0xFFFFFFu)==0x0000FFu &&
+         (frame[157*WIDTH+97]&0xFFFFFFu)==0xFFFFFFu,
+         "background atlas source rotates before nonuniform target scaling");
+  memset(frame,0,sizeof frame);
+  gml_draw_background_part_ext(&render,0,2,1,4,2,75,25,1,1,0x00FF00u,1);
+  expect(covered_pixels()==48 && (frame[151*WIDTH+99]&0xFFFFFFu)==0x00FF00u,
+         "background view part retains source selection and uniform tint");
+  memset(frame,0,sizeof frame);
+  gml_render_world_set_view_rotation(&render,45,100,HEIGHT/3.0);
+  gml_draw_background_tiled_ext(&render,0,1,2,-1,1,0xFFFFFFu,1,1,1);
+  expect(covered_pixels()==WIDTH*HEIGHT,
+         "background repeated cells cover the turned viewport under nonuniform scale and mirrors");
+}
+
 static void check_view_surface_nonuniform_projection(void){
   GmlRender render;GmlWin content={.bytecode=17};
   reset_render(&render,24);render.win=&content;
@@ -817,6 +888,8 @@ static void check_view_tiling_visible_corners(void){
 }
 
 int main(void){
+  check_view_background_quad_contract();
+  check_view_background_nonuniform_projection();
   check_view_tiling_visible_corners();
   check_view_sprite_nonuniform_scale_and_mirroring();
   check_view_surface_nonuniform_projection();

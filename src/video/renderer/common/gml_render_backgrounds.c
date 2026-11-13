@@ -247,7 +247,116 @@ static int resident_direct_background_nearest(GmlRender *r,int page_index,
     GML_RENDER_NEAREST_DIRECT_SNAP_RULE);
 }
 
+static int resident_view_background_quad(GmlRender *r,GmlTpag *page,
+  double sx,double sy,double sw,double sh,const double x[4],const double y[4],
+  uint32_t colour,double alpha){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  GmlRenderResourceSource source={0};
+  if(!r->win || !device || !r->resident_application_pass ||
+     !gml_render_scene_target_matches(r) || r->pending_presentation ||
+     r->classic_phase_scene_target || r->fog_flat || r->active_shader>=0 ||
+     r->alpha_test_enable || !r->alphablend || r->blendmode ||
+     r->blend_equation!=1 || r->blend_equation_alpha!=1 || r->color_write_mask>15u ||
+     r->rotated_batch_count || r->rotated_batch_building || alpha<=0.0 ||
+     page->atlas<0 || page->atlas>=r->n_atlas || page->sx<0 || page->sy<0 ||
+     !gml_render_atlas_scene_source_view(r,page->atlas,&source) ||
+     !source.borrowed_immutable || source.width>4096u || source.height>4096u ||
+     (uint64_t)page->sx+page->sw>source.width ||
+     (uint64_t)page->sy+page->sh>source.height) return 0;
+  if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
+  gml_render_flush_pending_fill(r);
+  GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+  if(!target || r->pending_fill) return 0;
+  GmlRenderImageRef image=gml_render_application_scene_next_image_ref(r,target);
+  if(image.content_version==UINT64_MAX) return 0;
+  GmlRenderDrawOp op={.opcode=GML_RENDER_OP_TEXTURED_QUAD,
+    .scene_family=GML_RENDER_SCENE_BACKGROUND,.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT,
+    .source_count=1u,.sources=&source.image};
+  op.target=(GmlRenderTargetRef){image,1u,(uint32_t)r->fbw,(uint32_t)r->fbh,
+    GML_RENDER_PIXEL_ARGB8888,{0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
+  op.target.image.content_version++;
+  GmlRenderQuad *q=&op.payload.quad;
+  q->shape=GML_RENDER_QUAD_GENERAL;q->filtered_draw_alpha=alpha;
+  q->sampling=(GmlRenderSamplingPolicy){r->interp?GML_RENDER_FILTER_HARDWARE_BILINEAR:GML_RENDER_FILTER_NEAREST,
+    GML_RENDER_EDGE_CLAMP_SUBIMAGE,{page->sx,page->sy,(uint32_t)page->sw,(uint32_t)page->sh},
+    GML_RENDER_QUANTISE_VIEW_BACKGROUND,0u};
+  uint32_t tint=((uint32_t)lround(alpha*255.0)<<24)|
+    ((colour&255u)<<16)|(colour&0xFF00u)|((colour>>16)&255u);
+  for(unsigned i=0;i<4u;i++){
+    q->x[i]=x[i];q->y[i]=y[i];q->corner_colour[i]=tint;
+    q->u[i]=(page->sx+sx-page->tx+((i==1u || i==2u)?sw:0.0))/source.width;
+    q->v[i]=(page->sy+sy-page->ty+(i>=2u?sh:0.0))/source.height;
+  }
+  GmlRenderDrawStateSnapshot state={.colour=0xFFFFFFFFu,.alpha=255u,
+    .write_mask=r->color_write_mask,.sampler_count=1u,
+    .rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA,
+    .rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
+    .alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA,
+    .alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
+    .rgb_equation=GML_RENDER_BLEND_ADD,.alpha_equation=GML_RENDER_BLEND_ADD};
+  if(!gml_render_target_preserves_alpha(r)){
+    state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+    state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+  }
+  state.samplers[0]=q->sampling;
+  return gml_render_view_background_quad_valid(&op,&state,source.width,source.height) &&
+    gml_render_application_scene_enqueue(r,&op,&state,&source);
+}
+
+static int view_background_part(GmlRender *r,int bg,double sx,double sy,double sw,double sh,
+  double x,double y,double xs,double ys,uint32_t colour,double alpha){
+  if(!gml_render_view_rotation_active(r) || gml_d3_is_active(r)) return 0;
+  if(bg<0 || bg>=r->n_bg || !isfinite(sx) || !isfinite(sy) ||
+     !isfinite(sw) || !isfinite(sh) || !isfinite(x) || !isfinite(y) ||
+     !isfinite(xs) || !isfinite(ys) || !isfinite(alpha) || sw<=0 || sh<=0 ||
+     xs==0.0 || ys==0.0 || fabs(sx)>INT_MAX/2 || fabs(sy)>INT_MAX/2 ||
+     sw>INT_MAX/2 || sh>INT_MAX/2) return 1;
+  int ti=r->bg[bg].tpag;
+  if(ti<0 || ti>=r->n_tpag) return 1;
+  GmlTpag *page=&r->tpag[ti],selection;
+  int source_x=0,source_y=0;
+  double x0,y0,x1,y1;
+  if(page->sw<=0 || page->sh<=0 ||
+     !gml_render_tpag_part_view(page,sx,sy,sw,sh,&selection,&source_x,&source_y,
+                               &x0,&y0,&x1,&y1)) return 1;
+  if(alpha<=0.0 && !(r->alphablend &&
+     gml_render_blend_uses_destination_colour(r->blendmode))) return 1;
+  alpha=fmin(1.0,fmax(0.0,alpha));
+  x+=((selection.sw==1?x0:source_x)-sx)*xs;
+  y+=((selection.sh==1?y0:source_y)-sy)*ys;
+  double width=selection.sw==1?x1-x0:selection.sw;
+  double height=selection.sh==1?y1-y0:selection.sh;
+  double px[4],py[4],min_x=INFINITY,min_y=INFINITY,max_x=-INFINITY,max_y=-INFINITY;
+  for(unsigned i=0;i<4u;i++){
+    px[i]=x+((i==1u || i==2u)?width*xs:0.0);py[i]=y+(i>=2u?height*ys:0.0);
+    gml_render_draw_map_point(r,&px[i],&py[i]);
+    px[i]-=r->cam_x;py[i]-=r->cam_y;
+    gml_render_view_rotate_point(r,&px[i],&py[i]);
+    if(!isfinite(px[i]) || !isfinite(py[i])) return 1;
+    min_x=fmin(min_x,px[i]);max_x=fmax(max_x,px[i]);
+    min_y=fmin(min_y,py[i]);max_y=fmax(max_y,py[i]);
+  }
+  double shift=r->classic?-.5:0.0;
+  if(max_x+shift<=0 || max_y+shift<=0 || min_x+shift>=r->fbw || min_y+shift>=r->fbh) return 1;
+  gml_render_warm_bg(r,bg);
+  if(!resident_view_background_quad(r,page,source_x,source_y,selection.sw,selection.sh,
+                                    px,py,colour,alpha)){
+    double mapped_x[4],mapped_y[4];
+    for(unsigned i=0;i<4u;i++){mapped_x[i]=px[i]+r->cam_x;mapped_y[i]=py[i]+r->cam_y;}
+    gml_render_cpu_blit_view_background(r,page,source_x,source_y,selection.sw,selection.sh,
+                                       mapped_x,mapped_y,colour,alpha);
+  }
+  r->fb_opaque_known=0;
+  if(r->fb==r->app_surface) r->app_surface_opaque=0;
+  return 1;
+}
+
 void gml_draw_background(GmlRender *r, int bg, double x, double y){
+  if(gml_render_view_rotation_active(r) && bg>=0 && bg<r->n_bg){
+    int ti=r->bg[bg].tpag;
+    if(ti>=0 && ti<r->n_tpag && view_background_part(r,bg,0,0,
+       r->tpag[ti].bw,r->tpag[ti].bh,x,y,1,1,0xFFFFFFu,r->alpha)) return;
+  }
   gml_render_draw_map_point(r,&x,&y);
   if(bg<0||bg>=r->n_bg) return;
   int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
@@ -285,6 +394,7 @@ void gml_draw_background_stretched(GmlRender *r, int bg, double x, double y, dou
 
 void gml_draw_background_part_ext(GmlRender *r, int bg, double sx, double sy, double sw, double sh,
                                   double x, double y, double xs, double ys, uint32_t color, double alpha){
+  if(view_background_part(r,bg,sx,sy,sw,sh,x,y,xs,ys,color,alpha)) return;
   gml_render_draw_map_point(r,&x,&y);
   gml_render_draw_map_scale(r,&xs,&ys);
   if(bg<0||bg>=r->n_bg) return;
@@ -442,6 +552,11 @@ void gml_draw_background_tile(GmlRender *r,int bg,
 /* draw_background[_tiled]_ext: as above + xscale/yscale + blend colour + alpha. */
 void gml_draw_background_ext(GmlRender *r, int bg, double x, double y, double xs, double ys,
                             uint32_t color, double alpha){
+  if(gml_render_view_rotation_active(r) && bg>=0 && bg<r->n_bg){
+    int ti=r->bg[bg].tpag;
+    if(ti>=0 && ti<r->n_tpag && view_background_part(r,bg,0,0,
+       r->tpag[ti].bw,r->tpag[ti].bh,x,y,xs,ys,color,alpha)) return;
+  }
   gml_render_draw_map_point(r,&x,&y);
   gml_render_draw_map_scale(r,&xs,&ys);
   if(bg<0||bg>=r->n_bg) return;
@@ -531,6 +646,28 @@ void gml_draw_room_backgrounds(GmlRender *r, uint32_t bg_ptr, int want_fg){
  * horizontally (e.g. a ground strip) must draw a single row, not fill the screen vertically. */
 static void do_bg_tiled_ext(GmlRender *r, int bg, double x, double y, double xs, double ys,
                             uint32_t color, double alpha, int htiled, int vtiled){
+  if(gml_render_view_rotation_active(r) && !gml_d3_is_active(r)){
+    if(bg<0 || bg>=r->n_bg || !isfinite(xs) || !isfinite(ys) || !isfinite(alpha) ||
+       (alpha<=0 && !(r->alphablend &&
+         gml_render_blend_uses_destination_colour(r->blendmode)))) return;
+    int ti=r->bg[bg].tpag;
+    if(ti<0 || ti>=r->n_tpag) return;
+    GmlTpag *page=&r->tpag[ti];
+    double mx=1,my=1,ax=x,ay=y;
+    gml_render_draw_map_scale(r,&mx,&my);gml_render_draw_map_point(r,&ax,&ay);
+    ax-=r->cam_x;ay-=r->cam_y;
+    if(!r->classic){ax=floor(ax);ay=floor(ay);}
+    GmlRenderViewTileGrid grid;
+    if(mx<=0 || my<=0 || !gml_render_view_tile_grid(r,ax,ay,
+         page->bw*fabs(xs*mx),page->bh*fabs(ys*my),&grid)) return;
+    if(!htiled){grid.x=ax;grid.columns=1;}
+    if(!vtiled){grid.y=ay;grid.rows=1;}
+    for(int64_t row=0;row<grid.rows;row++) for(int64_t col=0;col<grid.columns;col++)
+      view_background_part(r,bg,0,0,page->bw,page->bh,
+        (grid.x+col*grid.width+r->cam_x)/mx,(grid.y+row*grid.height+r->cam_y)/my,
+        xs,ys,color,alpha);
+    return;
+  }
   gml_render_draw_map_point(r,&x,&y);
   gml_render_draw_map_scale(r,&xs,&ys);
   if(bg<0||bg>=r->n_bg) return;

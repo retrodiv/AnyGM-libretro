@@ -7304,8 +7304,9 @@ static void blit_sprite_general_coloured_impl(GmlRender *r, GmlSprite *sprite,
                                                   const uint32_t corner_colour[4],
                                                   double alpha,
                                                   const double placed_x[4],
-                                                  const double placed_y[4]){
-  if(!r || !r->fb || !sprite || !corner_colour || sprite->n_frames<=0 ||
+                                                  const double placed_y[4],
+                                                  const GmlTpag *background_page){
+  if(!r || !r->fb || (!background_page && (!sprite || sprite->n_frames<=0)) || !corner_colour ||
      !isfinite(sx) || !isfinite(sy) || !isfinite(sw) || !isfinite(sh) ||
      !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
      !isfinite(rotation) || !isfinite(alpha) ||
@@ -7314,15 +7315,18 @@ static void blit_sprite_general_coloured_impl(GmlRender *r, GmlSprite *sprite,
   const uint8_t *rgba=NULL;
   int stride=0,offset_x=0,offset_y=0,source_width=0,source_height=0;
   double logical_x=0.0,logical_y=0.0;
-  if(sprite->runtime_rgba){
+  if(!background_page && sprite->runtime_rgba){
     rgba=runtime_frame_rgba(sprite,subimg);
     stride=source_width=sprite->w;
     source_height=sprite->h;
-  } else if(sprite->frame){
-    int frame=gml_render_runtime_frame_index(sprite,subimg);
-    int page_index=sprite->frame[frame];
-    if(page_index<0 || page_index>=r->n_tpag) return;
-    GmlTpag *page=&r->tpag[page_index];
+  } else if(background_page || sprite->frame){
+    const GmlTpag *page=background_page;
+    if(!page){
+      int frame=gml_render_runtime_frame_index(sprite,subimg);
+      int page_index=sprite->frame[frame];
+      if(page_index<0 || page_index>=r->n_tpag) return;
+      page=&r->tpag[page_index];
+    }
     if(page->atlas<0 || page->atlas>=r->n_atlas ||
        !atlas_pixels(r,page->atlas)) return;
     GmlAtlas *atlas=&r->atlas[page->atlas];
@@ -7440,7 +7444,7 @@ void gml_render_cpu_blit_sprite_general_coloured(GmlRender *r,GmlSprite *sprite,
   GmlRenderDispatchCpuScope scope;
   gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_SPRITE);
   blit_sprite_general_coloured_impl(r,sprite,subimg,sx,sy,sw,sh,x,y,xs,ys,rotation,
-                                    colour,alpha,NULL,NULL);
+                                    colour,alpha,NULL,NULL,NULL);
   gml_render_dispatch_cpu_scope_end(r,&scope);
 }
 
@@ -7451,7 +7455,19 @@ void gml_render_cpu_blit_view_sprite_region(GmlRender *r,GmlSprite *sprite,int s
   GmlRenderDispatchCpuScope scope;
   gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_SPRITE);
   blit_sprite_general_coloured_impl(r,sprite,subimg,sx,sy,sw,sh,0.0,0.0,1.0,1.0,
-                                    rotation,colour,alpha,x,y);
+                                    rotation,colour,alpha,x,y,NULL);
+  gml_render_dispatch_cpu_scope_end(r,&scope);
+}
+
+void gml_render_cpu_blit_view_background(GmlRender *r,const GmlTpag *page,
+  double sx,double sy,double sw,double sh,const double x[4],const double y[4],
+  uint32_t colour,double alpha){
+  if(!page || !gml_render_cpu_draw_barrier(r)) return;
+  GmlRenderDispatchCpuScope scope;
+  const uint32_t corners[4]={colour,colour,colour,colour};
+  gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_BACKGROUND);
+  blit_sprite_general_coloured_impl(r,NULL,0,sx,sy,sw,sh,0,0,1,1,0,
+                                    corners,alpha,x,y,page);
   gml_render_dispatch_cpu_scope_end(r,&scope);
 }
 
