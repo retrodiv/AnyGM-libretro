@@ -1275,7 +1275,9 @@ static int parse_primary(Compiler *c){
   if(c->lex.tok.kind==TOK_ID){
     char name[128]; snprintf(name,sizeof(name),"%s",c->lex.tok.text); lx_next(&c->lex);
     if(eat(c,"(")){
-      if(!strcmp(name,"ord") && c->lex.tok.kind==TOK_STR){
+      /* Keep the byte-sized ASCII fold; Unicode literals use the shared runtime conversion. */
+      if(!strcmp(name,"ord") && c->lex.tok.kind==TOK_STR &&
+         (unsigned char)c->lex.tok.text[0]<0x80){
         unsigned char ch=(unsigned char)c->lex.tok.text[0];
         lx_next(&c->lex);
         if(!need(c,")")) return 0;
