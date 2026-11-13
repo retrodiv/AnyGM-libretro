@@ -121,6 +121,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
   native_uv=quad->shape==GML_RENDER_QUAD_GENERAL &&
     (quad->sampling.quantisation==GML_RENDER_QUANTISE_VIEW_SURFACE ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_VIEW_BACKGROUND ||
+     quad->sampling.quantisation==GML_RENDER_QUANTISE_VIEW_TILE ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION ||
      (op->scene_family==GML_RENDER_SCENE_SURFACE &&

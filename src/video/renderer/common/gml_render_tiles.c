@@ -31,6 +31,15 @@ static int cmp_tile_depth(const void *a, const void *b){
 }
 /* blit a single tile: a sub-rect (sx,sy,w,h) of background/tileset `def` at room (x,y). */
 void gml_draw_tile(GmlRender *r, int def, int sx, int sy, int w, int h, double x, double y){
+  if(gml_render_view_rotation_active(r) && !gml_d3_is_active(r) && def>=0 && def<r->n_bg){
+    int ti=r->bg[def].tpag;
+    if(ti>=0 && ti<r->n_tpag){
+      GmlTpag *page=&r->tpag[ti];
+      gml_draw_background_tile(r,def,(double)sx+page->tx,(double)sy+page->ty,
+                               w,h,x,y,1,1,0,0,0,0xFFFFFFu,1);
+      return;
+    }
+  }
   gml_render_draw_map_point(r,&x,&y);
   double draw_xscale=1.0,draw_yscale=1.0;
   gml_render_draw_map_scale(r,&draw_xscale,&draw_yscale);
@@ -108,6 +117,10 @@ void gml_draw_room_tiles(GmlRender *r, uint32_t tile_ptr){
     if(t->def<0 || t->def>=r->n_bg) continue;
     int ti=r->bg[t->def].tpag; if(ti<0 || ti>=r->n_tpag) continue;
     GmlTpag *bt=&r->tpag[ti];
+    if(gml_render_view_rotation_active(r) && !gml_d3_is_active(r)){
+      gml_draw_tile(r,t->def,t->sx,t->sy,t->w,t->h,t->x,t->y);
+      continue;
+    }
     if(r->classic_phase_resource){
       GmlTpag view=*bt;
       view.sx+=t->sx;view.sy+=t->sy;view.sw=t->w;view.sh=t->h;

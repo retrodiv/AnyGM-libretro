@@ -768,6 +768,43 @@ static void check_view_background_quad_contract(void){
     expect(!gml_render_view_background_quad_valid(&invalid,&broken,16,8),
            "view background rejects cross-family resources and malformed source geometry");
   }
+  op.scene_family=GML_RENDER_SCENE_TILE;
+  q->sampling.quantisation=GML_RENDER_QUANTISE_VIEW_TILE;state.samplers[0]=q->sampling;
+  expect(gml_render_view_tile_quad_valid(&op,&state,16,8) &&
+         !gml_render_view_background_quad_valid(&op,&state,16,8),
+         "view tile has its own typed atlas admission and hardware sampling");
+  q->sampling.filter=GML_RENDER_FILTER_NEAREST;state.samplers[0]=q->sampling;
+  expect(gml_render_view_tile_quad_valid(&op,&state,16,8),
+         "view tile retains nearest UV admission for mirrored geometry");
+  GmlRenderDrawOp invalid=op;
+  invalid.scene_family=GML_RENDER_SCENE_BACKGROUND;
+  expect(!gml_render_view_tile_quad_valid(&invalid,&state,16,8),
+         "view tile rejects a background-family packet");
+  invalid=op;invalid.payload.quad.v[0]=0;
+  expect(!gml_render_view_tile_quad_valid(&invalid,&state,16,8),
+         "view tile rejects UVs outside the source crop");
+}
+
+static void check_view_world_visible_bounds(void){
+  GmlRender render;reset_render(&render,24);
+  render.fbh=render.base_fbh=150;render.cam_x=14;render.cam_y=27;
+  set_world_scale(&render,2,3);
+  gml_render_world_set_view_rotation(&render,90,100,50);
+  double x,y,width,height;
+  expect(gml_render_world_view(&render,&x,&y,&width,&height) &&
+         fabs(x-32)<1e-10 && fabs(y+16)<1e-10 &&
+         fabs(width-50)<1e-10 && fabs(height-100)<1e-10,
+         "quarter-turn visibility converts inverse target bounds into authored world units");
+  gml_render_world_set_view_rotation(&render,45,100,50);
+  double extent=150.0/sqrt(2.0);
+  expect(gml_render_world_view(&render,&x,&y,&width,&height) &&
+         fabs(x-(57-extent*.5))<1e-10 && fabs(y-(34-extent*.5))<1e-10 &&
+         fabs(width-extent)<1e-10 && fabs(height-extent)<1e-10,
+         "diagonal visibility covers cells beyond the axis camera rectangle");
+  render.target_sp++;
+  expect(gml_render_world_view(&render,&x,&y,&width,&height) &&
+         x==7 && y==9 && width==100 && height==50,
+         "independent target retains the established unturned world query");
 }
 
 static void check_view_background_nonuniform_projection(void){
@@ -797,6 +834,28 @@ static void check_view_background_nonuniform_projection(void){
   gml_draw_background_tiled_ext(&render,0,1,2,-1,1,0xFFFFFFu,1,1,1);
   expect(covered_pixels()==WIDTH*HEIGHT,
          "background repeated cells cover the turned viewport under nonuniform scale and mirrors");
+  gml_render_world_set_view_rotation(&render,90,100,50);
+  for(unsigned flags=0;flags<8u;flags++) for(unsigned signs=0;signs<4u;signs++){
+    memset(frame,0,sizeof frame);
+    double xs=signs&1u?-1:1,ys=signs&2u?-1:1;
+    gml_draw_background_tile(&render,0,2,1,4,2,75,25,xs,ys,
+                             flags&1u,flags&2u,flags&4u,0x00FF00u,1);
+    int x0,y0,x1,y1;covered_bounds(&x0,&y0,&x1,&y1);
+    int expected_x=(flags&4u) || ys>0?96:100;
+    int expected_y=(flags&4u) || xs>0?150:138;
+    expect(covered_pixels()==48 && x0==expected_x && y0==expected_y &&
+           x1==x0+3 && y1==y0+11 && (frame[y0*WIDTH+x0]&0xFFFFFFu)==0x00FF00u,
+           "non-square view tiles retain all flag/signed-axis footprints before nonuniform projection");
+  }
+  memset(frame,0,sizeof frame);
+  gml_render_world_set_view_rotation(&render,45,100,HEIGHT/3.0);
+  for(unsigned row=0;row<35u;row++) for(unsigned col=0;col<18u;col++){
+    unsigned flags=(col+3u*row)%8u;
+    gml_draw_background_tile(&render,0,0,0,8,4,-32+8*(int)col,-40+4*(int)row,1,1,
+                             flags&1u,flags&2u,flags&4u,0xFFFFFFu,1);
+  }
+  expect(covered_pixels()==WIDTH*HEIGHT,
+         "adjacent transformed tiles retain opaque coverage at shared mirrored source edges");
 }
 
 static void check_view_surface_nonuniform_projection(void){
@@ -888,6 +947,7 @@ static void check_view_tiling_visible_corners(void){
 }
 
 int main(void){
+  check_view_world_visible_bounds();
   check_view_background_quad_contract();
   check_view_background_nonuniform_projection();
   check_view_tiling_visible_corners();

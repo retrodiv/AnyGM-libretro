@@ -317,6 +317,14 @@ int gml_render_world_view(const GmlRender *r,double *x,double *y,
   if(!r) return 0;
   double scale_x=r->world_transform_active && r->world_scale_x>0.0 ? r->world_scale_x : 1.0;
   double scale_y=r->world_transform_active && r->world_scale_y>0.0 ? r->world_scale_y : 1.0;
+  double left,top,extent_x,extent_y;
+  if(gml_render_view_visible_bounds(r,&left,&top,&extent_x,&extent_y)){
+    if(x) *x=(left+r->cam_x)/scale_x;
+    if(y) *y=(top+r->cam_y)/scale_y;
+    if(width) *width=extent_x/scale_x;
+    if(height) *height=extent_y/scale_y;
+    return 1;
+  }
   if(x) *x=r->cam_x/scale_x;
   if(y) *y=r->cam_y/scale_y;
   if(width) *width=(double)r->fbw/scale_x;

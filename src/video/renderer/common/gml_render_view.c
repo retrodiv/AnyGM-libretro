@@ -41,11 +41,9 @@ void gml_render_view_rotate_point(const GmlRender *r,double *x,double *y){
   *y=r->view_centre_y+(r->view_sine*dx+r->view_cosine*dy)*sy;
 }
 
-int gml_render_view_tile_grid(const GmlRender *r,double x,double y,
-                             double width,double height,GmlRenderViewTileGrid *grid){
-  if(!grid || !gml_render_view_rotation_active(r) || r->fbw<=0 || r->fbh<=0 ||
-     !isfinite(x) || !isfinite(y) || !isfinite(width) || !isfinite(height) ||
-     width<=0.0 || height<=0.0) return 0;
+int gml_render_view_visible_bounds(const GmlRender *r,double *x,double *y,
+                                    double *width,double *height){
+  if(!gml_render_view_rotation_active(r) || r->fbw<=0 || r->fbh<=0) return 0;
   double sx=r->world_transform_active?r->world_scale_x:1.0;
   double sy=r->world_transform_active?r->world_scale_y:1.0;
   if(!isfinite(sx) || !isfinite(sy) || sx<=0.0 || sy<=0.0) return 0;
@@ -59,6 +57,21 @@ int gml_render_view_tile_grid(const GmlRender *r,double x,double y,
     min_x=fmin(min_x,px);min_y=fmin(min_y,py);
     max_x=fmax(max_x,px);max_y=fmax(max_y,py);
   }
+  if(x) *x=min_x;
+  if(y) *y=min_y;
+  if(width) *width=max_x-min_x;
+  if(height) *height=max_y-min_y;
+  return 1;
+}
+
+int gml_render_view_tile_grid(const GmlRender *r,double x,double y,
+                             double width,double height,GmlRenderViewTileGrid *grid){
+  if(!grid || !gml_render_view_rotation_active(r) || r->fbw<=0 || r->fbh<=0 ||
+     !isfinite(x) || !isfinite(y) || !isfinite(width) || !isfinite(height) ||
+     width<=0.0 || height<=0.0) return 0;
+  double min_x,min_y,visible_width,visible_height;
+  if(!gml_render_view_visible_bounds(r,&min_x,&min_y,&visible_width,&visible_height)) return 0;
+  double max_x=min_x+visible_width,max_y=min_y+visible_height;
   /* Reduce distant phases before indexing. Integer counters cannot stall when
    * a floating-point increment is smaller than the original supplied anchor. */
   double phase_x=fmod(x,width),phase_y=fmod(y,height);

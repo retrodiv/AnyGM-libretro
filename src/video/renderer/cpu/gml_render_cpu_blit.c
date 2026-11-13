@@ -7305,7 +7305,7 @@ static void blit_sprite_general_coloured_impl(GmlRender *r, GmlSprite *sprite,
                                                   double alpha,
                                                   const double placed_x[4],
                                                   const double placed_y[4],
-                                                  const GmlTpag *background_page){
+                                                  const GmlTpag *background_page,int tile_edges){
   if(!r || !r->fb || (!background_page && (!sprite || sprite->n_frames<=0)) || !corner_colour ||
      !isfinite(sx) || !isfinite(sy) || !isfinite(sw) || !isfinite(sh) ||
      !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
@@ -7392,6 +7392,12 @@ static void blit_sprite_general_coloured_impl(GmlRender *r, GmlSprite *sprite,
                               tu[triangle],tv[triangle],&u,&v);
     if(!hit) continue;
     double source_x=sx+u*sw,source_y=sy+v*sh;
+    if(tile_edges){
+      /* Closed triangle coverage may include the last source edge of both
+       * neighbouring mirrored tiles. Sampling that edge clamps to its texel. */
+      source_x=fmax(sx,fmin(nextafter(sx+sw,sx),source_x));
+      source_y=fmax(sy,fmin(nextafter(sy+sh,sy),source_y));
+    }
     if(source_x<logical_x || source_y<logical_y ||
        source_x>=logical_x+source_width ||
        source_y>=logical_y+source_height) continue;
@@ -7444,7 +7450,7 @@ void gml_render_cpu_blit_sprite_general_coloured(GmlRender *r,GmlSprite *sprite,
   GmlRenderDispatchCpuScope scope;
   gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_SPRITE);
   blit_sprite_general_coloured_impl(r,sprite,subimg,sx,sy,sw,sh,x,y,xs,ys,rotation,
-                                    colour,alpha,NULL,NULL,NULL);
+                                    colour,alpha,NULL,NULL,NULL,0);
   gml_render_dispatch_cpu_scope_end(r,&scope);
 }
 
@@ -7455,19 +7461,23 @@ void gml_render_cpu_blit_view_sprite_region(GmlRender *r,GmlSprite *sprite,int s
   GmlRenderDispatchCpuScope scope;
   gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_SPRITE);
   blit_sprite_general_coloured_impl(r,sprite,subimg,sx,sy,sw,sh,0.0,0.0,1.0,1.0,
-                                    rotation,colour,alpha,x,y,NULL);
+                                    rotation,colour,alpha,x,y,NULL,0);
   gml_render_dispatch_cpu_scope_end(r,&scope);
 }
 
-void gml_render_cpu_blit_view_background(GmlRender *r,const GmlTpag *page,
+void gml_render_cpu_blit_view_atlas(GmlRender *r,const GmlTpag *page,
   double sx,double sy,double sw,double sh,const double x[4],const double y[4],
-  uint32_t colour,double alpha){
-  if(!page || !gml_render_cpu_draw_barrier(r)) return;
+  uint32_t colour,double alpha,GmlRenderSceneFamily family){
+  if(!page || (family!=GML_RENDER_SCENE_BACKGROUND && family!=GML_RENDER_SCENE_TILE) ||
+     !gml_render_cpu_draw_barrier(r)) return;
   GmlRenderDispatchCpuScope scope;
   const uint32_t corners[4]={colour,colour,colour,colour};
-  gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_BACKGROUND);
+  gml_render_dispatch_cpu_scope_begin(r,&scope,family);
+  int saved_filter=r->interp;
+  if(family==GML_RENDER_SCENE_TILE && r->classic) r->interp=0;
   blit_sprite_general_coloured_impl(r,NULL,0,sx,sy,sw,sh,0,0,1,1,0,
-                                    corners,alpha,x,y,page);
+                                    corners,alpha,x,y,page,family==GML_RENDER_SCENE_TILE);
+  r->interp=saved_filter;
   gml_render_dispatch_cpu_scope_end(r,&scope);
 }
 

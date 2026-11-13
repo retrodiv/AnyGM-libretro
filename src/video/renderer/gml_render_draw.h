@@ -210,7 +210,8 @@ enum {
   GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION=26u,
   /* Selected-view surface quads carry native UVs, including rendered textures. */
   GML_RENDER_QUANTISE_VIEW_SURFACE=27u,
-  GML_RENDER_QUANTISE_VIEW_BACKGROUND=28u
+  GML_RENDER_QUANTISE_VIEW_BACKGROUND=28u,
+  GML_RENDER_QUANTISE_VIEW_TILE=29u
 };
 
 /* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors
@@ -541,6 +542,8 @@ int gml_render_native_textured_triangle_valid(const GmlRenderDrawOp *operation);
 int gml_render_view_surface_quad_valid(const GmlRenderDrawOp *operation,
   const GmlRenderDrawStateSnapshot *state,uint32_t source_width,uint32_t source_height);
 int gml_render_view_background_quad_valid(const GmlRenderDrawOp *operation,
+  const GmlRenderDrawStateSnapshot *state,uint32_t source_width,uint32_t source_height);
+int gml_render_view_tile_quad_valid(const GmlRenderDrawOp *operation,
   const GmlRenderDrawStateSnapshot *state,uint32_t source_width,uint32_t source_height);
 int gml_render_textured_vertex_row_valid(const GmlRenderDrawOp *operation);
 

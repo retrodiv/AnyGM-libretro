@@ -249,10 +249,11 @@ static int resident_direct_background_nearest(GmlRender *r,int page_index,
 
 static int resident_view_background_quad(GmlRender *r,GmlTpag *page,
   double sx,double sy,double sw,double sh,const double x[4],const double y[4],
-  uint32_t colour,double alpha){
+  uint32_t colour,double alpha,GmlRenderSceneFamily family){
   const GmlRenderDeviceServices *device=gml_render_device(r);
   GmlRenderResourceSource source={0};
-  if(!r->win || !device || !r->resident_application_pass ||
+  if((family!=GML_RENDER_SCENE_BACKGROUND && family!=GML_RENDER_SCENE_TILE) ||
+     !r->win || !device || !r->resident_application_pass ||
      !gml_render_scene_target_matches(r) || r->pending_presentation ||
      r->classic_phase_scene_target || r->fog_flat || r->active_shader>=0 ||
      r->alpha_test_enable || !r->alphablend || r->blendmode ||
@@ -270,16 +271,17 @@ static int resident_view_background_quad(GmlRender *r,GmlTpag *page,
   GmlRenderImageRef image=gml_render_application_scene_next_image_ref(r,target);
   if(image.content_version==UINT64_MAX) return 0;
   GmlRenderDrawOp op={.opcode=GML_RENDER_OP_TEXTURED_QUAD,
-    .scene_family=GML_RENDER_SCENE_BACKGROUND,.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT,
+    .scene_family=family,.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT,
     .source_count=1u,.sources=&source.image};
   op.target=(GmlRenderTargetRef){image,1u,(uint32_t)r->fbw,(uint32_t)r->fbh,
     GML_RENDER_PIXEL_ARGB8888,{0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
   op.target.image.content_version++;
   GmlRenderQuad *q=&op.payload.quad;
   q->shape=GML_RENDER_QUAD_GENERAL;q->filtered_draw_alpha=alpha;
-  q->sampling=(GmlRenderSamplingPolicy){r->interp?GML_RENDER_FILTER_HARDWARE_BILINEAR:GML_RENDER_FILTER_NEAREST,
+  q->sampling=(GmlRenderSamplingPolicy){r->interp && !(family==GML_RENDER_SCENE_TILE && r->classic)
+      ?GML_RENDER_FILTER_HARDWARE_BILINEAR:GML_RENDER_FILTER_NEAREST,
     GML_RENDER_EDGE_CLAMP_SUBIMAGE,{page->sx,page->sy,(uint32_t)page->sw,(uint32_t)page->sh},
-    GML_RENDER_QUANTISE_VIEW_BACKGROUND,0u};
+    family==GML_RENDER_SCENE_TILE?GML_RENDER_QUANTISE_VIEW_TILE:GML_RENDER_QUANTISE_VIEW_BACKGROUND,0u};
   uint32_t tint=((uint32_t)lround(alpha*255.0)<<24)|
     ((colour&255u)<<16)|(colour&0xFF00u)|((colour>>16)&255u);
   for(unsigned i=0;i<4u;i++){
@@ -299,7 +301,9 @@ static int resident_view_background_quad(GmlRender *r,GmlTpag *page,
     state.alpha_source_factor=GML_RENDER_BLEND_ONE;
   }
   state.samplers[0]=q->sampling;
-  return gml_render_view_background_quad_valid(&op,&state,source.width,source.height) &&
+  return (family==GML_RENDER_SCENE_TILE
+      ?gml_render_view_tile_quad_valid(&op,&state,source.width,source.height)
+      :gml_render_view_background_quad_valid(&op,&state,source.width,source.height)) &&
     gml_render_application_scene_enqueue(r,&op,&state,&source);
 }
 
@@ -340,11 +344,11 @@ static int view_background_part(GmlRender *r,int bg,double sx,double sy,double s
   if(max_x+shift<=0 || max_y+shift<=0 || min_x+shift>=r->fbw || min_y+shift>=r->fbh) return 1;
   gml_render_warm_bg(r,bg);
   if(!resident_view_background_quad(r,page,source_x,source_y,selection.sw,selection.sh,
-                                    px,py,colour,alpha)){
+                                    px,py,colour,alpha,GML_RENDER_SCENE_BACKGROUND)){
     double mapped_x[4],mapped_y[4];
     for(unsigned i=0;i<4u;i++){mapped_x[i]=px[i]+r->cam_x;mapped_y[i]=py[i]+r->cam_y;}
-    gml_render_cpu_blit_view_background(r,page,source_x,source_y,selection.sw,selection.sh,
-                                       mapped_x,mapped_y,colour,alpha);
+    gml_render_cpu_blit_view_atlas(r,page,source_x,source_y,selection.sw,selection.sh,
+                                       mapped_x,mapped_y,colour,alpha,GML_RENDER_SCENE_BACKGROUND);
   }
   r->fb_opaque_known=0;
   if(r->fb==r->app_surface) r->app_surface_opaque=0;
@@ -478,11 +482,68 @@ static int resident_quarter_background_tile(GmlRender *r,int page_index,
     tile_xscale,tile_yscale,0,mirror,flip,colour,alpha);
 }
 
+static int view_tile_part(GmlRender *r,int bg,
+  double sx,double sy,double sw,double sh,double x,double y,double xs,double ys,
+  int mirror,int flip,int rotate,uint32_t colour,double alpha){
+  if(!gml_render_view_rotation_active(r) || gml_d3_is_active(r)) return 0;
+  if(bg<0 || bg>=r->n_bg || !isfinite(sx) || !isfinite(sy) ||
+     !isfinite(sw) || !isfinite(sh) || !isfinite(x) || !isfinite(y) ||
+     !isfinite(xs) || !isfinite(ys) || !isfinite(alpha) || sw<=0 || sh<=0 ||
+     xs==0 || ys==0 || fabs(sx)>INT_MAX/2 || fabs(sy)>INT_MAX/2 ||
+     sw>INT_MAX/2 || sh>INT_MAX/2) return 1;
+  int ti=r->bg[bg].tpag;
+  if(ti<0 || ti>=r->n_tpag) return 1;
+  GmlTpag *page=&r->tpag[ti],selection;
+  int source_x=0,source_y=0;
+  double left,top,right,bottom;
+  if(page->sw<=0 || page->sh<=0 ||
+     !gml_render_tpag_part_view(page,sx,sy,sw,sh,&selection,&source_x,&source_y,
+                               &left,&top,&right,&bottom)) return 1;
+  if(alpha<=0 && !(r->alphablend &&
+     gml_render_blend_uses_destination_colour(r->blendmode))) return 1;
+  alpha=fmin(1.0,fmax(0.0,alpha));
+  if(selection.sw!=1){left=source_x;right=source_x+selection.sw;}
+  if(selection.sh!=1){top=source_y;bottom=source_y+selection.sh;}
+  double px[4],py[4],min_x=INFINITY,min_y=INFINITY,max_x=-INFINITY,max_y=-INFINITY;
+  for(unsigned i=0;i<4u;i++){
+    double u=(((i==1 || i==2)?right:left)-sx)/sw;
+    double v=((i>=2?bottom:top)-sy)/sh;
+    if(mirror) u=1-u;
+    if(flip) v=1-v;
+    if(rotate){
+      /* A quarter-turn permutes source axes inside the authored tile box.
+       * Its existing signed-scale owner anchors that box at its minimum. */
+      if(ys<0) u=1-u;
+      if(xs<0) v=1-v;
+      px[i]=x+(1-v)*fabs(sw*xs);py[i]=y+u*fabs(sh*ys);
+    }else{px[i]=x+u*sw*xs;py[i]=y+v*sh*ys;}
+    gml_render_draw_map_point(r,&px[i],&py[i]);
+    px[i]-=r->cam_x;py[i]-=r->cam_y;
+    gml_render_view_rotate_point(r,&px[i],&py[i]);
+    if(!isfinite(px[i]) || !isfinite(py[i])) return 1;
+    min_x=fmin(min_x,px[i]);max_x=fmax(max_x,px[i]);
+    min_y=fmin(min_y,py[i]);max_y=fmax(max_y,py[i]);
+  }
+  double shift=r->classic?-.5:0;
+  if(max_x+shift<=0 || max_y+shift<=0 || min_x+shift>=r->fbw || min_y+shift>=r->fbh) return 1;
+  gml_render_warm_bg(r,bg);
+  if(!resident_view_background_quad(r,page,source_x,source_y,selection.sw,selection.sh,
+                                    px,py,colour,alpha,GML_RENDER_SCENE_TILE)){
+    for(unsigned i=0;i<4u;i++){px[i]+=r->cam_x;py[i]+=r->cam_y;}
+    gml_render_cpu_blit_view_atlas(r,page,source_x,source_y,selection.sw,selection.sh,
+                                  px,py,colour,alpha,GML_RENDER_SCENE_TILE);
+  }
+  r->fb_opaque_known=0;
+  if(r->fb==r->app_surface) r->app_surface_opaque=0;
+  return 1;
+}
+
 void gml_draw_background_tile(GmlRender *r,int bg,
                               double sx,double sy,double sw,double sh,
                               double x,double y,double xs,double ys,
                               int mirror,int flip,int rotate,
                               uint32_t color,double alpha){
+  if(view_tile_part(r,bg,sx,sy,sw,sh,x,y,xs,ys,mirror,flip,rotate,color,alpha)) return;
   if(!rotate){
     if(mirror){ x+=sw*xs; xs=-xs; }
     if(flip){ y+=sh*ys; ys=-ys; }
