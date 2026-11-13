@@ -36,5 +36,9 @@ int gml_video_codec_error(const GmlVideoCodec *codec);
 void gml_video_codec_close(GmlVideoCodec *codec);
 /* A derived decoder continuation is accepted only by the same provider versions. */
 void gml_video_codec_stamp(uint32_t versions[5]);
+/* Runtime availability is separate from compilation: a missing shared provider leaves the
+ * engine usable and causes video_open to take the generic skip path. */
+int gml_video_codec_available(void);
+const char *gml_video_codec_provider_error(void);
 
 #endif

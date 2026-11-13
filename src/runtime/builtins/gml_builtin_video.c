@@ -4,6 +4,7 @@
 #include "gml_builtin_internal.h"
 #include "gml_video_player.h"
 #include "anygm_vfs.h"
+#include "anygm_host.h"
 #include "gml_hash.h"
 
 #include <string.h>
@@ -17,14 +18,17 @@ struct GmlBuiltinVideoSource {
 typedef struct {
   GmlVideoPlayer *player;
   GmlBuiltinVideoSource *source;
+  int skip_pending;
 } GmlBuiltinVideo;
+
+static void video_notify(GmlVM *vm,const char *type);
 
 void gml_builtin_video_source_release(GmlBuiltinVideoSource *source){
   if(source && --source->references==0){free(source->bytes);free(source->path);free(source);}
 }
 GmlBuiltinVideoSource *gml_builtin_video_checkpoint(GmlVM *vm){
   GmlBuiltinVideo *video=vm && vm->builtins?vm->builtins->video:NULL;
-  if(!video) return NULL;
+  if(!video || !video->source) return NULL;
   video->source->references++;return video->source;
 }
 void gml_builtin_video_rebind(GmlVM *vm){
@@ -69,16 +73,32 @@ static GmlBuiltinVideoSource *source_open(GmlVM *vm,const char *path,const uint8
   }
   return source;
 }
+static void video_skip(GmlVM *vm,const char *reason){
+  GmlBuiltinVideo *video=calloc(1,sizeof *video);
+  if(!video) return;
+  video->skip_pending=1;
+  vm->builtins->video=video;vm->builtins->video_generation++;
+  if(vm->builtins->video_skip_log_count++<4)
+    anygm_host_logf(vm->host,ANYGM_LOG_WARN,
+      "Video playback unavailable; skipping the requested movie and completing it: %s\n",
+      reason&&reason[0]?reason:"unknown provider failure");
+}
 static void video_open(GmlVM *vm,const char *path){
   gml_builtin_video_close(vm);
   if(!vm->render) return;
+  if(!gml_video_codec_available()){
+    video_skip(vm,gml_video_codec_provider_error());return;
+  }
   GmlBuiltinVideoSource *source=source_open(vm,path,NULL);
-  if(!source) return;
+  if(!source){video_skip(vm,"the media source could not be opened");return;}
   GmlBuiltinVideo *video=calloc(1,sizeof *video);
   if(!video){gml_builtin_video_source_release(source);return;}
   video->source=source;
   video->player=gml_video_player_open(source->bytes,source->size,vm->render,vm->audio);
-  if(!video->player){gml_builtin_video_source_release(source);free(video);return;}
+  if(!video->player){
+    gml_builtin_video_source_release(source);free(video);
+    video_skip(vm,"the media stream could not be decoded");return;
+  }
   vm->builtins->video=video;vm->builtins->video_generation++;
 }
 GmlVal gml_builtin_try_video(GmlVM *vm,const char *name,GmlVal *args,int count){
@@ -137,6 +157,12 @@ void gml_builtin_video_tick(GmlVM *vm){
   GmlBuiltinState *state=vm?vm->builtins:NULL;
   GmlBuiltinVideo *video=state?state->video:NULL;
   if(!video) return;
+  if(video->skip_pending){
+    /* Remove the transient slot before dispatch. A Social handler may sleep and expose a public
+     * frame boundary; that state must contain the callback payload, not an unserializable player. */
+    state->video=NULL;state->video_generation++;
+    free(video);video_notify(vm,"video_end");return;
+  }
   gml_video_player_tick(video->player,1000.0/gml_room_speed(vm));
   unsigned notices=gml_video_player_notifications(video->player);
   uint64_t generation=state->video_generation;
@@ -148,7 +174,7 @@ void gml_builtin_video_tick(GmlVM *vm){
 int gml_builtin_video_state_get(const GmlBuiltinState *state,const char **path,
                                 const uint8_t **digest,GmlVideoPlayerState *saved){
   const GmlBuiltinVideo *video=state?state->video:NULL;
-  if(!video || !path || !digest || !saved) return 0;
+  if(!video || !video->source || !video->player || !path || !digest || !saved) return 0;
   *path=video->source->path;*digest=video->source->digest;
   return gml_video_player_state_get(video->player,saved);
 }

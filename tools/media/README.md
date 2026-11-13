@@ -6,8 +6,10 @@
 The runtime uses FFmpeg's public libavformat, libavcodec, libavutil, libswscale
 and libswresample APIs. These libraries remain separate, replaceable shared
 libraries; no FFmpeg implementation source is imported into the core.
-FFmpeg 8 or later development headers and libraries are required. Formats
-available at runtime depend on that provider's enabled decoders and demuxers.
+FFmpeg 8 or later target development headers enable this provider at compile
+time; the core has no FFmpeg link dependency. Formats available at runtime
+depend on the shared provider's enabled decoders and demuxers. Without it,
+movie requests take the documented completion fallback.
 
 ## Pinned provider
 
@@ -54,19 +56,24 @@ for executing the target binary on an appropriate host.
 ## Building and checking the core
 
 Point `PKG_CONFIG_PATH` at the prepared provider's `install/lib/pkgconfig`
-directory. `PKG_CONFIG`, `FFMPEG_CFLAGS` and `FFMPEG_LIBS` may instead select
-an equivalent provider or a target sysroot. The ordinary core build does not
-run the preparation script, download sources, or invoke FFmpeg's configure.
+directory for a native build. `PKG_CONFIG`, `FFMPEG_CFLAGS` and `FFMPEG_LIBS`
+may instead select an equivalent provider or a target sysroot. Cross builds do
+not consult host pkg-config: pass their target `FFMPEG_CFLAGS` and select
+`VIDEO_PROVIDER=dynamic`. The ordinary core build does not run the preparation
+script, download sources, or invoke FFmpeg's configure.
 
 ```sh
 PKG_CONFIG_PATH="$ANYGM_VIDEO_DEPS/install/lib/pkgconfig" make -j1
 ```
 
-The loader must also find those shared libraries when running the core. On
-a private Unix installation, set `LD_LIBRARY_PATH` to its `install/lib`
-directory; on macOS use the appropriate loader installation/rpath policy;
-on Windows install the target FFmpeg DLLs where the normal loader finds them.
-Do not embed a developer's absolute prefix in a published core.
+The core does not link against FFmpeg. It resolves the provider only when movie
+playback is requested. The loader must then find those shared libraries: on a
+private Unix installation, set `LD_LIBRARY_PATH` to its `install/lib`
+directory; on macOS use the appropriate loader installation/rpath policy; on
+Windows place the target FFmpeg DLLs beside the core or where the normal loader
+finds them. Without them the core remains loadable and completes the requested
+movie through one `video_end` event. Do not embed a developer's absolute prefix
+in a published core.
 
 ```sh
 PKG_CONFIG_PATH="$ANYGM_VIDEO_DEPS/install/lib/pkgconfig" \

@@ -33,6 +33,22 @@ def run(argv: list[str], cwd: Path, log: Path) -> None:
         raise SystemExit(f"ffmpeg: command failed ({result.returncode}); inspect {log}")
 
 
+def verify_elf_private_symbols(build: Path, nm: str) -> None:
+    """Reject a partial ELF shared library left by an interrupted object build."""
+    libraries = sorted({path.resolve() for path in build.rglob("*.so*") if path.is_file()})
+    for library in libraries:
+        result = subprocess.run([nm, "-D", "--undefined-only", str(library)],
+                                capture_output=True, text=True)
+        if result.returncode:
+            raise SystemExit(f"ffmpeg: could not inspect shared-library symbols: {library}")
+        private = sorted({line.split()[-1] for line in result.stdout.splitlines()
+                          if line.split() and line.split()[-1].startswith("ff_")})
+        if private:
+            raise SystemExit(
+                f"ffmpeg: shared library retains unresolved private symbols: {library}: "
+                + ", ".join(private[:8]))
+
+
 def source_seal(archive: Path, work: Path, source: Path) -> str:
     rows = []
     expected = set()
@@ -139,6 +155,8 @@ def main() -> int:
     if '#define FFMPEG_LICENSE "LGPL version 2.1 or later"' not in config:
         raise SystemExit("ffmpeg: unexpected configured license")
     run(["make", f"-j{args.jobs}"], build, work / "build.log")
+    verify_elf_private_symbols(build, args.nm or
+                               ((args.cross_prefix or "") + "nm" if args.cross_prefix else "nm"))
     run(["make", "install"], build, work / "install.log")
     if source_seal(archive, work, source) != source_digest:
         raise SystemExit("ffmpeg: source tree changed during the build")

@@ -8,6 +8,7 @@ export ANYGM_TEST_GPU_PIXEL_PARITY := $(GPU_PIXEL_PARITY)
 # The optional hardware renderer. HARDWARE_RENDER=0 excludes the GPU objects and the libretro
 # hardware bridge, omits the core option, and leaves a build with no unresolved graphics symbol.
 HARDWARE_RENDER ?= 1
+VIDEO_PROVIDER ?= auto
 
 include Makefile.common
 
@@ -129,6 +130,15 @@ ifneq (,$(findstring win,$(platform)))
 CORE_EXTENSION := dll
 CORE_PLATFORM_LDLIBS := -lm -lgdi32 -luser32
 CORE_PLATFORM_LDFLAGS := -Wl,--no-insert-timestamp -static-libgcc -static-libstdc++
+endif
+
+VIDEO_PROVIDER_LDLIBS :=
+ifeq ($(ANYGM_VIDEO_PROVIDER_DYNAMIC),1)
+ifeq (,$(findstring win,$(platform)))
+ifeq (,$(filter osx ios tvos,$(platform)))
+VIDEO_PROVIDER_LDLIBS := -ldl
+endif
+endif
 endif
 ifneq (,$(findstring android,$(platform)))
 CORE_ARTIFACT_SUFFIX := _android
@@ -255,7 +265,7 @@ runtime: $(RUNTIME_LIBRARY)
 .PHONY: runtime-link-libs
 # C consumers query the selected runtime's dependencies instead of duplicating its provider list.
 runtime-link-libs:
-	@printf '%s\n' $(call build_quote,$(CORE_PLATFORM_LDLIBS) $(CXX_RUNTIME_LDLIBS) $(FFMPEG_LIBS))
+	@printf '%s\n' $(call build_quote,$(CORE_PLATFORM_LDLIBS) $(CXX_RUNTIME_LDLIBS) $(VIDEO_PROVIDER_LDLIBS))
 
 .PHONY: ffmpeg-check
 ffmpeg-check: $(TEST_DIR)/test_ffmpeg_provider
@@ -268,13 +278,14 @@ $(TEST_DIR)/test_ffmpeg_provider: tests/contract/ffmpeg_provider.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) $< -o $@ $(FFMPEG_LIBS)
 
 .PHONY: video-check
-video-check: $(TEST_DIR)/test_video_codec $(TEST_DIR)/test_video_audio $(TEST_DIR)/test_video_player $(TEST_DIR)/test_builtin_video $(TEST_DIR)/test_engine_video $(TEST_DIR)/video_fixture.avi $(TEST_DIR)/video_large_fixture.avi
+video-check: $(TEST_DIR)/test_video_codec $(TEST_DIR)/test_video_audio $(TEST_DIR)/test_video_player $(TEST_DIR)/test_builtin_video $(TEST_DIR)/test_engine_video $(TEST_DIR)/test_engine_video_no_provider $(TEST_DIR)/video_fixture.avi $(TEST_DIR)/video_large_fixture.avi
 	$(TEST_DIR)/test_video_codec $(TEST_DIR)/video_fixture.avi
 	$(TEST_DIR)/test_video_audio
 	$(TEST_DIR)/test_video_player $(TEST_DIR)/video_fixture.avi
 	$(TEST_DIR)/test_builtin_video $(TEST_DIR)/video_fixture.avi
 	$(TEST_DIR)/test_engine_video $(TEST_DIR)/video_fixture.avi
 	$(TEST_DIR)/test_engine_video $(TEST_DIR)/video_large_fixture.avi --capacity
+	$(TEST_DIR)/test_engine_video_no_provider --fallback
 
 # Run only after qualifying the producer; this diagnostic reports CPU cost, not a frame-time gate.
 .PHONY: video-replay-check
@@ -289,13 +300,15 @@ $(TEST_DIR)/video_large_fixture.avi: tests/unit/media/video_fixture.py
 	mkdir -p $(dir $@)
 	python3 $< $@ --large
 
-$(TEST_DIR)/test_video_codec: tests/unit/media/test_video_codec.c src/media/gml_video_codec.c
+$(TEST_DIR)/test_video_codec: tests/unit/media/test_video_codec.c src/media/gml_video_codec.c \
+	src/media/gml_video_provider.c
 	mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(filter %.c,$^) -o $@ $(FFMPEG_LIBS) -lm
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(filter %.c,$^) -o $@ $(VIDEO_PROVIDER_LDLIBS) -lm
 
-$(TEST_DIR)/test_video_audio: tests/unit/media/test_video_audio.c src/media/gml_video_codec.c
+$(TEST_DIR)/test_video_audio: tests/unit/media/test_video_audio.c src/media/gml_video_codec.c \
+	src/media/gml_video_provider.c
 	mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $< -o $@ $(FFMPEG_LIBS) -lm
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< src/media/gml_video_provider.c -o $@ $(VIDEO_PROVIDER_LDLIBS) -lm
 
 $(TEST_DIR)/test_video_player: tests/unit/media/test_video_player.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
@@ -304,6 +317,30 @@ $(TEST_DIR)/test_video_player: tests/unit/media/test_video_player.c $(UNIT_RUNTI
 $(TEST_DIR)/test_builtin_video: tests/unit/runtime/test_builtin_video.c tests/support/memory_vfs.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(TEST_CPPFLAGS))
+
+NULL_VIDEO_PROVIDER_OBJECT := $(BUILD_DIR)/obj-no-video/src/media/gml_video_provider.o
+NULL_VIDEO_CODEC_OBJECT := $(BUILD_DIR)/obj-no-video/src/media/gml_video_codec.o
+NULL_VIDEO_RUNTIME_OBJECTS := $(filter-out $(BUILD_DIR)/obj/src/media/gml_video_provider.o \
+	$(BUILD_DIR)/obj/src/media/gml_video_codec.o,$(RUNTIME_OBJECTS)) \
+	$(NULL_VIDEO_PROVIDER_OBJECT) $(NULL_VIDEO_CODEC_OBJECT) $(TEST_HOST_OBJECTS) \
+	$(TEST_PLATFORM_OBJECTS)
+NULL_VIDEO_CPPFLAGS := $(filter-out -DANYGM_VIDEO_PROVIDER_DYNAMIC=%,$(TEST_CPPFLAGS)) \
+	-DANYGM_VIDEO_PROVIDER_DYNAMIC=0
+
+$(NULL_VIDEO_PROVIDER_OBJECT): src/media/gml_video_provider.c src/media/gml_video_provider.h
+	mkdir -p $(dir $@)
+	$(CC) $(NULL_VIDEO_CPPFLAGS) $(CFLAGS) $(PIC_FLAGS) $(object_dependency_flags) -c $< -o $@
+
+$(NULL_VIDEO_CODEC_OBJECT): src/media/gml_video_codec.c src/media/gml_video_codec.h \
+	src/media/gml_video_provider.h
+	mkdir -p $(dir $@)
+	$(CC) $(NULL_VIDEO_CPPFLAGS) $(CFLAGS) $(PIC_FLAGS) $(object_dependency_flags) -c $< -o $@
+
+$(TEST_DIR)/test_engine_video_no_provider: tests/integration/test_engine_video.c \
+	tests/support/synthetic_content.c tests/support/memory_vfs.c $(NULL_VIDEO_RUNTIME_OBJECTS)
+	mkdir -p $(dir $@)
+	$(CC) $(NULL_VIDEO_CPPFLAGS) $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $^ -o $@ \
+		-lm -pthread $(CXX_RUNTIME_LDLIBS)
 
 # Track caller toolchain settings without adding a generator to ordinary builds.
 # Expand before target-specific warning flags can be inherited from one object.
@@ -314,7 +351,7 @@ object_dependency_flags = -MMD -MP $(foreach object_target,$(sort $@ $(abspath $
 COMPILE_CONFIG := $(BUILD_DIR)/.compile-config
 LINK_CONFIG := $(BUILD_DIR)/.link-config
 COMPILE_SETTINGS := $(foreach name,CC CXX CPPFLAGS CFLAGS CXXFLAGS PIC_FLAGS LIBRETRO_CPPFLAGS MACOSX_DEPLOYMENT_TARGET SDKROOT PATH CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH,$(call build_quote,$(name)=$($(name))))
-LINK_SETTINGS := $(foreach name,CC CXX AR ARFLAGS LDFLAGS LDLIBS FFMPEG_LIBS CORE_SHARED_FLAG CORE_PLATFORM_LDFLAGS CORE_PLATFORM_LDLIBS STATIC_LINKING CORE_OBJECTS RUNTIME_OBJECTS MACOSX_DEPLOYMENT_TARGET SDKROOT PATH LIBRARY_PATH,$(call build_quote,$(name)=$($(name))))
+LINK_SETTINGS := $(foreach name,CC CXX AR ARFLAGS LDFLAGS LDLIBS FFMPEG_LIBS VIDEO_PROVIDER VIDEO_PROVIDER_LDLIBS CORE_SHARED_FLAG CORE_PLATFORM_LDFLAGS CORE_PLATFORM_LDLIBS STATIC_LINKING CORE_OBJECTS RUNTIME_OBJECTS MACOSX_DEPLOYMENT_TARGET SDKROOT PATH LIBRARY_PATH,$(call build_quote,$(name)=$($(name))))
 
 .PHONY: FORCE_BUILD_CONFIG build-config-check
 FORCE_BUILD_CONFIG:
@@ -344,7 +381,7 @@ $(CORE_TARGET): $(CORE_OBJECTS)
 	$(AR) $(ARFLAGS) $@ $(CORE_OBJECTS)
 else
 $(CORE_TARGET): $(CORE_OBJECTS) $(CORE_LINK_INPUTS)
-	$(CXX) $(LDFLAGS) $(CORE_SHARED_FLAG) $(PIC_FLAGS) $(CORE_PLATFORM_LDFLAGS) -o $@ $(CORE_OBJECTS) $(LDLIBS) $(CORE_PLATFORM_LDLIBS) $(FFMPEG_LIBS)
+	$(CXX) $(LDFLAGS) $(CORE_SHARED_FLAG) $(PIC_FLAGS) $(CORE_PLATFORM_LDFLAGS) -o $@ $(CORE_OBJECTS) $(LDLIBS) $(CORE_PLATFORM_LDLIBS) $(VIDEO_PROVIDER_LDLIBS)
 endif
 
 $(RUNTIME_LIBRARY): $(RUNTIME_OBJECTS)
@@ -388,7 +425,7 @@ ifneq (,$(filter osx ios tvos,$(platform)))
 CXX_RUNTIME_LDLIBS := -lc++
 endif
 define link_runtime_test
-	$(CC) $(1) $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS) $(FFMPEG_LIBS)
+	$(CC) $(1) $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS) $(VIDEO_PROVIDER_LDLIBS)
 endef
 
 $(TEST_DIR)/test_rng: tests/unit/runtime/test_rng.c $(UNIT_RUNTIME_OBJECTS)
@@ -456,7 +493,7 @@ $(TEST_DIR)/test_builtin_draw_queries: tests/unit/runtime/test_builtin_draw_quer
   tests/unit/media/font_test_fixture.h tests/support/memory_vfs.c \
   tests/support/anygm_test_runner.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $(filter-out %.h,$^) -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS) $(FFMPEG_LIBS)
+	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $(filter-out %.h,$^) -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS) $(VIDEO_PROVIDER_LDLIBS)
 
 $(TEST_DIR)/test_builtin_paths: tests/unit/runtime/test_builtin_paths.c tests/support/anygm_test_runner.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
@@ -716,7 +753,7 @@ $(TEST_DIR)/test_renderer_fonts: tests/unit/video/renderer/test_renderer_fonts.c
 	tests/unit/media/font_test_fixture.h tests/support/memory_vfs.c \
 	tests/support/anygm_test_runner.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $(filter-out %.h,$^) -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS) $(FFMPEG_LIBS)
+	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $(filter-out %.h,$^) -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS) $(VIDEO_PROVIDER_LDLIBS)
 
 $(TEST_DIR)/test_array_copy_policy: tests/unit/content/test_array_copy_policy.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
@@ -973,7 +1010,7 @@ $(TEST_DIR)/test_font_state: tests/integration/test_font_state.c \
 	tests/unit/media/font_test_fixture.h tests/support/memory_vfs.c \
 	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $(filter-out %.h,$^) -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS) $(FFMPEG_LIBS)
+	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $(filter-out %.h,$^) -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS) $(VIDEO_PROVIDER_LDLIBS)
 
 $(TEST_DIR)/test_engine_video: tests/integration/test_engine_video.c \
 	tests/support/memory_vfs.c tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
@@ -984,7 +1021,7 @@ $(TEST_DIR)/test_engine_instances: tests/integration/test_engine_instances.c \
 	tests/integration/state_fixture_projection.h \
 	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $(filter-out %.h,$^) -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS) $(FFMPEG_LIBS)
+	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $(filter-out %.h,$^) -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS) $(VIDEO_PROVIDER_LDLIBS)
 
 $(TEST_DIR)/test_mouse_input: tests/integration/test_mouse_input.c \
 	tests/support/synthetic_content.c tests/support/anygm_test_runner.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
@@ -1053,12 +1090,12 @@ $(TEST_DIR)/test_libretro_state_transport: tests/contract/libretro_state_transpo
 $(TEST_DIR)/test_libretro_tilemap_state: tests/contract/libretro_tilemap_state.c \
 	tests/support/synthetic_content.c $(CORE_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS) $(FFMPEG_LIBS)
+	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS) $(VIDEO_PROVIDER_LDLIBS)
 
 $(TEST_DIR)/test_libretro_display_cadence: tests/contract/libretro_display_cadence.c \
 	tests/support/synthetic_content.c $(CORE_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS) $(FFMPEG_LIBS)
+	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS) $(VIDEO_PROVIDER_LDLIBS)
 
 # Explicit MinGW-only contract; every mode starts without content or a frontend.
 .PHONY: windows-dll-lifetime-probe windows-dll-lifetime-check
@@ -1093,7 +1130,7 @@ $(TEST_DIR)/test_libretro_dynamic_rewind: tests/contract/libretro_dynamic_rewind
 	tests/support/synthetic_content.c tests/support/graphics_driver_fixture.c \
 	$(CORE_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS) $(FFMPEG_LIBS)
+	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS) $(VIDEO_PROVIDER_LDLIBS)
 
 $(TEST_DIR)/test_libretro_option_defaults: tests/contract/libretro_option_defaults.c \
 	src/adapters/libretro/libretro_options.c \
@@ -1104,7 +1141,7 @@ $(TEST_DIR)/test_libretro_option_defaults: tests/contract/libretro_option_defaul
 $(TEST_DIR)/test_libretro_crt_output: tests/contract/libretro_crt_output.c \
 	tests/support/synthetic_content.c $(CORE_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS) $(FFMPEG_LIBS)
+	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS) $(VIDEO_PROVIDER_LDLIBS)
 
 $(TEST_DIR)/test_libretro_keyboard_source: tests/contract/libretro_keyboard_source.c \
 	src/adapters/libretro/libretro_input.c \

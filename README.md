@@ -10,8 +10,9 @@ runtimes for each format generation.
 
 The repository includes the runtime, libretro adapter, build files, tests,
 generated data with recorded provenance, and bundled third-party components.
-Video playback links to shared FFmpeg libraries supplied by the build environment;
-the [video dependency guide](tools/media/README.md) provides a pinned LGPL build
+Video playback can load replaceable shared FFmpeg libraries at runtime; the core
+still loads and safely completes movies when they are absent. The
+[video dependency guide](tools/media/README.md) provides a pinned LGPL build
 recipe. No content or proprietary runtime components are included.
 
 ## Supported format families
@@ -81,7 +82,9 @@ capture timing, and path fallback rules.
 The `video_*` functions use one player per engine, shared by both renderers.
 `video_draw()` supplies an ordinary RGBA surface; drawing that surface uses the
 selected renderer. Decoded stereo audio uses the existing mixer at 44100 Hz.
-The shared FFmpeg provider selects the available containers and codecs.
+When present, the shared FFmpeg provider selects the available containers and codecs.
+When it is absent or incompatible, a requested movie reports a closed player and
+completes through one Social async `video_end` notification.
 
 Inputs use the host's existing file namespace and remain immutable while open.
 The current memory-backed input limit is 256 MiB; a decoded image is limited to

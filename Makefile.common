@@ -63,13 +63,33 @@ ANYGM_MEDIA_SOURCES := \
 
 # Video playback belongs to the runtime, not the standalone content compiler's image helpers.
 ANYGM_VIDEO_SOURCES := \
+	src/media/gml_video_provider.c \
 	src/media/gml_video_codec.c \
 	src/media/gml_video_player.c
 
 PKG_CONFIG ?= pkg-config
 ANYGM_FFMPEG_PACKAGES := libavformat libavcodec libavutil libswscale libswresample
+ANYGM_CROSS_PROVIDER := $(strip $(CROSS_COMPILE) $(filter android,$(platform)))
+ifeq ($(ANYGM_CROSS_PROVIDER),)
 FFMPEG_CFLAGS ?= $(shell $(PKG_CONFIG) --cflags $(ANYGM_FFMPEG_PACKAGES) 2>/dev/null)
 FFMPEG_LIBS ?= $(shell $(PKG_CONFIG) --libs $(ANYGM_FFMPEG_PACKAGES) 2>/dev/null)
+ANYGM_FFMPEG_DISCOVERED := $(shell $(PKG_CONFIG) --exists $(ANYGM_FFMPEG_PACKAGES) 2>/dev/null && printf 1)
+else
+FFMPEG_CFLAGS ?=
+FFMPEG_LIBS ?=
+ANYGM_FFMPEG_DISCOVERED := $(if $(strip $(FFMPEG_CFLAGS)),1)
+endif
+
+ifeq ($(VIDEO_PROVIDER),auto)
+ANYGM_VIDEO_PROVIDER_DYNAMIC := $(if $(ANYGM_FFMPEG_DISCOVERED),1,0)
+else ifeq ($(VIDEO_PROVIDER),dynamic)
+ANYGM_VIDEO_PROVIDER_DYNAMIC := 1
+else ifeq ($(VIDEO_PROVIDER),none)
+ANYGM_VIDEO_PROVIDER_DYNAMIC := 0
+else
+$(error VIDEO_PROVIDER must be auto, dynamic or none)
+endif
+CPPFLAGS += -DANYGM_VIDEO_PROVIDER_DYNAMIC=$(ANYGM_VIDEO_PROVIDER_DYNAMIC)
 
 ANYGM_PXTONE_SOURCES := \
 	src/audio/codecs/gml_pxtone.cpp \

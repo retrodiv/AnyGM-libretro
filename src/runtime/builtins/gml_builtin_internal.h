@@ -237,6 +237,7 @@ struct GmlBuiltinState {
   int surface_depth_disabled;    /* surface_depth_disable() latch the getter reads back, DRAW-owned */
   void *video;
   uint64_t video_generation;
+  unsigned video_skip_log_count; /* diagnostics only; skipped-video events are not serialized */
 };
 
 struct GmlRender;

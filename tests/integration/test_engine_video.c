@@ -23,6 +23,12 @@ typedef struct {
   AnygmEngine *engine;
   uint8_t *payload;
 } Fixture;
+static int fallback_warnings;
+static void fixture_log(void *userdata,AnygmLogLevel level,const char *message){
+  (void)userdata;
+  if(level==ANYGM_LOG_WARN && message && strstr(message,"Video playback unavailable"))
+    fallback_warnings++;
+}
 
 static uint64_t read64(const uint8_t *p){
   uint64_t value=0;
@@ -45,6 +51,7 @@ static int init(Fixture *fixture,const uint8_t *clip,size_t clip_size,int callba
   int ok=created && anygm_synthetic_content_read(&content,&fixture->payload,&payload_size);
   if(created) anygm_synthetic_content_destroy(&content);
   anygm_memory_vfs_init(&fixture->memory,&fixture->host);
+  fixture->host.log=fixture_log;
   AnygmContentSource source={0};source.struct_size=sizeof source;
   source.kind=ANYGM_CONTENT_MEMORY;source.path="/content/data.win";
   source.data=fixture->payload;source.size=payload_size;
@@ -60,6 +67,7 @@ static void destroy(Fixture *fixture){
 static GmlVal call(AnygmEngine *engine,const char *name){
   return gml_builtin_call(&engine->vm,name,NULL,0);
 }
+static int global_text(GmlVM *vm,const char *name,const char *text);
 static int frame(AnygmEngine *engine,AnygmFrameOutput *output){
   AnygmInputFrame input={0};input.struct_size=sizeof input;
   input.pointer_x=input.pointer_y=-1;
@@ -74,6 +82,32 @@ static int open_paused(AnygmEngine *engine){
   int surface=(int)gml_arr_get(draw,1).d;gml_values_release(&draw,1);
   (void)call(engine,"video_pause");
   return surface>=0 && frame(engine,&output) && call(engine,"video_get_status").d==3;
+}
+static int fallback_case(void){
+  Fixture *fixture=calloc(1,sizeof *fixture);int ok=0;const uint8_t unused=0;
+  CHECK(fixture && init(fixture,&unused,1,1),"fallback fixture");
+  AnygmEngine *engine=fixture->engine;GmlVM *vm=&engine->vm;AnygmFrameOutput output;
+  fallback_warnings=0;gml_set_global_scalar(vm,"fixture_release",1);
+  GmlVal path=vstr("clip.avi");
+  (void)gml_builtin_call(vm,"video_open",&path,1);
+  GmlVal draw=call(engine,"video_draw");
+  CHECK(call(engine,"video_get_status").d==0 && call(engine,"video_get_duration").d==0 &&
+        call(engine,"video_get_position").d==0 && gml_val_array_length(draw)==2 &&
+        gml_arr_get(draw,0).d==-1 && gml_arr_get(draw,1).d==-1,
+        "unavailable provider exposes a coherent closed player");
+  gml_values_release(&draw,1);
+  CHECK(frame(engine,&output) && fallback_warnings==1 && !vm->wait.active &&
+        gml_global_num(vm,"fixture_entries")==1 && gml_global_num(vm,"fixture_resumed")==1 &&
+        gml_global_num(vm,"fixture_status")==0 &&
+        global_text(vm,"fixture_before","video_end") &&
+        global_text(vm,"fixture_after","video_end"),
+        "unavailable provider logs and completes the Social video event");
+  CHECK(frame(engine,&output) && gml_global_num(vm,"fixture_entries")==1 &&
+        call(engine,"video_get_status").d==0,
+        "fallback completion is delivered once and remains closed");
+  ok=1;
+done:
+  destroy(fixture);return ok;
 }
 static uint8_t *save(AnygmEngine *engine,size_t *size){
   size_t capacity=anygm_state_size(engine);uint8_t *bytes=capacity?malloc(capacity):NULL;
@@ -326,6 +360,11 @@ done:
 }
 
 int main(int argc,char **argv){
+  if(argc==2 && !strcmp(argv[1],"--fallback")){
+    int ok=fallback_case();
+    if(ok) puts("engine video fallback: closed status, warning and one automatic end event pass");
+    return ok?0:1;
+  }
   int capacity=argc==3 && !strcmp(argv[2],"--capacity");
   int replay_cost=argc==3 && !strcmp(argv[2],"--replay-cost");
   if(argc!=2 && !capacity && !replay_cost) return 1;

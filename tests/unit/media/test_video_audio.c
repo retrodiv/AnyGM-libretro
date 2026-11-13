@@ -37,7 +37,9 @@ static int feed(GmlVideoCodec *codec,int format,int channels,int rate,int sample
 }
 
 int main(void){
-  GmlVideoCodec codec={0};codec.frame=av_frame_alloc();int ok=0,total=0;
+  GmlVideoCodec codec={0};int ok=0,total=0;
+  if(!gml_video_provider_acquire()) return 1;
+  codec.provider_acquired=1;codec.frame=av_frame_alloc();
   if(!codec.frame) return 1;
   if(!feed(&codec,AV_SAMPLE_FMT_S16,2,44100,4410,2048,-1024,&total)){
     fputs("video audio: initial signed stereo control failed\n",stderr);goto done;

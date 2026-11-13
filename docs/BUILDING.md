@@ -5,12 +5,13 @@
 
 ## Requirements
 
-The Unix build requires C11 and C++11 compilers, an archiver, POSIX threads,
-a standard `make` implementation, and FFmpeg 8 or later development headers
-and shared libraries for libavformat, libavcodec, libavutil, libswscale and
-libswresample. `pkg-config` supplies their flags by default. The production
-build does not download dependencies, run generators, or require a content corpus.
-Other required library headers and sources are bundled in this checkout.
+The Unix build requires C11 and C++11 compilers, an archiver, POSIX threads and
+a standard `make` implementation. FFmpeg 8 or later development headers enable
+the optional dynamic video provider; `pkg-config` supplies their flags by
+default on native builds. Without those headers the core builds with movie
+fallback support. The production build does not download dependencies, run
+generators, or require a content corpus. Other required library headers and
+sources are bundled in this checkout.
 
 The [video dependency guide](../tools/media/README.md) describes the pinned
 LGPL-2.1-or-later provider, exact source receipt, runtime dependency check,
@@ -70,15 +71,22 @@ the platform-targets section below spells out. `CC`, `CXX`, `AR`,
 `CROSS_COMPILE`, `CPPFLAGS`, `CFLAGS`, `CXXFLAGS`, `LDFLAGS`, `LDLIBS`, `STATIC_LINKING`, and
 `BUILD_DIR` remain caller-owned build inputs.
 
-`PKG_CONFIG`, `FFMPEG_CFLAGS` and `FFMPEG_LIBS` select the external video
-provider. Cross builds must select target headers, import libraries and
-shared binaries rather than host packages; the pinned recipe accepts explicit
-target OS, architecture and compiler inputs. A static runtime archive retains
-FFmpeg references, so its consumers must link the same five libraries. FFmpeg
-itself remains shared even when `STATIC_LINKING=1` archives the core objects.
-`make -s runtime-link-libs` prints the selected platform's runtime link
-libraries for C consumers. Query it with the same provider and toolchain inputs
-used to build that archive; it performs no compilation or network access.
+`VIDEO_PROVIDER` selects movie support. Its default, `auto`, enables the dynamic
+FFmpeg provider when native target headers are discoverable and otherwise builds
+a working core whose movies complete immediately. `dynamic` requires FFmpeg 8
+target headers through `FFMPEG_CFLAGS`; `none` explicitly builds the fallback.
+Cross builds never query host pkg-config, so target headers must be selected
+explicitly. `FFMPEG_LIBS` is used only by the provider qualification probe: the
+core and static runtime resolve the five shared libraries at runtime and retain
+no FFmpeg link dependency. `make -s runtime-link-libs` prints the selected
+platform loader libraries for C consumers.
+
+At runtime, place compatible FFmpeg 8 shared libraries beside the core or in the
+platform's normal library search path. If they are absent or incompatible,
+`video_open` logs a bounded warning, reports a closed player and delivers one
+`video_end` event so content waiting for a movie can continue. Adding the
+libraries later makes the next movie-open attempt use them; the core itself does
+not need to be rebuilt.
 
 Core and runtime objects rebuild when the selected compiler commands, compilation
 flags or SDK environment change. Linker and archiver settings are tracked separately:

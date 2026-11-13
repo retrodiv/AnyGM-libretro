@@ -18,9 +18,37 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools/media"))
 import prepare_ci as ci
+import build_ffmpeg as builder
 
 
 class ProviderPreparation(unittest.TestCase):
+    def test_partial_shared_library_is_rejected_before_install(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            library = root / "libavcodec.so.62"
+            library.write_bytes(b"partial")
+            nm = root / "nm"
+            nm.write_text("#!/bin/sh\nprintf '%s\\n' '                 U ff_missing_private'\n")
+            nm.chmod(0o755)
+            with self.assertRaisesRegex(SystemExit, "unresolved private symbols"):
+                builder.verify_elf_private_symbols(root, str(nm))
+
+    def test_cross_make_never_queries_host_pkg_config(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            marker = root / "called"
+            script = root / "pkg-config"
+            script.write_text("#!/bin/sh\ntouch \"$MARKER\"\nprintf '%s\\n' -I/host/include\n")
+            script.chmod(0o755)
+            env = dict(os.environ, MARKER=str(marker))
+            result = subprocess.run([
+                "make", "-s", "platform=win", "CROSS_COMPILE=target-",
+                f"PKG_CONFIG={script}", "runtime-link-libs",
+            ], cwd=ROOT, env=env, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse(marker.exists())
+            self.assertNotIn("/host/include", result.stdout)
+
     def test_mxe_keeps_the_selected_cross_tool_family(self):
         values = ci.target_options("windows-x64", {
             "CC": "x86_64-w64-mingw32.static-gcc", "CXX": "x86_64-w64-mingw32.static-g++",

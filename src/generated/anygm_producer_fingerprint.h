@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-/* Derived from 261 first-party sources. */
-#define ANYGM_PRODUCER_FINGERPRINT UINT64_C(0xc32a767d238cb397)
+/* Derived from 263 first-party sources. */
+#define ANYGM_PRODUCER_FINGERPRINT UINT64_C(0xa7378c3e61190965)
 
 #endif

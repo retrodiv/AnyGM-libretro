@@ -2,19 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "gml_video_codec.h"
-
-#include <libavcodec/avcodec.h>
-#include <libavformat/avformat.h>
-#include <libavutil/channel_layout.h>
-#include <libavutil/avutil.h>
-#include <libavutil/mem.h>
-#include <libavutil/mathematics.h>
-#include <libswresample/swresample.h>
-#include <libswscale/swscale.h>
-
-#if LIBAVCODEC_VERSION_MAJOR < 62 || LIBAVFORMAT_VERSION_MAJOR < 62 || LIBAVUTIL_VERSION_MAJOR < 60 || LIBSWSCALE_VERSION_MAJOR < 9 || LIBSWRESAMPLE_VERSION_MAJOR < 6
-#error Video playback requires FFmpeg 8 or later development headers.
-#endif
+#include "gml_video_provider.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -23,10 +11,70 @@
 #include <stdio.h>
 #include <string.h>
 
+int gml_video_codec_available(void){return gml_video_provider_available();}
+const char *gml_video_codec_provider_error(void){return gml_video_provider_error();}
+
+#if ANYGM_VIDEO_PROVIDER_DYNAMIC
+
+#define av_channel_layout_check gml_video_provider_api.av_channel_layout_check
+#define av_channel_layout_compare gml_video_provider_api.av_channel_layout_compare
+#define av_channel_layout_copy gml_video_provider_api.av_channel_layout_copy
+#define av_channel_layout_default gml_video_provider_api.av_channel_layout_default
+#define av_channel_layout_uninit gml_video_provider_api.av_channel_layout_uninit
+#define av_dict_free gml_video_provider_api.av_dict_free
+#define av_dict_set gml_video_provider_api.av_dict_set
+#define av_find_best_stream gml_video_provider_api.av_find_best_stream
+#define av_frame_alloc gml_video_provider_api.av_frame_alloc
+#define av_frame_free gml_video_provider_api.av_frame_free
+#define av_frame_get_buffer gml_video_provider_api.av_frame_get_buffer
+#define av_frame_unref gml_video_provider_api.av_frame_unref
+#define av_free gml_video_provider_api.av_free
+#define av_freep gml_video_provider_api.av_freep
+#define av_get_bytes_per_sample gml_video_provider_api.av_get_bytes_per_sample
+#define av_malloc gml_video_provider_api.av_malloc
+#define av_packet_alloc gml_video_provider_api.av_packet_alloc
+#define av_packet_free gml_video_provider_api.av_packet_free
+#define av_packet_unref gml_video_provider_api.av_packet_unref
+#define av_read_frame gml_video_provider_api.av_read_frame
+#define av_realloc gml_video_provider_api.av_realloc
+#define av_rescale_rnd gml_video_provider_api.av_rescale_rnd
+#define avcodec_alloc_context3 gml_video_provider_api.avcodec_alloc_context3
+#define avcodec_find_decoder gml_video_provider_api.avcodec_find_decoder
+#define avcodec_free_context gml_video_provider_api.avcodec_free_context
+#define avcodec_open2 gml_video_provider_api.avcodec_open2
+#define avcodec_parameters_to_context gml_video_provider_api.avcodec_parameters_to_context
+#define avcodec_receive_frame gml_video_provider_api.avcodec_receive_frame
+#define avcodec_send_packet gml_video_provider_api.avcodec_send_packet
+#define avcodec_version gml_video_provider_api.avcodec_version
+#define avformat_alloc_context gml_video_provider_api.avformat_alloc_context
+#define avformat_close_input gml_video_provider_api.avformat_close_input
+#define avformat_find_stream_info gml_video_provider_api.avformat_find_stream_info
+#define avformat_open_input gml_video_provider_api.avformat_open_input
+#define avformat_version gml_video_provider_api.avformat_version
+#define avio_alloc_context gml_video_provider_api.avio_alloc_context
+#define avio_context_free gml_video_provider_api.avio_context_free
+#define avutil_version gml_video_provider_api.avutil_version
+#define swresample_version gml_video_provider_api.swresample_version
+#define swr_alloc_set_opts2 gml_video_provider_api.swr_alloc_set_opts2
+#define swr_convert gml_video_provider_api.swr_convert
+#define swr_free gml_video_provider_api.swr_free
+#define swr_get_delay gml_video_provider_api.swr_get_delay
+#define swr_init gml_video_provider_api.swr_init
+#define swscale_version gml_video_provider_api.swscale_version
+#define sws_freeContext gml_video_provider_api.sws_freeContext
+#define sws_getCachedContext gml_video_provider_api.sws_getCachedContext
+#define sws_getCoefficients gml_video_provider_api.sws_getCoefficients
+#define sws_scale gml_video_provider_api.sws_scale
+#define sws_setColorspaceDetails gml_video_provider_api.sws_setColorspaceDetails
+
 enum { VIDEO_MAX_PIXELS=67108864, VIDEO_MAX_AUDIO=1048576, VIDEO_RATE=GML_VIDEO_AUDIO_RATE };
 void gml_video_codec_stamp(uint32_t versions[5]){
+  if(!versions) return;
+  memset(versions,0,5*sizeof *versions);
+  if(!gml_video_provider_acquire()) return;
   versions[0]=avformat_version();versions[1]=avcodec_version();versions[2]=avutil_version();
   versions[3]=swscale_version();versions[4]=swresample_version();
+  gml_video_provider_release();
 }
 struct GmlVideoCodec {
   const uint8_t *bytes; size_t size, position;
@@ -41,6 +89,7 @@ struct GmlVideoCodec {
   GmlVideoInfo info;
   double origin_ms, audio_next_ms, image_next_ms;
   unsigned selected;
+  int provider_acquired;
 };
 
 static int source_read(void *opaque,uint8_t *out,int count){
@@ -74,6 +123,7 @@ static void release_resources(GmlVideoCodec *d){
   sws_freeContext(d->scale);swr_free(&d->resample);
   av_channel_layout_uninit(&d->audio_layout);
   av_free(d->image);av_free(d->audio);
+  if(d->provider_acquired){d->provider_acquired=0;gml_video_provider_release();}
 }
 void gml_video_codec_close(GmlVideoCodec *d){
   if(d){release_resources(d);free(d);}
@@ -96,6 +146,8 @@ GmlVideoCodec *gml_video_codec_open_streams(const uint8_t *bytes,size_t size,uns
   if(!bytes || !size || size>INT64_MAX || !selected || (selected&~3u)) return NULL;
   GmlVideoCodec *d=calloc(1,sizeof *d);
   if(!d) return NULL;
+  if(!gml_video_provider_acquire()){free(d);return NULL;}
+  d->provider_acquired=1;
   d->bytes=bytes;d->size=size;d->selected=selected;d->streams[0]=d->streams[1]=-1;
   uint8_t *buffer=av_malloc(32768);
   if(!buffer) goto fail;
@@ -299,3 +351,26 @@ int gml_video_codec_rewind(GmlVideoCodec *d){
   release_resources(d);*d=*fresh;d->io->opaque=d;free(fresh);
   return 1;
 }
+
+#else
+
+void gml_video_codec_stamp(uint32_t versions[5]){
+  if(versions) memset(versions,0,5*sizeof *versions);
+}
+GmlVideoCodec *gml_video_codec_open(const uint8_t *bytes,size_t size){
+  (void)bytes;(void)size;return NULL;
+}
+GmlVideoCodec *gml_video_codec_open_streams(const uint8_t *bytes,size_t size,unsigned selected){
+  (void)bytes;(void)size;(void)selected;return NULL;
+}
+GmlVideoInfo gml_video_codec_info(const GmlVideoCodec *codec){
+  (void)codec;return (GmlVideoInfo){0};
+}
+int gml_video_codec_next(GmlVideoCodec *codec,GmlVideoDecoded *out){
+  (void)codec;if(out) memset(out,0,sizeof *out);return GML_VIDEO_ERROR;
+}
+int gml_video_codec_rewind(GmlVideoCodec *codec){(void)codec;return 0;}
+int gml_video_codec_error(const GmlVideoCodec *codec){(void)codec;return -1;}
+void gml_video_codec_close(GmlVideoCodec *codec){(void)codec;}
+
+#endif
