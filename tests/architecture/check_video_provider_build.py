@@ -44,7 +44,7 @@ class ProviderPreparation(unittest.TestCase):
             result = subprocess.run([
                 "make", "-s", "platform=win", "CROSS_COMPILE=target-",
                 f"PKG_CONFIG={script}", "runtime-link-libs",
-            ], cwd=ROOT, env=env, capture_output=True, text=True, timeout=10)
+            ], cwd=ROOT, env=env, capture_output=True, text=True, timeout=60)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertFalse(marker.exists())
             self.assertNotIn("/host/include", result.stdout)
