@@ -1096,6 +1096,46 @@ void gml_fire_async_http(GmlVM *vm){
     ds_map_destroy_id(vm,id);
   }
 }
+void builtin_fire_async_map(GmlVM *vm,int map,const char *event){
+  GmlVal *slot=gml_varmap_get(&vm->globals,"async_load");
+  GmlVal previous=slot?*slot:vreal(-1);
+  int had_wait=vm->wait.active;
+  *gml_varmap_put(&vm->globals,"async_load")=vreal(map);
+  int extent=vm->inst_count;uint32_t first_new_id=vm->next_id;
+  for(int i=0;i<extent;i++){
+    GmlInstance *instance=&vm->inst[i];
+    if(instance->active && !instance->marked && !instance->deactivated &&
+       instance->id<first_new_id) gml_run_event(vm,instance,event);
+  }
+  *gml_varmap_put(&vm->globals,"async_load")=previous;
+  if(!had_wait && vm->wait.active) vm->wait.async_map=map;
+  else ds_map_destroy_id(vm,map);
+}
+
+void gml_fire_async_account_picker(GmlVM *vm){
+  GmlBuiltinState *state=vm?vm->builtins:NULL;
+  if(!state || vm->wait.active) return;
+  /* Requests created by a callback belong to the next drain, even if it parks. */
+  int budget=state->n_account_picker;
+  while(budget-- && state->n_account_picker && !vm->wait.active){
+    GmlAccountPickerRequest request=state->account_picker[0];
+    int map=ds_map_create_id(vm);
+    if(map<0) return;
+    /* The portable player is a local, nonguest profile, not a service login. */
+    if(!ds_map_put_static_key(vm,map,"id",vreal(request.id),1) ||
+       !ds_map_put_static_key(vm,map,"user",vreal(1),1) ||
+       !ds_map_put_static_key(vm,map,"pad_index",vreal(request.pad),1) ||
+       !ds_map_put_static_key(vm,map,"succeeded",vreal(1),1) ||
+       !ds_map_put_static_string(vm,map,"type","xboxone_accountpicker")){
+      ds_map_destroy_id(vm,map);return;
+    }
+    state->n_account_picker--;
+    memmove(state->account_picker,state->account_picker+1,
+            (size_t)state->n_account_picker*sizeof(*state->account_picker));
+    builtin_fire_async_map(vm,map,"Other_63");
+  }
+}
+
 GmlVal builtin_http_request_stub(GmlVM *vm){
   int req=++vm->builtins->async_seq;
   if(vm->builtins->n_async_http<16) vm->builtins->async_http_q[vm->builtins->n_async_http++]=req;

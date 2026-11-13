@@ -981,8 +981,8 @@ static int broadcast_wait_state_roundtrip(int async_payload){
       !memcmp(before,after,written);
   }
   const uint32_t bad_maps[]={UINT32_MAX,INT32_MAX};
-  if(ok) ok=written>=12 && !memcmp(before+written-4,(const unsigned char[4]){0},4);
-  size_t owner_tail=async_payload?8u:12u;
+  if(ok) ok=written>=16 && !memcmp(before+written-8,(const unsigned char[8]){0},8);
+  size_t owner_tail=async_payload?12u:16u;
   for(size_t i=0;i<sizeof bad_maps/sizeof *bad_maps && ok;i++){
     memcpy(after,before,written);
     for(unsigned k=0;k<4;k++) after[written-owner_tail+k]=(unsigned char)(bad_maps[i]>>(8*k));
@@ -994,7 +994,7 @@ static int broadcast_wait_state_roundtrip(int async_payload){
   if(ok){
     /* One DS map cannot be owned by both callback channels. */
     memcpy(after,before,written);
-    for(unsigned k=0;k<4;k++) after[written-(async_payload?12u:8u)+k]=
+    for(unsigned k=0;k<4;k++) after[written-(async_payload?16u:12u)+k]=
       (unsigned char)((uint32_t)map.d>>(8*k));
     GmlVM rejected={0};
     if(gml_vm_init(&rejected,&win,NULL)) ok=0;

@@ -144,7 +144,21 @@ static void fixture_map(FixtureProjection *p){
  * against the live fixture. Direct state controls cover mutation/restoration of these fields. */
 static int project_fixture_playback(AnygmEngine *engine,uint8_t **data,size_t *written){
   uint8_t *bytes=*data;
-  if(*written<112 || (uint32_t)read_u64(bytes+4)!=68 || engine->render.n_spr<0)return 0;
+  if(*written<112 || (uint32_t)read_u64(bytes+4)!=69 || engine->render.n_spr<0 ||
+     gml_builtin_account_picker_pending_count(&engine->vm))return 0;
+  /* Preserve the preceding fixture's bytes only after proving that the new queue is empty.
+   * This scratch-only normalization never supplies an older layout to the runtime reader. */
+  size_t vm_start=112+(size_t)read_u64(bytes+64)+(size_t)read_u64(bytes+72);
+  size_t vm_size=(size_t)read_u64(bytes+80);
+  if(vm_start>*written || vm_size>*written-vm_start || vm_size<12 ||
+     (uint32_t)read_u64(bytes+vm_start+4)!=44 ||
+     memcmp(bytes+vm_start+vm_size-4,(const uint8_t[4]){0},4))return 0;
+  size_t vm_end=vm_start+vm_size;
+  memmove(bytes+vm_end-4,bytes+vm_end,*written-vm_end);
+  *written-=4;
+  write_u32(bytes+4,68);write_u32(bytes+vm_start+4,43);
+  write_u64(bytes+16,*written);write_u64(bytes+80,vm_size-4);
+  write_u64(bytes+96,*written-112);write_u64(bytes+56,state_checksum(bytes+112,*written-112));
   /* The historical fixture contains no dynamic sprite information or nine-slice.
    * Validate each current metadata word before omitting this new trailer. */
   size_t metadata_start=112+(size_t)read_u64(bytes+64);
@@ -426,7 +440,7 @@ static int fixture_projection_controls(AnygmEngine *engine,const uint8_t *baseli
     free(engine->vm.pending_game_load);engine->vm.pending_game_load=NULL;
     free(bytes);
   }
-  const uint32_t unknown_roots[]={50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,69};
+  const uint32_t unknown_roots[]={50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,70};
   for(unsigned i=0;i<sizeof unknown_roots/sizeof unknown_roots[0] && ok;i++){
     uint8_t *bytes=NULL;size_t count=0;
     ok=save_state(engine,&bytes,&count);
@@ -434,6 +448,19 @@ static int fixture_projection_controls(AnygmEngine *engine,const uint8_t *baseli
       write_u32(bytes+4,unknown_roots[i]);
       ok=!project_fixture_vm(engine,&bytes,&count);
     }
+    free(bytes);
+  }
+  for(unsigned variant=0;variant<3 && ok;variant++){
+    uint8_t *bytes=NULL;size_t count=0;
+    ok=save_state(engine,&bytes,&count);
+    size_t start=ok?112+(size_t)read_u64(bytes+64)+(size_t)read_u64(bytes+72):0;
+    size_t length=ok?(size_t)read_u64(bytes+80):0;
+    if(ok && start<=count && length<=count-start && length>=12){
+      if(variant<2)write_u32(bytes+start+4,variant?45:43);
+      else write_u32(bytes+start+length-4,1);
+      write_u64(bytes+56,state_checksum(bytes+112,count-112));
+      ok=!project_fixture_vm(engine,&bytes,&count);
+    }else ok=0;
     free(bytes);
   }
   if(ok){

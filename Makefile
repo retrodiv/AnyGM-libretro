@@ -212,7 +212,7 @@ RUNTIME_TESTS := test_unicode_strings test_vm_conv_bool test_vm_unset_reads test
 VIDEO_RENDERER_TESTS := test_renderer_effects test_renderer_postprocess test_renderer_surfaces \
 	test_renderer_tiles test_renderer_primitives test_renderer_assets test_renderer_fonts \
 	test_renderer_texture_shells test_render_plan test_render_resources
-RUNTIME_TESTS += test_builtin_buffer_codecs
+RUNTIME_TESTS += test_builtin_buffer_codecs test_builtin_account_picker
 ifneq ($(HARDWARE_RENDER),0)
 VIDEO_RENDERER_TESTS += test_gpu
 endif
@@ -588,6 +588,10 @@ $(TEST_DIR)/test_builtin_dispatch: tests/unit/runtime/test_builtin_dispatch.c \
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(CPPFLAGS))
 
+$(TEST_DIR)/test_builtin_account_picker: tests/unit/runtime/test_builtin_account_picker.c $(UNIT_RUNTIME_OBJECTS)
+	mkdir -p $(dir $@)
+	$(call link_runtime_test,$(CPPFLAGS))
+
 $(TEST_DIR)/test_builtin_physics: tests/unit/runtime/test_builtin_physics.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(CPPFLAGS))
@@ -769,6 +773,7 @@ check: CFLAGS += -Werror
 check: CXXFLAGS += -Werror
 check: warnings-check architecture-check api-check contract-check integration-check security-check video-check $(CHECK_TARGETS)
 	$(TEST_DIR)/test_keyboard_text
+	$(TEST_DIR)/test_builtin_account_picker
 	$(TEST_DIR)/test_unicode_strings
 	$(TEST_DIR)/test_bytecode
 	$(TEST_DIR)/test_array_copy_policy

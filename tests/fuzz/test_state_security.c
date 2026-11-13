@@ -68,13 +68,14 @@ static size_t render_metadata_body_end(const AnygmEngine *engine,
   return at;
 }
 
-/* These corruption fixtures carry neither a movie nor a suspended Social map. Check
- * their live owners and exact empty wire words before locating preceding fields. */
-static int neutral_video_tail(AnygmEngine *engine,const uint8_t *bytes,size_t end){
-  if(end<8 || engine->vm.wait.async_map) return 0;
+/* These corruption fixtures carry no movie, suspended Social map or pending account request.
+ * Check the exact empty trailing words before locating preceding fields. */
+static int neutral_async_video_tail(AnygmEngine *engine,const uint8_t *bytes,size_t end){
+  if(end<12 || engine->vm.wait.async_map ||
+     gml_builtin_account_picker_pending_count(&engine->vm)) return 0;
   GmlBuiltinVideoSource *source=gml_builtin_video_checkpoint(&engine->vm);
   if(source){gml_builtin_video_source_release(source);return 0;}
-  return !memcmp(bytes+end-8,(const uint8_t[8]){0},8);
+  return !memcmp(bytes+end-12,(const uint8_t[12]){0},12);
 }
 
 /* Locate older table controls only after proving this fixture has no semantic
@@ -90,11 +91,11 @@ static size_t neutral_vm_body_end(AnygmEngine *engine,const uint8_t *bytes,size_
     start+=(size_t)part;
   }
   uint64_t length=read_u64(bytes+80);
-  if(length<45 || length>size-start || (uint32_t)read_u64(bytes+start+4)!=43)
+  if(length<49 || length>size-start || (uint32_t)read_u64(bytes+start+4)!=44)
     return SIZE_MAX;
   size_t end=start+(size_t)length;
-  if(!neutral_video_tail(engine,bytes,end)) return SIZE_MAX;
-  end-=8;
+  if(!neutral_async_video_tail(engine,bytes,end)) return SIZE_MAX;
+  end-=12;
   if(memcmp(bytes+end-4,(const uint8_t[4]){0},4)) return SIZE_MAX;
   end-=4;
   if(memcmp(bytes+end-4,(const uint8_t[4]){0},4)) return SIZE_MAX;
@@ -113,7 +114,7 @@ static int neutral_vm_body_end_controls(AnygmEngine *engine,
     return fail("current neutral VM trailer was not located");
   uint8_t *candidate=malloc(size);
   if(!candidate) return fail("neutral trailer control allocation");
-  const uint32_t roots[]={53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,69},vms[]={31,32,33,34,35,36,37,38,39,40,41,42,44};
+  const uint32_t roots[]={53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,70},vms[]={31,32,33,34,35,36,37,38,39,40,41,42,43,45};
   size_t vm_start=STATE_HEADER_SIZE+(size_t)read_u64(bytes+64)+
                   (size_t)read_u64(bytes+72);
   int ok=1;
@@ -1603,9 +1604,9 @@ static int registered_member_state_cases(const AnygmHostServices *services,
     size_t end=STATE_HEADER_SIZE+(size_t)read_u64(state+64)+(size_t)read_u64(state+72)+
                (size_t)read_u64(state+80);
     ok=ok && !engine->vm.pending_game_load && !engine->vm.wait.broadcast_map &&
-       end<=size && end>=45 && neutral_video_tail(engine,state,end) &&
-       !memcmp(state+end-16,(const uint8_t[8]){0},8);
-    if(ok)end-=16;
+       end<=size && end>=49 && neutral_async_video_tail(engine,state,end) &&
+       !memcmp(state+end-20,(const uint8_t[8]){0},8);
+    if(ok)end-=20;
     ok=ok && !memcmp(state+end-25,(const uint8_t[25]){0},25);
     if(ok) ok=reject_payload_u32(engine,candidate,size,state,size,end-25,UINT32_MAX,
                                  "invalid member registry count");
@@ -1621,9 +1622,9 @@ static int registered_member_state_cases(const AnygmHostServices *services,
     size_t start=STATE_HEADER_SIZE+(size_t)read_u64(state+64)+(size_t)read_u64(state+72);
     size_t end=start+(size_t)read_u64(state+80);
     ok=ok && !engine->vm.pending_game_load && !engine->vm.wait.broadcast_map &&
-       end<=size && end>=start+38 && neutral_video_tail(engine,state,end) &&
-       !memcmp(state+end-16,(const uint8_t[8]){0},8);
-    if(ok)end-=16;
+       end<=size && end>=start+42 && neutral_async_video_tail(engine,state,end) &&
+       !memcmp(state+end-20,(const uint8_t[8]){0},8);
+    if(ok)end-=20;
     ok=ok && !memcmp(state+end-21,(const uint8_t[21]){0},21) && state[end-22]==V_UNDEF;
     if(ok){
       memcpy(candidate,state,size);
@@ -1933,17 +1934,17 @@ static int date_timezone_state_cases(const AnygmHostServices *services,
   if(ok){
     size_t at=STATE_HEADER_SIZE+(size_t)read_u64(utc+64)+(size_t)read_u64(utc+72);
     size_t length=(size_t)read_u64(utc+80);
-    ok=at<utc_size && length>20 && length<=utc_size-at &&
-       neutral_video_tail(engine,utc,at+length) &&
-       neutral_video_tail(engine,local,at+length) &&
-       !memcmp(utc+at+length-16,(const uint8_t[8]){0},8) &&
-       !memcmp(local+at+length-16,(const uint8_t[8]){0},8) &&
-       utc[at+length-17]==1 && local[at+length-17]==0;
+    ok=at<utc_size && length>24 && length<=utc_size-at &&
+       neutral_async_video_tail(engine,utc,at+length) &&
+       neutral_async_video_tail(engine,local,at+length) &&
+       !memcmp(utc+at+length-20,(const uint8_t[8]){0},8) &&
+       !memcmp(local+at+length-20,(const uint8_t[8]){0},8) &&
+       utc[at+length-21]==1 && local[at+length-21]==0;
     candidate=malloc(utc_size);
     ok=ok && candidate;
     const unsigned invalid[]={2,255};
     for(unsigned i=0;i<sizeof invalid/sizeof invalid[0] && ok;i++){
-      memcpy(candidate,utc,utc_size);candidate[at+length-17]=(uint8_t)invalid[i];
+      memcpy(candidate,utc,utc_size);candidate[at+length-21]=(uint8_t)invalid[i];
       refresh_checksum(candidate);
       ok=reject_unchanged(engine,candidate,utc_size,local,local_size,"invalid date timezone");
     }
@@ -1975,10 +1976,10 @@ static int deferred_game_load_state_cases(const AnygmHostServices *services,
   size_t vm_start=ok?STATE_HEADER_SIZE+(size_t)read_u64(baseline+64)+
     (size_t)read_u64(baseline+72):0;
   size_t vm_size=ok?(size_t)read_u64(baseline+80):0;
-  if(ok)ok=length>=4 && vm_size>=length+16u && vm_start<=size && vm_size<=size-vm_start &&
-    !engine->vm.wait.broadcast_map && neutral_video_tail(engine,baseline,vm_start+vm_size) &&
-    !memcmp(baseline+vm_start+vm_size-12,(const uint8_t[4]){0},4);
-  size_t count_at=ok?vm_start+vm_size-length-16u:0;
+  if(ok)ok=length>=4 && vm_size>=length+20u && vm_start<=size && vm_size<=size-vm_start &&
+    !engine->vm.wait.broadcast_map && neutral_async_video_tail(engine,baseline,vm_start+vm_size) &&
+    !memcmp(baseline+vm_start+vm_size-16,(const uint8_t[4]){0},4);
+  size_t count_at=ok?vm_start+vm_size-length-20u:0;
   if(ok)ok=engine->vm.pending_game_load &&
     (uint32_t)read_u64(baseline+count_at)==length &&
     !memcmp(baseline+count_at+4,engine->vm.pending_game_load,length);
@@ -2005,16 +2006,16 @@ static int broadcast_payload_state_cases(const AnygmHostServices *services,
   size_t start=ok?STATE_HEADER_SIZE+(size_t)read_u64(baseline+64)+
     (size_t)read_u64(baseline+72):0;
   size_t length=ok?(size_t)read_u64(baseline+80):0;
-  ok=ok && length>=12 && start<=size && length<=size-start &&
+  ok=ok && length>=16 && start<=size && length<=size-start &&
     !engine->vm.wait.active && !engine->vm.wait.broadcast_map &&
-    neutral_video_tail(engine,baseline,start+length) &&
-    !memcmp(baseline+start+length-12,(const uint8_t[4]){0},4);
+    neutral_async_video_tail(engine,baseline,start+length) &&
+    !memcmp(baseline+start+length-16,(const uint8_t[4]){0},4);
   candidate=ok?malloc(size):NULL;ok=ok && candidate;
-  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,start+length-12,UINT32_MAX,
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,start+length-16,UINT32_MAX,
                              "negative parked broadcast map identity");
-  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,start+length-12,INT32_MAX,
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,start+length-16,INT32_MAX,
                              "missing parked broadcast map identity");
-  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,start+length-12,(uint32_t)map.d,
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,start+length-16,(uint32_t)map.d,
                              "live broadcast map without a parked chain");
   if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,4,66,
                              "previous payload-owner-free public schema");
@@ -2023,6 +2024,50 @@ static int broadcast_payload_state_cases(const AnygmHostServices *services,
   free(candidate);free(baseline);anygm_destroy(engine);
   if(ok)puts("broadcast payload state: five malformed/old-schema controls reject transactionally");
   return ok?1:fail("broadcast payload ownership state rollback");
+}
+
+static int account_picker_state_cases(const AnygmHostServices *services,
+                                      const AnygmContentSource *source){
+  AnygmEngine *engine=NULL;uint8_t *baseline=NULL,*candidate=NULL;size_t size=0;
+  int ok=anygm_create(services,&engine)==ANYGM_OK && anygm_load(engine,source,NULL)==ANYGM_OK;
+  for(int i=0;i<3 && ok;i++){
+    GmlVal argument=vreal(i);
+    GmlVal request=gml_builtin_call(&engine->vm,"xboxone_show_account_picker",&argument,1);
+    ok=request.t==V_REAL && request.d>0;
+  }
+  if(ok)ok=save_state(engine,&baseline,&size);
+  size_t start=ok?STATE_HEADER_SIZE+(size_t)read_u64(baseline+64)+
+                       (size_t)read_u64(baseline+72):0;
+  size_t length=ok?(size_t)read_u64(baseline+80):0;
+  ok=ok && length>=28 && start<=size && length<=size-start;
+  size_t at=ok?start+length-28:0;
+  if(ok)ok=(uint32_t)read_u64(baseline+at)==3;
+  candidate=ok?malloc(size):NULL;ok=ok && candidate;
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,at,17,"oversized account request queue");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,at,UINT32_MAX,"negative account request count");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,at+4,0,"zero account request identity");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,at+4,INT32_MAX,"future account request identity");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,at+12,
+                             (uint32_t)read_u64(baseline+at+4),"duplicate account request identity");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,4,68,"previous account-queue-free public schema");
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,start+4,43,"previous account-queue-free VM schema");
+  if(ok){
+    ok=anygm_reset(engine)==ANYGM_OK;
+    GmlVal argument=vreal(0);
+    GmlVal request=ok?gml_builtin_call(&engine->vm,"xboxone_show_account_picker",&argument,1):vundef();
+    ok=ok && request.t==V_REAL && request.d==1;
+    uint8_t *fresh=NULL;size_t fresh_size=0;
+    if(ok)ok=save_state(engine,&fresh,&fresh_size);
+    if(ok){
+      size_t end=STATE_HEADER_SIZE+(size_t)read_u64(fresh+64)+(size_t)read_u64(fresh+72)+
+                 (size_t)read_u64(fresh+80);
+      ok=end<=fresh_size && end>=12 && (uint32_t)read_u64(fresh+end-12)==1 &&
+         (uint32_t)read_u64(fresh+end-8)==1;
+    }
+    free(fresh);
+  }
+  free(candidate);free(baseline);anygm_destroy(engine);
+  return ok?1:fail("account picker pending state, transactional rejection or Reset");
 }
 
 int main(void){
@@ -2048,7 +2093,8 @@ int main(void){
   source.size=content_size;
   if(anygm_load(engine,&source,NULL)!=ANYGM_OK) return fail("content load failed")?0:1;
 
-  if(!broadcast_payload_state_cases(&services,&source) ||
+  if(!account_picker_state_cases(&services,&source) ||
+     !broadcast_payload_state_cases(&services,&source) ||
      !particle_configuration_state_cases(&services,&source) ||
      !particle_runtime_state_cases(&services,&source) ||
      !particle_group_state_cases(&services,&source) ||

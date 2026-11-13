@@ -501,6 +501,7 @@ void gml_builtin_state_reset(GmlBuiltinState *state){
   state->async_seq=0;
   state->n_async_sl=0;
   state->n_async_http=0;
+  state->n_account_picker=0;
   state->async_group_active=0;
   state->async_group_id=0;
   state->async_group_status=1;
@@ -594,6 +595,43 @@ void gml_builtin_state_profile_ds(const GmlBuiltinState *state,
         byte_totals[2]+=gml_vm_state_measure_value(state->vm,grid->cell[j]);
     }
   }
+}
+
+int gml_builtin_account_picker_pending_count(const GmlVM *vm){
+  return vm && vm->builtins?vm->builtins->n_account_picker:0;
+}
+
+void gml_builtin_state_write_account_picker(const GmlBuiltinState *state,
+                                            GmlVmStateWriter *writer){
+  gml_vm_state_write_i32(writer,state->n_account_picker);
+  for(int i=0;i<state->n_account_picker;i++){
+    gml_vm_state_write_i32(writer,state->account_picker[i].id);
+    gml_vm_state_write_i32(writer,state->account_picker[i].pad);
+  }
+}
+int gml_builtin_state_read_account_picker(GmlBuiltinState *state,
+                                           GmlVmStateReader *reader){
+  if(!state || !gml_vm_state_reader_ok(reader)) return 0;
+  int count=gml_vm_state_read_i32(reader);
+  if(count<0 || count>GML_ACCOUNT_PICKER_REQUEST_MAX ||
+     (size_t)count>gml_vm_state_reader_remaining(reader)/8u){
+    gml_vm_state_reader_fail(reader,"bad account request count",(uint32_t)count);return 0;
+  }
+  GmlAccountPickerRequest requests[GML_ACCOUNT_PICKER_REQUEST_MAX];
+  int previous=0;
+  for(int i=0;i<count;i++){
+    requests[i].id=gml_vm_state_read_i32(reader);
+    requests[i].pad=gml_vm_state_read_i32(reader);
+    if(requests[i].id<=previous || requests[i].id>state->async_seq){
+      gml_vm_state_reader_fail(reader,"bad account request identity",(uint32_t)requests[i].id);
+      return 0;
+    }
+    previous=requests[i].id;
+  }
+  if(!gml_vm_state_reader_ok(reader)) return 0;
+  memcpy(state->account_picker,requests,(size_t)count*sizeof(*requests));
+  state->n_account_picker=count;
+  return 1;
 }
 
 void gml_builtin_state_write_ini_ds(const GmlBuiltinState *state,

@@ -1085,6 +1085,7 @@ void gml_vm_step(GmlVM *vm){
   gml_fire_async_saveload(vm);
   /* deferred async HTTP failure events (Other_62) queued by http_* this step (offline core) */
   gml_fire_async_http(vm);
+  gml_fire_async_account_picker(vm);
   gml_fire_async_audio(vm);
   gml_builtin_video_tick(vm);
   /* room transition requested during the step */

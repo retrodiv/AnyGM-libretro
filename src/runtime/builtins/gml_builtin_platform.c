@@ -816,6 +816,16 @@ GmlVal gml_builtin_try_platform_extensions(GmlVM *vm, const char *nm, GmlVal *a,
     return vreal(0); }
   /* Console-authored local menus can use the portable player without an online session. */
   if(!strcmp(nm,"xboxone_user_is_signed_in")) return vreal(1);
+  if(!strcmp(nm,"xboxone_show_account_picker")){
+    double pad=N(a,n,0);
+    if(!isfinite(pad) || pad<INT_MIN || pad>INT_MAX) return vreal(-1);
+    GmlBuiltinState *state=gml_builtin_state_ensure(vm);
+    if(!state || state->n_account_picker>=GML_ACCOUNT_PICKER_REQUEST_MAX ||
+       state->async_seq>=INT_MAX) return vreal(-1);
+    int id=++state->async_seq;
+    state->account_picker[state->n_account_picker++]=(GmlAccountPickerRequest){id,(int)pad};
+    return vreal(id);
+  }
   if(!strncmp(nm,"xboxone_",8)) return vreal(0);
   /* The host receives one completed video frame per anygm_run_frame. Desktop refresh/vsync calls
    * cannot expose an intermediate buffer here, and waiting would only stall emulation. */

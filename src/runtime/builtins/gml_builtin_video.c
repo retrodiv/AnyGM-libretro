@@ -139,19 +139,7 @@ static void video_notify(GmlVM *vm,const char *type){
      !ds_map_put_static_key(vm,map,"status",vreal(0),1)){
     ds_map_destroy_id(vm,map);return;
   }
-  GmlVal *slot=gml_varmap_get(&vm->globals,"async_load");
-  GmlVal previous=slot?*slot:vreal(-1);
-  int had_wait=vm->wait.active;
-  *gml_varmap_put(&vm->globals,"async_load")=vreal(map);
-  int extent=vm->inst_count;uint32_t first_new_id=vm->next_id;
-  for(int i=0;i<extent;i++){
-    GmlInstance *instance=&vm->inst[i];
-    if(instance->active && !instance->marked && !instance->deactivated &&
-       instance->id<first_new_id) gml_run_event(vm,instance,"Other_70");
-  }
-  *gml_varmap_put(&vm->globals,"async_load")=previous;
-  if(!had_wait && vm->wait.active) vm->wait.async_map=map;
-  else ds_map_destroy_id(vm,map);
+  builtin_fire_async_map(vm,map,"Other_70");
 }
 void gml_builtin_video_tick(GmlVM *vm){
   GmlBuiltinState *state=vm?vm->builtins:NULL;

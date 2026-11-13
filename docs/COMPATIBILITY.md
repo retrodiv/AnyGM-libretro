@@ -216,6 +216,22 @@ Freeing an emitter stops its attached voices through the existing stop path, so 
 identifier does not retune old sounds. Emitter and derived voice state participate in the current
 transactional format; this does not add the separate Audio Playback Ended callback API.
 
+## Portable account selection
+
+Console-authored menus can select the runtime's local nonguest player without an external
+service session. `xboxone_show_account_picker` returns a positive request ID and completes
+through the Dialog event. The temporary `async_load` map contains `id`, `user`, `pad_index`,
+`type` (`xboxone_accountpicker`) and `succeeded`. The controller index is echoed as signed
+integer metadata; this does not create another input device. Allowing guests still selects
+the available nonguest local player.
+
+At most sixteen requests can remain pending. Full queues, exhausted IDs and nonfinite or
+unrepresentable controller arguments return `-1` without advancing the identity cursor.
+Callbacks run in request order; requests created by a callback wait for the next drain.
+Pending requests and a parked callback's map survive current-format save states. Reset
+starts a fresh lifetime, and callback completion restores the outer `async_load` binding.
+These portable policies do not authenticate an online account or open a native console UI.
+
 ## Extended blend queries
 
 The extended blend getters return independently owned arrays of RGB source/destination

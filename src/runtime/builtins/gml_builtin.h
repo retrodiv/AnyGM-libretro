@@ -49,6 +49,7 @@ void gml_builtin_state_take_owned_values(GmlBuiltinState *state,
 void gml_builtin_state_profile_ds(const GmlBuiltinState *state,
                                   size_t byte_totals[3], int live_counts[3]);
 int gml_builtin_ini_entry_count(const GmlVM *vm);
+int gml_builtin_account_picker_pending_count(const GmlVM *vm);
 void gml_builtin_physics_room_reset(GmlVM *vm);
 int gml_physics_body_enabled(GmlVM *vm,const GmlInstance *instance);
 void gml_physics_step(GmlVM *vm);
@@ -79,6 +80,10 @@ void gml_builtin_state_write_time_sources(const GmlBuiltinState *state,
                                           GmlVmStateWriter *writer);
 int gml_builtin_state_read_time_sources(GmlBuiltinState *state,
                                         GmlVmStateReader *reader);
+void gml_builtin_state_write_account_picker(const GmlBuiltinState *state,
+                                            GmlVmStateWriter *writer);
+int gml_builtin_state_read_account_picker(GmlBuiltinState *state,
+                                           GmlVmStateReader *reader);
 
 /* Copies instance user storage through the existing value-clone owner. */
 int gml_builtin_copy_instance_variables(GmlVM *vm,const GmlInstance *source,uint32_t copy_id,

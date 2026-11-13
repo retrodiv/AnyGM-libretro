@@ -332,7 +332,7 @@ typedef struct GmlWait {
   int expected_depth;  /* execution depth of the frame that must park next */
   int n_frames;        /* frames[0] is the run that blocked; frames[n_frames-1] is the event's own */
   int broadcast_map;   /* an event payload owned until this parked chain finishes; zero if absent */
-  int async_map;       /* retained async_load payload for a parked video callback */
+  int async_map;       /* retained async_load payload for a parked callback */
   GmlWaitFrame frames[GML_WAIT_MAX_FRAMES];
 } GmlWait;
 
@@ -758,6 +758,7 @@ int  gml_broadcast_map_live(GmlVM *vm,int map);
 void gml_broadcast_map_release(GmlVM *vm,int map);
 void gml_fire_async_saveload(GmlVM *vm);  /* drain queued Other_72 (async save/load) events */ /* dispatch GM gamepad-discovered async event */
 void gml_fire_async_http(GmlVM *vm);      /* drain queued Other_62 (async HTTP, always-fail offline) events */
+void gml_fire_async_account_picker(GmlVM *vm); /* drain queued Other_63 local account selections */
 void gml_fire_async_audio(GmlVM *vm);     /* drain PCM queue completion notices (Other_74) */
 void         gml_room_enter(GmlVM *vm, int room_index);      /* instantiate + Create events */
 int          gml_vm_room_get(GmlVM *vm, int room_index, GmlRoom *out);

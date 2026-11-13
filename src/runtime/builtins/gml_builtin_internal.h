@@ -138,6 +138,10 @@ typedef struct {
 } GmlSaudioEntry;
 
 #define GML_EXTERNAL_AUDIO_ASSET_MAX 65536u
+#define GML_ACCOUNT_PICKER_REQUEST_MAX 16
+typedef struct {
+  int id, pad;
+} GmlAccountPickerRequest;
 typedef struct {
   char *path;
   uint8_t content_sha256[32];
@@ -156,6 +160,8 @@ struct GmlBuiltinState {
   int async_group_active, async_group_id;
   int async_group_status, async_group_count;
   int async_http_q[16], n_async_http;
+  GmlAccountPickerRequest account_picker[GML_ACCOUNT_PICKER_REQUEST_MAX];
+  int n_account_picker;
   GmlDSPool ds_maps, ds_lists, ds_grids;
   GmlDSMap *ds_map_last;
   int next_ds_id;
@@ -290,6 +296,9 @@ double gp_axis_digital_fallback(GmlVM *vm, int device, int ax);
 int gp_debug_on(GmlVM *vm);
 GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n);
 GmlVal gml_builtin_try_video(GmlVM *vm,const char *name,GmlVal *args,int count);
+
+/* Owns the temporary map until the event or its parked continuation finishes. */
+void builtin_fire_async_map(GmlVM *vm,int map,const char *event);
 
 GmlVal gml_builtin_try_animation(GmlVM *vm, const char *name,
                                  GmlVal *args, int count);

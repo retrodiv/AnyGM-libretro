@@ -18,7 +18,7 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=43 };
+enum { GML_VM_STATE_SCHEMA=44 };
 enum { STATE_MAX_TILEMAPS=512, STATE_TILEMAP_RECORD_BYTES=56 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 /* IDs are assigned in canonical traversal order, never from addresses. Zero is the null array;
@@ -2530,6 +2530,7 @@ static void sw_vm(StateW *s, GmlVM *vm){
   sw_i32(s,vm->wait.broadcast_map);
   sw_i32(s,vm->wait.async_map);
   gml_builtin_state_write_video(builtin_state,s);
+  gml_builtin_state_write_account_picker(builtin_state,s);
   vm_state_profile_globals(vm);
   if(save_time){
     uint64_t save_t4=anygm_host_monotonic_time_ns(vm->host);
@@ -2980,6 +2981,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     }else vm->wait.async_map=map;
   }
   if(s.ok) (void)gml_builtin_state_read_video(builtin_state,&s);
+  if(s.ok) (void)gml_builtin_state_read_account_picker(builtin_state,&s);
   /* Rebind immutable grids before restoring their saved handles. The temporary
    * construction IDs never escape this state transaction. */
   if(s.ok && vm->win && vm->room_index>=0){

@@ -2072,7 +2072,8 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1968, VIDEO_RESUME, "video_resume", AUDIO, VIDEO, ALWAYS) \
   ENTRY(1969, PSN_INIT_NP_LIBS, "psn_init_np_libs", ANIMATION, ANIMATION, ALWAYS) \
   ENTRY(1970, PSN_SETUP_TROPHIES, "psn_setup_trophies", ANIMATION, ANIMATION, ALWAYS) \
-  ENTRY(1971, XBOXONE_USER_IS_SIGNED_IN, "xboxone_user_is_signed_in", PLATFORM, PLATFORM_EXTENSIONS, ALWAYS)
+  ENTRY(1971, XBOXONE_USER_IS_SIGNED_IN, "xboxone_user_is_signed_in", PLATFORM, PLATFORM_EXTENSIONS, ALWAYS) \
+  ENTRY(1972, XBOXONE_SHOW_ACCOUNT_PICKER, "xboxone_show_account_picker", PLATFORM, PLATFORM_EXTENSIONS, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -2087,7 +2088,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1972
+  GML_BUILTIN_ID_LIMIT = 1973
 } GmlBuiltinId;
 
 #endif
