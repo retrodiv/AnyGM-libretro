@@ -3652,7 +3652,9 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_NATIVE_TEXTURED_TRIANGLE;
     int native_triangle=native_textured || (op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
       op->payload.primitive.kind==GML_RENDER_PRIMITIVE_NATIVE_TRIANGLE);
-    int native_opaque_surface=native_triangle && !native_textured &&
+    int native_source_alpha=native_triangle && !native_textured &&
+      (op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA);
+    int native_opaque_surface=native_triangle && !native_textured && !native_source_alpha &&
       op->target.image.resource_class==GML_RENDER_RESOURCE_SURFACE;
     int primitive_alpha_test=native_triangle && !native_opaque_surface?0:-1;
     int particle=disc || (op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
@@ -3684,7 +3686,8 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       (op->payload.primitive.alpha_blend && (op->payload.primitive.alpha<1.0 || vertex_span) &&
        (rectangle_blend==0u || rectangle_blend==1u || rectangle_blend==4u) &&
        !(op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)?35u:34u):
-      native_triangle?(native_opaque_surface?31u:32u):disc?109u:particle?28u:studio_alpha_rect?32u:31u;
+      native_triangle?(native_source_alpha?GL_SCENE_NATIVE_TRIANGLE_SOURCE_ALPHA_FILTER:
+        native_opaque_surface?31u:32u):disc?109u:particle?28u:studio_alpha_rect?32u:31u;
     if(textured_vertex) primitive_filter=(op->payload.primitive.interpolate?106u:103u)+
       (primitive_filter==35u?1u:0u);
     if(native_textured) primitive_filter=(op->payload.primitive.interpolate?GL_SCENE_NATIVE_TEXTURE_LINEAR_FILTER:GL_SCENE_NATIVE_TEXTURE_NEAREST_FILTER)+

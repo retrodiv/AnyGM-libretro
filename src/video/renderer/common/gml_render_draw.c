@@ -358,6 +358,9 @@ int gml_render_native_triangle_valid(const GmlRenderDrawOp *operation){
   const GmlRenderPrimitiveRect *p=&operation->payload.primitive;
   const GmlRenderTargetRef *t=&operation->target;
   int surface=t->image.resource_class==GML_RENDER_RESOURCE_SURFACE;
+  int source_over=(p->rectangle_flags&GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA)!=0u;
+  int alpha_target=surface ||
+    (t->image.resource_class==GML_RENDER_RESOURCE_APPLICATION && source_over);
   if(p->kind!=GML_RENDER_PRIMITIVE_NATIVE_TRIANGLE ||
      (t->image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
       t->image.resource_class!=GML_RENDER_RESOURCE_APPLICATION && !surface) ||
@@ -366,14 +369,17 @@ int gml_render_native_triangle_valid(const GmlRenderDrawOp *operation){
      t->region.width!=t->width || t->region.height!=t->height ||
      p->region.x || p->region.y || p->region.width!=t->width || p->region.height!=t->height ||
      p->alpha!=1.0 || p->alpha_blend!=1u || p->interpolate ||
-     p->rectangle_flags!=(surface?GML_RENDER_RECTANGLE_TARGET_ALPHA:0u) ||
+     (source_over && !alpha_target) ||
+     p->rectangle_flags!=((alpha_target?GML_RENDER_RECTANGLE_TARGET_ALPHA:0u)|
+                         (source_over?GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA:0u)) ||
      p->pixel_write_mask!=15u) return 0;
   for(unsigned v=0;v<3u;v++) for(unsigned c=0;c<6u;c++){
     double value=p->triangle[v][c];
     if(!isfinite(value) || (c<2u?fabs(value)>32766.0:value<0.0 || value>1.0) ||
        (c>=2u && c<5u && value!=p->triangle[0][c])) return 0;
   }
-  if(surface) for(unsigned v=0;v<3u;v++) if(p->triangle[v][5]!=1.0) return 0;
+  if(surface && !source_over)
+    for(unsigned v=0;v<3u;v++) if(p->triangle[v][5]!=1.0) return 0;
   return 1;
 }
 

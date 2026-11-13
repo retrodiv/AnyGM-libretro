@@ -504,6 +504,8 @@ static int resident_rectangle_state_eligible(GmlRender *r,int cpu_passthrough){
 static int resident_native_triangles(GmlRender *r,
   const GmlRenderCpuBackendTriangle *triangles,uint32_t count,int view_rotation){
   int surface=view_rotation && r && r->target_id>0;
+  int preserving_application=view_rotation &&
+    gml_render_target_is_first_generation_application_surface(r);
   if(!resident_primitive_state_eligible_rule(r,1) ||
      (!view_rotation && (r->classic || !anygm_policy_has_modern_layer_semantics(r->win) ||
        r->target_sp || r->target_id!=-1 || gml_render_target_preserves_alpha(r))) ||
@@ -516,20 +518,28 @@ static int resident_native_triangles(GmlRender *r,
   GmlRenderDrawOp *operations=calloc(count,sizeof *operations);
   if(!operations) return 0;
   int result=0;
+  int fractional_surface=0;
   for(uint32_t i=0;i<count;i++){
     GmlRenderDrawOp *op=&operations[i];
     op->opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;op->scene_family=GML_RENDER_SCENE_PRIMITIVE;
     op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
     op->target=(GmlRenderTargetRef){.image={.resource_class=surface?
-      GML_RENDER_RESOURCE_SURFACE:GML_RENDER_RESOURCE_SCREEN},
+      GML_RENDER_RESOURCE_SURFACE:preserving_application?
+      GML_RENDER_RESOURCE_APPLICATION:GML_RENDER_RESOURCE_SCREEN},
       .width=(uint32_t)r->fbw,.height=(uint32_t)r->fbh,.pixel_format=GML_RENDER_PIXEL_ARGB8888,
       .region={0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
     GmlRenderPrimitiveRect *p=&op->payload.primitive;
     p->region=op->target.region;p->kind=GML_RENDER_PRIMITIVE_NATIVE_TRIANGLE;
     if(surface)
       p->rectangle_flags=GML_RENDER_RECTANGLE_TARGET_ALPHA;
+    if(preserving_application)
+      p->rectangle_flags=GML_RENDER_RECTANGLE_TARGET_ALPHA|GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA;
     p->alpha=1.0;p->alpha_blend=1u;p->pixel_write_mask=15u;
     memcpy(p->triangle,triangles[i].vertex,sizeof p->triangle);
+    if(surface || preserving_application) for(unsigned v=0;v<3u;v++) if(p->triangle[v][5]<1.0){
+      p->rectangle_flags|=GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA;
+      fractional_surface=1;
+    }
     if(!gml_render_native_triangle_valid(op)) goto native_done;
   }
   if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) goto native_done;
@@ -546,9 +556,9 @@ static int resident_native_triangles(GmlRender *r,
     operations[i].target.image=next;operations[i].target.image.content_version+=i+1u;
     operations[i].target.storage_version=1u;
   }
-  int opaque=r->fb_opaque_known && r->fb_all_opaque;
+  int opaque=r->fb_opaque_known && r->fb_all_opaque && !fractional_surface;
   result=gml_render_application_scene_enqueue_primitives(r,operations,count);
-  /* Source-over and covered-alpha stamping cannot remove existing opacity. */
+  /* Fractional source-over can lower a preserving target's alpha; covered stamps cannot. */
   if(result){r->fb_all_transparent=0;r->fb_opaque_known=r->fb_all_opaque=opaque;}
 native_done:
   free(operations);return result;
@@ -1484,7 +1494,19 @@ static int resident_point_function(GmlRender *r,int x,int y,uint32_t colour){
   return 1;
 }
 
+static int view_point_coordinate(const GmlRender *r,int *x,int *y){
+  if(!gml_render_view_rotation_active(r) || gml_d3_is_active(r)) return 1;
+  /* A point remains one destination pixel; project its centre before device filling. */
+  double px=(double)*x+.5,py=(double)*y+.5;
+  gml_render_view_rotate_point(r,&px,&py);
+  if(!isfinite(px) || !isfinite(py) || px<0.0 || py<0.0 ||
+     px>=r->fbw || py>=r->fbh) return 0;
+  *x=(int)floor(px);*y=(int)floor(py);
+  return 1;
+}
+
 void gml_render_primitive_point(GmlRender *render,int x,int y,uint32_t color){
+  if(!view_point_coordinate(render,&x,&y)) return;
   if(gml_render_try_opaque_primitive_rect(render,x,y,x,y,color)) return;
   if(resident_point_function(render,x,y,color)) return;
   gml_render_cpu_point(render,x,y,color);
@@ -1639,10 +1661,47 @@ void gml_render_primitive_circle_color_subpixel(GmlRender *render,
                               inner,outer,outline);
 }
 
+static int world_view_triangle(GmlRender *r,double x1,double y1,double x2,double y2,
+                               double x3,double y3,uint32_t colour,double alpha,int outline){
+  if(!gml_render_view_rotation_active(r) || gml_d3_is_active(r)) return 0;
+  if(!isfinite(alpha) || alpha<=0.0) return 1;
+  if(alpha>1.0) alpha=1.0;
+  double x[6]={x1,x2,x3},y[6]={y1,y2,y3};
+  for(unsigned i=0;i<3u;i++) gml_render_view_rotate_point(r,&x[i],&y[i]);
+  GmlRenderCpuBackendTriangle triangles[6]={0};
+  unsigned count=outline?6u:1u;
+  if(outline){
+    const double inset=GML_RENDER_TRIANGLE_OUTLINE_INSET;
+    for(unsigned i=0;i<3u;i++){
+      x[i+3u]=(1.0-2.0*inset)*x[i]+inset*x[(i+1u)%3u]+inset*x[(i+2u)%3u];
+      y[i+3u]=(1.0-2.0*inset)*y[i]+inset*y[(i+1u)%3u]+inset*y[(i+2u)%3u];
+    }
+  }
+  for(unsigned i=0;i<count;i++){
+    unsigned edge=i/2u,next=(edge+1u)%3u;
+    unsigned vertices[3]={0,1,2};
+    if(outline){
+      vertices[0]=edge;
+      vertices[1]=(i&1u)?next+3u:next;
+      vertices[2]=(i&1u)?edge+3u:next+3u;
+    }
+    for(unsigned v=0;v<3u;v++){
+      double *vertex=triangles[i].vertex[v];unsigned n=vertices[v];
+      vertex[0]=x[n];vertex[1]=y[n];
+      vertex[2]=(colour&255u)/255.0;vertex[3]=((colour>>8)&255u)/255.0;
+      vertex[4]=((colour>>16)&255u)/255.0;vertex[5]=alpha;
+    }
+  }
+  if(!resident_native_triangles(r,triangles,count,1))
+    gml_render_cpu_triangle_alpha(r,x[0],y[0],x[1],y[1],x[2],y[2],colour,alpha,outline);
+  return 1;
+}
+
 void gml_render_primitive_triangle_alpha(GmlRender *render,
                                          double x1,double y1,double x2,double y2,
                                          double x3,double y3,uint32_t color,
                                          double alpha,int outline){
+  if(world_view_triangle(render,x1,y1,x2,y2,x3,y3,color,alpha,outline)) return;
   if(outline && resident_outline_triangle(render,x1,y1,x2,y2,x3,y3,color,alpha)) return;
   if(resident_filled_triangle(render,x1,y1,x2,y2,x3,y3,color,alpha,outline)) return;
   gml_render_cpu_triangle_alpha(render,x1,y1,x2,y2,x3,y3,color,alpha,outline);

@@ -6,6 +6,9 @@
 
 #include "gml_render.h"
 
+/* The existing triangle outline excludes the interior above this barycentric inset. */
+#define GML_RENDER_TRIANGLE_OUTLINE_INSET 0.04
+
 typedef void (*GmlRenderPrimitiveSpan)(void *context,int x0,int x1,int y);
 typedef void (*GmlRenderPrimitiveBox)(void *context,int x1,int y1,int x2,int y2,
                                       uint32_t color);

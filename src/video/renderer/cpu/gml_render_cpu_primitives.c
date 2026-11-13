@@ -839,7 +839,8 @@ static void emit_triangle_barycentric_pixels(const GmlTriangleBarycentricBounds 
       double a0=((Y2-Y3)*(xx-X3)+(X3-X2)*(yy-Y3))/den;
       double b0=((Y3-Y1)*(xx-X3)+(X1-X3)*(yy-Y3))/den;
       double c0=1-a0-b0;
-      if(outline && a0>0.04&&b0>0.04&&c0>0.04) continue;
+      if(outline && a0>GML_RENDER_TRIANGLE_OUTLINE_INSET &&
+         b0>GML_RENDER_TRIANGLE_OUTLINE_INSET && c0>GML_RENDER_TRIANGLE_OUTLINE_INSET) continue;
       if(a0>=0&&b0>=0&&c0>=0) emit(context,xx,yy,xx,yy,color);
     }
 }

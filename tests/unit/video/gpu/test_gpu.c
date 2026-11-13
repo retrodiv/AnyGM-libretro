@@ -2933,6 +2933,49 @@ static int scene_native_triangle_batch_case(void){
   return 1;
 }
 
+static int scene_source_alpha_triangle_case(void){
+  for(unsigned api=0;api<2u;api++) for(unsigned owner=0;owner<2u;owner++)
+  for(unsigned variant=0;variant<5u;variant++){
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
+    GmlRenderDeviceServices device={0};anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),
+      "source-alpha triangle context");
+    gml_gpu_device_services(gpu,&device);
+    GmlRenderDrawOp ops[2]={0};
+    ops[0].opcode=GML_RENDER_OP_CLEAR;
+    ops[0].target=(GmlRenderTargetRef){.image={owner?GML_RENDER_RESOURCE_APPLICATION:GML_RENDER_RESOURCE_SURFACE,1u,1u,2u},
+      .storage_version=1u,.width=32u,.height=24u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+      .region={0,0,32u,24u}};ops[0].payload.clear_colour=0xFF273859u;
+    ops[1]=ops[0];ops[1].opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;
+    ops[1].scene_family=GML_RENDER_SCENE_PRIMITIVE;
+    ops[1].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    ops[1].target.image.content_version++;
+    GmlRenderPrimitiveRect *p=&ops[1].payload.primitive;
+    p->kind=GML_RENDER_PRIMITIVE_NATIVE_TRIANGLE;p->region=ops[1].target.region;
+    p->alpha=1.0;p->alpha_blend=1u;p->pixel_write_mask=15u;
+    p->rectangle_flags=GML_RENDER_RECTANGLE_TARGET_ALPHA|GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA;
+    const double xy[3][2]={{3,4},{29,4},{11,22}};
+    for(unsigned v=0;v<3u;v++){
+      p->triangle[v][0]=xy[v][0];p->triangle[v][1]=xy[v][1];
+      p->triangle[v][2]=.25;p->triangle[v][3]=.5;p->triangle[v][4]=.75;p->triangle[v][5]=.37;
+    }
+    if(variant==1u)p->rectangle_flags&=~GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA;
+    if(variant==2u)p->rectangle_flags&=~GML_RENDER_RECTANGLE_TARGET_ALPHA;
+    if(variant==3u)ops[1].target.image.resource_class=GML_RENDER_RESOURCE_SCREEN;
+    if(variant==4u)p->triangle[1][5]=NAN;
+    GmlRenderDrawBatch batch={ops,2u,NULL,0u};
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    if(variant)REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+      !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls(),
+      "untyped or malformed preserving triangle rejects before any prefix writes");
+    else REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==2u &&
+      anygm_test_graphics_scene_draw_calls()==1u && !anygm_test_graphics_scene_copies() &&
+      !anygm_test_graphics_read_pixels(),"source-alpha triangle uses one colour pass without an opaque stamp");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_opaque_surface_triangle_case(void){
   for(unsigned api=0;api<2u;api++) for(unsigned variant=0;variant<6u;variant++){
     GmlRenderDrawOp ops[3]={0};
@@ -8385,6 +8428,7 @@ int main(int argc,char **argv){
     {"scene_service_contract",scene_service_contract_case},
     {"scene_unit_texel_magnification",scene_unit_texel_magnification_case},
     {"scene_native_triangles",scene_native_triangle_batch_case},
+    {"scene_source_alpha_triangles",scene_source_alpha_triangle_case},
     {"scene_opaque_surface_triangles",scene_opaque_surface_triangle_case},
     {"scene_native_textured_triangles",scene_native_textured_triangle_case},
     {"scene_hot_constant_programs",scene_hot_constant_programs_case},
