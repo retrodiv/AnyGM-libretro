@@ -868,7 +868,12 @@ static void draw_triangle_cpu_pixel(void *context,int x1,int y1,int x2,int y2,
 
 /* Instance-owned immediate-mode primitive buffer used between begin/end. */
 static void prim_tri_fill_ex(GmlRender *R, double X1,double Y1,double X2,double Y2,double X3,double Y3,
-                             uint32_t col, double alpha, int outline){
+                             uint32_t col, double alpha, int outline,double sample_origin){
+  /* The legacy primitive kernel samples integer coordinates. Physical world
+   * vertices keep their shared placement and select cell-centre sampling here. */
+  X1-=sample_origin;Y1-=sample_origin;
+  X2-=sample_origin;Y2-=sample_origin;
+  X3-=sample_origin;Y3-=sample_origin;
   GmlTriangleBarycentricBounds bounds;
   if(!prepare_triangle_barycentric_bounds(R,X1,Y1,X2,Y2,X3,Y3,&alpha,&bounds)) return;
   int minx=bounds.minx,maxx=bounds.maxx;
@@ -964,7 +969,17 @@ void gml_render_cpu_triangle_alpha(GmlRender *render,
   GmlRenderDispatchCpuScope scope;
   gml_render_dispatch_cpu_scope_begin(render,&scope,GML_RENDER_SCENE_PRIMITIVE);
   if(gml_render_cpu_draw_barrier(render))
-    prim_tri_fill_ex(render,x1,y1,x2,y2,x3,y3,color,alpha,outline);
+    prim_tri_fill_ex(render,x1,y1,x2,y2,x3,y3,color,alpha,outline,0.0);
+  gml_render_dispatch_cpu_scope_end(render,&scope);
+}
+
+void gml_render_cpu_triangle_pixel_centres(GmlRender *render,
+                                           double x1,double y1,double x2,double y2,
+                                           double x3,double y3,uint32_t color,double alpha){
+  GmlRenderDispatchCpuScope scope;
+  gml_render_dispatch_cpu_scope_begin(render,&scope,GML_RENDER_SCENE_PRIMITIVE);
+  if(gml_render_cpu_draw_barrier(render))
+    prim_tri_fill_ex(render,x1,y1,x2,y2,x3,y3,color,alpha,0,0.5);
   gml_render_dispatch_cpu_scope_end(render,&scope);
 }
 

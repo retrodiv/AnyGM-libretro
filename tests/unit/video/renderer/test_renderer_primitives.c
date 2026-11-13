@@ -531,7 +531,50 @@ static void check_circle_span_matches_pixel_writer(void){
   printf("circle span ARGB/metadata controls: %u\n",controls);
 }
 
+static void check_world_view_rotation_geometry(void){
+  GmlRender render;
+  reset_render(&render,24);
+  set_world_scale(&render,2.0,3.0);
+  gml_render_world_set_view_rotation(&render,90.0,100.0,50.0);
+  double x=150.0,y=75.0;
+  gml_render_view_rotate_point(&render,&x,&y);
+  expect(fabs(x-100.0)<1e-10 && fabs(y-150.0)<1e-10,
+         "view rotation must precede nonuniform raster scaling");
+  gml_render_world_set_view_rotation(&render,-450.0,100.0,50.0);
+  x=150.0;y=75.0;
+  gml_render_view_rotate_point(&render,&x,&y);
+  expect(fabs(x-100.0)<1e-10 && fabs(y)<1e-10,
+         "negative multi-turn view angle has the opposite placement");
+  render.target_sp++;
+  x=150.0;y=75.0;gml_render_view_rotate_point(&render,&x,&y);
+  expect(x==150.0 && y==75.0,"nested target retains local coordinates");
+  render.target_sp--;
+  render.gui_pass_active=1;
+  gml_render_view_rotate_point(&render,&x,&y);
+  expect(x==150.0 && y==75.0,"GUI retains its own coordinates");
+  render.gui_pass_active=0;
+  gml_render_view_rotate_point(&render,&x,&y);
+  expect(fabs(x-100.0)<1e-10 && fabs(y)<1e-10,
+         "world transform resumes after local target and GUI");
+  gml_render_world_set_view_rotation(&render,720.0,100.0,50.0);
+  expect(!gml_render_view_rotation_active(&render),"complete turns retain identity draw paths");
+
+  reset_render(&render,24);
+  gml_render_primitive_rectangle(&render,130,95,140,105,0x00FF00u,0);
+  int unrotated_area=covered_pixels();
+  expect(unrotated_area==121,"axis rectangle establishes inclusive integer footprint");
+  reset_render(&render,24);
+  gml_render_world_set_view_rotation(&render,90.0,WIDTH,HEIGHT);
+  gml_render_primitive_rectangle(&render,130,95,140,105,0x00FF00u,0);
+  expect((frame[135*WIDTH+100]&0x00FFFFFFu)==0x00FF00u &&
+         !(frame[100*WIDTH+135]&0x00FFFFFFu),
+         "opaque rectangle uses placed rotated geometry in CPU mode");
+  expect(covered_pixels()==unrotated_area,
+         "quarter-turn rectangle must retain the axis control area");
+}
+
 int main(void){
+  check_world_view_rotation_geometry();
   check_circle_span_matches_pixel_writer();
   check_fractional_radius_is_not_truncated();
   check_fractional_centre_is_not_quantized();

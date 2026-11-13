@@ -123,7 +123,7 @@ typedef struct {
 
 typedef struct {
   int index, visible, camera;
-  double x, y, w, h;
+  double x, y, w, h, angle;
   int px, py, pw, ph;
 } GmlPresentView;
 

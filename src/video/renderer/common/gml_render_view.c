@@ -14,6 +14,32 @@ int gml_render_view_surface_begin(GmlRender *r,int surface,double cx,double cy){
   return 1;
 }
 
+void gml_render_world_set_view_rotation(GmlRender *r,double angle,double width,double height){
+  if(!r) return;
+  r->view_rotation=0.0;r->view_cosine=1.0;r->view_sine=0.0;
+  if(!isfinite(angle) || !isfinite(width) || !isfinite(height) || width<=0 || height<=0)
+    return;
+  angle=remainder(angle,360.0);
+  double radians=angle*(M_PI/180.0);
+  r->view_rotation=angle;
+  r->view_cosine=cos(radians);r->view_sine=sin(radians);
+  r->view_centre_x=width*.5*(r->world_transform_active?r->world_scale_x:1.0);
+  r->view_centre_y=height*.5*(r->world_transform_active?r->world_scale_y:1.0);
+  r->view_target_id=r->target_id;r->view_target_depth=r->target_sp;
+}
+int gml_render_view_rotation_active(const GmlRender *r){
+  return r && r->view_rotation!=0.0 && !r->gui_pass_active &&
+    r->target_id==r->view_target_id && r->target_sp==r->view_target_depth;
+}
+void gml_render_view_rotate_point(const GmlRender *r,double *x,double *y){
+  if(!x || !y || !gml_render_view_rotation_active(r)) return;
+  double sx=r->world_transform_active?r->world_scale_x:1.0;
+  double sy=r->world_transform_active?r->world_scale_y:1.0;
+  double dx=(*x-r->view_centre_x)/sx,dy=(*y-r->view_centre_y)/sy;
+  *x=r->view_centre_x+(r->view_cosine*dx-r->view_sine*dy)*sx;
+  *y=r->view_centre_y+(r->view_sine*dx+r->view_cosine*dy)*sy;
+}
+
 void gml_render_world_set_logical_extent(GmlRender *r,int width,int height){
   if(!r || width<=0 || height<=0 || r->fbw<=0 || r->fbh<=0 ||
      r->target_sp!=0 || r->target_id>=0) return;

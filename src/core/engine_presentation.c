@@ -581,12 +581,14 @@ int present_view_get(AnygmEngine *engine,int index, GmlPresentView *out) {
     out->y = gml_global_arr(&engine->vm, "__gml_camera_y", out->camera);
     out->w = gml_global_arr(&engine->vm, "__gml_camera_w", out->camera);
     out->h = gml_global_arr(&engine->vm, "__gml_camera_h", out->camera);
+    out->angle = gml_global_arr(&engine->vm, "__gml_camera_angle", out->camera);
   } else {
     out->camera = index;
     out->x = gml_global_arr(&engine->vm, "view_xview", index);
     out->y = gml_global_arr(&engine->vm, "view_yview", index);
     out->w = gml_global_arr(&engine->vm, "view_wview", index);
     out->h = gml_global_arr(&engine->vm, "view_hview", index);
+    out->angle = gml_global_arr(&engine->vm, "view_angle", index);
   }
   out->px = (int)lround(gml_global_arr(&engine->vm, "view_xport", index));
   out->py = (int)lround(gml_global_arr(&engine->vm, "view_yport", index));
@@ -1759,6 +1761,7 @@ int render_multiview_application(AnygmEngine *engine) {
          !gml_render_completed_screen_write(&engine->render,view_buffer,vw,vh)) return -1;
       resident_composition=0;
     }
+    gml_render_world_set_view_rotation(&engine->render,v->angle,v->w,v->h);
     if(clear_background)
       gml_render_set_pending_fill(&engine->render, engine->background);
     if (have_room && !gml_draws_bg) draw_runtime_backgrounds(engine,0);

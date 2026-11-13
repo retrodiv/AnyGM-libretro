@@ -322,6 +322,11 @@ typedef struct GmlRender {
    * part of canonical renderer state. */
   int       world_transform_active;
   double    world_scale_x, world_scale_y;
+  /* Frame-local camera geometry belongs to the selected world target. A nested
+   * explicit target and the GUI pass use their own coordinate systems. */
+  double    view_rotation, view_cosine, view_sine;
+  double    view_centre_x, view_centre_y;
+  int       view_target_id, view_target_depth;
   /* Draw-GUI can change its logical coordinate space in the middle of an event with
    * display_set_gui_size().  The framebuffer does not change size at that point: subsequent
    * draws are transformed to the same physical GUI target immediately.  Keep this transform in

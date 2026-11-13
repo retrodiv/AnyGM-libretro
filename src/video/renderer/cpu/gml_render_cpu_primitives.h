@@ -47,6 +47,9 @@ void gml_render_cpu_circle_color(GmlRender *render,double cx,double cy,
 void gml_render_cpu_triangle_alpha(GmlRender *render,double x1,double y1,
                                    double x2,double y2,double x3,double y3,
                                    uint32_t color,double alpha,int outline);
+void gml_render_cpu_triangle_pixel_centres(GmlRender *render,double x1,double y1,
+                                           double x2,double y2,double x3,double y3,
+                                           uint32_t color,double alpha);
 
 void gml_render_cpu_point(GmlRender *render,int x,int y,uint32_t color);
 void gml_render_cpu_line(GmlRender *render,int x1,int y1,int x2,int y2,

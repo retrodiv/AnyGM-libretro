@@ -4880,8 +4880,8 @@ static int expect_persistent_lifecycle_exit_code(void){
      global_array_value(&vm,"view_angle",7)!=0){
     fprintf(stderr,"view angles lack room ownership or zero defaults\n"); return 1;
   }
-  gml_set_global_arr(&vm,"view_angle",0,37.5);
-  gml_set_global_arr(&vm,"view_angle",7,-450);
+  gml_vm_view_angle_set(&vm,0,37.5);
+  gml_vm_view_angle_set(&vm,7,-450);
   *gml_varmap_put(&vm.globals,"room_speed")=vreal(55);
   gml_tile_layer_shift(&vm,300,8,9);
   uint32_t id=created->id; *gml_varmap_put(&created->vars,"value")=vreal(42);
@@ -4890,8 +4890,8 @@ static int expect_persistent_lifecycle_exit_code(void){
      global_array_value(&vm,"view_angle",7)!=0){
     fprintf(stderr,"fresh room inherited another room's view angles\n"); return 1;
   }
-  gml_set_global_arr(&vm,"view_angle",0,-12.5);
-  gml_set_global_arr(&vm,"view_angle",7,719.25);
+  gml_vm_view_angle_set(&vm,0,-12.5);
+  gml_vm_view_angle_set(&vm,7,719.25);
   if(global_array_value(&vm,"background_xscale",0)!=1 ||
      global_array_value(&vm,"background_yscale",7)!=1){
     fprintf(stderr,"fresh room inherited another room's background scales\n"); return 1;

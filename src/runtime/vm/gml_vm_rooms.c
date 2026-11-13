@@ -1444,6 +1444,30 @@ int gml_vm_room_placements_cleared(GmlVM *vm, int room_index){
   return room_state_restore_number(vm,room_index,"placements_cleared",0)>=0.5;
 }
 
+static int room_view_angle_camera(GmlVM *vm,int index){
+  if(!vm || index<0 || index>=8) return -1;
+  double value=gml_vm_global_array_number(vm,"view_camera",index);
+  if(!isfinite(value) || value<0 || value>=GML_CAMERA_LIMIT) return -1;
+  int camera=(int)lround(value);
+  return camera<GML_CAMERA_LIMIT &&
+    gml_vm_global_array_number(vm,"__gml_camera_live",camera)>=0.5?camera:-1;
+}
+double gml_vm_view_angle(GmlVM *vm,int index){
+  if(!vm) return 0.0;
+  int camera=room_view_angle_camera(vm,index);
+  return camera>=0?gml_vm_global_array_number(vm,"__gml_camera_angle",camera)
+                  :gml_vm_global_array_number(vm,"view_angle",index);
+}
+void gml_vm_view_angle_set(GmlVM *vm,int index,double angle){
+  if(!vm) return;
+  gml_vm_global_array_set(vm,"view_angle",index,angle);
+  int camera=room_view_angle_camera(vm,index);
+  if(camera>=0){
+    gml_vm_global_array_set(vm,"__gml_camera_angle",camera,angle);
+    gml_camera_matrices_clear(vm,camera);
+  }
+}
+
 static const char *const room_background_fields[]={
   "background_visible","background_foreground","background_index","background_x","background_y",
   "background_htiled","background_vtiled","background_hspeed","background_vspeed","background_stretch",
@@ -1488,7 +1512,7 @@ static void room_camera_resources_init(GmlVM *vm,int reset_bindings){
     "__gml_camera_yspeed","__gml_camera_xborder","__gml_camera_yborder"
   };
   static const char *const view_fields[]={
-    "view_xview","view_yview","view_wview","view_hview",NULL,"view_object",
+    "view_xview","view_yview","view_wview","view_hview","view_angle","view_object",
     "view_hspeed","view_vspeed","view_hborder","view_vborder"
   };
   for(int camera=0;camera<GML_ROOM_CAMERA_COUNT;camera++){
@@ -1516,7 +1540,8 @@ static void room_runtime_state_store(GmlVM *vm, int room){
                                                   gml_vm_global_array_number(vm,room_background_fields[field],i));
   for(size_t field=0;field<sizeof(room_view_fields)/sizeof(room_view_fields[0]);field++)
     for(int i=0;i<8;i++) room_state_store_number(vm,room,room_view_fields[field],i,
-                                                  gml_vm_global_array_number(vm,room_view_fields[field],i));
+      !strcmp(room_view_fields[field],"view_angle")?gml_vm_view_angle(vm,i)
+        :gml_vm_global_array_number(vm,room_view_fields[field],i));
   if(anygm_policy_has_modern_layer_semantics(vm->win))
     for(int i=0;i<GML_ROOM_CAMERA_COUNT;i++)
       room_state_store_number(vm,room,"view_surface_id",i,

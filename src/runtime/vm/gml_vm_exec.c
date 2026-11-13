@@ -1229,6 +1229,10 @@ static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm
     anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[camera] bind f%ld view=%d value=%.0f scope=%d global=%d\n",
             vm->frame,idx,asnum(v),inst_t,is_room_global_array(nm));
   }
+  if(!strcmp(nm,"view_angle")){
+    gml_vm_view_angle_set(vm,idx,asnum(v));
+    return;
+  }
   if(!strcmp(nm,"view_enabled")){
     /* Current bytecode represents this scalar built-in through its array-access opcode:
      * writes carry accessor index 0 while reads carry index 1.  The index is metadata, not a pair
@@ -1360,6 +1364,7 @@ static GmlVal array_get_h(
     if(alias){ nm=alias; nh=gml_value_name_hash(alias); }
   }
   if(background_dimension_get(vm,nm,idx,&dimension)) return dimension;
+  if(!strcmp(nm,"view_angle")) return vreal(gml_vm_view_angle(vm,idx));
   if(!strcmp(nm,"view_enabled")){
     GmlVal *slot=gml_varmap_get_hashed(&vm->globals,nm,nh);
     return slot?*slot:vreal(0);
@@ -2894,7 +2899,7 @@ static int draw_loop_parse_argument(
       const char *name=array_push->refname;
       uint32_t hash=array_push->refhash
         ? array_push->refhash : gml_value_name_hash(name);
-      if(var_name_maybe_special(vm,name,hash)) return 0;
+      if(var_name_maybe_special(vm,name,hash) || !strcmp(name,"view_angle")) return 0;
       GmlVarMap *owner=is_room_global_array(name)
         ? &vm->globals : scope_map(vm,locals,(int)number);
       GmlVal *slot=owner?gml_varmap_get_hashed(owner,name,hash):NULL;

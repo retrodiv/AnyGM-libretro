@@ -1978,6 +1978,9 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   if(direct_owned_world)
     gml_render_world_set_logical_extent(
       &engine->render,(int)engine->width,(int)engine->height);
+  if(frame_view_count>0)
+    gml_render_world_set_view_rotation(&engine->render,frame_views[0].angle,
+                                      frame_views[0].w,frame_views[0].h);
   gml_render_sample_planes_update(
     &engine->render,&sample_planes,GML_RENDER_SAMPLE_PLANES_CLASSIC);
   if(classic_sample_world && base_world_began &&
