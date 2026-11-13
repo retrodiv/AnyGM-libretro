@@ -34,11 +34,19 @@ int main(void){
   says_real("0.5 to bool is 1",  gml_vm_conv_value(vreal(0.5),DT_BOOL),  1);
   says_real("1 to bool stays 1", gml_vm_conv_value(vreal(1),DT_BOOL),    1);
 
-  /* Every other conversion is a relabelling and must not touch the value: rounding here would
-     change arithmetic everywhere, which is the opposite mistake. */
+  /* Integral inputs survive encoded integer conversion; real conversion keeps its fraction. */
   says_real("15 to int32 is untouched", gml_vm_conv_value(vreal(15),DT_INT32), 15);
   says_real("0.5 to double is untouched", gml_vm_conv_value(vreal(0.5),DT_DOUBLE), 0.5);
   says_real("-3 to int16 is untouched", gml_vm_conv_value(vreal(-3),DT_INT16), -3);
+
+  /* Original first-generation Studio conv.v.i repeat controls truncate positive
+   * fractions. Retaining the real value would execute an extra loop iteration. */
+  {
+    const double inputs[]={0.25,0.5,0.625,1.25,1.5,1.625,2.25,2.5,2.625,3.5};
+    const double counts[]={0,0,0,1,1,1,2,2,2,3};
+    for(unsigned i=0;i<sizeof inputs/sizeof inputs[0];i++)
+      says_real("fractional Int32 loop count",gml_vm_conv_value(vreal(inputs[i]),DT_INT32),counts[i]);
+  }
 
   /* Undefined stays undefined rather than becoming false: the two are distinguishable everywhere
      else in this VM and collapsing them here would hide an unset read. */
