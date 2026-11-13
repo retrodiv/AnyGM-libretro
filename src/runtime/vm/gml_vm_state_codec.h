@@ -31,6 +31,7 @@ typedef struct {
 
 void gml_vm_state_write_raw(GmlVmStateWriter *writer,
                             const void *bytes, size_t size);
+void gml_vm_state_writer_fail(GmlVmStateWriter *writer);
 void gml_vm_state_write_u32(GmlVmStateWriter *writer, uint32_t value);
 void gml_vm_state_write_i32(GmlVmStateWriter *writer, int value);
 void gml_vm_state_write_real(GmlVmStateWriter *writer, double value);

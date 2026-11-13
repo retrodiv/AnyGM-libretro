@@ -4,6 +4,10 @@ Copyright (c) 2026 retrodiv <retrodiv@proton.me>
 The identification above covers this project's original explanatory text, not
 third-party code or notices. Those retain their respective licenses and rights.
 
+Video playback uses shared libraries from the FFmpeg project under LGPL-2.1-or-later.
+The complete license is in LICENSES/ffmpeg-lgpl-2.1.txt. The reviewed source pin,
+unmodified-source build recipe and distribution requirements are in tools/media/.
+
 This product includes a modified in-memory decoder from xdelta3:
 Copyright 2016 Joshua MacDonald
 Licensed under the Apache License, Version 2.0.

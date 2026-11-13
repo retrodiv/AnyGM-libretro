@@ -13,6 +13,13 @@ ANYGM_ANDROID_CORE := $(ANYGM_ANDROID_BUILD)/anygm_libretro_android.so
 ANYGM_NDK_BIN := $(NDK_ROOT)/toolchains/llvm/prebuilt/linux-x86_64/bin
 ANYGM_ANDROID_API := 24
 
+# A prepared provider contains one target's headers and import libraries.
+ifneq ($(ANYGM_VIDEO_ABI),)
+ifneq ($(ANYGM_VIDEO_ABI),$(TARGET_ARCH_ABI))
+  $(error Prepared video provider ABI does not match TARGET_ARCH_ABI)
+endif
+endif
+
 ifeq ($(TARGET_ARCH_ABI),arm64-v8a)
   ANYGM_ANDROID_TRIPLE := aarch64-linux-android
 else ifeq ($(TARGET_ARCH_ABI),armeabi-v7a)

@@ -593,6 +593,7 @@ static int boot_runtime_prepare(AnygmEngine *engine) {
   engine->present_mouse_valid = 0;
   engine->follow_player = 0; engine->player_object = -1; engine->audio_accumulator = 0.0; engine->fps = 60.0; engine->fps_room = -1;
   engine->state_just_loaded = 0;
+  engine->state_resume_measured_hint=0;
   engine->runtime_ended = 0;
   engine->shutdown_sent = 0;
   classic_transition_reset(engine);
@@ -880,6 +881,9 @@ static int engine_state_locator_from_target(const char *program_directory,const 
   return engine_state_content_locator_valid(locator);
 }
 
+static void engine_clear_video_restore_source(AnygmEngine *engine){
+  gml_builtin_video_source_release(engine->state_video_source);engine->state_video_source=NULL;
+}
 static void engine_rebind_moved_runtime(AnygmEngine *engine){
   if(!engine) return;
   engine->win.host=&engine->host;
@@ -893,6 +897,7 @@ static void engine_rebind_moved_runtime(AnygmEngine *engine){
   gml_render_bind_software3d(&engine->render,engine->vm.software3d);
   gml_audio_rebind_content(engine->audio,&engine->win);
   engine->vm.audio=engine->audio;
+  gml_builtin_video_rebind(&engine->vm);
   engine->vm.draw_event_hook=aspect_draw_event_hook;
   engine->vm.draw_event_hook_user=engine;
   engine->vm.room_layer_hook=screen_redraw_room_layer_hook;
@@ -1072,6 +1077,8 @@ static AnygmResult engine_apply_game_change(AnygmEngine *engine,int *changed){
   snprintf(save_directory,sizeof save_directory,"%s",engine->win.save_dir);
   profile_report(engine,1);
   gml_vm_fire_game_end(&engine->vm);
+  gml_builtin_video_close(&engine->vm);
+  engine_clear_video_restore_source(engine);
   gml_audio_free(engine->audio); engine->audio=NULL; engine->vm.audio=NULL;
   gml_vm_free(&engine->vm);
   engine_dispatch_renderer_retire(engine);
@@ -1122,6 +1129,8 @@ static AnygmResult engine_apply_game_change_and_run_frame(AnygmEngine *engine){
 static void engine_unload(AnygmEngine *engine){
   if(!engine->loaded) return;
   profile_report(engine,1);
+  gml_builtin_video_close(&engine->vm);
+  engine_clear_video_restore_source(engine);
   gml_audio_free(engine->audio); engine->audio=NULL; engine->vm.audio=NULL;
   gml_vm_free(&engine->vm);
   engine_dispatch_renderer_retire(engine);
@@ -1129,6 +1138,7 @@ static void engine_unload(AnygmEngine *engine){
   classic_transition_release(engine);
   engine->have_presented_frame=0; engine->audio_accumulator=0.0; engine->fps=60.0; engine->fps_room=-1;
   engine->state_just_loaded=0; engine->state_reapply_size=0;
+  engine->state_resume_measured_hint=0;
   engine->state_frame_available=0; engine->input_continuity_pending=0;
   engine->state_gpu_frame_capture=0;
   engine->state_frame_width=engine->state_frame_height=0;
@@ -1169,6 +1179,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     engine->output_height=engine->state_frame_height;
     engine->state_just_loaded=0;
     engine->state_reapply_size=0;
+    engine_clear_video_restore_source(engine);
     engine->state_frame_available=0;
     engine->have_presented_frame=1;
     engine->fps_room=-1;
@@ -1426,6 +1437,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
       uint32_t display_request=engine_display_request(engine);
       GmlTimelineTable timeline_assets=gml_vm_timelines_take(&engine->vm);
       engine->vm.game_end = 0;
+      gml_builtin_video_close(&engine->vm);
+      engine_clear_video_restore_source(engine);
       gml_audio_free(engine->audio); engine->audio=NULL; engine->vm.audio=NULL;
       gml_vm_free(&engine->vm);
       engine_dispatch_renderer_retire(engine);
@@ -2708,8 +2721,12 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   if(state_restore_frame && engine->state_reapply_size){
     size_t restore_size=engine->state_reapply_size;
     engine->state_reapply_size=0;
+    void *previous_video_source=engine->vm.video_restore_source;
+    engine->vm.video_restore_source=engine->state_video_source;
     if(!state_unserialize_impl(engine,engine->state_reapply,restore_size,0))
       engine_logf(engine,ANYGM_LOG_ERROR,"[anygm] could not reapply loaded state after presentation\n");
+    engine->vm.video_restore_source=previous_video_source;
+    engine_clear_video_restore_source(engine);
     /* state_unserialize_impl deliberately leaves the composited pixels alone.  They are the
      * visible rewind/load frame even though the simulation was put back at its pre-Draw state. */
     engine->state_just_loaded=0;
@@ -2871,6 +2888,7 @@ AnygmResult anygm_create(const AnygmHostServices *services,AnygmEngine **out_eng
 void anygm_destroy(AnygmEngine *engine){
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD) return;
   if(engine->lifecycle!=ENGINE_EMPTY) anygm_unload(engine);
+  engine_clear_video_restore_source(engine);
   free(engine->state_reapply);
   free(engine->state_frame_capture);
   free(engine->classic_phase_mem);
@@ -2997,6 +3015,8 @@ AnygmResult anygm_reset(AnygmEngine *engine){
       snprintf(engine->language_tag,sizeof engine->language_tag,"%s",tag[0]?tag:"en-US");
     }
   }
+  gml_builtin_video_close(&engine->vm);
+  engine_clear_video_restore_source(engine);
   gml_audio_free(engine->audio); engine->audio=NULL; engine->vm.audio=NULL;
   gml_render_discard_deferred_presentation(&engine->render);
   engine->frame_authority=ENGINE_FRAME_CPU_MATERIALIZED;
@@ -3381,6 +3401,15 @@ size_t anygm_state_resume_capacity_hint(const AnygmEngine *engine){
     else dynamic+=metrics.inline_runtime_sprite_bytes;
     if(dynamic>hint) hint=dynamic;
   }
+  size_t movie=gml_builtin_video_state_capacity_hint(&engine->vm);
+  if(movie){
+    /* The first video_draw may create a noncompressible surface after the frontend has sized
+     * its ring. Add its known RLE ceiling and PCM window to the freshly queried baseline.
+     * Keeping the allowance after creation also covers a later, less compressible frame. */
+    size_t baseline=engine->state_resume_measured_hint;
+    size_t projected=movie>SIZE_MAX-baseline?SIZE_MAX:baseline+movie;
+    if(projected>hint) hint=projected;
+  }
   return hint;
 }
 
@@ -3391,6 +3420,7 @@ uint32_t anygm_state_capacity_flags(const AnygmEngine *engine){
     if(engine->win.ref_kind && engine->win.ref_kind[i]!=GML_REF_FUNCTION) continue;
     const char *name=engine->win.ref_name[i];
     if(name && (!strcmp(name,"surface_create") || !strcmp(name,"surface_create_ext") ||
+                !strcmp(name,"video_open") || !strcmp(name,"video_draw") ||
                 !strcmp(name,"surface_resize") || !strcmp(name,"execute_string") ||
                 !strcmp(name,"execute_file") || !strcmp(name,"game_change")))
       flags|=ANYGM_STATE_CAPACITY_DYNAMIC_SURFACES;

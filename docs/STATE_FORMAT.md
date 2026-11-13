@@ -20,9 +20,28 @@ failed partial reads leave the canonical image unpublished and invalid as a
 current resource. See R03-P9-INCREMENTAL-CHECKPOINT in
 [the renderer map](RENDERER_BACKENDS.md) for owners and controls.
 
-The current AnyGM save-state schema is `67`. It is the format transported by
+The current AnyGM save-state schema is `68`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `68` introduces VM schema `43` and audio schema `6`. The VM trailer adds
+an independently owned suspended Social-event map, followed by a movie-presence
+word and a versioned movie record when present. The record retains the input path
+and SHA-256, five provider versions, decoded-output counts, lifecycle flags,
+notifications, surface/queue/voice identities, audio cursor, position, volume and
+last image end. Encoded media and native decoder objects are never serialized.
+Restore validates the input and provider, replays decoded outputs to reconstruct
+pending windows, and adopts the surface and PCM queue restored by their existing
+owners. Replay cost grows with playback age. A live immutable source checkpoint
+protects rollback and post-load presentation when the file changes or disappears;
+an unavailable uncached source rejects the transaction.
+
+Audio queue records add a validated internal-queue flag before the block count.
+Internal movie queues use the existing PCM storage and mixer but do not emit
+public buffer-completion events. Parked Social callbacks retain their DS-map until
+completion or cancellation, restoring the enclosing `async_load` during execution.
+Older public, VM and audio schemas reject; graphics resource bytes are unchanged.
+Movie surface and PCM capacity hints are derived metadata, never state fields.
 
 Schema `67` introduces VM schema `42`. A final signed 32-bit field owns the DS-map
 identity of a suspended broadcast callback, or zero when absent. The existing DS

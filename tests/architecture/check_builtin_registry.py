@@ -105,6 +105,8 @@ STAGES = (
           "src/runtime/builtins/gml_builtin_instances.c"),
     Stage("AUDIO", "AUDIO", ("gml_builtin_try_audio",),
           "src/runtime/builtins/gml_builtin_audio.c"),
+    Stage("VIDEO", "AUDIO", ("gml_builtin_try_video",),
+          "src/runtime/builtins/gml_builtin_video.c"),
     Stage("INSTANCES_PATHS", "INSTANCES",
           ("gml_builtin_try_instances_paths",),
           "src/runtime/builtins/gml_builtin_instances.c"),

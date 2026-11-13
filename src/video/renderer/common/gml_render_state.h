@@ -26,6 +26,8 @@ void gml_render_font_checkpoint_free(GmlRenderFontCheckpoint *checkpoint);
 size_t gml_render_state_size(GmlRender *render,int derived_view_surface);
 /* Metadata-only upper bound for the existing payload; no pixel observer or compression. */
 size_t gml_render_state_capacity(GmlRender *render,int derived_view_surface);
+/* Additional worst-case payload for a surface's pixels; its fixed slot header already exists. */
+size_t gml_render_surface_state_capacity(int width,int height);
 int gml_render_state_save(GmlRender *render,int derived_view_surface,
                           void *data,size_t length,size_t *written);
 int gml_render_state_load(GmlRender *render,const void *data,size_t length,size_t *used);

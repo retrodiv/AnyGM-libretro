@@ -9,6 +9,7 @@
 #include "gml_builtin.h"
 #include "gml_render.h"
 #include "gml_audio.h"
+#include "gml_video_constants.h"
 #include "gml_particle.h"
 #include "gml_physics_solver.h"
 #include "anygm_host.h"
@@ -573,6 +574,9 @@ static const char *const g_special_var_names[]={
 #define GML_BUFFER_RECORD_SPECIAL(value,label) label,
   GML_BUFFER_RECORD_CONSTANTS(GML_BUFFER_RECORD_SPECIAL)
 #undef GML_BUFFER_RECORD_SPECIAL
+#define GML_VIDEO_CONSTANT_SPECIAL(value,label) label,
+  GML_VIDEO_CONSTANTS(GML_VIDEO_CONSTANT_SPECIAL)
+#undef GML_VIDEO_CONSTANT_SPECIAL
 };
 #define N_SPECIAL_VAR (int)(sizeof g_special_var_names/sizeof *g_special_var_names)
 /* Open-addressed set of the special-name hashes.  A 64-bit bloom cannot gate 109 names — it
@@ -707,6 +711,11 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
 #define GML_BUFFER_RECORD_READ(value,label) if(!strcmp(name,label)) return vreal(value);
   GML_BUFFER_RECORD_CONSTANTS(GML_BUFFER_RECORD_READ)
 #undef GML_BUFFER_RECORD_READ
+  if(!strncmp(name,"video_",6)){
+#define GML_VIDEO_CONSTANT_READ(value,label) if(!strcmp(name,label)) return vreal(value);
+    GML_VIDEO_CONSTANTS(GML_VIDEO_CONSTANT_READ)
+#undef GML_VIDEO_CONSTANT_READ
+  }
   if(!strncmp(name,"phy_joint_",10)){
 #define GML_JOINT_FIELD_READ(symbol, value, label) if(!strcmp(name,label)) return vreal(value);
     GML_PHYS_JOINT_FIELDS(GML_JOINT_FIELD_READ)
@@ -3150,6 +3159,7 @@ void gml_vm_wait_cancel(GmlVM *vm){
   if(!vm) return;
   for(int i=0;i<vm->wait.n_frames;i++) wait_frame_release(&vm->wait.frames[i]);
   gml_broadcast_map_release(vm,vm->wait.broadcast_map);
+  gml_broadcast_map_release(vm,vm->wait.async_map);
   memset(&vm->wait,0,sizeof vm->wait);
   vm->wait_requested=0;
 }
@@ -4373,6 +4383,10 @@ int gml_vm_wait_resume(GmlVM *vm){
   GmlVal previous_payload=payload?*payload:vreal(-1);
   if(resumed.broadcast_map)
     *gml_varmap_put(&vm->globals,"event_data")=vreal(resumed.broadcast_map);
+  GmlVal *async_payload=gml_varmap_get(&vm->globals,"async_load");
+  GmlVal previous_async=async_payload?*async_payload:vreal(-1);
+  if(resumed.async_map)
+    *gml_varmap_put(&vm->globals,"async_load")=vreal(resumed.async_map);
   vm->wait_event_scope=1;   /* the outermost parked frame is the event's own code run */
   GmlVal r=vm_run_code_impl(vm,0,NULL,NULL,NULL,0,resumed.frames,resumed.n_frames-1);
   if(r.t==V_STR && r.d!=0) free((char*)r.s);   /* discarded owned return: free it */
@@ -4380,6 +4394,11 @@ int gml_vm_wait_resume(GmlVM *vm){
     *gml_varmap_put(&vm->globals,"event_data")=previous_payload;
     if(vm->wait.active) vm->wait.broadcast_map=resumed.broadcast_map;
     else gml_broadcast_map_release(vm,resumed.broadcast_map);
+  }
+  if(resumed.async_map){
+    *gml_varmap_put(&vm->globals,"async_load")=previous_async;
+    if(vm->wait.active) vm->wait.async_map=resumed.async_map;
+    else gml_broadcast_map_release(vm,resumed.async_map);
   }
   vm->wait_event_scope=save_scope;
   vm->cur_event=save_event; vm->cur_event_obj=save_event_obj;

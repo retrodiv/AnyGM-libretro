@@ -15,10 +15,10 @@ extern "C" {
  * runtime library version, and every publishable metadata file declares the literal "Git" instead
  * of a number, so no copy can promise a value that has gone stale. CONTRIBUTING.md owns the single
  * increment step. */
-#define ANYGM_VERSION "0.1.856"
+#define ANYGM_VERSION "0.1.857"
 #define ANYGM_API_VERSION 8u
 #define ANYGM_HOST_SERVICES_VERSION 2u
-#define ANYGM_STATE_SCHEMA 67u
+#define ANYGM_STATE_SCHEMA 68u
 #define ANYGM_MAX_GAMEPADS 4u
 #define ANYGM_MAX_GAMEPAD_BUTTONS 16u
 #define ANYGM_MAX_GAMEPAD_AXES 4u
@@ -637,9 +637,10 @@ size_t anygm_state_size(AnygmEngine *engine);
  * loads through anygm_state_load and the next run continues from the restored post-frame state. */
 size_t anygm_state_resume_size(AnygmEngine *engine);
 /* The capacity advised for frame-free states: at least the largest size remembered from an earlier
- * session, raised by mutable render allocations whose dimensions are already known at load. It is
- * a bounded advisory hint, just like anygm_state_capacity_hint; the current buffer requirement is
- * always anygm_state_resume_size. */
+ * session, raised by known mutable render allocations. An open movie also reserves its current
+ * image dimensions and PCM window against the most recently queried resume size, before its first
+ * surface exists. Query anygm_state_resume_size first. This advisory hint cannot bound arbitrary
+ * future content allocations; the current buffer requirement is anygm_state_resume_size. */
 size_t anygm_state_resume_capacity_hint(const AnygmEngine *engine);
 /* A content-declared minimum allocation, independent of the current encoded size.
  * It can only raise a host's ordinary reserve; zero means no declaration. */

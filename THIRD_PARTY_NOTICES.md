@@ -9,6 +9,7 @@ including their original copyright years.
 
 | Component | Location | Terms |
 | --- | --- | --- |
+| FFmpeg video/audio decoding and format conversion | External shared libavformat, libavcodec, libavutil, libswscale and libswresample; pin and build recipe in `tools/media/` | LGPL-2.1-or-later, reproduced in `LICENSES/ffmpeg-lgpl-2.1.txt`; preserve each provider's corresponding source and notices |
 | imohash, adapted to C with standard default sampling and size encoding | `src/media/gml_hash.c`, content-selector recipe and conformance vectors | MIT, Jim Kalafut; reproduced in `LICENSES/imohash.txt` |
 | MurmurHash3 x64_128, adapted from Peter Scott's C port | `src/media/gml_hash.c`, content-selector recipe | Austin Appleby's public-domain dedication in `LICENSES/murmur3.txt` |
 | Box2D | `src/third_party/box2d/` | MIT, reproduced in `LICENSES/box2d.txt` |
@@ -56,3 +57,10 @@ The compiled core contains a copy of this file, `NOTICE`, and every regular
 file under `LICENSES/`. Distributors must still present the applicable texts
 in a form that satisfies their licenses; including the companion files is the
 clearest route when the delivery channel allows it.
+
+Video playback uses shared libraries from the FFmpeg project under LGPL-2.1-or-later.
+The first-party adapters use its public API and retain the repository's MIT terms.
+The reviewed provider recipe excludes GPL, nonfree and version3 components and
+does not modify FFmpeg. See [the dependency guide](tools/media/README.md) for exact
+source provenance, replacement rights, and requirements when conveying library binaries.
+The core's own notice table does not replace the provider's corresponding-source delivery.

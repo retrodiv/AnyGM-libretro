@@ -61,6 +61,16 @@ ANYGM_MEDIA_SOURCES := \
 	src/media/gml_image_codec.c \
 	src/media/gml_font_raster.c
 
+# Video playback belongs to the runtime, not the standalone content compiler's image helpers.
+ANYGM_VIDEO_SOURCES := \
+	src/media/gml_video_codec.c \
+	src/media/gml_video_player.c
+
+PKG_CONFIG ?= pkg-config
+ANYGM_FFMPEG_PACKAGES := libavformat libavcodec libavutil libswscale libswresample
+FFMPEG_CFLAGS ?= $(shell $(PKG_CONFIG) --cflags $(ANYGM_FFMPEG_PACKAGES) 2>/dev/null)
+FFMPEG_LIBS ?= $(shell $(PKG_CONFIG) --libs $(ANYGM_FFMPEG_PACKAGES) 2>/dev/null)
+
 ANYGM_PXTONE_SOURCES := \
 	src/audio/codecs/gml_pxtone.cpp \
 	src/third_party/pxtone/pxtnData.cpp \
@@ -268,6 +278,7 @@ ANYGM_BUILTIN_SOURCES := \
 	src/runtime/builtins/gml_builtin_actions.c \
 	src/runtime/builtins/gml_builtin_input.c \
 	src/runtime/builtins/gml_builtin_audio.c \
+	src/runtime/builtins/gml_builtin_video.c \
 	src/runtime/builtins/gml_builtin_instances.c \
 	src/runtime/builtins/gml_builtin_layers.c \
 	src/runtime/builtins/gml_builtin_platform.c \
@@ -294,6 +305,7 @@ ANYGM_RUNTIME_SOURCES := \
 	src/content/bytecode/gml_bc15.c \
 	src/content/bytecode/gml_bc17.c \
 	$(ANYGM_MEDIA_SOURCES) \
+	$(ANYGM_VIDEO_SOURCES) \
 	$(ANYGM_VM_SOURCES) \
 	$(ANYGM_BUILTIN_SOURCES) \
 	$(ANYGM_RENDERER_SOURCES) \

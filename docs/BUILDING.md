@@ -5,10 +5,19 @@
 
 ## Requirements
 
-The Unix build requires a C11-capable C compiler, an archiver, POSIX threads,
-and a standard `make` implementation. The production build does not download
-dependencies, run generators, or require a content corpus. All required
-headers and third-party sources are present in this checkout.
+The Unix build requires C11 and C++11 compilers, an archiver, POSIX threads,
+a standard `make` implementation, and FFmpeg 8 or later development headers
+and shared libraries for libavformat, libavcodec, libavutil, libswscale and
+libswresample. `pkg-config` supplies their flags by default. The production
+build does not download dependencies, run generators, or require a content corpus.
+Other required library headers and sources are bundled in this checkout.
+
+The [video dependency guide](../tools/media/README.md) describes the pinned
+LGPL-2.1-or-later provider, exact source receipt, runtime dependency check,
+and the notices/source required when distributing those libraries. A system
+FFmpeg package built with GPL or nonfree components does not satisfy that
+reviewed distribution route. `make ffmpeg-check` checks the libraries actually
+loaded on a native host; compiling against headers alone is insufficient.
 
 **The compiler must be GCC or Clang.** The runtime uses GNU C extensions that
 C11 does not define -- `typeof`, `__builtin_ctzll`, `__attribute__((vector_size))`
@@ -61,6 +70,16 @@ the platform-targets section below spells out. `CC`, `CXX`, `AR`,
 `CROSS_COMPILE`, `CPPFLAGS`, `CFLAGS`, `CXXFLAGS`, `LDFLAGS`, `LDLIBS`, `STATIC_LINKING`, and
 `BUILD_DIR` remain caller-owned build inputs.
 
+`PKG_CONFIG`, `FFMPEG_CFLAGS` and `FFMPEG_LIBS` select the external video
+provider. Cross builds must select target headers, import libraries and
+shared binaries rather than host packages; the pinned recipe accepts explicit
+target OS, architecture and compiler inputs. A static runtime archive retains
+FFmpeg references, so its consumers must link the same five libraries. FFmpeg
+itself remains shared even when `STATIC_LINKING=1` archives the core objects.
+`make -s runtime-link-libs` prints the selected platform's runtime link
+libraries for C consumers. Query it with the same provider and toolchain inputs
+used to build that archive; it performs no compilation or network access.
+
 Core and runtime objects rebuild when the selected compiler commands, compilation
 flags or SDK environment change. Linker and archiver settings are tracked separately:
 changing only `LDFLAGS` relinks without recompiling. Repeating an unchanged build
@@ -70,9 +89,10 @@ C++ and libretro adapter objects when an included header changes. Use separate
 `BUILD_DIR` values for concurrent builds with different settings. If a toolchain or SDK is replaced in place while
 its command and settings stay identical, clean that build directory first.
 
-Dependencies compile directly from the source lists below; the core build does
-not invoke Autoconf or consume `CONFIGURE_HOST` / `CONFIGURE_BUILD`. Set the actual
-compiler commands and their flags for cross compilation.
+Bundled dependencies compile directly from the source lists below; the core build
+does not invoke Autoconf or consume `CONFIGURE_HOST` / `CONFIGURE_BUILD`. The separate
+FFmpeg preparation recipe runs upstream's configure before the core build. Set the
+actual compiler commands and their flags for cross compilation.
 
 The source lists and their order are defined in `Makefile.common`. A build does
 not discover sources by walking the filesystem, which keeps buildbot and local

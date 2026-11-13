@@ -13,6 +13,8 @@ typedef struct AnygmSyntheticContent {
 } AnygmSyntheticContent;
 
 int anygm_synthetic_content_create(AnygmSyntheticContent *fixture);
+/* The Social callback reads its video payload before and after a reparkable wait. */
+int anygm_synthetic_video_wait_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_manual_single_view_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_manual_inset_view_content_create(AnygmSyntheticContent *fixture);
 /* The same fixture at an explicit authored room raster for presentation contracts. */

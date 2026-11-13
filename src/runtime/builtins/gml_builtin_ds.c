@@ -357,7 +357,7 @@ static int ds_map_reserve(GmlDSMap *m, int n){
   m->entry=e; m->cap=nc; return 1;
 }
 static int ds_map_store(GmlVM *vm, int id, GmlVal keyv, GmlVal val,
-                         int overwrite, int static_key){
+                         int overwrite, int static_key,int static_string){
   GmlDSMap *m=ds_map_slot(vm,id);
   if(!m) return 0;
   DsKeyTemp kt;
@@ -366,7 +366,7 @@ static int ds_map_store(GmlVM *vm, int id, GmlVal keyv, GmlVal val,
   if(i>=0){
     if(overwrite){
       ds_map_state_cache_clear(m);
-      m->entry[i].val=ds_val_clone(val);   /* old val leaks: refs may have escaped via ds_ret */
+      m->entry[i].val=static_string?val:ds_val_clone(val); /* old refs may have escaped */
       ds_entry_state_memo_clear(&m->entry[i],2);
       m->entry[i].child_kind=0;
     }
@@ -381,7 +381,7 @@ static int ds_map_store(GmlVM *vm, int id, GmlVal keyv, GmlVal val,
   ds_map_state_cache_clear(m);
   m->entry[m->len].key=key;
   m->entry[m->len].key_val=static_key?keyv:ds_key_val_clone(keyv);
-  m->entry[m->len].val=ds_val_clone(val);
+  m->entry[m->len].val=static_string?val:ds_val_clone(val);
   m->entry[m->len].child_kind=0;
   memset(m->entry[m->len].state_string_encoding,0,
          sizeof m->entry[m->len].state_string_encoding);
@@ -400,10 +400,15 @@ static int ds_map_store(GmlVM *vm, int id, GmlVal keyv, GmlVal val,
   return 1;
 }
 int ds_map_put(GmlVM *vm, int id, GmlVal keyv, GmlVal val, int overwrite){
-  return ds_map_store(vm,id,keyv,val,overwrite,0);
+  return ds_map_store(vm,id,keyv,val,overwrite,0,0);
 }
 int ds_map_put_static_key(GmlVM *vm, int id, const char *key, GmlVal val, int overwrite){
-  return key && ds_map_store(vm,id,vstr(key),val,overwrite,1);
+  return key && ds_map_store(vm,id,vstr(key),val,overwrite,1,0);
+}
+/* Both strings must have process lifetime. Returned DS references remain valid after destruction,
+ * so constant event labels need no unreclaimable heap copy when their map is transient. */
+int ds_map_put_static_string(GmlVM *vm,int id,const char *key,const char *value){
+  return key && value && ds_map_store(vm,id,vstr(key),vstr(value),1,1,1);
 }
 void ds_map_mark_child(GmlVM *vm, int id, GmlVal keyv, int kind){
   GmlDSMap *m=ds_map_slot(vm,id);

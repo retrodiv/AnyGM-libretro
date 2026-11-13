@@ -9,7 +9,11 @@
 
 /* Typed particle records share these buffer names with ordinary GML accesses. */
 #define GML_BUFFER_RECORD_CONSTANTS(ENTRY) \
+  ENTRY(0,"buffer_fixed") \
   ENTRY(1,"buffer_grow") \
+  ENTRY(1,"buffer_u8") \
+  ENTRY(3,"buffer_u16") \
+  ENTRY(4,"buffer_s16") \
   ENTRY(5,"buffer_u32") \
   ENTRY(6,"buffer_s32") \
   ENTRY(8,"buffer_f32") \
@@ -20,6 +24,16 @@ typedef struct GmlVmStateWriter GmlVmStateWriter;
 typedef struct GmlVmStateReader GmlVmStateReader;
 typedef void (*GmlBuiltinValueVisitor)(void *userdata, GmlVal value);
 void gml_builtin_finish_game_load(GmlVM *vm);
+void gml_builtin_video_close(GmlVM *vm);
+void gml_builtin_video_tick(GmlVM *vm);
+typedef struct GmlBuiltinVideoSource GmlBuiltinVideoSource;
+GmlBuiltinVideoSource *gml_builtin_video_checkpoint(GmlVM *vm);
+void gml_builtin_video_source_release(GmlBuiltinVideoSource *source);
+void gml_builtin_video_rebind(GmlVM *vm);
+int gml_builtin_video_finish_restore(GmlVM *vm);
+size_t gml_builtin_video_state_capacity_hint(const GmlVM *vm);
+void gml_builtin_state_write_video(const GmlBuiltinState *state,GmlVmStateWriter *writer);
+int gml_builtin_state_read_video(GmlBuiltinState *state,GmlVmStateReader *reader);
 
 GmlBuiltinState *gml_builtin_state_create(GmlVM *vm);
 GmlBuiltinState *gml_builtin_state_ensure(GmlVM *vm);

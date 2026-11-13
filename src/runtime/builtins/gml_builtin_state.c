@@ -5,6 +5,7 @@
 #include "gml_builtin_internal.h"
 #include "gml_vm_state_codec.h"
 #include "gml_audio.h"
+#include "gml_video_player.h"
 #include "anygm_host.h"
 
 #include <math.h>
@@ -180,7 +181,7 @@ GmlBuiltinState *gml_builtin_state_ensure(GmlVM *vm){
 }
 
 void gml_builtin_state_rebind(GmlBuiltinState *state,GmlVM *vm){
-  if(state) state->vm=vm;
+  if(state){state->vm=vm;gml_builtin_video_rebind(vm);}
 }
 
 void file_find_reset(GmlBuiltinState *state){
@@ -530,6 +531,7 @@ void gml_builtin_state_reset(GmlBuiltinState *state){
   builtin_state_external_audio_clear(state);
   builtin_wwise_state_free(state);
   builtin_jbfmod_state_free(state);
+  gml_builtin_video_close(state->vm);
   builtin_state_physics_reset(state);
   file_find_reset(state);
   memset(state->gamepad_deadzone,0,sizeof(state->gamepad_deadzone));
@@ -1692,4 +1694,60 @@ int gml_builtin_state_read_time_sources(GmlBuiltinState *state,
                                (uint32_t)parent);
   }
   return gml_vm_state_reader_ok(reader);
+}
+
+void gml_builtin_state_write_video(const GmlBuiltinState *state,GmlVmStateWriter *writer){
+  int present=state && state->video;
+  gml_vm_state_write_u32(writer,(uint32_t)present);
+  if(!present) return;
+  GmlVideoPlayerState saved;
+  const char *path=NULL;const uint8_t *digest=NULL;
+  if(!gml_builtin_video_state_get(state,&path,&digest,&saved)){
+    gml_vm_state_writer_fail(writer);return;
+  }
+  gml_vm_state_write_u32(writer,1u);
+  gml_vm_state_write_string(writer,path);
+  gml_vm_state_write_raw(writer,digest,32u);
+  for(int i=0;i<5;i++) gml_vm_state_write_u32(writer,saved.provider[i]);
+  gml_vm_state_write_u32(writer,saved.picture_reads);
+  gml_vm_state_write_u32(writer,saved.sound_reads);
+  gml_vm_state_write_u32(writer,saved.flags);
+  gml_vm_state_write_u32(writer,saved.notifications);
+  gml_vm_state_write_i32(writer,saved.surface);
+  gml_vm_state_write_i32(writer,saved.queue);
+  gml_vm_state_write_i32(writer,saved.voice);
+  gml_vm_state_write_u32(writer,(uint32_t)saved.audio_cursor);
+  gml_vm_state_write_u32(writer,(uint32_t)(saved.audio_cursor>>32));
+  gml_vm_state_write_real(writer,saved.position);
+  gml_vm_state_write_real(writer,saved.volume);
+  gml_vm_state_write_real(writer,saved.image_end);
+}
+int gml_builtin_state_read_video(GmlBuiltinState *state,GmlVmStateReader *reader){
+  uint32_t present=gml_vm_state_read_u32(reader);
+  if(!gml_vm_state_reader_ok(reader) || present>1u){
+    gml_vm_state_reader_fail(reader,"bad video presence",present);return 0;
+  }
+  if(!present) return 1;
+  uint32_t schema=gml_vm_state_read_u32(reader);
+  char *path=gml_vm_state_read_string(reader);uint8_t digest[32];
+  gml_vm_state_read_raw(reader,digest,sizeof digest);
+  GmlVideoPlayerState saved={0};
+  for(int i=0;i<5;i++) saved.provider[i]=gml_vm_state_read_u32(reader);
+  saved.picture_reads=gml_vm_state_read_u32(reader);
+  saved.sound_reads=gml_vm_state_read_u32(reader);
+  saved.flags=gml_vm_state_read_u32(reader);
+  saved.notifications=gml_vm_state_read_u32(reader);
+  saved.surface=gml_vm_state_read_i32(reader);saved.queue=gml_vm_state_read_i32(reader);
+  saved.voice=gml_vm_state_read_i32(reader);
+  saved.audio_cursor=gml_vm_state_read_u32(reader);
+  saved.audio_cursor|=(uint64_t)gml_vm_state_read_u32(reader)<<32;
+  saved.position=gml_vm_state_read_real(reader);saved.volume=gml_vm_state_read_real(reader);
+  saved.image_end=gml_vm_state_read_real(reader);
+  int restored=gml_vm_state_reader_ok(reader) && schema==1u && path && *path &&
+    strlen(path)<=4096u && gml_builtin_video_state_restore(state,path,digest,&saved);
+  free(path);
+  if(!restored){
+    gml_vm_state_reader_fail(reader,"video source or decoder restore",schema);return 0;
+  }
+  return 1;
 }

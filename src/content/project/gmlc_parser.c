@@ -7,6 +7,7 @@
 #include "gml_win.h"
 #include "gml_physics_particles.h"
 #include "gml_builtin.h"
+#include "gml_video_constants.h"
 
 #include <ctype.h>
 #include <inttypes.h>
@@ -271,6 +272,9 @@ static int resolve_const(Compiler *c, const char *name, double *out){
 #define GML_PARTICLE_CONSTANT(value,label) if(!strcmp(name,label)){*out=value;return 1;}
   GML_PHYS_PARTICLE_CONSTANTS(GML_PARTICLE_CONSTANT)
 #undef GML_PARTICLE_CONSTANT
+#define GML_VIDEO_CONSTANT(value,label) if(!strcmp(name,label)){*out=value;return 1;}
+  GML_VIDEO_CONSTANTS(GML_VIDEO_CONSTANT)
+#undef GML_VIDEO_CONSTANT
   static const char *effect_kinds[]={
     "ef_explosion","ef_ring","ef_ellipse","ef_firework","ef_smoke","ef_smokeup",
     "ef_star","ef_spark","ef_flare","ef_cloud","ef_rain","ef_snow"

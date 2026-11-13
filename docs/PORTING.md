@@ -52,6 +52,10 @@ cut: it neither compiles nor links the libretro adapter.
    completed picture; either form loads through `anygm_state_load`. Consult
    `anygm_state_capacity_flags` before reducing a fixed session's ordinary reserve: referenced
    surface creation can grow required render storage after the cold allocation was measured.
+   Query the current resume size before its capacity hint. For an open movie the hint includes
+   the known image's encoded surface ceiling and a PCM window, even before its first draw.
+   Movie references also report dynamic surface risk; later size changes or arbitrary content
+   allocations still require the host's ordinary growth policy.
 7. Call `anygm_unload` before replacing content and destroy the engine before
    destroying anything referenced by host userdata.
 

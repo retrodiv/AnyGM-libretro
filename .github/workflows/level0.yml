@@ -58,6 +58,13 @@ jobs:
       - name: Install the minimal tier
         run: python -m pip install --upgrade numpy pillow
 
+      - name: Prepare the shared video provider
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm pkg-config
+          free -h; nproc; cat /proc/loadavg; df -h /tmp
+          python3 tools/media/prepare_ci.py --download --work-root "$RUNNER_TEMP/video-native" --env-file "$GITHUB_ENV" --format github
+
       - name: Build the core and the container writer
         run: |
           make -j1 core

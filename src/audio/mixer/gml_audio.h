@@ -23,6 +23,9 @@ void gml_audio_free(GmlAudio *a);
 /* PCM playback queues use regular sound/voice controls. Submitted byte ranges are copied;
  * completion notices retain the public buffer handle, not a pointer into VM storage. */
 int gml_audio_queue_create(GmlAudio *a,int format,int rate,int channels);
+/* Media-owned PCM uses the same mixer and state transport, without public buffer callbacks. */
+int gml_audio_queue_create_internal(GmlAudio *a,int format,int rate,int channels);
+int gml_audio_queue_is_internal_pcm16_stereo(const GmlAudio *a,int queue,int rate);
 int gml_audio_queue_submit(GmlAudio *a,int queue,int buffer,const uint8_t *data,size_t bytes);
 void gml_audio_queue_free(GmlAudio *a,int queue);
 unsigned gml_audio_queue_event_count(const GmlAudio *a);

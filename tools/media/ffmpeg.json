@@ -1,0 +1,27 @@
+{
+  "version": "8.0.3",
+  "source_url": "https://ffmpeg.org/releases/ffmpeg-8.0.3.tar.xz",
+  "source_sha256": "6136812ea6d4e68bdba27e33c2a94382711cdf4f8602ffef056ff792bd6f9818",
+  "signature_url": "https://ffmpeg.org/releases/ffmpeg-8.0.3.tar.xz.asc",
+  "signature_sha256": "975f9512458fc39cacf35a9496f51c9d82e3a3b684a9db111bedcfa523f2b2b8",
+  "release_key_fingerprint": "FCF986EA15E6E293A5644F10B4322F04D67658D8",
+  "license": "LGPL-2.1-or-later",
+  "configure": [
+    "--disable-autodetect",
+    "--disable-gpl",
+    "--disable-nonfree",
+    "--disable-version3",
+    "--disable-static",
+    "--enable-shared",
+    "--disable-programs",
+    "--disable-doc",
+    "--disable-network",
+    "--disable-protocols",
+    "--disable-avdevice",
+    "--disable-avfilter",
+    "--disable-encoders",
+    "--disable-muxers",
+    "--disable-filters",
+    "--disable-devices"
+  ]
+}

@@ -913,6 +913,54 @@ int anygm_synthetic_blocking_wait_content_create(AnygmSyntheticContent *fixture)
   return 1;
 }
 
+int anygm_synthetic_video_wait_content_create(AnygmSyntheticContent *fixture){
+  if(!fixture) return 0;
+  memset(fixture,0,sizeof *fixture);
+  if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
+  char create[192],social[192];
+  snprintf(create,sizeof create,"%s/create.gml",fixture->directory);
+  snprintf(social,sizeof social,"%s/social.gml",fixture->directory);
+  snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
+  if(!write_text(create,
+       "global.fixture_release = 0; global.fixture_resumed = 0;\n"
+       "global.fixture_constants = [video_status_closed, video_status_preparing,\n"
+       "  video_status_playing, video_status_paused, video_format_rgba, video_format_yuv];\n"
+       "global.fixture_entries = 0;\n") ||
+     !write_text(social,
+       "global.fixture_entries += 1;\n"
+       "global.fixture_map = async_load;\n"
+       "global.fixture_before = ds_map_find_value(async_load, \"type\");\n"
+       "while (global.fixture_release == 0) { sleep(10); }\n"
+       "global.fixture_after = ds_map_find_value(async_load, \"event_type\");\n"
+       "global.fixture_status = ds_map_find_value(async_load, \"status\");\n"
+       "global.fixture_resumed += 1;\n")){
+    anygm_synthetic_content_destroy(fixture);return 0;
+  }
+  AnygmHostServices services={0};services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;anygm_stdio_vfs_services_init(&services);
+  GmlcProject project={0};GmlcObject object={0};GmlcObjectEvent events[2]={0};
+  GmlcRoom room={0};GmlcRoomInstance instance={0};int order=0;
+  project.host=&services;project.name=(char *)"neutral-video-wait-fixture";
+  project.objects=&object;project.n_objects=project.cap_objects=1;
+  project.rooms=&room;project.n_rooms=project.cap_rooms=1;
+  project.room_order=&order;project.n_room_order=1;
+  object.id=object.name=(char *)"obj_fixture";
+  object.sprite_id=object.mask_id=object.parent_id=-1;
+  object.events=events;object.n_events=object.cap_events=2;
+  events[0].event_type=0;events[0].source_path=create;
+  events[1].event_type=7;events[1].event_number=70;events[1].source_path=social;
+  room.id=room.name=(char *)"room_fixture";room.width=64;room.height=48;room.speed=60;
+  room.draw_background_color=1;room.instances=&instance;room.n_instances=room.cap_instances=1;
+  instance.id=instance.name=(char *)"instance_fixture";instance.object_id=0;
+  instance.instance_id=100000;instance.sx=instance.sy=1;instance.color=0xffffffffu;
+  char error[256]={0};
+  if(!gmlc_package_write_structural(&project,fixture->path,error,sizeof error)){
+    fprintf(stderr,"video wait package failed: %s\n",error);
+    anygm_synthetic_content_destroy(fixture);return 0;
+  }
+  return 1;
+}
+
 int anygm_synthetic_simulated_key_content_create(AnygmSyntheticContent *fixture){
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);

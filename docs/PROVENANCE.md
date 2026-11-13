@@ -53,6 +53,20 @@ not measurements of an original runner. Native controls distinguish real rigid
 shape preservation, strength-weighted elastic correction, solid repulsion and
 canonical group/unfinished-definition restoration.
 
+## Video interface constants
+
+`src/media/gml_video_constants.h` records interface names and numeric values,
+shared by the source compiler, VM and player. The publisher's
+[`yyVideo.js`](https://github.com/YoYoGames/GameMaker-HTML5/blob/b7196aa2cf174e19e817f3ac045132c556fc9561/scripts/yyVideo.js)
+declares closed/preparing/playing/paused as 0/1/2/3 and RGBA/YUV as 0/1.
+Only these interface facts were used; no publisher implementation or comments
+are bundled. Native controls verify compiled and runtime identifier reads.
+These constants do not establish native playback timing or image fidelity.
+The same publisher revision's `scripts/yyBuffer.js` confirms the fixed buffer
+format (0) and unsigned-byte/unsigned-short/signed-short types (1/3/4).
+These names let the neutral GML media fixture author ordinary RIFF bytes;
+the existing buffer algorithms are unchanged.
+
 ## Queue and stack text formats
 
 The sequence text codecs are first-party implementations over the existing DS
@@ -146,8 +160,8 @@ release evidence. The following SHA-256 directives pin only the two
 first-party files in this repository; `make provenance-check` verifies
 their current bytes.
 
-<!-- PROVENANCE-CHECK: src/runtime/builtins/gml_builtin_registry.h = d654dd02f8202bb2c4b07a8b19e0c9fbe996b6c295e0f06ebe11519399efdb96 -->
-<!-- PROVENANCE-CHECK: src/generated/gml_builtin_registry_index.h = 48200fdb7fd3c3cdfd6560fa7a5ee07179a9c6a3dfc9aa3fab51e4c63a72fdd9 -->
+<!-- PROVENANCE-CHECK: src/runtime/builtins/gml_builtin_registry.h = 41e5a819e0a94d29df74c1bf04c62d5dc87e63d59010276941a32acacd72b1ef -->
+<!-- PROVENANCE-CHECK: src/generated/gml_builtin_registry_index.h = c0e70e5984549128e53162dc09136cc0dadfc2123c356f00b8bf0b5053bc8df5 -->
 
 ## Audio setup packets
 

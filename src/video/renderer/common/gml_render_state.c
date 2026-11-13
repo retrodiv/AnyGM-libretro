@@ -248,6 +248,13 @@ static int runtime_path_rebuild(const GmlRender *render,int root,const char *sto
   return 1;
 }
 
+size_t gml_render_surface_state_capacity(int width,int height){
+  size_t bytes=0;
+  if(width<=0 || height<=0 ||
+     !state_bounded_product3((size_t)width,(size_t)height,8u,SIZE_MAX-4u,&bytes)) return 0;
+  return 4u+bytes;
+}
+
 static void render_state_write(GmlRender *render,int view_surface,CoreW *s,
                                int metadata_only){
   if(render->n_fonts<0 || render->n_fonts>GML_MAX_FONTS){ s->ok=0; return; }
@@ -289,14 +296,13 @@ static void render_state_write(GmlRender *render,int view_surface,CoreW *s,
     cw_i32(s,sf->live); cw_i32(s,sf->w); cw_i32(s,sf->h);
     if(sf->live && sf->px && sf->w>0 && sf->h>0){
       if(metadata_only){
-        size_t run_bytes=0;
-        if(!state_bounded_product3((size_t)sf->w,(size_t)sf->h,8u,
-                                   SIZE_MAX-4u,&run_bytes)){
+        size_t pixel_capacity=gml_render_surface_state_capacity(sf->w,sf->h);
+        if(!pixel_capacity){
           s->ok=0; return;
         }
         /* One run per pixel is the existing surface encoding's ceiling. Counting that
          * ceiling observes neither the device nor a stale CPU plane/RLE cache. */
-        cw_raw(s,NULL,view_surface>0 && i==view_surface-1 ? 12u:4u+run_bytes);
+        cw_raw(s,NULL,view_surface>0 && i==view_surface-1 ? 12u:pixel_capacity);
         continue;
       }
       if(sf->resource){

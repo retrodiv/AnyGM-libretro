@@ -12,6 +12,13 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+struct GmlVideoPlayerState;
+int gml_builtin_video_state_get(const GmlBuiltinState *state,const char **path,
+                                const uint8_t **digest,struct GmlVideoPlayerState *saved);
+int gml_builtin_video_state_restore(GmlBuiltinState *state,const char *path,
+                                    const uint8_t digest[32],
+                                    const struct GmlVideoPlayerState *saved);
+
 /* Encode renderer-native ARGB pixels through the existing writable-content VFS. */
 int builtin_save_image(GmlVM *vm,const char *path,const uint32_t *pixels,
                         int width,int height,int opaque);
@@ -228,6 +235,8 @@ struct GmlBuiltinState {
   int unknown_builtin_seen_count;
   unsigned text_source_serial;   /* rotates file_text_open_from_string scratch names, IO-owned */
   int surface_depth_disabled;    /* surface_depth_disable() latch the getter reads back, DRAW-owned */
+  void *video;
+  uint64_t video_generation;
 };
 
 struct GmlRender;
@@ -279,6 +288,7 @@ double gp_axis_value_filtered(GmlVM *vm, int dev, int ax);
 double gp_axis_digital_fallback(GmlVM *vm, int device, int ax);
 int gp_debug_on(GmlVM *vm);
 GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n);
+GmlVal gml_builtin_try_video(GmlVM *vm,const char *name,GmlVal *args,int count);
 
 GmlVal gml_builtin_try_animation(GmlVM *vm, const char *name,
                                  GmlVal *args, int count);
@@ -407,6 +417,8 @@ int ds_map_put(GmlVM *vm, int id, GmlVal key, GmlVal value, int overwrite);
 /* Internal metadata only: key must have static lifetime, including after map destruction.
  * Runtime strings use ds_map_put; value cloning and escaped-reference policy are unchanged. */
 int ds_map_put_static_key(GmlVM *vm, int id, const char *key, GmlVal value, int overwrite);
+/* The key and string value must both have process lifetime. */
+int ds_map_put_static_string(GmlVM *vm,int id,const char *key,const char *value);
 void ds_map_mark_child(GmlVM *vm, int id, GmlVal key, int kind);
 void ds_map_destroy_id(GmlVM *vm, int id);
 int ds_list_create_id(GmlVM *vm);

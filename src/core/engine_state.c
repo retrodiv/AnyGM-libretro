@@ -7,6 +7,7 @@
 #include "anygm_host.h"
 #include "anygm_vfs.h"
 #include "gml_render_state.h"
+#include "gml_builtin.h"
 #include "gml_thread.h"
 
 
@@ -733,7 +734,8 @@ size_t engine_state_resume_size(AnygmEngine *engine){
   measure.ok=1;
   state_write(engine,&measure,NULL);
   engine->state_omit_frame=previous;
-  return measure.ok?measure.pos:0;
+  engine->state_resume_measured_hint=measure.ok?measure.pos:0;
+  return engine->state_resume_measured_hint;
 }
 bool engine_state_save(AnygmEngine *engine,void *d,size_t n,size_t *written){
   if(!engine->loaded || !d) return false;
@@ -872,6 +874,8 @@ bool state_unserialize_impl(AnygmEngine *engine,const void *d, size_t n, int sch
   engine->input_continuity_pending = 1;
   size_t offset=core_size;
   size_t render_used=0;
+  /* The old player's identities still refer to the old resource set at this point. */
+  gml_builtin_video_close(&engine->vm);
   if(!gml_render_state_load(&engine->render,payload+offset,render_size,&render_used) ||
      render_used!=render_size){
     if(anygm_host_development_setting(&engine->host,"GML_LOG_STATE"))
@@ -896,6 +900,7 @@ bool state_unserialize_impl(AnygmEngine *engine,const void *d, size_t n, int sch
     return false;
   }
   offset+=audio_size;
+  if(!gml_builtin_video_finish_restore(&engine->vm)) return false;
   if(anygm_host_development_setting(&engine->host,"GML_REENTER_ROOM") &&
      engine->vm.room_index>=0)
     gml_room_enter(&engine->vm,engine->vm.room_index);
@@ -1028,6 +1033,9 @@ bool engine_state_load(AnygmEngine *engine,const void *d,size_t n){
 
   int prior_just_loaded=engine->state_just_loaded;
   size_t prior_reapply_size=engine->state_reapply_size;
+  GmlBuiltinVideoSource *video_checkpoint=gml_builtin_video_checkpoint(&engine->vm);
+  void *previous_video_source=engine->vm.video_restore_source;
+  engine->vm.video_restore_source=video_checkpoint;
   if(!state_unserialize_impl(engine,d,target_size,1)){
     int fonts_restored=gml_render_font_checkpoint_restore(&engine->render,font_checkpoint);
     int restored=state_unserialize_impl(engine,snapshot,snapshot_size,0);
@@ -1040,6 +1048,8 @@ bool engine_state_load(AnygmEngine *engine,const void *d,size_t n){
     gml_render_font_checkpoint_free(font_checkpoint);
     if(!restored || !fonts_restored)
       engine_logf(engine,ANYGM_LOG_ERROR,"[anygm] state rollback failed after a rejected load\n");
+    engine->vm.video_restore_source=previous_video_source;
+    gml_builtin_video_source_release(video_checkpoint);
     return false;
   }
   if(target_size>engine->state_reapply_capacity){
@@ -1056,12 +1066,19 @@ bool engine_state_load(AnygmEngine *engine,const void *d,size_t n){
       gml_render_font_checkpoint_free(font_checkpoint);
       if(!restored || !fonts_restored)
         engine_logf(engine,ANYGM_LOG_ERROR,"[anygm] state rollback failed after an allocation error\n");
+      engine->vm.video_restore_source=previous_video_source;
+      gml_builtin_video_source_release(video_checkpoint);
       return false;
     }
     engine->state_reapply=next;
     engine->state_reapply_capacity=target_size;
   }
   memcpy(engine->state_reapply,d,target_size);
+  gml_builtin_video_source_release(engine->state_video_source);
+  engine->state_video_source=engine->state_just_loaded
+    ?gml_builtin_video_checkpoint(&engine->vm):NULL;
+  engine->vm.video_restore_source=previous_video_source;
+  gml_builtin_video_source_release(video_checkpoint);
   engine->state_reapply_size=target_size;
   free(snapshot);
   gml_render_font_checkpoint_free(font_checkpoint);

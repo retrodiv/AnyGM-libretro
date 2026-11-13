@@ -203,6 +203,8 @@ static GmlVal gml_builtin_call_registered_stage(
       return gml_builtin_try_instances_scripts(vm,nm,a,n);
     case GML_BUILTIN_STAGE_AUDIO:
       return gml_builtin_try_audio(vm,nm,a,n);
+    case GML_BUILTIN_STAGE_VIDEO:
+      return gml_builtin_try_video(vm,nm,a,n);
     case GML_BUILTIN_STAGE_INSTANCES_PATHS:
       return gml_builtin_try_instances_paths(vm,nm,a,n);
     case GML_BUILTIN_STAGE_INSTANCES_TIMELINES:

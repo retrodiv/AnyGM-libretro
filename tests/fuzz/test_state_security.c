@@ -68,9 +68,18 @@ static size_t render_metadata_body_end(const AnygmEngine *engine,
   return at;
 }
 
+/* These corruption fixtures carry neither a movie nor a suspended Social map. Check
+ * their live owners and exact empty wire words before locating preceding fields. */
+static int neutral_video_tail(AnygmEngine *engine,const uint8_t *bytes,size_t end){
+  if(end<8 || engine->vm.wait.async_map) return 0;
+  GmlBuiltinVideoSource *source=gml_builtin_video_checkpoint(&engine->vm);
+  if(source){gml_builtin_video_source_release(source);return 0;}
+  return !memcmp(bytes+end-8,(const uint8_t[8]){0},8);
+}
+
 /* Locate older table controls only after proving this fixture has no semantic
  * array-owner records. Never skip a populated or unknown trailer. */
-static size_t neutral_vm_body_end(const AnygmEngine *engine,const uint8_t *bytes,size_t size){
+static size_t neutral_vm_body_end(AnygmEngine *engine,const uint8_t *bytes,size_t size){
   if(engine->vm.next_array_owner || engine->vm.member_names.len ||
      engine->vm.pending_game_load) return SIZE_MAX;
   if(size<STATE_HEADER_SIZE || (uint32_t)read_u64(bytes+4)!=ANYGM_STATE_SCHEMA) return SIZE_MAX;
@@ -81,9 +90,11 @@ static size_t neutral_vm_body_end(const AnygmEngine *engine,const uint8_t *bytes
     start+=(size_t)part;
   }
   uint64_t length=read_u64(bytes+80);
-  if(length<37 || length>size-start || (uint32_t)read_u64(bytes+start+4)!=42)
+  if(length<45 || length>size-start || (uint32_t)read_u64(bytes+start+4)!=43)
     return SIZE_MAX;
   size_t end=start+(size_t)length;
+  if(!neutral_video_tail(engine,bytes,end)) return SIZE_MAX;
+  end-=8;
   if(memcmp(bytes+end-4,(const uint8_t[4]){0},4)) return SIZE_MAX;
   end-=4;
   if(memcmp(bytes+end-4,(const uint8_t[4]){0},4)) return SIZE_MAX;
@@ -96,13 +107,13 @@ static size_t neutral_vm_body_end(const AnygmEngine *engine,const uint8_t *bytes
   return end-4;
 }
 
-static int neutral_vm_body_end_controls(const AnygmEngine *engine,
+static int neutral_vm_body_end_controls(AnygmEngine *engine,
                                         const uint8_t *bytes,size_t size){
   if(neutral_vm_body_end(engine,bytes,size)==SIZE_MAX)
     return fail("current neutral VM trailer was not located");
   uint8_t *candidate=malloc(size);
   if(!candidate) return fail("neutral trailer control allocation");
-  const uint32_t roots[]={53,54,55,56,57,58,59,60,61,62,63,64,65,66,68},vms[]={31,32,33,34,35,36,37,38,39,40,41,43};
+  const uint32_t roots[]={53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,69},vms[]={31,32,33,34,35,36,37,38,39,40,41,42,44};
   size_t vm_start=STATE_HEADER_SIZE+(size_t)read_u64(bytes+64)+
                   (size_t)read_u64(bytes+72);
   int ok=1;
@@ -1592,8 +1603,9 @@ static int registered_member_state_cases(const AnygmHostServices *services,
     size_t end=STATE_HEADER_SIZE+(size_t)read_u64(state+64)+(size_t)read_u64(state+72)+
                (size_t)read_u64(state+80);
     ok=ok && !engine->vm.pending_game_load && !engine->vm.wait.broadcast_map &&
-       end<=size && end>=37 && !memcmp(state+end-8,(const uint8_t[8]){0},8);
-    if(ok)end-=8;
+       end<=size && end>=45 && neutral_video_tail(engine,state,end) &&
+       !memcmp(state+end-16,(const uint8_t[8]){0},8);
+    if(ok)end-=16;
     ok=ok && !memcmp(state+end-25,(const uint8_t[25]){0},25);
     if(ok) ok=reject_payload_u32(engine,candidate,size,state,size,end-25,UINT32_MAX,
                                  "invalid member registry count");
@@ -1609,8 +1621,9 @@ static int registered_member_state_cases(const AnygmHostServices *services,
     size_t start=STATE_HEADER_SIZE+(size_t)read_u64(state+64)+(size_t)read_u64(state+72);
     size_t end=start+(size_t)read_u64(state+80);
     ok=ok && !engine->vm.pending_game_load && !engine->vm.wait.broadcast_map &&
-       end<=size && end>=start+30 && !memcmp(state+end-8,(const uint8_t[8]){0},8);
-    if(ok)end-=8;
+       end<=size && end>=start+38 && neutral_video_tail(engine,state,end) &&
+       !memcmp(state+end-16,(const uint8_t[8]){0},8);
+    if(ok)end-=16;
     ok=ok && !memcmp(state+end-21,(const uint8_t[21]){0},21) && state[end-22]==V_UNDEF;
     if(ok){
       memcpy(candidate,state,size);
@@ -1920,15 +1933,17 @@ static int date_timezone_state_cases(const AnygmHostServices *services,
   if(ok){
     size_t at=STATE_HEADER_SIZE+(size_t)read_u64(utc+64)+(size_t)read_u64(utc+72);
     size_t length=(size_t)read_u64(utc+80);
-    ok=at<utc_size && length>12 && length<=utc_size-at &&
-       !memcmp(utc+at+length-8,(const uint8_t[8]){0},8) &&
-       !memcmp(local+at+length-8,(const uint8_t[8]){0},8) &&
-       utc[at+length-9]==1 && local[at+length-9]==0;
+    ok=at<utc_size && length>20 && length<=utc_size-at &&
+       neutral_video_tail(engine,utc,at+length) &&
+       neutral_video_tail(engine,local,at+length) &&
+       !memcmp(utc+at+length-16,(const uint8_t[8]){0},8) &&
+       !memcmp(local+at+length-16,(const uint8_t[8]){0},8) &&
+       utc[at+length-17]==1 && local[at+length-17]==0;
     candidate=malloc(utc_size);
     ok=ok && candidate;
     const unsigned invalid[]={2,255};
     for(unsigned i=0;i<sizeof invalid/sizeof invalid[0] && ok;i++){
-      memcpy(candidate,utc,utc_size);candidate[at+length-9]=(uint8_t)invalid[i];
+      memcpy(candidate,utc,utc_size);candidate[at+length-17]=(uint8_t)invalid[i];
       refresh_checksum(candidate);
       ok=reject_unchanged(engine,candidate,utc_size,local,local_size,"invalid date timezone");
     }
@@ -1960,10 +1975,10 @@ static int deferred_game_load_state_cases(const AnygmHostServices *services,
   size_t vm_start=ok?STATE_HEADER_SIZE+(size_t)read_u64(baseline+64)+
     (size_t)read_u64(baseline+72):0;
   size_t vm_size=ok?(size_t)read_u64(baseline+80):0;
-  if(ok)ok=length>=4 && vm_size>=length+8u && vm_start<=size && vm_size<=size-vm_start &&
-    !engine->vm.wait.broadcast_map &&
-    !memcmp(baseline+vm_start+vm_size-4,(const uint8_t[4]){0},4);
-  size_t count_at=ok?vm_start+vm_size-length-8u:0;
+  if(ok)ok=length>=4 && vm_size>=length+16u && vm_start<=size && vm_size<=size-vm_start &&
+    !engine->vm.wait.broadcast_map && neutral_video_tail(engine,baseline,vm_start+vm_size) &&
+    !memcmp(baseline+vm_start+vm_size-12,(const uint8_t[4]){0},4);
+  size_t count_at=ok?vm_start+vm_size-length-16u:0;
   if(ok)ok=engine->vm.pending_game_load &&
     (uint32_t)read_u64(baseline+count_at)==length &&
     !memcmp(baseline+count_at+4,engine->vm.pending_game_load,length);
@@ -1990,15 +2005,16 @@ static int broadcast_payload_state_cases(const AnygmHostServices *services,
   size_t start=ok?STATE_HEADER_SIZE+(size_t)read_u64(baseline+64)+
     (size_t)read_u64(baseline+72):0;
   size_t length=ok?(size_t)read_u64(baseline+80):0;
-  ok=ok && length>=4 && start<=size && length<=size-start &&
+  ok=ok && length>=12 && start<=size && length<=size-start &&
     !engine->vm.wait.active && !engine->vm.wait.broadcast_map &&
-    !memcmp(baseline+start+length-4,(const uint8_t[4]){0},4);
+    neutral_video_tail(engine,baseline,start+length) &&
+    !memcmp(baseline+start+length-12,(const uint8_t[4]){0},4);
   candidate=ok?malloc(size):NULL;ok=ok && candidate;
-  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,start+length-4,UINT32_MAX,
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,start+length-12,UINT32_MAX,
                              "negative parked broadcast map identity");
-  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,start+length-4,INT32_MAX,
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,start+length-12,INT32_MAX,
                              "missing parked broadcast map identity");
-  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,start+length-4,(uint32_t)map.d,
+  if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,start+length-12,(uint32_t)map.d,
                              "live broadcast map without a parked chain");
   if(ok)ok=reject_payload_u32(engine,candidate,size,baseline,size,4,66,
                              "previous payload-owner-free public schema");

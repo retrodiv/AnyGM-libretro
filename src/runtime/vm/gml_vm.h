@@ -332,6 +332,7 @@ typedef struct GmlWait {
   int expected_depth;  /* execution depth of the frame that must park next */
   int n_frames;        /* frames[0] is the run that blocked; frames[n_frames-1] is the event's own */
   int broadcast_map;   /* an event payload owned until this parked chain finishes; zero if absent */
+  int async_map;       /* retained async_load payload for a parked video callback */
   GmlWaitFrame frames[GML_WAIT_MAX_FRAMES];
 } GmlWait;
 
@@ -541,6 +542,7 @@ typedef struct GmlVM {
   int *draw_ord; int draw_ord_cap;  /* scratch order buffer for draw passes (runtime-only) */
   void    *render;   /* GmlRender* (set by the engine coordinator) for draw_* builtins */
   void    *audio;    /* GmlAudio*  (set by the engine coordinator) for audio_* builtins */
+  void    *video_restore_source; /* borrowed immutable source checkpoint during an engine rollback */
   struct GmlDrawScratch *draw_scratch;
   unsigned char *audio_room_warm_scan; int audio_room_warm_scan_n;
   /* GMS2.3 struct pool: standalone GmlInstances (malloc'd individually so the growable pointer

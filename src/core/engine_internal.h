@@ -305,6 +305,8 @@ struct AnygmEngine {
    * scene dependencies before the next observation without transferring pixels to the CPU. */
   int state_gpu_frame_capture;
   size_t state_vm_size_hint;
+  /* Latest frame-free size query; metadata baseline for pending known media allocations. */
+  size_t state_resume_measured_hint;
   /* Last complete write in this engine, used only to try allocating a rollback snapshot.
    * A missing or stale bound falls back to the exact measuring traversal. Not serialized. */
   size_t state_written_size_hint;
@@ -314,6 +316,7 @@ struct AnygmEngine {
   int state_omit_frame;
   uint8_t *state_reapply;
   size_t state_reapply_capacity,state_reapply_size;
+  void *state_video_source; /* owned immutable media retained through the post-load redraw */
   /* Peak serialized size for this content: what the namespace cache remembered at load, the
    * largest save observed since, and the value most recently persisted back. The cache entry is
    * untrusted input: reads validate and clamp before believing it. It exists only when the host

@@ -649,7 +649,7 @@ void gml_vm_step(GmlVM *vm){
   uint32_t alarm_first_id=vm->next_id;
   if(resource_major_alarm_order){
     for(int a=0;a<GML_ALARMS;a++){
-      char s[16]; snprintf(s,sizeof s,"Alarm_%d",a);
+      char s[24]; snprintf(s,sizeof s,"Alarm_%d",a);
       int object_count=0;
       const int *objects=gml_vm_instances_event_objects(vm,s,&object_count);
       int extent=objects?object_count:vm->n_objects;
@@ -685,7 +685,7 @@ void gml_vm_step(GmlVM *vm){
     if(!gml_vm_phase_member(in,alarm_first_id)) continue;
     for(int a=0;a<GML_ALARMS;a++){
       if(alarm_at_zero){ if(!(in->alarm[a]>0)) continue; } else { if(!(in->alarm[a]>-1)) continue; }
-      char s[16]; snprintf(s,sizeof s,"Alarm_%d",a);
+      char s[24]; snprintf(s,sizeof s,"Alarm_%d",a);
       int declared_code=-1;
       int native_declared=gml_vm_instances_native_event_declared(
           vm,2,a,in->obj,NULL,&declared_code);
@@ -1086,6 +1086,7 @@ void gml_vm_step(GmlVM *vm){
   /* deferred async HTTP failure events (Other_62) queued by http_* this step (offline core) */
   gml_fire_async_http(vm);
   gml_fire_async_audio(vm);
+  gml_builtin_video_tick(vm);
   /* room transition requested during the step */
   if(vm->pending_room>=0) gml_vm_apply_pending_room(vm,0);
   /* Game End (Other_3): fire on all active instances when game_end was set. */

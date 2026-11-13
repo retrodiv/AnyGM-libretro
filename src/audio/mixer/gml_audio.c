@@ -49,7 +49,7 @@ typedef struct GmlAudioBlock {
   struct GmlAudioBlock *next;
   int16_t *pcm;
   uint32_t nval;
-  int queue,buffer,shutdown;
+  int queue,buffer,shutdown,internal;
 } GmlAudioBlock;
 
 typedef struct {
@@ -67,7 +67,7 @@ typedef struct {
   uint32_t external_type;
   uint8_t content_sha256[32];
   int content_hash_known;
-  int queue_format,queue_channels;
+  int queue_format,queue_channels,queue_internal;
   int stream_policy;
   GmlAudioBlock *queue_head,*queue_tail,*queue_shutdown;
 } GmlSound; /* own is decoded/copied PCM; encoded_own backs a dynamic compressed blob */
@@ -151,6 +151,7 @@ static void audio_queue_refresh(GmlSound *sound){
 }
 /* Reuse the submission node for the event, so completing audio cannot fail allocation. */
 static void audio_queue_event(GmlAudio *a,GmlAudioBlock *block,int shutdown){
+  if(block->internal){ audio_block_delete(a,block); return; }
   a->queue_bytes-=(size_t)block->nval*sizeof(int16_t);
   free(block->pcm); block->pcm=NULL; block->nval=0;
   block->shutdown=shutdown; block->next=NULL;
@@ -718,6 +719,19 @@ int gml_audio_queue_create(GmlAudio *a,int format,int rate,int channels){
   shutdown->queue=slot; shutdown->buffer=-1; a->queue_blocks++;
   return slot;
 }
+int gml_audio_queue_create_internal(GmlAudio *a,int format,int rate,int channels){
+  int slot=gml_audio_queue_create(a,format,rate,channels);
+  if(slot>=0){
+    a->snd[slot].queue_internal=1;
+    a->snd[slot].queue_shutdown->internal=1;
+  }
+  return slot;
+}
+int gml_audio_queue_is_internal_pcm16_stereo(const GmlAudio *a,int queue,int rate){
+  return a && queue>=0 && queue<a->n_snd && a->snd[queue].queue_internal &&
+    a->snd[queue].queue_format==4 && a->snd[queue].queue_channels==1 &&
+    a->snd[queue].sample_rate==rate;
+}
 int gml_audio_queue_submit(GmlAudio *a,int queue,int buffer,const uint8_t *data,size_t bytes){
   if(!a || queue<0 || queue>=a->n_snd || !data || buffer<0 || !bytes ||
      a->queue_blocks>=GML_QUEUE_BLOCKS_MAX) return 0;
@@ -736,6 +750,7 @@ int gml_audio_queue_submit(GmlAudio *a,int queue,int buffer,const uint8_t *data,
     block->pcm[i]=width==2?(int16_t)rd16(data,(uint32_t)(i*2))
                            :(int16_t)(((int)data[i]-128)*256);
   block->nval=(uint32_t)values; block->queue=queue; block->buffer=buffer;
+  block->internal=sound->queue_internal;
   if(sound->queue_tail) sound->queue_tail->next=block; else sound->queue_head=block;
   sound->queue_tail=block; a->queue_blocks++; a->queue_bytes+=values*sizeof(int16_t);
   audio_queue_refresh(sound);
@@ -1694,7 +1709,7 @@ void gml_audio_mix(GmlAudio *a, int16_t *out, int frames){
   if(a && a->fmod) gml_fmod_mix(a->fmod,out,frames,44100);
 }
 
-enum { GML_AUDIO_STATE_SCHEMA=5 };
+enum { GML_AUDIO_STATE_SCHEMA=6 };
 #define GML_AUDIO_STATE_MAGIC UINT32_C(0x53554141)
 typedef struct { uint8_t *data; size_t cap, pos; int ok; } AudW;
 typedef struct { const uint8_t *data; size_t cap, pos; int ok; } AudR;
@@ -1763,7 +1778,7 @@ static void audio_state_write(AudW *s, GmlAudio *a){
     GmlSound *sound=&a->snd[i]; unsigned blocks=0;
     for(GmlAudioBlock *block=sound->queue_head;block;block=block->next) blocks++;
     aw_i32(s,i); aw_i32(s,sound->queue_format); aw_i32(s,sound->sample_rate);
-    aw_i32(s,sound->queue_channels); aw_u32(s,blocks);
+    aw_i32(s,sound->queue_channels); aw_i32(s,sound->queue_internal); aw_u32(s,blocks);
     for(GmlAudioBlock *block=sound->queue_head;block;block=block->next){
       aw_i32(s,block->buffer); aw_u32(s,block->nval);
       for(uint32_t value=0;value<block->nval;value++){
@@ -1797,20 +1812,24 @@ static int audio_queues_read(AudR *reader,GmlAudio *stage,int stored_sounds,int 
   int previous=-1;
   for(unsigned index=0;index<queues;index++){
     int handle=ar_i32(reader),format=ar_i32(reader),rate=ar_i32(reader),channels=ar_i32(reader);
+    int internal=ar_i32(reader);
     unsigned blocks=ar_u32(reader);
     if(!reader->ok || handle<=previous || handle<base_sounds || handle>=stored_sounds ||
        (unsigned)(handle-base_sounds)>=GML_DYNAMIC_SOUND_LIMIT ||
        (format!=1 && format!=4) || rate<1000 || rate>48000 || channels<0 || channels>2 ||
+       (internal!=0 && internal!=1) ||
        stage->queue_blocks>=GML_QUEUE_BLOCKS_MAX ||
        blocks>GML_QUEUE_BLOCKS_MAX-stage->queue_blocks-1u) return 0;
     previous=handle;
     GmlSound *sound=&stage->snd[handle];
     sound->queue_format=format; sound->queue_channels=channels;
+    sound->queue_internal=internal;
     sound->channels=channels==0?1:channels==1?2:6; sound->sample_rate=rate;
     sound->vol=1.0f;
     sound->queue_shutdown=calloc(1,sizeof(*sound->queue_shutdown));
     if(!sound->queue_shutdown) return 0;
     sound->queue_shutdown->queue=handle; sound->queue_shutdown->buffer=-1;
+    sound->queue_shutdown->internal=internal;
     stage->queue_blocks++;
     for(unsigned index=0;index<blocks;index++){
       int buffer=ar_i32(reader); uint32_t values=ar_u32(reader);
@@ -1827,6 +1846,7 @@ static int audio_queues_read(AudR *reader,GmlAudio *stage,int stored_sounds,int 
         block->pcm[value]=(int16_t)rd16(reader->data+reader->pos,value*2u);
       reader->pos+=bytes;
       block->nval=values; block->queue=handle; block->buffer=buffer;
+      block->internal=internal;
       if(sound->queue_tail) sound->queue_tail->next=block; else sound->queue_head=block;
       sound->queue_tail=block; stage->queue_blocks++; stage->queue_bytes+=bytes;
     }

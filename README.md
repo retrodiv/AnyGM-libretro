@@ -8,10 +8,11 @@ supported GameMaker content formats. It provides one shared execution engine
 for classic containers and Studio bytecode; it does not contain separate
 runtimes for each format generation.
 
-The repository is self-contained. It includes the runtime, the libretro
-adapter, build files, tests, generated data with recorded provenance, and the
-third-party components needed to build the core. It does not include content
-or proprietary runtime components.
+The repository includes the runtime, libretro adapter, build files, tests,
+generated data with recorded provenance, and bundled third-party components.
+Video playback links to shared FFmpeg libraries supplied by the build environment;
+the [video dependency guide](tools/media/README.md) provides a pinned LGPL build
+recipe. No content or proprietary runtime components are included.
 
 ## Supported format families
 
@@ -75,6 +76,26 @@ frontend-provided save directory. With libretro, this is the directory supplied 
 See [image export and save paths](docs/PORTING.md#game-image-export) for the layout,
 capture timing, and path fallback rules.
 
+## Video playback
+
+The `video_*` functions use one player per engine, shared by both renderers.
+`video_draw()` supplies an ordinary RGBA surface; drawing that surface uses the
+selected renderer. Decoded stereo audio uses the existing mixer at 44100 Hz.
+The shared FFmpeg provider selects the available containers and codecs.
+
+Inputs use the host's existing file namespace and remain immutable while open.
+The current memory-backed input limit is 256 MiB; a decoded image is limited to
+67,108,864 pixels. Demuxers cannot open additional files or network sources.
+Playback advances from the runtime clock and honors pause, volume and looping.
+Start and end notifications use the ordinary Social async event.
+
+States retain the source path, input digest, provider versions and logical
+decoder position. Restoring validates the source and reconstructs decoder
+windows by replaying earlier outputs; restore cost grows with playback age.
+Renderer and mixer state retain the actual surface and queued PCM bytes.
+Changed or unavailable uncached media, or a different provider version, rejects
+the load transactionally. No encoded movie is embedded in a state.
+
 ## Independence and trademarks
 
 AnyGM is an independent project. It is not affiliated with or endorsed by
@@ -122,6 +143,7 @@ make check TEST=renderer_tiles
 make check TEST=d3_state D3_TEST_ARGS='--case raster.projection'
 make check TEST=persistent_room PERSISTENT_TEST_ARGS='--case state.canonical_roundtrip'
 make diagnostics-check
+make ffmpeg-check
 make check
 ```
 

@@ -2388,5 +2388,5 @@ GmlVal gml_builtin_try_audio(GmlVM *vm, const char *nm, GmlVal *a, int n){
       gml_audio_group_gain(AU,(int)N(a,n,0),N(a,n,1),(int)N(a,n,2)); return vreal(0); }
   }
 
-  return gml_builtin_try_instances_paths(vm,nm,a,n);
+  return gml_builtin_try_video(vm,nm,a,n);
 }

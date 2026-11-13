@@ -209,10 +209,10 @@ int expect_object_state_bounds(void){
   GmlObject original[3]; memcpy(original,vm.objects,sizeof original);
   if(ok){
     /* This property-only fixture has an empty member-name map, array ownership,
-     * timezone, pending-load and parked-payload trailers. The instance-order word stays in body. */
-    size_t body=size>=33?size-33:0;
-    ok=body>=92 && !vm.next_array_owner && !vm.wait.broadcast_map &&
-      !memcmp(bytes+body,(const uint8_t[33]){0},33);
+     * timezone, pending-load, parked-payload and video trailers. Instance order stays in body. */
+    size_t body=size>=41?size-41:0;
+    ok=body>=92 && !vm.next_array_owner && !vm.wait.broadcast_map && !vm.wait.async_map &&
+      !memcmp(bytes+body,(const uint8_t[41]){0},41);
     size_t table=body>=92?body-92:0;
     ok=ok && fixture_u32(bytes,table)==3 && fixture_u32(bytes,body-4)==0;
     const struct { size_t offset; uint32_t value; const char *label; } changes[]={
