@@ -356,6 +356,9 @@ GmlVal gml_builtin_try_animation(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"steam_file_read")||!strcmp(nm,"steam_get_persona_name")) return vstr("");
   if(!strcmp(nm,"steam_file_exists")||!strcmp(nm,"steam_file_write")||
      !strcmp(nm,"steam_stats_ready")) return vreal(0);
+  /* Portable setup has no service session to initialize or external trophy store. */
+  if(!strcmp(nm,"psn_init_np_libs")) return vundef();
+  if(!strcmp(nm,"psn_setup_trophies")) return vint32(1);
   if(!strncmp(nm,"psn_",4)) return vreal(0);
   return gml_builtin_try_physics(vm,nm,a,n);
 }

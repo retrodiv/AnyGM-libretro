@@ -814,6 +814,8 @@ GmlVal gml_builtin_try_platform_extensions(GmlVM *vm, const char *nm, GmlVal *a,
       anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_INFO,"[gml-test] %s\n",message);
     if(builtin_setting(vm,"GML_LOG_DEBUGMSG")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[gml debug] %s\n", message);
     return vreal(0); }
+  /* Console-authored local menus can use the portable player without an online session. */
+  if(!strcmp(nm,"xboxone_user_is_signed_in")) return vreal(1);
   if(!strncmp(nm,"xboxone_",8)) return vreal(0);
   /* The host receives one completed video frame per anygm_run_frame. Desktop refresh/vsync calls
    * cannot expose an intermediate buffer here, and waiting would only stall emulation. */

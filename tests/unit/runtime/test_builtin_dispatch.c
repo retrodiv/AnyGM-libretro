@@ -1852,6 +1852,25 @@ static int internal_value_helpers_contract(void){
   return ok;
 }
 
+static int portable_account_results_contract(GmlVM *vm){
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    GmlVal initialized=cached?call_fast(vm,"psn_init_np_libs",NULL,0,&ok)
+                             :gml_builtin_call(vm,"psn_init_np_libs",NULL,0);
+    GmlVal ready=cached?call_fast(vm,"psn_setup_trophies",NULL,0,&ok)
+                       :gml_builtin_call(vm,"psn_setup_trophies",NULL,0);
+    GmlVal user=vreal(0);
+    GmlVal available=cached?call_fast(vm,"xboxone_user_is_signed_in",&user,1,&ok)
+                           :gml_builtin_call(vm,"xboxone_user_is_signed_in",&user,1);
+    ok=initialized.t==V_UNDEF && ok;
+    ok=expect_real("portable trophy setup status",ready,1) &&
+       gml_val_number_kind(ready)==GML_NUM_INT32 && ok;
+    ok=expect_real("portable local player availability",available,1) && ok;
+  }
+  if(!ok) fprintf(stderr,"portable account result types or local menu gates changed\n");
+  return ok;
+}
+
 int main(int argc,char **argv){
   int guid_only=argc==3 && !strcmp(argv[1],"--case") &&
                 !strcmp(argv[2],"input.gamepad_guid");
@@ -1875,6 +1894,7 @@ int main(int argc,char **argv){
          finish_finally_contract(&vm,&log_fixture) &&
          legacy_question_contract(&vm,&log_fixture) &&
          unavailable_steam_contract(&vm,&log_fixture) &&
+         portable_account_results_contract(&vm) &&
          internal_value_helpers_contract() &&
          instance_id_view_contract() &&
          gamepad_guid_capability_contract(&vm) &&
