@@ -700,6 +700,71 @@ static int repeated_map_heap_roundtrip(int independent_arrays){
   free(before);free(after);gml_vm_free(&source);gml_vm_free(&restored);return ok;
 }
 
+/* Equal hashes must not merge different names. Key order and private bucket
+ * capacity must not change canonical bytes or independent variable bindings. */
+static int colliding_map_slots_roundtrip(void){
+  enum { count=7 };
+  const char *names[]={"costarring","liquid"};
+  GmlCode codes[count];memset(codes,0,sizeof codes);
+  char code_names[count][48];
+  for(int i=0;i<count;i++){
+    snprintf(code_names[i],sizeof code_names[i],"gml_Script_static_slot_%d",i);
+    codes[i].name=code_names[i];
+  }
+  GmlWin win={0};win.code=codes;win.n_code=count;
+  GmlVM source={0},restored={0};
+  int ok=gml_value_name_hash(names[0])==gml_value_name_hash(names[1]) &&
+    !gml_vm_init(&source,&win,NULL) && !gml_vm_init(&restored,&win,NULL);
+  for(int i=0;i<count && ok;i++){
+    GmlVarMap *map=&source.code_static[i];source.code_static_init[i]=1;
+    if(i==3){
+      map->slots=calloc(64,sizeof(*map->slots));map->cap=64;
+      if(!map->slots){ok=0;break;}
+    }
+    for(int n=0;n<(i<5?2:1) && ok;n++){
+      int key=i<5?((i==2 || i==4)?1-n:n):i-5;
+      GmlVal *slot;
+      if(i==1){
+        char *owned=strdup(names[key]);if(!owned){ok=0;break;}
+        slot=gml_varmap_put_owned(map,owned);
+      }else slot=gml_varmap_put(map,names[key]);
+      *slot=i>=5?vint64(50):key==0?vint64(i==2?30:10):vreal(i==2?40:20);
+    }
+  }
+  for(int phase=0;phase<2 && ok;phase++){
+    if(phase){
+      *gml_varmap_put(&source.code_static[1],names[0])=vint64(110);
+      *gml_varmap_put(&source.code_static[2],names[1])=vreal(-40);
+    }
+    size_t size=gml_vm_state_size(&source),written=0,used=0,repeated=0;
+    unsigned char *before=malloc(size?size:1),*after=malloc(size?size:1);
+    ok=size && before && after &&
+      gml_vm_state_save(&source,before,size,&written) && written==size &&
+      gml_vm_state_load(&restored,before,size,&used) && used==size &&
+      gml_vm_state_save(&restored,after,size,&repeated) && repeated==size &&
+      !memcmp(before,after,size);
+    for(int i=0;i<count && ok;i++){
+      GmlVarMap *map=&restored.code_static[i];
+      GmlVal *first=gml_varmap_get(map,names[i==6?1:0]);
+      GmlVal *last=gml_varmap_get(map,names[i==6?0:1]);
+      int64_t expected=i>=5?50:i==2?30:phase && i==1?110:10;
+      ok=restored.code_static_init[i] && first && first->t==V_REAL &&
+        first->number_kind==GML_NUM_INT64 && first->integer==expected;
+      if(i<5)ok=ok && map->len==2 && last && last->t==V_REAL &&
+        last->number_kind==GML_NUM_REAL && last->d==(i==2?(phase?-40:40):20);
+      else ok=ok && map->len==1 && !last;
+    }
+    if(ok){
+      *gml_varmap_put(&restored.code_static[1],names[0])=vint64(999);
+      GmlVal *independent=gml_varmap_get(&restored.code_static[0],names[0]);
+      ok=independent && independent->integer==10;
+    }
+    free(before);free(after);
+  }
+  if(!ok)fputs("colliding variable maps changed keys, typed values, independent bindings or canonical bytes\n",stderr);
+  gml_vm_free(&source);gml_vm_free(&restored);return ok;
+}
+
 static int array_zero_bits_roundtrip(void){
   GmlWin win={0}; GmlVM source={0},restored={0};
   int ok=!gml_vm_init(&source,&win,NULL) && !gml_vm_init(&restored,&win,NULL);
@@ -964,6 +1029,7 @@ int main(void){
   if(!array_zero_bits_roundtrip()) return 1;
   if(!ds_owned_string_memo_roundtrip()) return 1;
   if(!repeated_map_heap_roundtrip(0) || !repeated_map_heap_roundtrip(1)) return 1;
+  if(!colliding_map_slots_roundtrip()) return 1;
   if(!boxed_object_state_roundtrip()) return 1;
   if(!dense_struct_heap_roundtrip()) return 1;
   if(!many_grids_roundtrip()) return 1;

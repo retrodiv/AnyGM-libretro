@@ -1153,11 +1153,25 @@ static uint64_t state_map_hash(const GmlVarMap *map,uint32_t *count,uint64_t *sh
   *shape=state_map_mix(keys^*count);
   return state_map_mix(hash^*count);
 }
+/* Equal-key maps commonly retain the same bucket layout. Verify that slot's
+ * complete key before probing again; collisions and capacity changes keep the
+ * ordinary lookup, including its missing-key result. */
+static GmlVal *state_map_matching_value(const GmlVarMap *map,
+                                        const GmlVarMap *reference,
+                                        const GmlVarSlot *slot){
+  if(map->cap==reference->cap){
+    const GmlVarSlot *candidate=&map->slots[slot-reference->slots];
+    if(candidate->key && candidate->hash==slot->hash &&
+       (candidate->key==slot->key || !strcmp(candidate->key,slot->key)))
+      return (GmlVal *)&candidate->val;
+  }
+  return gml_varmap_get_hashed((GmlVarMap *)map,slot->key,slot->hash);
+}
 static int state_maps_equal(const GmlVarMap *left,const GmlVarMap *right){
   for(int i=0;i<left->cap;i++) if(left->slots[i].key){
     const GmlVarSlot *slot=&left->slots[i];
     GmlVal value=slot->val;
-    GmlVal *other=gml_varmap_get_hashed((GmlVarMap*)right,slot->key,slot->hash);
+    GmlVal *other=state_map_matching_value(right,left,slot);
     if(!other) return 0;
     if(slot->array_owner!=*gml_varmap_value_owner(other)) return 0;
     if(value.t!=other->t) return 0;
@@ -1178,7 +1192,7 @@ static int state_shape_matches(StateW *s,const GmlVarMap *map,const StateMapEntr
   const StateKeyShape *shape=&s->shapes[entry->id];
   for(uint32_t i=0;i<shape->count;i++){
     const GmlVarSlot *key=shape->slots[i];
-    GmlVal *value=gml_varmap_get_hashed((GmlVarMap*)map,key->key,key->hash);
+    GmlVal *value=state_map_matching_value(map,entry->map,key);
     if(!value) return 0;
     s->shape_values[i]=value;
   }
