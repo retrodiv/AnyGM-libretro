@@ -7109,7 +7109,7 @@ static void sprite_pos_pixel(GmlRender *r,int x,int y,const double sample[4],dou
 }
 
 static void blit_sprite_pos_impl(GmlRender *r,int sprite,int subimg,
-                                              const double x[4],const double y[4],double alpha){
+  const double x[4],const double y[4],uint32_t colour,double alpha){
   GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
   const uint8_t *rgba=NULL; int stride=0,ox=0,oy=0,sw=0,sh=0;
   GmlTpag *page=NULL;
@@ -7130,8 +7130,8 @@ static void blit_sprite_pos_impl(GmlRender *r,int sprite,int subimg,
   if(geometry_kind==0) return;
   if(geometry_kind==1){
     const double *qx=geometry.qx,*qy=geometry.qy;
-    if(page) blit(r,page,qx[0],qy[0],(qx[1]-qx[0])/sw,(qy[3]-qy[0])/sh,0xFFFFFF,alpha);
-    else gml_render_cpu_blit_rgba_region(r,rgba,sw,sh,0,0,sw,sh,qx[0],qy[0],qx[1]-qx[0],qy[3]-qy[0],0xFFFFFF,alpha);
+    if(page) blit(r,page,qx[0],qy[0],(qx[1]-qx[0])/sw,(qy[3]-qy[0])/sh,colour,alpha);
+    else gml_render_cpu_blit_rgba_region(r,rgba,sw,sh,0,0,sw,sh,qx[0],qy[0],qx[1]-qx[0],qy[3]-qy[0],colour,alpha);
     return;
   }
   gml_render_maybe_prepare_draw(r);
@@ -7139,15 +7139,20 @@ static void blit_sprite_pos_impl(GmlRender *r,int sprite,int subimg,
     double u=0,v=0; int hit=0;
     for(int part=0;part<2&&!hit;part++)
       hit=sprite_pos_triangle(px+.5,py+.5,geometry.tx[part],geometry.ty[part],geometry.tu[part],geometry.tv[part],&u,&v);
-    if(hit){ double sample[4]; sprite_pos_sample(rgba,stride,ox,oy,sw,sh,u,v,r->interp,sample); sprite_pos_pixel(r,px,py,sample,alpha); }
+    if(hit){
+      double sample[4];sprite_pos_sample(rgba,stride,ox,oy,sw,sh,u,v,r->interp,sample);
+      for(unsigned channel=0;channel<3;channel++)
+        sample[channel]*=((colour>>(channel*8u))&255u)/255.0;
+      sprite_pos_pixel(r,px,py,sample,alpha);
+    }
   }
 }
 
 void gml_render_cpu_blit_sprite_pos_resolved(GmlRender *r,int sprite,int subimg,
-                                            const double x[4],const double y[4],double alpha){
+  const double x[4],const double y[4],uint32_t colour,double alpha){
   GmlRenderDispatchCpuScope scope;
   gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_SPRITE);
-  blit_sprite_pos_impl(r,sprite,subimg,x,y,alpha);
+  blit_sprite_pos_impl(r,sprite,subimg,x,y,colour,alpha);
   gml_render_dispatch_cpu_scope_end(r,&scope);
 }
 
@@ -7567,8 +7572,17 @@ void gml_render_cpu_blit_sprite_ext_resolved(GmlRender *r, GmlSprite *s,
   if(sprof) sprof_add(sprite,s->name,(rprof_now()-sprof_t0)*1000.0);
 }
 
+void gml_render_cpu_blit_view_sprite(GmlRender *r,int sprite,int subimg,
+  const double x[4],const double y[4],uint32_t colour,double alpha){
+  if(!gml_render_cpu_draw_barrier(r)) return;
+  GmlMaskedSpriteDraw masked=masked_sprite_draw_begin(r);
+  gml_render_cpu_blit_sprite_pos_resolved(r,sprite,subimg,x,y,colour,alpha);
+  masked_sprite_draw_end(r,masked);
+}
+
 void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double y,
                          double xs, double ys, double rot, uint32_t blend, double alpha){
+  if(gml_render_resident_view_sprite(r,sprite,subimg,x,y,xs,ys,rot,blend,alpha)) return;
   /* A wholly clipped ordinary source needs neither the fog silhouette nor
    * the masked destination preparation; preserve the queued resident prefix. */
   if(r && (r->fog_flat || r->color_write_mask!=0x0Fu) &&

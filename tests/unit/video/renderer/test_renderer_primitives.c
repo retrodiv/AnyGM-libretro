@@ -573,7 +573,60 @@ static void check_world_view_rotation_geometry(void){
          "quarter-turn rectangle must retain the axis control area");
 }
 
+static void check_view_sprite_nonuniform_scale_and_mirroring(void){
+  GmlRender render;GmlWin content={.bytecode=17};
+  reset_render(&render,24);render.win=&content;
+  render.spr=calloc(1,sizeof *render.spr);render.n_spr=1;
+  expect(render.spr!=NULL,"view sprite fixture allocates its source");
+  if(!render.spr) return;
+  GmlSprite *sprite=render.spr;
+  sprite->w=4;sprite->h=2;sprite->n_frames=1;
+  sprite->originx=2;sprite->originy=1;
+  sprite->runtime_owned=sprite->runtime_opaque=sprite->runtime_scene_binary=1;
+  sprite->runtime_rgba=calloc(8,4);
+  expect(sprite->runtime_rgba!=NULL,"view sprite fixture allocates pixel storage");
+  if(!sprite->runtime_rgba){gml_render_free(&render);return;}
+  for(unsigned i=0;i<8;i++){
+    sprite->runtime_rgba[i*4u+(i%4u<2u?0u:2u)]=255;
+    sprite->runtime_rgba[i*4u+3u]=255;
+  }
+  set_world_scale(&render,2.0,3.0);
+  gml_render_world_set_view_rotation(&render,90.0,100.0,50.0);
+  gml_draw_sprite_ext(&render,0,0,75,25,1,1,90,0xFFFFFFu,1.0);
+  expect(covered_pixels()==48 &&
+         (frame[148*WIDTH+96]&0xFFFFFFu)==0xFF0000u &&
+         (frame[148*WIDTH+103]&0xFFFFFFu)==0x0000FFu &&
+         !(frame[148*WIDTH+95]&0xFFFFFFu),
+         "camera/local turns cancel before nonuniform sprite projection");
+  memset(frame,0,sizeof frame);
+  gml_draw_sprite_ext(&render,0,0,75,25,-1,1,90,0xFFFFFFu,1.0);
+  expect(covered_pixels()==48 &&
+         (frame[148*WIDTH+96]&0xFFFFFFu)==0x0000FFu &&
+         (frame[148*WIDTH+103]&0xFFFFFFu)==0xFF0000u,
+         "view sprite retains mirrored texture coordinates and extent");
+  render.atlas=calloc(1,sizeof *render.atlas);
+  render.tpag=calloc(1,sizeof *render.tpag);
+  sprite->frame=calloc(1,sizeof *sprite->frame);
+  expect(render.atlas && render.tpag && sprite->frame,
+         "view sprite fixture allocates packaged crop metadata");
+  if(!render.atlas || !render.tpag || !sprite->frame){gml_render_free(&render);return;}
+  render.n_atlas=render.n_tpag=1;
+  render.atlas[0].px=sprite->runtime_rgba;
+  render.atlas[0].w=4;render.atlas[0].h=2;
+  sprite->runtime_rgba=NULL;
+  render.tpag[0]=(GmlTpag){.atlas=0,.sw=4,.sh=2,.tw=8,.th=4,.tx=1,.ty=2};
+  memset(frame,0,sizeof frame);
+  gml_draw_sprite_ext(&render,0,0,75,25,1,1,90,0xFFFFFFu,1.0);
+  expect(covered_pixels()==192 &&
+         (frame[153*WIDTH+98]&0xFFFFFFu)==0xFF0000u &&
+         (frame[153*WIDTH+113]&0xFFFFFFu)==0x0000FFu &&
+         !(frame[152*WIDTH+98]&0xFFFFFFu),
+         "view sprite projects the authored crop size independently of texture size");
+  gml_render_free(&render);
+}
+
 int main(void){
+  check_view_sprite_nonuniform_scale_and_mirroring();
   check_world_view_rotation_geometry();
   check_circle_span_matches_pixel_writer();
   check_fractional_radius_is_not_truncated();

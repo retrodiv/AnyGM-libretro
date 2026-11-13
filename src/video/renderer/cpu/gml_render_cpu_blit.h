@@ -39,7 +39,9 @@ void gml_render_cpu_filtered_tpag_band(
     const struct GmlShaderPal *solid_mask,const struct GmlShaderPal *solid_blur,
     const uint32_t *solid_blur_alpha,unsigned long long vispix);
 void gml_render_cpu_blit_sprite_pos_resolved(GmlRender *render, int sprite, int subimage,
-                                              const double x[4], const double y[4], double alpha);
+  const double x[4], const double y[4],uint32_t colour,double alpha);
+void gml_render_cpu_blit_view_sprite(GmlRender *render,int sprite,int subimage,
+  const double x[4],const double y[4],uint32_t colour,double alpha);
 
 /* Existing coarse sprite-region raster entries; sources remain borrowed. */
 void gml_render_cpu_blit_rgba_region(GmlRender *r, const uint8_t *source, int width, int height,

@@ -8,6 +8,7 @@
 #include "gml_render_surfaces_internal.h"
 #include "gml_render_shaders.h"
 #include "gml_render_cpu_blit.h"
+#include "gml_render_cpu_backend.h"
 #include "gml_software3d.h"
 #include "anygm_host.h"
 
@@ -5776,7 +5777,7 @@ static int resident_positioned_axis_sprite(GmlRender *r,int sprite,int subimg,
 /* The CPU's two-triangle barycentric UVs reduce to one affine inverse for a
  * parallelogram. A convex warped quad carries those UVs at its four corners. */
 static int resident_positioned_quad_sprite(GmlRender *r,int sprite,int subimg,
-                                              const double x[4],const double y[4],double alpha){
+  const double x[4],const double y[4],double alpha,uint32_t colour,int view_mapped){
   GmlRenderSpritePosGeometry geometry;
   GmlRenderResourceSource source={0};
   GmlRenderResource *target;
@@ -5785,11 +5786,12 @@ static int resident_positioned_quad_sprite(GmlRender *r,int sprite,int subimg,
   GmlRenderImageRef image;
   GmlTpag *page;
   GmlAtlas *atlas;
+  GmlTpag runtime_page={0};
   double mapped_x[4],mapped_y[4],ax,ay,bx,by,det;
   int page_index,affine;
-  if(!r || !r->resident_application_pass || !r->win || r->classic ||
-     !(anygm_policy_uses_first_generation_studio(r->win) ||
-       anygm_policy_has_modern_layer_semantics(r->win)) ||
+  if(!r || !r->resident_application_pass || !r->win || (!view_mapped && r->classic) ||
+     (!view_mapped && !(anygm_policy_uses_first_generation_studio(r->win) ||
+       anygm_policy_has_modern_layer_semantics(r->win))) ||
      !r->alphablend || r->blendmode || r->blend_equation!=1 ||
      r->blend_equation_alpha!=1 || r->color_write_mask!=0x0fu ||
      r->gui_pass_active || r->active_shader>=0 || r->alpha_test_enable ||
@@ -5800,29 +5802,38 @@ static int resident_positioned_quad_sprite(GmlRender *r,int sprite,int subimg,
      sprite<0 || sprite>=r->n_spr) return 0;
   if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
   GmlSprite *sprite_source=&r->spr[sprite];
-  if(sprite_source->runtime_rgba || sprite_source->spine ||
+  if((sprite_source->runtime_rgba && !view_mapped) || sprite_source->spine ||
      sprite_source->ns_enabled || sprite_source->n_frames<=0 ||
-     !sprite_source->frame) return 0;
-  page_index=sprite_source->frame[gml_render_runtime_frame_index(sprite_source,subimg)];
-  if(page_index<0 || page_index>=r->n_tpag) return 0;
-  page=&r->tpag[page_index];
-  if(page->sw<=0 || page->sh<=0 || page->sx<0 || page->sy<0 ||
-     page->tw!=page->sw || page->th!=page->sh ||
-     page->atlas<0 || page->atlas>=r->n_atlas) return 0;
-  atlas=&r->atlas[page->atlas];
-  if(!gml_render_atlas_scene_source_view(r,page->atlas,&source) ||
-     (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
-     (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
-  resident_classify_page(r,page,atlas);
-  if(anygm_policy_has_modern_layer_semantics(r->win) &&
+     (!sprite_source->runtime_rgba && !sprite_source->frame)) return 0;
+  if(sprite_source->runtime_rgba){
+    if(!gml_render_runtime_sprite_scene_source_view(r,sprite_source,subimg,&source)) return 0;
+    runtime_page.sw=sprite_source->w;runtime_page.sh=sprite_source->h;
+    runtime_page.scene_fully_opaque=sprite_source->runtime_opaque;
+    runtime_page.scene_binary_alpha=sprite_source->runtime_scene_binary;
+    page=&runtime_page;
+  }else{
+    page_index=sprite_source->frame[gml_render_runtime_frame_index(sprite_source,subimg)];
+    if(page_index<0 || page_index>=r->n_tpag) return 0;
+    page=&r->tpag[page_index];
+    if(page->sw<=0 || page->sh<=0 || page->sx<0 || page->sy<0 ||
+       (!view_mapped && (page->tw!=page->sw || page->th!=page->sh)) ||
+       page->atlas<0 || page->atlas>=r->n_atlas) return 0;
+    atlas=&r->atlas[page->atlas];
+    if(!gml_render_atlas_scene_source_view(r,page->atlas,&source) ||
+       (uint64_t)(uint32_t)page->sx+(uint32_t)page->sw>source.width ||
+       (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
+    resident_classify_page(r,page,atlas);
+  }
+  if(!view_mapped && anygm_policy_has_modern_layer_semantics(r->win) &&
      (!r->fb_opaque_known || !r->fb_all_opaque)) return 0;
   for(int corner=0;corner<4;corner++){
     if(!isfinite(x[corner]) || !isfinite(y[corner])) return 0;
     mapped_x[corner]=x[corner]; mapped_y[corner]=y[corner];
-    gml_render_draw_map_point(r,&mapped_x[corner],&mapped_y[corner]);
+    if(!view_mapped) gml_render_draw_map_point(r,&mapped_x[corner],&mapped_y[corner]);
     if(!isfinite(mapped_x[corner]) || !isfinite(mapped_y[corner])) return 0;
   }
-  if(gml_render_sprite_pos_geometry(r,mapped_x,mapped_y,&geometry)!=2) return 0;
+  int geometry_kind=gml_render_sprite_pos_geometry(r,mapped_x,mapped_y,&geometry);
+  if(geometry_kind!=2 && !(view_mapped && geometry_kind==1)) return 0;
   affine=fabs(geometry.qx[2]-(geometry.qx[1]+geometry.qx[3]-geometry.qx[0]))<=1e-9 &&
          fabs(geometry.qy[2]-(geometry.qy[1]+geometry.qy[3]-geometry.qy[0]))<=1e-9;
   for(int corner=0;corner<4;corner++){
@@ -5833,17 +5844,19 @@ static int resident_positioned_quad_sprite(GmlRender *r,int sprite,int subimg,
     double edge_y=geometry.qy[next]-geometry.qy[corner];
     double turn_x=geometry.qx[after]-geometry.qx[next];
     double turn_y=geometry.qy[after]-geometry.qy[next];
-    if(edge_x*turn_y-edge_y*turn_x<=1e-9) return 0;
+    double turn=edge_x*turn_y-edge_y*turn_x;
+    if(view_mapped?fabs(turn)<=1e-9:turn<=1e-9) return 0;
   }
   ax=geometry.qx[1]-geometry.qx[0]; ay=geometry.qy[1]-geometry.qy[0];
   bx=geometry.qx[3]-geometry.qx[0]; by=geometry.qy[3]-geometry.qy[0];
   /* A nearest, freely rotated affine edge can land exactly on a source-texel
    * boundary where the CPU barycentric double and GPU inverse float pick
    * opposite sides. Cardinal and axis-led shear cases are separately tested. */
-  if(affine && !r->interp && fabs(ax)>1e-9 && fabs(ay)>1e-9) return 0;
-  if(!affine && !r->interp && (fabs(ay)>1e-9 || fabs(bx)>1e-9)) return 0;
+  if(!view_mapped && affine && !r->interp && fabs(ax)>1e-9 && fabs(ay)>1e-9) return 0;
+  if(!view_mapped && !affine && !r->interp && (fabs(ay)>1e-9 || fabs(bx)>1e-9)) return 0;
   det=ax*by-ay*bx;
-  if(!isfinite(det) || det<=1e-9 || det>100000000.0) return 0;
+  if(!isfinite(det) || (view_mapped?fabs(det)<=1e-9:det<=1e-9) ||
+     fabs(det)>100000000.0) return 0;
   gml_render_flush_pending_fill(r);
   if(r->pending_fill || !(target=gml_render_scene_target_resource_ensure(r))) return 0;
   image=gml_render_application_scene_next_image_ref(r,target);
@@ -5869,7 +5882,8 @@ static int resident_positioned_quad_sprite(GmlRender *r,int sprite,int subimg,
   for(int corner=0;corner<4;corner++){
     quad->x[corner]=geometry.qx[corner];
     quad->y[corner]=geometry.qy[corner];
-    quad->corner_colour[corner]=((uint32_t)lround(alpha*255.0)<<24)|0xFFFFFFu;
+    quad->corner_colour[corner]=((uint32_t)lround(alpha*255.0)<<24)|
+      (gml_render_cpu_backend_color_to_xrgb(colour)&0xFFFFFFu);
   }
   if(!affine){
     quad->u[0]=quad->u[3]=0.0;
@@ -5887,10 +5901,13 @@ static int resident_positioned_quad_sprite(GmlRender *r,int sprite,int subimg,
   state.write_mask=15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
+  if(view_mapped && !gml_render_target_preserves_alpha(r))
+    state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
   if(!page->scene_fully_opaque || alpha<1.0){
     state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
-    state.alpha_source_factor=anygm_policy_has_modern_layer_semantics(r->win)
+    state.alpha_source_factor=(view_mapped?!gml_render_target_preserves_alpha(r)
+      :anygm_policy_has_modern_layer_semantics(r->win))
       ?GML_RENDER_BLEND_ONE:GML_RENDER_BLEND_SOURCE_ALPHA;
     state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.rgb_equation=GML_RENDER_BLEND_ADD;
@@ -6285,10 +6302,51 @@ done:
   free(operations);return accepted;
 }
 
+int gml_render_resident_view_sprite(GmlRender *r,int sprite,int subimg,
+  double x,double y,double xs,double ys,double rotation,uint32_t colour,double alpha){
+  if(!gml_render_view_rotation_active(r) || gml_d3_is_active(r)) return 0;
+  if(sprite<0 || sprite>=r->n_spr || !isfinite(x) || !isfinite(y) ||
+     !isfinite(xs) || !isfinite(ys) || !isfinite(rotation) || !isfinite(alpha)) return 1;
+  gml_render_warm_sprite(r,sprite);
+  GmlSprite *record=&r->spr[sprite];
+  if(record->spine || record->ns_enabled) return 0;
+  if(record->n_frames<=0 || xs==0.0 || ys==0.0) return 1;
+  if(alpha<=0.0 && !(r->alphablend && (r->blendmode==6 ||
+     gml_render_blend_uses_destination_colour(r->blendmode)))) return 1;
+  alpha=fmax(0.0,fmin(1.0,alpha));
+  double left=-record->originx,top=-record->originy;
+  double width=record->w,height=record->h;
+  if(!record->runtime_rgba){
+    if(!record->frame) return 1;
+    int page_id=record->frame[gml_render_runtime_frame_index(record,subimg)];
+    if(page_id<0 || page_id>=r->n_tpag) return 1;
+    GmlTpag *page=&r->tpag[page_id];
+    left+=page->tx;top+=page->ty;width=page->tw;height=page->th;
+  }
+  if(width<=0 || height<=0) return 1;
+  double radians=remainder(rotation,360.0)*(M_PI/180.0);
+  double cosine=cos(radians),sine=sin(radians),mx[4],my[4];
+  for(unsigned i=0;i<4;i++){
+    double lx=(left+((i==1 || i==2)?width:0.0))*xs;
+    double ly=(top+(i>=2?height:0.0))*ys;
+    mx[i]=x+lx*cosine+ly*sine;my[i]=y-lx*sine+ly*cosine;
+    gml_render_draw_map_point(r,&mx[i],&my[i]);
+    mx[i]-=r->cam_x;my[i]-=r->cam_y;
+    gml_render_view_rotate_point(r,&mx[i],&my[i]);
+    mx[i]+=r->cam_x;my[i]+=r->cam_y;
+    if(!isfinite(mx[i]) || !isfinite(my[i])) return 1;
+  }
+  GmlRenderSpritePosGeometry geometry;
+  if(!gml_render_sprite_pos_geometry(r,mx,my,&geometry)) return 1;
+  if(resident_positioned_quad_sprite(r,sprite,subimg,mx,my,alpha,colour,1)) return 1;
+  gml_render_cpu_blit_view_sprite(r,sprite,subimg,mx,my,colour,alpha);
+  return 1;
+}
+
 void gml_draw_sprite_pos(GmlRender *r,int sprite,int subimg,
                          const double x[4],const double y[4],double alpha){
   if(resident_positioned_axis_sprite(r,sprite,subimg,x,y,alpha)) return;
-  if(resident_positioned_quad_sprite(r,sprite,subimg,x,y,alpha)) return;
+  if(resident_positioned_quad_sprite(r,sprite,subimg,x,y,alpha,0xFFFFFFu,0)) return;
   if(resident_positioned_function(r,sprite,subimg,x,y,alpha)) return;
   if(!gml_render_cpu_draw_barrier(r)) return;
   double mapped_x[4],mapped_y[4];
@@ -6307,7 +6365,7 @@ void gml_draw_sprite_pos(GmlRender *r,int sprite,int subimg,
        gml_render_blend_uses_destination_colour(r->blendmode)))) return;
   if(alpha>1) alpha=1;
   for(int i=0;i<4;i++) if(!isfinite(x[i])||!isfinite(y[i])) return;
-  gml_render_cpu_blit_sprite_pos_resolved(r,sprite,subimg,x,y,alpha);
+  gml_render_cpu_blit_sprite_pos_resolved(r,sprite,subimg,x,y,0xFFFFFFu,alpha);
 }
 
 int gml_render_sprite_pos_geometry(GmlRender *r, const double x[4], const double y[4],

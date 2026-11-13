@@ -2839,7 +2839,7 @@ static void check_dispatch_rgba_textures(void){
       else if(kind==10 || kind==11){
         double x[4]={1,15,kind==10?17:15,kind==10?3:1};
         double y[4]={1,kind==10?3:1,17,kind==10?15:17};
-        gml_render_cpu_blit_sprite_pos_resolved(&render,0,0,x,y,alpha);
+        gml_render_cpu_blit_sprite_pos_resolved(&render,0,0,x,y,0xFFFFFFu,alpha);
       } else if(kind==12){
         const uint32_t colours[4]={0xFFFFFFu,0xB0C0D0u,0x507090u,0x203040u};
         gml_render_cpu_blit_sprite_general_coloured(&render,&sprite,0,0,0,8,8,
