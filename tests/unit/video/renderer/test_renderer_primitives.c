@@ -604,15 +604,24 @@ static void check_view_sprite_nonuniform_scale_and_mirroring(void){
          (frame[148*WIDTH+96]&0xFFFFFFu)==0x0000FFu &&
          (frame[148*WIDTH+103]&0xFFFFFFu)==0xFF0000u,
          "view sprite retains mirrored texture coordinates and extent");
-  for(unsigned i=0;i<WIDTH*HEIGHT;i++) frame[i]=0xFF000000u;
-  render.target_sp=1;
-  render.fb_opaque_known=render.fb_all_opaque=1;
-  gml_render_world_set_view_rotation(&render,90.0,100.0,50.0);
-  gml_draw_sprite_ext(&render,0,0,75,25,1,1,90,0xFFFFFFu,128.0/255.0);
-  expect((frame[148*WIDTH+96]>>24)==191u && !render.fb_opaque_known &&
+  int alpha_target=gml_surface_create(&render,WIDTH,HEIGHT);
+  expect(alpha_target>0 && gml_surface_set_target(&render,alpha_target),
+         "view sprite alpha fixture selects an explicit target");
+  if(alpha_target<=0 || render.target_id!=alpha_target){gml_render_free(&render);return;}
+  render.world_transform_active=0;
+  gml_render_set_pending_fill(&render,0xFF000000u);
+  gml_render_world_set_view_rotation(&render,90.0,WIDTH,HEIGHT);
+  gml_draw_sprite_ext(&render,0,0,130,100,1,1,90,0xFFFFFFu,128.0/255.0);
+  uint32_t alpha_pixel=render.fb[129*WIDTH+98];
+  if((alpha_pixel>>24)!=191u || render.fb_opaque_known || render.fb_all_opaque)
+    fprintf(stderr,"view sprite alpha: pixel=%08x known=%d opaque=%d depth=%d active=%d\n",
+      alpha_pixel,render.fb_opaque_known,render.fb_all_opaque,
+      render.target_sp,gml_render_view_rotation_active(&render));
+  expect((alpha_pixel>>24)==191u && !render.fb_opaque_known &&
          !render.fb_all_opaque,
          "partial-alpha view sprites invalidate opaque target certificates");
-  render.target_sp=0;
+  gml_surface_reset_target(&render);
+  set_world_scale(&render,2.0,3.0);
   gml_render_world_set_view_rotation(&render,90.0,100.0,50.0);
   render.atlas=calloc(1,sizeof *render.atlas);
   render.tpag=calloc(1,sizeof *render.tpag);

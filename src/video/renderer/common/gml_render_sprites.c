@@ -6340,12 +6340,12 @@ int gml_render_resident_view_sprite(GmlRender *r,int sprite,int subimg,
   }
   GmlRenderSpritePosGeometry geometry;
   if(!gml_render_sprite_pos_geometry(r,mx,my,&geometry)) return 1;
+  if(!resident_positioned_quad_sprite(r,sprite,subimg,mx,my,alpha,colour,1))
+    gml_render_cpu_blit_view_sprite(r,sprite,subimg,mx,my,colour,alpha);
   if(gml_render_target_preserves_alpha(r) && (alpha<1.0 || !source_opaque)){
     r->fb_opaque_known=r->fb_all_opaque=0;
     if(r->fb==r->app_surface) r->app_surface_opaque=0;
   }
-  if(resident_positioned_quad_sprite(r,sprite,subimg,mx,my,alpha,colour,1)) return 1;
-  gml_render_cpu_blit_view_sprite(r,sprite,subimg,mx,my,colour,alpha);
   return 1;
 }
 
