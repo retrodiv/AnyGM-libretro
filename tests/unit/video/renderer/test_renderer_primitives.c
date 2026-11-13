@@ -988,7 +988,43 @@ static void check_selected_view_point_and_triangles(void){
   }
 }
 
+static void check_selected_view_lines(void){
+  const double turns[3]={0,90,-90};
+  for(unsigned mode=0;mode<3u;mode++) for(unsigned thick=0;thick<2u;thick++)
+  for(unsigned turn=0;turn<3u;turn++){
+    GmlRender render;
+    reset_render(&render,24);
+    gml_render_world_set_view_rotation(&render,turns[turn],WIDTH,HEIGHT);
+    int width=thick?5:1;
+    if(!mode) gml_render_primitive_line(&render,130,70,150,70,0xFFFFFFu,width);
+    else if(mode==1u)
+      gml_render_primitive_line_color(&render,130,70,150,70,0x0000FFu,0xFF0000u,width);
+    else gml_render_primitive_line_color_subpixel(&render,130,70,150,70,
+                                                  0x0000FFu,0xFF0000u,width);
+    int ink=covered_pixels(),outside=0;
+    for(int y=0;y<HEIGHT;y++) for(int x=0;x<WIDTH;x++){
+      if(!(frame[y*WIDTH+x]&0xFFFFFFu)) continue;
+      if(turn==1u?(x<126 || x>134 || y<128 || y>152):
+         turn==2u?(x<66 || x>74 || y<48 || y>72):
+                   (x<128 || x>152 || y<66 || y>74)) outside++;
+    }
+    int ax=turn==1u?130:turn==2u?70:134;
+    int ay=turn==1u?134:turn==2u?66:70;
+    int bx=turn==1u?130:turn==2u?70:146;
+    int by=turn==1u?146:turn==2u?54:70;
+    uint32_t first=frame[ay*WIDTH+ax],second=frame[by*WIDTH+bx];
+    int gradient=!mode || (((first>>16)&255u)>(first&255u) &&
+                           (second&255u)>((second>>16)&255u));
+    int ok=ink>0 && !outside && (first&0xFFFFFFu) && (second&0xFFFFFFu) && gradient;
+    fprintf(stderr,"selected line mode=%u width=%d turn=%g ink=%d outside=%d gradient=%d pass=%d\n",
+      mode,width,turns[turn],ink,outside,gradient,ok);
+    expect(ok,"selected view places continuous flat and gradient line geometry and retains endpoint colours");
+    gml_render_free(&render);
+  }
+}
+
 int main(void){
+  check_selected_view_lines();
   check_selected_view_point_and_triangles();
   check_view_world_visible_bounds();
   check_view_background_quad_contract();
