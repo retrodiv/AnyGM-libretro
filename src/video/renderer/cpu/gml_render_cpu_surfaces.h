@@ -22,5 +22,8 @@ void gml_render_cpu_draw_surface_ext_mapped(GmlRender *render, int surface,
                                               double x, double y, double xs, double ys,
                                               double rotation, uint32_t blend, double alpha,
                                               int allow_fast);
+void gml_render_cpu_draw_surface_view(GmlRender *render,int surface,
+  double sx,double sy,double sw,double sh,const double x[4],const double y[4],
+  uint32_t blend,double alpha);
 
 #endif

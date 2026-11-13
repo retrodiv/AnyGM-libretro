@@ -308,6 +308,12 @@ static int native_numbered_point(const GmlRenderDrawOp *op,
 
 static uint32_t scene_filter(const GmlRenderQuad *quad,
                              const GmlRenderDrawStateSnapshot *state,uint32_t family){
+  if(quad->sampling.quantisation==GML_RENDER_QUANTISE_VIEW_SURFACE){
+    int opaque=state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+    return quad->sampling.filter==GML_RENDER_FILTER_NEAREST
+      ?(opaque?GL_SCENE_NATIVE_POINT_OPAQUE_FILTER:GL_SCENE_NATIVE_POINT_FILTER)
+      :(opaque?148u:147u);
+  }
   if(quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION)
     return GL_SCENE_NATIVE_POINT_FILTER;
 
@@ -1834,6 +1840,17 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       GlSceneImage *source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
       const GmlRenderSamplingPolicy *sampling=&op->payload.quad.sampling;
       int blend=qualified_blend(state);
+      if(sampling->quantisation==GML_RENDER_QUANTISE_VIEW_SURFACE){
+        if(!source || (source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 &&
+                       source->pixel_format!=GML_RENDER_PIXEL_XRGB8888 &&
+                       source->pixel_format!=GML_RENDER_PIXEL_RGBA8888) ||
+           same_logical(op->sources[0],target->image) ||
+           !backend->gl.BlendFuncSeparate || !backend->gl.BlendEquationSeparate ||
+           !gml_render_view_surface_quad_valid(op,state,source->width,source->height) ||
+           !gml_render_gpu_opengl_draw_textured_quad(op,state,source->width,source->height,
+                                                     source->rendered_origin,probe)) return 0;
+        continue;
+      }
       if(op->scene_family==GML_RENDER_SCENE_SURFACE &&
          op->payload.quad.shape==GML_RENDER_QUAD_GENERAL &&
          sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC){

@@ -16856,6 +16856,41 @@ static int resident_lazy_native_atlas(void){
   gml_render_abandon_device(r);gml_render_free(r);free(r);return 1;
 }
 
+static int resident_view_surface_quads(void){
+  enum { W=32,H=32 };
+  GmlRender *r=calloc(1,sizeof *r);GmlWin content={.bytecode=17};
+  FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+  uint32_t *screen=calloc(W*H,sizeof *screen),shadow[W*H];uint8_t pixels[8*4*4];
+  memset(pixels,255,sizeof pixels);
+  CHECK(r && screen && !gml_render_init(r,NULL));r->win=&content;
+  device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
+  CHECK(gml_render_begin_resident_base(r,screen,W,H,0,0));
+  int source=gml_surface_create(r,8,4),target=gml_surface_create(r,W,H);
+  CHECK(source>0 && target>0 && gml_surface_write_rgba8(r,source,pixels,sizeof pixels) &&
+        gml_surface_set_target(r,target));
+  gml_render_world_set_view_rotation(r,90,W,H);
+  gml_render_set_pending_fill(r,0xFF000000u);gml_render_flush_pending_fill(r);
+  CHECK(gml_render_scene_submit_pending(r));memcpy(shadow,r->fb,sizeof shadow);
+  uint64_t before=fake.textured_families[GML_RENDER_SCENE_SURFACE];
+  gml_draw_surface_part_ext(r,source,2,1,4,2,20,18,1,1,0xFFFFFFu,1.0);
+  CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r));
+  CHECK(fake.textured_families[GML_RENDER_SCENE_SURFACE]==before+1u &&
+    fake.last_quad.sampling.quantisation==GML_RENDER_QUANTISE_VIEW_SURFACE &&
+    fake.last_quad.shape==GML_RENDER_QUAD_GENERAL && !fake.last_quad.span_active);
+  CHECK(fake.last_quad.x[0]==14.0 && fake.last_quad.y[0]==20.0 &&
+    fake.last_quad.x[2]==12.0 && fake.last_quad.y[2]==24.0 &&
+    fake.last_quad.u[0]==.25 && fake.last_quad.u[1]==.75 &&
+    fake.last_quad.v[0]==.25 && fake.last_quad.v[2]==.75);
+  r->interp=1;
+  gml_draw_surface_ext(r,source,4,18,1,1,90,0xFFFFFFu,1.0);
+  CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r));
+  CHECK(fake.textured_families[GML_RENDER_SCENE_SURFACE]==before+2u &&
+    fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
+    fake.last_quad.sampling.quantisation==GML_RENDER_QUANTISE_VIEW_SURFACE);
+  CHECK(!fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,sizeof shadow));
+  gml_render_abandon_device(r);gml_render_free(r);free(r);free(screen);return 1;
+}
+
 static int resident_numbered_rotated_native_quad(void){
   enum { W=256,H=192,SW=128,SH=96 };
   for(unsigned owner=0;owner<3u;owner++) for(unsigned angle=0;angle<(owner==1u?2u:1u);angle++)
@@ -20931,6 +20966,7 @@ int main(void){
     else if(!strcmp(selected,"wide-nearest-rows")) passed=resident_large_screen_axis_row_metadata();
     else if(!strcmp(selected,"large-rotated-rows")) passed=resident_large_rotated_sample_row_metadata();
     else if(!strcmp(selected,"numbered-rotated-native-quad")) passed=resident_numbered_rotated_native_quad();
+    else if(!strcmp(selected,"view-surface-quads")) passed=resident_view_surface_quads();
     else if(!strcmp(selected,"lazy-native-atlas")) passed=resident_lazy_native_atlas();
     else if(!strcmp(selected,"flat-fog-sprite")) passed=resident_flat_fog_sprite_function();
     else if(!strcmp(selected,"nearest-text-sampler-edges")) passed=resident_nearest_text_sampler_edges();
@@ -21285,9 +21321,10 @@ int main(void){
   passed+=resident_rectangle_cpu_passthrough_programs();
   passed+=skip_cpu_draw_policy_preserves_observers();
   passed+=resident_numbered_rotated_native_quad();
+  passed+=resident_view_surface_quads();
   passed+=resident_lazy_native_atlas();
   passed+=resident_unit_texel_magnification();
   passed+=opaque_rectangle_clear_complement();
   printf("render resource cases: passed=%d failed=%d\n",passed,333-passed);
-  return passed==333?EXIT_SUCCESS:EXIT_FAILURE;
+  return passed==334?EXIT_SUCCESS:EXIT_FAILURE;
 }

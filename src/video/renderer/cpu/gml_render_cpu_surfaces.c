@@ -1718,9 +1718,14 @@ static void mapped_multiply_band(void *context,int first,int last,int slot){
   if(written) gml_render_dispatch_cpu_coverage_write(band->coverage);
 }
 
+typedef struct {
+  const double *x,*y;
+  double sx,sy,width,height;
+} GmlSurfacePlacedRegion;
+
 static void draw_surface_ext_mapped_impl(GmlRender *r,int surf,double x,double y,
                                            double xs,double ys,double rr,uint32_t blend,double alpha,
-                                           int allow_fast){
+                                           int allow_fast,const GmlSurfacePlacedRegion *placed){
   int sw=0,sh=0; const uint32_t *src=surface_pixels_observe(r,surf,&sw,&sh);
   if(!r||!r->fb||!src||sw<=0||sh<=0||xs==0.0||ys==0.0||
      (alpha<=0.0 && !destination_colour_blend_active(r))) return;
@@ -1736,18 +1741,31 @@ static void draw_surface_ext_mapped_impl(GmlRender *r,int surf,double x,double y
   double c,sn; render_rotation_sincos(rr,&c,&sn);
   double ax=x-r->cam_x,ay=y-r->cam_y;
   render_modern_cardinal_anchor(r,rr,xs,ys,c,sn,&ax,&ay);
+  double inverse_x[2]={0},inverse_y[2]={0};
+  if(placed){
+    double ux=placed->x[1]-placed->x[0],uy=placed->y[1]-placed->y[0];
+    double vx=placed->x[3]-placed->x[0],vy=placed->y[3]-placed->y[0];
+    double det=ux*vy-uy*vx;
+    if(!isfinite(det) || fabs(det)<=1e-12){free(copy);return;}
+    ax=placed->x[0];ay=placed->y[0];
+    inverse_x[0]=vy*placed->width/det;inverse_y[0]=-vx*placed->width/det;
+    inverse_x[1]=-uy*placed->height/det;inverse_y[1]=ux*placed->height/det;
+  }
   double local[4][2]={{0,0},{sw*xs,0},{sw*xs,sh*ys},{0,sh*ys}};
   double minx=1e30,miny=1e30,maxx=-1e30,maxy=-1e30;
   for(int i=0;i<4;i++){
     double px=ax+local[i][0]*c+local[i][1]*sn;
     double py=ay-local[i][0]*sn+local[i][1]*c;
+    if(placed){px=placed->x[i];py=placed->y[i];}
     if(px<minx) minx=px;
     if(px>maxx) maxx=px;
     if(py<miny) miny=py;
     if(py>maxy) maxy=py;
   }
-  int x0=(int)floor(minx)-1,y0=(int)floor(miny)-1;
-  int x1=(int)ceil(maxx)+1,y1=(int)ceil(maxy)+1;
+  int x0=placed?(int)fmax(0.0,fmin(r->fbw,floor(minx)-1)):(int)floor(minx)-1;
+  int y0=placed?(int)fmax(0.0,fmin(r->fbh,floor(miny)-1)):(int)floor(miny)-1;
+  int x1=placed?(int)fmax(0.0,fmin(r->fbw,ceil(maxx)+1)):(int)ceil(maxx)+1;
+  int y1=placed?(int)fmax(0.0,fmin(r->fbh,ceil(maxy)+1)):(int)ceil(maxy)+1;
   if(x0<0) x0=0;
   if(y0<0) y0=0;
   if(x1>r->fbw) x1=r->fbw;
@@ -1765,7 +1783,7 @@ static void draw_surface_ext_mapped_impl(GmlRender *r,int surf,double x,double y
   int separate=source_address<=target_address
     ?target_address-source_address>=source_bytes
     :source_address-target_address>=target_bytes;
-  if(allow_fast && separate && !r->interp && r->blendmode==3 &&
+  if(allow_fast && !placed && separate && !r->interp && r->blendmode==3 &&
      !destination_colour_blend_active(r) && !sremap && !squant && !slut && !sgrid){
     unsigned long long pixels=(unsigned long long)(x1-x0)*(unsigned)(y1-y0);
     uint32_t *tiles=NULL;
@@ -1795,6 +1813,12 @@ static void draw_surface_ext_mapped_impl(GmlRender *r,int surf,double x,double y
   for(int py=y0;py<y1;py++) for(int px=x0;px<x1;px++){
     double rx=px+0.5-ax,ry=py+0.5-ay;
     double u=(rx*c-ry*sn)/xs,v=(rx*sn+ry*c)/ys;
+    if(placed){
+      u=rx*inverse_x[0]+ry*inverse_y[0];
+      v=rx*inverse_x[1]+ry*inverse_y[1];
+      if(u<0.0 || v<0.0 || u>=placed->width || v>=placed->height) continue;
+      u+=placed->sx;v+=placed->sy;
+    }
     if(u<0.0||v<0.0||u>=(double)sw||v>=(double)sh) continue;
     uint32_t sv;
     if(r->interp){
@@ -1860,7 +1884,16 @@ void gml_render_cpu_draw_surface_ext_mapped(GmlRender *r,int surf,double x,doubl
                                            uint32_t blend,double alpha,int allow_fast){
   GmlRenderDispatchCpuScope scope;
   gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_SURFACE);
-  draw_surface_ext_mapped_impl(r,surf,x,y,xs,ys,rotation,blend,alpha,allow_fast);
+  draw_surface_ext_mapped_impl(r,surf,x,y,xs,ys,rotation,blend,alpha,allow_fast,NULL);
+  gml_render_dispatch_cpu_scope_end(r,&scope);
+}
+void gml_render_cpu_draw_surface_view(GmlRender *r,int surf,
+  double sx,double sy,double sw,double sh,const double x[4],const double y[4],
+  uint32_t blend,double alpha){
+  GmlRenderDispatchCpuScope scope;
+  GmlSurfacePlacedRegion placed={x,y,sx,sy,sw,sh};
+  gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_SURFACE);
+  draw_surface_ext_mapped_impl(r,surf,0.0,0.0,1.0,1.0,0.0,blend,alpha,0,&placed);
   gml_render_dispatch_cpu_scope_end(r,&scope);
 }
 void gml_render_cpu_draw_surface_part_mapped(GmlRender *r,int surf,double sx,double sy,double sw,double sh,

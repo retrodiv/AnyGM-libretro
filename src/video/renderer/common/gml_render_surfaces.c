@@ -701,7 +701,9 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
     operation->scene_family==GML_RENDER_SCENE_SURFACE &&
     operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT &&
     operation->opcode==GML_RENDER_OP_TEXTURED_QUAD &&
-    ((operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST &&
+    ((state && operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_VIEW_SURFACE &&
+      gml_render_view_surface_quad_valid(operation,state,source->width,source->height)) ||
+     (operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST &&
       (operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION ||
        operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_POINT ||
        operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_ROTATED_POINT ||
@@ -2906,8 +2908,17 @@ static int resident_surface_canvas(GmlRender *r,int surf,double dx,double dy,
     resident_surface_filtered_resolved(r,surf,dx,dy,dw,dh,colour,alpha,1);
 }
 
+static int resident_view_surface(GmlRender *r,int surf,
+  double sx,double sy,double sw,double sh,double x,double y,double xs,double ys,
+  double rotation,uint32_t colour,double alpha);
+
 void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
                                 double dw,double dh,uint32_t blend,double alpha){
+  if(gml_render_view_rotation_active(r)){
+    int width=gml_surface_width(r,surf),height=gml_surface_height(r,surf);
+    if(width>0 && height>0 && resident_view_surface(r,surf,0.0,0.0,width,height,
+         dx,dy,dw/width,dh/height,0.0,blend,alpha)) return;
+  }
   int resident_success=resident_surface_canvas(r,surf,dx,dy,dw,dh,blend,alpha);
   int source_slot=surface_slot(surf);
   if(!resident_success && r && ((source_slot>=0 && r->surface[source_slot].live) ||
@@ -4144,6 +4155,7 @@ static int resident_surface_part_empty(GmlRender *r,double sx,double sy,double s
 
 void gml_draw_surface_part_ext(GmlRender *r,int surf,double sx,double sy,double sw,double sh,
                                double dx,double dy,double xs,double ys,uint32_t blend,double alpha){
+  if(resident_view_surface(r,surf,sx,sy,sw,sh,dx,dy,xs,ys,0.0,blend,alpha)) return;
   int explicit_target_raster=gml_render_surface_draw_targets_screen_raster(r,surf,sw*xs,sh*ys);
   if(!explicit_target_raster){
     gml_render_draw_map_point(r,&dx,&dy);
@@ -4449,8 +4461,122 @@ rotated_done:
   free(runs);return result;
 }
 
+/* Selected views share the ordinary surface resource/feedback owners. The
+ * device rasterizes one placed quad; CPU retains its existing source writer. */
+static int resident_view_surface_quad(GmlRender *r,int surf,
+  double sx,double sy,double sw,double sh,const double x[4],const double y[4],
+  uint32_t colour,double alpha){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  int slot=surface_slot(surf);
+  if(!r->win || !device || !r->resident_application_pass ||
+     !gml_render_scene_target_matches(r) || r->pending_presentation ||
+     r->classic_phase_scene_target || resident_surface_shader_selected(r) ||
+     r->fog_flat || r->rotated_batch_count || r->rotated_batch_building ||
+     !r->alphablend || r->blendmode || r->blend_equation!=1 ||
+     r->blend_equation_alpha!=1 || r->alpha_test_enable || r->color_write_mask>15u ||
+     alpha<=0.0 || r->fbw<=0 || r->fbh<=0 || r->fbw>16384 || r->fbh>16384) return 0;
+  int width=gml_surface_width(r,surf),height=gml_surface_height(r,surf);
+  const uint32_t *pixels=surf==0?r->app_surface:
+    slot>=0 && r->surface[slot].live?r->surface[slot].px:NULL;
+  if(!pixels || width<=0 || height<=0 || width>4096 || height>4096 ||
+     sx<0.0 || sy<0.0 || sx+sw>width || sy+sh>height ||
+     (surf==0 && !r->app_surface_published)) return 0;
+  int feedback=pixels==r->fb;
+  if(feedback && !surface_feedback_supported(r,device,width,height)) return 0;
+  for(int i=0;i<r->target_sp;i++)
+    if(r->target_stack[i].fb==pixels &&
+       (r->target_stack[i].pending_fill || r->target_stack[i].pending_underlay)) return 0;
+  for(unsigned i=0;i<4u;i++)
+    if(fabs(x[i])>65536.0 || fabs(y[i])>65536.0) return 0;
+  double ux=x[1]-x[0],uy=y[1]-y[0],vx=x[3]-x[0],vy=y[3]-y[0];
+  double det=ux*vy-uy*vx;
+  if(!isfinite(det) || fabs(det)<=1e-12) return 0;
+  if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
+  GmlRenderResource *resource=feedback?gml_render_scene_target_resource_ensure(r):
+    surf==0?(pixels==r->app_surface_owned?gml_render_application_resource_ensure(r):
+             resident_surface_borrowed_application(r)):gml_render_surface_resource_ensure(r,surf);
+  GmlRenderResourceSource source={0};
+  if(!surface_feedback_source(r,device,resource,feedback,&source)) return 0;
+  gml_render_flush_pending_fill(r);
+  GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+  if(r->pending_fill || !target || !r->resident_application_pass) return 0;
+  GmlRenderImageRef image=gml_render_application_scene_next_image_ref(r,target);
+  if(image.content_version==UINT64_MAX) return 0;
+  GmlRenderDrawOp op={.opcode=GML_RENDER_OP_TEXTURED_QUAD,.scene_family=GML_RENDER_SCENE_SURFACE,
+    .reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT,.source_count=1u,.sources=&source.image};
+  op.target=(GmlRenderTargetRef){image,1u,(uint32_t)r->fbw,(uint32_t)r->fbh,
+    GML_RENDER_PIXEL_ARGB8888,{0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
+  op.target.image.content_version++;
+  GmlRenderQuad *q=&op.payload.quad;
+  q->shape=GML_RENDER_QUAD_GENERAL;
+  q->sampling=(GmlRenderSamplingPolicy){r->interp?GML_RENDER_FILTER_HARDWARE_BILINEAR:GML_RENDER_FILTER_NEAREST,
+    GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,(uint32_t)width,(uint32_t)height},
+    GML_RENDER_QUANTISE_VIEW_SURFACE,0u};
+  q->filtered_draw_alpha=alpha;
+  uint32_t tint=((uint32_t)lround(alpha*255.0)<<24)|
+    ((colour&255u)<<16)|(colour&0xFF00u)|((colour>>16)&255u);
+  for(unsigned i=0;i<4u;i++){
+    q->x[i]=x[i];q->y[i]=y[i];q->corner_colour[i]=tint;
+    q->u[i]=(sx+((i==1u || i==2u)?sw:0.0))/width;
+    q->v[i]=(sy+(i>=2u?sh:0.0))/height;
+  }
+  GmlRenderDrawStateSnapshot state={.colour=0xFFFFFFFFu,.alpha=255u,
+    .write_mask=r->color_write_mask,.sampler_count=1u,
+    .coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA,
+    .rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA,
+    .rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
+    .alpha_source_factor=GML_RENDER_BLEND_ONE,
+    .alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
+    .rgb_equation=GML_RENDER_BLEND_ADD,.alpha_equation=GML_RENDER_BLEND_ADD};
+  state.samplers[0]=q->sampling;
+  surface_source_over_alpha_state(r,&state);
+  if(!gml_render_view_surface_quad_valid(&op,&state,source.width,source.height) ||
+     !surface_feedback_enqueue(r,&op,&state,&source,feedback)) return 0;
+  r->fb_opaque_known=r->fb_all_opaque=r->fb_all_transparent=0;
+  return 1;
+}
+
+static int resident_view_surface(GmlRender *r,int surf,
+  double sx,double sy,double sw,double sh,double x,double y,double xs,double ys,
+  double rotation,uint32_t colour,double alpha){
+  if(!gml_render_view_rotation_active(r) || gml_d3_is_active(r)) return 0;
+  if(!isfinite(sx) || !isfinite(sy) || !isfinite(sw) || !isfinite(sh) ||
+     !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
+     !isfinite(rotation) || !isfinite(alpha) || sw<=0.0 || sh<=0.0 ||
+     xs==0.0 || ys==0.0) return 1;
+  int width=gml_surface_width(r,surf),height=gml_surface_height(r,surf);
+  if(width<=0 || height<=0 || sx>=width || sy>=height || sx+sw<=0 || sy+sh<=0) return 1;
+  int destination=r->alphablend && gml_render_blend_uses_destination_colour(r->blendmode);
+  if(alpha<=0.0 && !destination) return 1;
+  alpha=fmax(0.0,fmin(1.0,alpha));
+  double c,sn;render_rotation_sincos(rotation,&c,&sn);
+  double px[4],py[4];
+  for(unsigned i=0;i<4u;i++){
+    double lx=(i==1u || i==2u)?sw*xs:0.0,ly=i>=2u?sh*ys:0.0;
+    px[i]=x+lx*c+ly*sn;py[i]=y-lx*sn+ly*c;
+    gml_render_draw_map_point(r,&px[i],&py[i]);
+    px[i]-=r->cam_x;py[i]-=r->cam_y;
+    gml_render_view_rotate_point(r,&px[i],&py[i]);
+    if(!isfinite(px[i]) || !isfinite(py[i])) return 1;
+  }
+  if(!resident_view_surface_quad(r,surf,sx,sy,sw,sh,px,py,colour,alpha)){
+    if(!gml_render_cpu_draw_barrier(r)) return 1;
+    gml_render_cpu_draw_surface_view(r,surf,sx,sy,sw,sh,px,py,colour,alpha);
+  }
+  if(gml_render_modern_surface_blends_alpha(r)){
+    r->fb_opaque_known=r->fb_all_opaque=0;
+    if(r->fb==r->app_surface) r->app_surface_opaque=0;
+  }
+  return 1;
+}
+
 void gml_draw_surface_ext(GmlRender *r,int surf,double x,double y,
                           double xs,double ys,double rot,uint32_t blend,double alpha){
+  if(gml_render_view_rotation_active(r)){
+    int width=gml_surface_width(r,surf),height=gml_surface_height(r,surf);
+    if(width>0 && height>0 && resident_view_surface(r,surf,0.0,0.0,width,height,
+         x,y,xs,ys,rot,blend,alpha)) return;
+  }
   double rr=fmod(rot,360.0); if(rr<0) rr+=360.0;
   if(fabs(rr)<0.001 || fabs(rr-360.0)<0.001){
     int sw=gml_surface_width(r,surf),sh=gml_surface_height(r,surf);

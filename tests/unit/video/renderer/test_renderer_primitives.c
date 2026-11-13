@@ -676,8 +676,97 @@ static void check_view_sprite_nonuniform_scale_and_mirroring(void){
   gml_render_free(&render);
 }
 
+static void check_view_surface_quad_contract(void){
+  GmlRenderImageRef source={GML_RENDER_RESOURCE_SURFACE,1u,1u,1u};
+  GmlRenderDrawOp op={.opcode=GML_RENDER_OP_TEXTURED_QUAD,
+    .scene_family=GML_RENDER_SCENE_SURFACE,.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT,
+    .source_count=1u,.sources=&source};
+  op.target.width=op.target.height=32;op.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  op.target.region=(GmlRenderRect){0,0,32,32};
+  GmlRenderQuad *q=&op.payload.quad;q->shape=GML_RENDER_QUAD_GENERAL;
+  q->sampling=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_NEAREST,
+    GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,8,4},GML_RENDER_QUANTISE_VIEW_SURFACE,0u};
+  q->filtered_draw_alpha=1.0;
+  for(unsigned i=0;i<4u;i++){
+    q->x[i]=(i==1u || i==2u)?8.0:4.0;q->y[i]=i>=2u?8.0:6.0;
+    q->u[i]=(i==1u || i==2u)?.75:.25;q->v[i]=i>=2u?.75:.25;
+    q->corner_colour[i]=0xFFFFFFFFu;
+  }
+  GmlRenderDrawStateSnapshot state={.colour=0xFFFFFFFFu,.alpha=255u,.write_mask=15u,
+    .sampler_count=1u,.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA,
+    .rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
+    .alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA,
+    .alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
+    .rgb_equation=GML_RENDER_BLEND_ADD,.alpha_equation=GML_RENDER_BLEND_ADD};
+  state.samplers[0]=q->sampling;
+  expect(gml_render_view_surface_quad_valid(&op,&state,8,4),
+         "view surface contract accepts a selected native UV rectangle");
+  for(unsigned i=0;i<4u;i++) q->x[i]=32.0-q->x[i];
+  q->sampling.filter=GML_RENDER_FILTER_HARDWARE_BILINEAR;state.samplers[0]=q->sampling;
+  expect(gml_render_view_surface_quad_valid(&op,&state,8,4),
+         "view surface contract keeps mirrored filtered device geometry");
+  for(unsigned test=0;test<14u;test++){
+    GmlRenderDrawOp invalid=op;GmlRenderDrawStateSnapshot broken=state;
+    switch(test){
+      case 0:invalid.payload.quad.x[2]+=1.0;break;
+      case 1:invalid.payload.quad.u[1]=NAN;break;
+      case 2:invalid.payload.quad.v[0]=-.01;break;
+      case 3:invalid.payload.quad.inverse_x[0]=1.0;break;
+      case 4:invalid.payload.quad.span_active=1u;break;
+      case 5:broken.source_palette.enabled=1u;break;
+      case 6:broken.alpha_test_enabled=1u;break;
+      case 7:broken.sampler_count=2u;break;
+      case 8:invalid.payload.quad.corner_colour[3]=0xFF00FF00u;break;
+      case 9:invalid.payload.quad.filtered_draw_alpha=0.0;break;
+      case 10:broken.samplers[0].source_region.width=9u;break;
+      case 11:broken.coverage_policy=GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA;break;
+      case 12:broken.write_mask=16u;break;
+      case 13:invalid.payload.quad.sampling.quantisation=0u;break;
+    }
+    expect(!gml_render_view_surface_quad_valid(&invalid,&broken,8,4),
+           "view surface contract rejects malformed or unsupported packet state");
+  }
+}
+
+static void check_view_surface_nonuniform_projection(void){
+  GmlRender render;GmlWin content={.bytecode=17};
+  reset_render(&render,24);render.win=&content;
+  int source=gml_surface_create(&render,4,2);
+  uint8_t pixels[32]={0};
+  for(unsigned i=0;i<8u;i++){
+    pixels[i*4u+(i%4u<2u?0u:2u)]=255;
+    pixels[i*4u+3u]=255;
+  }
+  expect(source>0 && gml_surface_write_rgba8(&render,source,pixels,sizeof pixels),
+         "view surface fixture creates its source bytes");
+  if(source<=0){gml_render_free(&render);return;}
+  set_world_scale(&render,2.0,3.0);
+  gml_render_world_set_view_rotation(&render,90.0,100.0,50.0);
+  gml_draw_surface_ext(&render,source,75,25,1,1,90,0xFFFFFFu,1.0);
+  expect(covered_pixels()==48 &&
+         (frame[151*WIDTH+101]&0xFFFFFFu)==0xFF0000u &&
+         (frame[151*WIDTH+106]&0xFFFFFFu)==0x0000FFu &&
+         !(frame[151*WIDTH+99]&0xFFFFFFu),
+         "local and view surface turns cancel before nonuniform projection");
+  memset(frame,0,sizeof frame);
+  gml_draw_surface_stretched(&render,source,75,25,8,6,0xFFFFFFu,1.0);
+  expect(covered_pixels()==288 &&
+         (frame[151*WIDTH+90]&0xFFFFFFu)==0xFF0000u &&
+         (frame[170*WIDTH+90]&0xFFFFFFu)==0x0000FFu,
+         "view surface canvas keeps its two independently scaled axes");
+  memset(frame,0,sizeof frame);
+  gml_draw_surface_part_ext(&render,source,2,0,2,2,75,25,1,1,0xFFFFFFu,1.0);
+  expect(covered_pixels()==24 &&
+         (frame[151*WIDTH+97]&0xFFFFFFu)==0x0000FFu &&
+         !(frame[151*WIDTH+95]&0xFFFFFFu),
+         "view surface part retains its independent source selection");
+  gml_render_free(&render);
+}
+
 int main(void){
   check_view_sprite_nonuniform_scale_and_mirroring();
+  check_view_surface_nonuniform_projection();
+  check_view_surface_quad_contract();
   check_world_view_rotation_geometry();
   check_circle_span_matches_pixel_writer();
   check_fractional_radius_is_not_truncated();

@@ -119,7 +119,8 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
   half_gui=!rendered_source_origin &&
     gml_gpu_opengl_half_gui_point_valid(op,state,source_width,source_height);
   native_uv=quad->shape==GML_RENDER_QUAD_GENERAL &&
-    (quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN ||
+    (quad->sampling.quantisation==GML_RENDER_QUANTISE_VIEW_SURFACE ||
+     quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION ||
      (op->scene_family==GML_RENDER_SCENE_SURFACE &&
       quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC));

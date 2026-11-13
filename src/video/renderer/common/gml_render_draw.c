@@ -399,6 +399,55 @@ int gml_render_native_textured_triangle_valid(const GmlRenderDrawOp *operation){
   return 1;
 }
 
+int gml_render_view_surface_quad_valid(const GmlRenderDrawOp *op,
+  const GmlRenderDrawStateSnapshot *state,uint32_t width,uint32_t height){
+  if(!op || !state || !width || !height || width>4096u || height>4096u ||
+     op->opcode!=GML_RENDER_OP_TEXTURED_QUAD || op->scene_family!=GML_RENDER_SCENE_SURFACE ||
+     op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT || op->source_count!=1u || !op->sources ||
+     op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 || !op->target.width || !op->target.height ||
+     op->target.width>16384u || op->target.height>16384u || op->target.region.x || op->target.region.y ||
+     op->target.region.width!=op->target.width || op->target.region.height!=op->target.height ||
+     state->alpha!=255u || state->colour!=0xFFFFFFFFu || state->write_mask>15u ||
+     state->sampler_count!=1u || state->material_identity || state->material_version ||
+     state->source_alpha_key || state->source_palette.enabled || state->alpha_test_enabled ||
+     state->clip.width || state->clip.height ||
+     state->rgb_equation!=GML_RENDER_BLEND_ADD || state->alpha_equation!=GML_RENDER_BLEND_ADD ||
+     state->rgb_source_factor!=GML_RENDER_BLEND_SOURCE_ALPHA ||
+     state->rgb_destination_factor!=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA ||
+     state->alpha_destination_factor!=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA) return 0;
+  if(state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA){
+    if(state->alpha_source_factor!=GML_RENDER_BLEND_ONE) return 0;
+  }else if(state->coverage_policy || state->alpha_source_factor!=GML_RENDER_BLEND_SOURCE_ALPHA) return 0;
+  const GmlRenderQuad *q=&op->payload.quad;
+  const GmlRenderSamplingPolicy *p=&q->sampling,*a=&state->samplers[0];
+  if(q->shape!=GML_RENDER_QUAD_GENERAL || q->span_active || q->source_endpoint_rgb_mask ||
+     p->quantisation!=GML_RENDER_QUANTISE_VIEW_SURFACE ||
+     (p->filter!=GML_RENDER_FILTER_NEAREST && p->filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR) ||
+     p->edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE || p->logical_margin_mask ||
+     p->source_region.x || p->source_region.y || p->source_region.width!=width ||
+     p->source_region.height!=height || a->filter!=p->filter || a->edge_rule!=p->edge_rule ||
+     a->quantisation!=p->quantisation || a->logical_margin_mask!=p->logical_margin_mask ||
+     a->source_region.x || a->source_region.y || a->source_region.width!=width ||
+     a->source_region.height!=height || !isfinite(q->filtered_draw_alpha) ||
+     q->filtered_draw_alpha<=0.0 || q->filtered_draw_alpha>1.0 ||
+     (q->corner_colour[0]>>24)!=(uint32_t)lround(q->filtered_draw_alpha*255.0)) return 0;
+  for(unsigned i=0;i<4u;i++){
+    if(!isfinite(q->x[i]) || !isfinite(q->y[i]) || fabs(q->x[i])>65536 || fabs(q->y[i])>65536 ||
+       !isfinite(q->u[i]) || !isfinite(q->v[i]) || q->u[i]<0.0 || q->u[i]>1.0 ||
+       q->v[i]<0.0 || q->v[i]>1.0 || q->corner_colour[i]!=q->corner_colour[0] ||
+       q->span_x[i] || q->span_y[i]) return 0;
+  }
+  for(unsigned i=0;i<2u;i++)
+    if(q->inverse_anchor[i] || q->inverse_x[i] || q->inverse_y[i] || q->inverse_offset[i]) return 0;
+  double area=(q->x[1]-q->x[0])*(q->y[3]-q->y[0])-
+              (q->y[1]-q->y[0])*(q->x[3]-q->x[0]);
+  return isfinite(area) && fabs(area)>1e-10 &&
+    fabs(q->x[0]+q->x[2]-q->x[1]-q->x[3])<=1e-8 &&
+    fabs(q->y[0]+q->y[2]-q->y[1]-q->y[3])<=1e-8 &&
+    q->u[0]==q->u[3] && q->u[1]==q->u[2] && q->u[1]>q->u[0] &&
+    q->v[0]==q->v[1] && q->v[2]==q->v[3] && q->v[2]>q->v[0];
+}
+
 int gml_render_rectangle_valid(const GmlRenderDrawOp *operation){
   if(!operation || operation->opcode!=GML_RENDER_OP_COLOURED_PRIMITIVE ||
      operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
