@@ -712,11 +712,67 @@ static int selected_view_glyph_case(void){
   return ok;
 }
 
+static int selected_view_sdf_case(void){
+  FontFixture *f=fixture_create();
+  if(!f) return 0;
+  f->win.bytecode=17;
+  GmlRender *r=&f->render;
+  r->software_overlay=0;r->active_shader=-1;
+  r->color_write_mask=15;
+  r->atlas=calloc(1,sizeof *r->atlas);
+  if(!r->atlas){fixture_destroy(f);return 0;}
+  r->n_atlas=1;
+  r->atlas[0].w=8;r->atlas[0].h=4;
+  r->atlas[0].px=calloc(32,4);
+  if(!r->atlas[0].px){fixture_destroy(f);return 0;}
+  const uint8_t distance[8]={0,0,32,64,128,192,255,255};
+  for(int y=0;y<4;y++) for(int x=0;x<8;x++){
+    uint8_t *pixel=r->atlas[0].px+(y*8+x)*4;
+    pixel[0]=37;pixel[1]=89;pixel[2]=151;pixel[3]=distance[x];
+  }
+  GmlFont *font=&r->fonts[0];
+  font->real=1;font->sprite=-1;font->atlas=0;font->sdf_spread=1;
+  font->glyphs=calloc(1,sizeof *font->glyphs);
+  if(!font->glyphs){fixture_destroy(f);return 0;}
+  font->n_glyphs=1;font->line_height=font->align_height=4;
+  font->glyphs[0]=(GmlGlyph){.ch='A',.w=8,.h=4,.shift=8};
+  for(unsigned i=0;i<256;i++) font->glyph_by_char[i]=-1;
+  font->glyph_by_char['A']=0;
+  r->font=0;r->n_fonts=1;
+  int ok=1;
+  for(int turn=0;turn<2;turn++){
+    memset(f->frame,0,sizeof f->frame);
+    gml_render_begin(r,f->frame,96,48,0,0);
+    r->world_transform_active=1;
+    r->world_scale_x=r->world_scale_y=1;
+    gml_render_world_set_view_rotation(r,turn?90:0,96,48);
+    gml_draw_text_transformed(r,30,12,"A",2,2,0,0xFFFFFFu,1);
+    int ink=0,outside=0,white=0;
+    for(int y=0;y<48;y++) for(int x=0;x<96;x++){
+      uint32_t colour=f->frame[y*96+x]&0xFFFFFFu;
+      if(!colour) continue;
+      ink++;
+      if(colour==0xFFFFFFu) white++;
+      /* A quarter turn about(48,24) places the padded [28,44]x[10,18]
+       * glyph inside [54,62]x[4,20]. One border pixel allows sampling
+       * differences while keeping placement an exact geometry question. */
+      if(turn && (x<53 || x>62 || y<3 || y>20)) outside++;
+    }
+    int pass=ink>=16 && white>=4 && (!turn || !outside);
+    fprintf(stderr,"selected SDF glyph view=%d ink=%d white=%d outside=%d pass=%d\n",
+            turn?90:0,ink,white,outside,pass);
+    ok &=pass;
+  }
+  fixture_destroy(f);
+  return ok;
+}
+
 int main(int argc,char **argv){
   const char *filter=NULL;
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2];
   else if(argc!=1){ fprintf(stderr,"usage: %s [--case filter]\n",argv[0]); return 2; }
   const AnygmTestCase cases[]={
+    {"selected_view_sdf",selected_view_sdf_case},
     {"selected_view_glyph_cells",selected_view_glyph_case},
     {"dispatch_glyph_family",dispatch_glyph_family_case},
     {"classic_subpixel_channels",classic_subpixel_case},
