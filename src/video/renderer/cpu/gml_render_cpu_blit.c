@@ -7456,10 +7456,11 @@ void gml_render_cpu_blit_sprite_general_coloured(GmlRender *r,GmlSprite *sprite,
 
 void gml_render_cpu_blit_view_sprite_region(GmlRender *r,GmlSprite *sprite,int subimg,
   double sx,double sy,double sw,double sh,const double x[4],const double y[4],
-  double rotation,const uint32_t colour[4],double alpha){
-  if(!gml_render_cpu_draw_barrier(r)) return;
+  double rotation,const uint32_t colour[4],double alpha,GmlRenderSceneFamily family){
+  if((family!=GML_RENDER_SCENE_SPRITE && family!=GML_RENDER_SCENE_TEXT) ||
+     !gml_render_cpu_draw_barrier(r)) return;
   GmlRenderDispatchCpuScope scope;
-  gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_SPRITE);
+  gml_render_dispatch_cpu_scope_begin(r,&scope,family);
   blit_sprite_general_coloured_impl(r,sprite,subimg,sx,sy,sw,sh,0.0,0.0,1.0,1.0,
                                     rotation,colour,alpha,x,y,NULL,0);
   gml_render_dispatch_cpu_scope_end(r,&scope);

@@ -1029,4 +1029,7 @@ int gml_render_resident_view_atlas_quad(GmlRender *render,const GmlTpag *page,
   double sx,double sy,double sw,double sh,const double x[4],const double y[4],
   uint32_t colour,double alpha,GmlRenderSceneFamily family);
 
+int gml_render_resident_view_runtime_glyph(GmlRender *render,int sprite,int frame,
+  const double x[4],const double y[4],uint32_t colour,double alpha);
+
 #endif

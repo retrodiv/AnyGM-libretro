@@ -666,32 +666,46 @@ static int selected_view_glyph_case(void){
   font->glyph_by_char['A']=0;r->font=0;r->n_fonts=1;
   int ok=1;
   const double angles[4]={0,90,-90,45},local[3]={0,90,-30};
-  for(unsigned kind=0;kind<2u;kind++) for(unsigned v=0;v<4u;v++)
+  for(unsigned kind=0;kind<3u;kind++) for(unsigned v=0;v<4u;v++)
+  for(unsigned flip=0;flip<(kind==2?4u:1u);flip++)
   for(unsigned l=0;l<3u;l++){
     font->real=kind==0;font->sprite=kind==0?-1:0;font->first='A';
+    if(kind==2 && !r->spr[0].runtime_rgba){
+      r->spr[0].runtime_rgba=malloc(8u*4u*4u);
+      if(!r->spr[0].runtime_rgba){fixture_destroy(f);return 0;}
+      memcpy(r->spr[0].runtime_rgba,r->atlas[0].px,8u*4u*4u);
+      r->spr[0].runtime_rgba[3]=r->spr[0].runtime_rgba[7]=0;
+      r->spr[0].runtime_opaque=0;
+      r->spr[0].originx=2;r->spr[0].originy=1;
+    }
     memset(f->frame,0,sizeof f->frame);
     gml_render_begin(r,f->frame,96,48,0,0);
     r->world_transform_active=1;r->world_scale_x=2.0;r->world_scale_y=1.5;
     gml_render_world_set_view_rotation(r,angles[v],48,32);
-    gml_draw_text_transformed(r,30,12,"A",1.5,1.5,local[l],0xFFFFFFu,1);
+    double draw_xs=(flip&1u)?-1.5:1.5,draw_ys=(flip&2u)?-1.5:1.5;
+    gml_draw_text_transformed(r,30,12,"A",draw_xs,draw_ys,local[l],0xFFFFFFu,1);
     /* The old zero-view local rotation has a distinct physical-space policy.
      * Its existing controls remain unchanged; this probes new selected views. */
-    if(v==0 && l!=0) continue;
+    if(v==0 && (l!=0 || kind==2)) continue;
     double c=cos(angles[v]*M_PI/180.0),sn=sin(angles[v]*M_PI/180.0);
     double lc=cos(local[l]*M_PI/180.0),ls=sin(local[l]*M_PI/180.0);
     int ink=0,outside=0,matched=1;
     for(int y=0;y<48;y++) for(int x=0;x<96;x++){
       double dx=(x+.5)/2.0-24,dy=(y+.5)/1.5-16;
       double wx=24+c*dx+sn*dy-30,wy=16-sn*dx+c*dy-12;
-      double u=(lc*wx-ls*wy)/1.5,w=(ls*wx+lc*wy)/1.5;
+      double u=(lc*wx-ls*wy)/draw_xs+(kind==2?2:0);
+      double w=(ls*wx+lc*wy)/draw_ys+(kind==2?1:0);
       uint32_t got=f->frame[y*96+x]&0xFFFFFFu;
       if(u>.15 && u<7.85 && w>.15 && w<3.85 && fabs(u-4)>.15 && fabs(w-2)>.15){
-        matched &=got==rgb[(u>=4)+2*(w>=2)];ink++;
+        if(kind==2 && ((w<1.15 && fabs(u-2)<.15) ||
+                       (u<2.15 && fabs(w-1)<.15))) continue;
+        uint32_t expected=kind==2 && u<2 && w<1?0:rgb[(u>=4)+2*(w>=2)];
+        matched &=got==expected;ink++;
       }else if(u<-.5 || u>8.5 || w<-.5 || w>4.5){matched &=got==0;outside++;}
     }
     if(!matched || ink<8 || outside<100){
-      fprintf(stderr,"selected glyph kind=%u view=%g local=%g match=%d ink=%d outside=%d\n",
-              kind,angles[v],local[l],matched,ink,outside);ok=0;
+      fprintf(stderr,"selected glyph kind=%u view=%g local=%g flip=%u match=%d ink=%d outside=%d\n",
+              kind,angles[v],local[l],flip,matched,ink,outside);ok=0;
     }
   }
   fixture_destroy(f);

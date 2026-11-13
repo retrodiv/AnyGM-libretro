@@ -30,6 +30,27 @@ static void text_rotated_offset(const GmlRender *r,double dx,double dy,
   *y=(-dx/sx*sine+dy/sy*cosine)*sy;
 }
 
+static int text_view_corners(GmlRender *r,double x,double y,double width,double height,
+  double xs,double ys,double rotation,double px[4],double py[4]){
+  double cosine,sine;
+  render_rotation_sincos(rotation,&cosine,&sine);
+  for(unsigned i=0;i<4u;i++){
+    double dx=(i==1u || i==2u)?width*xs:0.0,dy=i>=2u?height*ys:0.0;
+    text_rotated_offset(r,dx,dy,cosine,sine,&px[i],&py[i]);
+    px[i]+=x-r->cam_x;py[i]+=y-r->cam_y;
+    gml_render_view_rotate_point(r,&px[i],&py[i]);
+    if(!isfinite(px[i]) || !isfinite(py[i])) return 0;
+  }
+  return 1;
+}
+
+static void text_view_target_written(GmlRender *r){
+  if(gml_render_target_preserves_alpha(r)){
+    r->fb_opaque_known=r->fb_all_opaque=0;
+    if(r->fb==r->app_surface) r->app_surface_opaque=0;
+  }
+}
+
 /* Layout supplies the actual glyph cell and its mapped anchor. Neither font
  * metrics nor glyph ownership is reconstructed as a synthetic sprite. */
 static int view_text_glyph(GmlRender *r,const GmlTpag *page,double x,double y,
@@ -37,25 +58,34 @@ static int view_text_glyph(GmlRender *r,const GmlTpag *page,double x,double y,
   if(!gml_render_view_rotation_active(r) || gml_d3_is_active(r)) return 0;
   if(!page || width<=0.0 || height<=0.0 || !isfinite(x) || !isfinite(y) ||
      !isfinite(xs) || !isfinite(ys) || !isfinite(rotation) || !isfinite(alpha)) return 1;
-  double cosine,sine,px[4],py[4];
-  render_rotation_sincos(rotation,&cosine,&sine);
-  for(unsigned i=0;i<4u;i++){
-    double dx=(i==1u || i==2u)?width*xs:0.0,dy=i>=2u?height*ys:0.0;
-    text_rotated_offset(r,dx,dy,cosine,sine,&px[i],&py[i]);
-    px[i]+=x-r->cam_x;py[i]+=y-r->cam_y;
-    gml_render_view_rotate_point(r,&px[i],&py[i]);
-    if(!isfinite(px[i]) || !isfinite(py[i])) return 1;
-  }
+  double px[4],py[4];
+  if(!text_view_corners(r,x,y,width,height,xs,ys,rotation,px,py)) return 1;
   if(!gml_render_resident_view_atlas_quad(r,page,page->tx,page->ty,page->sw,page->sh,
                                         px,py,colour,alpha,GML_RENDER_SCENE_TEXT)){
     for(unsigned i=0;i<4u;i++){px[i]+=r->cam_x;py[i]+=r->cam_y;}
     gml_render_cpu_blit_view_atlas(r,page,page->tx,page->ty,page->sw,page->sh,
                                   px,py,colour,alpha,GML_RENDER_SCENE_TEXT);
   }
-  if(gml_render_target_preserves_alpha(r)){
-    r->fb_opaque_known=r->fb_all_opaque=0;
-    if(r->fb==r->app_surface) r->app_surface_opaque=0;
+  text_view_target_written(r);
+  return 1;
+}
+
+static int view_runtime_text_glyph(GmlRender *r,int sprite,int frame,double x,double y,
+  double xs,double ys,double rotation,uint32_t colour,double alpha){
+  if(!gml_render_view_rotation_active(r) || gml_d3_is_active(r)) return 0;
+  if(sprite<0 || sprite>=r->n_spr || !isfinite(x) || !isfinite(y) ||
+     !isfinite(xs) || !isfinite(ys) || !isfinite(rotation) || !isfinite(alpha)) return 1;
+  GmlSprite *source=&r->spr[sprite];
+  if(!source->runtime_rgba || source->w<=0 || source->h<=0) return 0;
+  double px[4],py[4];
+  if(!text_view_corners(r,x,y,source->w,source->h,xs,ys,rotation,px,py)) return 1;
+  if(!gml_render_resident_view_runtime_glyph(r,sprite,frame,px,py,colour,alpha)){
+    for(unsigned i=0;i<4u;i++){px[i]+=r->cam_x;py[i]+=r->cam_y;}
+    const uint32_t corners[4]={colour,colour,colour,colour};
+    gml_render_cpu_blit_view_sprite_region(r,source,frame,0,0,source->w,source->h,
+      px,py,0,corners,alpha,GML_RENDER_SCENE_TEXT);
   }
+  text_view_target_written(r);
   return 1;
 }
 
@@ -510,7 +540,16 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
         double glyph_x=use_rot?x+glyph_ox*ca+glyph_oy*sa:x+glyph_ox;
         double glyph_y=use_rot?y-glyph_ox*sa+glyph_oy*ca:y+glyph_oy;
         int resident_glyph=0;
-        if(gml_render_view_rotation_active(r) && !s->runtime_rgba && s->frame){
+        if(gml_render_view_rotation_active(r) && s->runtime_rgba){
+          double left,top;
+          double ox=(cx-s->originx)*xs,oy=(base_y-s->originy)*ys;
+          if(use_rot){
+            text_rotated_offset(r,ox,oy,ca,sa,&left,&top);left+=x;top+=y;
+          }else{left=x+ox;top=y+oy;}
+          resident_glyph=view_runtime_text_glyph(r,f->sprite,fr,left,top,xs,ys,
+                                                use_rot?rr:0.0,blend,alpha);
+        }
+        if(!resident_glyph && gml_render_view_rotation_active(r) && !s->runtime_rgba && s->frame){
           int page_index=s->frame[fr];
           if(page_index>=0 && page_index<r->n_tpag){
             const GmlTpag *page=&r->tpag[page_index];

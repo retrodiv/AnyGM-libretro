@@ -278,28 +278,17 @@ double gml_render_gui_logical_y(const GmlRender *r, double physical_y){
 #define gml_render_draw_map_point render_draw_map_point_local
 #define gml_render_draw_map_scale render_draw_map_scale_local
 
-int gml_render_resident_view_atlas_quad(GmlRender *r,const GmlTpag *page,
-  double sx,double sy,double sw,double sh,const double x[4],const double y[4],
-  uint32_t colour,double alpha,GmlRenderSceneFamily family){
-  const GmlRenderDeviceServices *device=gml_render_device(r);
-  GmlRenderResourceSource source={0};
-  if(!r || !page ||
+static int resident_view_texture_quad(GmlRender *r,const GmlRenderResourceSource *source,
+  GmlRenderRect region,double sx,double sy,double sw,double sh,
+  const double x[4],const double y[4],uint32_t colour,double alpha,GmlRenderSceneFamily family){
+  if(!r || !source || !r->win || !gml_render_device(r) ||
      (family!=GML_RENDER_SCENE_BACKGROUND && family!=GML_RENDER_SCENE_TILE && family!=GML_RENDER_SCENE_TEXT) ||
-     !r->win || !device || !r->resident_application_pass ||
-     !gml_render_scene_target_matches(r) || r->pending_presentation ||
+     !r->resident_application_pass || !gml_render_scene_target_matches(r) || r->pending_presentation ||
      r->classic_phase_scene_target || r->fog_flat || r->active_shader>=0 ||
      r->alpha_test_enable || !r->alphablend || r->blendmode ||
      r->blend_equation!=1 || r->blend_equation_alpha!=1 || r->color_write_mask>15u ||
      r->rotated_batch_count || r->rotated_batch_building || alpha<=0.0 ||
-     page->atlas<0 || page->atlas>=r->n_atlas || page->sx<0 || page->sy<0 ||
-     !gml_render_atlas_scene_source_view(r,page->atlas,&source) ||
-     (!source.borrowed_immutable &&
-      !(family==GML_RENDER_SCENE_TEXT && r->atlas[page->atlas].runtime_font_page &&
-        !source.resident_resource && device->context && device->observe_on_demand &&
-        device->observe_on_demand(device->context))) ||
-     source.width>4096u || source.height>4096u ||
-     (uint64_t)page->sx+page->sw>source.width ||
-     (uint64_t)page->sy+page->sh>source.height) return 0;
+     !source->width || !source->height || source->width>4096u || source->height>4096u) return 0;
   if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
   gml_render_flush_pending_fill(r);
   GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
@@ -308,7 +297,7 @@ int gml_render_resident_view_atlas_quad(GmlRender *r,const GmlTpag *page,
   if(image.content_version==UINT64_MAX) return 0;
   GmlRenderDrawOp op={.opcode=GML_RENDER_OP_TEXTURED_QUAD,
     .scene_family=family,.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT,
-    .source_count=1u,.sources=&source.image};
+    .source_count=1u,.sources=&source->image};
   op.target=(GmlRenderTargetRef){image,1u,(uint32_t)r->fbw,(uint32_t)r->fbh,
     GML_RENDER_PIXEL_ARGB8888,{0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
   op.target.image.content_version++;
@@ -316,15 +305,15 @@ int gml_render_resident_view_atlas_quad(GmlRender *r,const GmlTpag *page,
   q->shape=GML_RENDER_QUAD_GENERAL;q->filtered_draw_alpha=alpha;
   q->sampling=(GmlRenderSamplingPolicy){r->interp && !(family==GML_RENDER_SCENE_TILE && r->classic)
       ?GML_RENDER_FILTER_HARDWARE_BILINEAR:GML_RENDER_FILTER_NEAREST,
-    GML_RENDER_EDGE_CLAMP_SUBIMAGE,{page->sx,page->sy,(uint32_t)page->sw,(uint32_t)page->sh},
+    GML_RENDER_EDGE_CLAMP_SUBIMAGE,region,
     family==GML_RENDER_SCENE_TILE?GML_RENDER_QUANTISE_VIEW_TILE:
       family==GML_RENDER_SCENE_TEXT?GML_RENDER_QUANTISE_VIEW_TEXT:GML_RENDER_QUANTISE_VIEW_BACKGROUND,0u};
   uint32_t tint=((uint32_t)lround(alpha*255.0)<<24)|
     ((colour&255u)<<16)|(colour&0xFF00u)|((colour>>16)&255u);
   for(unsigned i=0;i<4u;i++){
     q->x[i]=x[i];q->y[i]=y[i];q->corner_colour[i]=tint;
-    q->u[i]=(page->sx+sx-page->tx+((i==1u || i==2u)?sw:0.0))/source.width;
-    q->v[i]=(page->sy+sy-page->ty+(i>=2u?sh:0.0))/source.height;
+    q->u[i]=(sx+((i==1u || i==2u)?sw:0.0))/source->width;
+    q->v[i]=(sy+(i>=2u?sh:0.0))/source->height;
   }
   GmlRenderDrawStateSnapshot state={.colour=0xFFFFFFFFu,.alpha=255u,
     .write_mask=r->color_write_mask,.sampler_count=1u,
@@ -339,9 +328,42 @@ int gml_render_resident_view_atlas_quad(GmlRender *r,const GmlTpag *page,
   }
   state.samplers[0]=q->sampling;
   return (family==GML_RENDER_SCENE_TEXT
-      ?gml_render_view_text_quad_valid(&op,&state,source.width,source.height)
+      ?gml_render_view_text_quad_valid(&op,&state,source->width,source->height)
       :family==GML_RENDER_SCENE_TILE
-      ?gml_render_view_tile_quad_valid(&op,&state,source.width,source.height)
-      :gml_render_view_background_quad_valid(&op,&state,source.width,source.height)) &&
-    gml_render_application_scene_enqueue(r,&op,&state,&source);
+      ?gml_render_view_tile_quad_valid(&op,&state,source->width,source->height)
+      :gml_render_view_background_quad_valid(&op,&state,source->width,source->height)) &&
+    gml_render_application_scene_enqueue(r,&op,&state,source);
+}
+
+int gml_render_resident_view_atlas_quad(GmlRender *r,const GmlTpag *page,
+  double sx,double sy,double sw,double sh,const double x[4],const double y[4],
+  uint32_t colour,double alpha,GmlRenderSceneFamily family){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  GmlRenderResourceSource source={0};
+  if(!r || !page || !device || !r->resident_application_pass || !r->win || page->atlas<0 || page->atlas>=r->n_atlas ||
+     page->sx<0 || page->sy<0 || page->sw<=0 || page->sh<=0 ||
+     !gml_render_atlas_scene_source_view(r,page->atlas,&source) ||
+     (!source.borrowed_immutable &&
+      !(family==GML_RENDER_SCENE_TEXT && r->atlas[page->atlas].runtime_font_page &&
+        !source.resident_resource && device->context && device->observe_on_demand &&
+        device->observe_on_demand(device->context))) ||
+     (uint64_t)page->sx+page->sw>source.width ||
+     (uint64_t)page->sy+page->sh>source.height) return 0;
+  GmlRenderRect region={page->sx,page->sy,(uint32_t)page->sw,(uint32_t)page->sh};
+  return resident_view_texture_quad(r,&source,region,page->sx+sx-page->tx,page->sy+sy-page->ty,
+                                    sw,sh,x,y,colour,alpha,family);
+}
+
+int gml_render_resident_view_runtime_glyph(GmlRender *r,int sprite,int frame,
+  const double x[4],const double y[4],uint32_t colour,double alpha){
+  if(!r || !r->resident_application_pass || !r->win || !gml_render_device(r) ||
+     sprite<0 || sprite>=r->n_spr) return 0;
+  GmlSprite *glyph=&r->spr[sprite];
+  GmlRenderResourceSource source={0};
+  if(glyph->spine || glyph->ns_enabled ||
+     !gml_render_runtime_sprite_scene_source_view(r,glyph,frame,&source) ||
+     !source.borrowed_immutable) return 0;
+  GmlRenderRect region={0,0,source.width,source.height};
+  return resident_view_texture_quad(r,&source,region,0,0,source.width,source.height,
+                                    x,y,colour,alpha,GML_RENDER_SCENE_TEXT);
 }

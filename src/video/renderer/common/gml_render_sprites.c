@@ -6715,7 +6715,7 @@ static int resident_view_sprite_region(GmlRender *r,int sprite,int subimg,
                                       alpha,colour[0],1,&selection))
     gml_render_cpu_blit_view_sprite_region(r,record,subimg,
       selection.left,selection.top,selection.width,selection.height,mx,my,
-      rotation,colour,alpha);
+      rotation,colour,alpha,GML_RENDER_SCENE_SPRITE);
   view_sprite_invalidate_opaque_target(r,alpha,source_opaque);
   return 1;
 }
