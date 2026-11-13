@@ -1026,7 +1026,49 @@ static void check_selected_view_lines(void){
   }
 }
 
+static void check_selected_view_rectangles(void){
+  const double turns[3]={0,90,-90};
+  for(unsigned kind=0;kind<4u;kind++) for(unsigned opacity=0;opacity<2u;opacity++)
+  for(unsigned turn=0;turn<3u;turn++){
+    GmlRender render;
+    reset_render(&render,24);
+    render.alpha=opacity?.37:1;
+    gml_render_world_set_view_rotation(&render,turns[turn],WIDTH,HEIGHT);
+    if(kind<2u) gml_render_primitive_rectangle(&render,130,70,150,86,0xFFFFFFu,kind&1u);
+    else gml_render_primitive_rectangle_color(&render,130,70,150,86,
+      0x0000FFu,0x00FF00u,0xFF0000u,0xFFFFFFu,kind&1u);
+    int ink=covered_pixels(),outside=0;
+    for(int y=0;y<HEIGHT;y++) for(int x=0;x<WIDTH;x++){
+      if(!(frame[y*WIDTH+x]&0xFFFFFFu)) continue;
+      if(turn==1u?(x<112 || x>132 || y<128 || y>152):
+         turn==2u?(x<68 || x>88 || y<47 || y>72):
+                   (x<128 || x>152 || y<68 || y>88)) outside++;
+    }
+    const int probes[4][2]={{140,78},{140,70},{132,72},{148,84}};
+    uint32_t sample[4];
+    for(unsigned p=0;p<4u;p++){
+      double x=probes[p][0]+.5,y=probes[p][1]+.5;
+      double px=turn==1u?WIDTH-y:turn==2u?y:x;
+      double py=turn==1u?x:turn==2u?HEIGHT-x:y;
+      sample[p]=frame[(int)floor(py)*WIDTH+(int)floor(px)]&0xFFFFFFu;
+    }
+    int ok=ink>0 && !outside && sample[1] &&
+      ((kind&1u)?sample[0]==0:sample[0]!=0);
+    if(kind==2u) ok=ok && ((sample[2]>>16)&255u)>(sample[2]&255u) &&
+                          (sample[3]&255u)>((sample[3]>>16)&255u);
+    if(kind<2u){
+      int expected=(int)lround(255*render.alpha);
+      ok=ok && abs((int)(sample[1]&255u)-expected)<=2;
+    }
+    fprintf(stderr,"selected rectangle kind=%u alpha=%g turn=%g ink=%d outside=%d pass=%d\n",
+      kind,render.alpha,turns[turn],ink,outside,ok);
+    expect(ok,"selected view preserves rectangle placement, hollow interiors, opacity and corner colour order");
+    gml_render_free(&render);
+  }
+}
+
 int main(void){
+  check_selected_view_rectangles();
   check_selected_view_lines();
   check_selected_view_point_and_triangles();
   check_view_world_visible_bounds();
