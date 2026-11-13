@@ -569,6 +569,35 @@ static int small_complete_ring_covers_growth_and_reset(int negotiation_result){
   return ok;
 }
 
+/* The complete picture and required bytes fit together even when duplicating the required bytes
+ * would not. Required-state growth has its own allowance; keep an exact picture in this slot. */
+static int small_complete_ring_counts_required_bytes_once(int negotiation_result){
+  stub_state_bytes=80u*1024u;
+  if(!begin_frontend(negotiation_result)) return 0;
+  stub_resume_state_bytes=stub_state_bytes;
+  stub_resume_hint_bytes=stub_state_bytes;
+  stub_hint_bytes=900u*1024u;
+  stub_capacity_flags=ANYGM_STATE_CAPACITY_DYNAMIC_CONTAINERS;
+  const size_t capacity=retro_serialize_size();
+  int ok=capacity==1024u*1024u;
+  uint8_t *state=ok?malloc(capacity):NULL;
+  if(!state) ok=0;
+  if(ok) ok=retro_serialize(state,capacity);
+  if(ok){
+    retro_run();
+    stub_resume_state_bytes=96u*1024u;
+    stub_state_bytes=stub_hint_bytes+stub_resume_state_bytes;
+    ok=retro_serialize_size()==capacity && retro_serialize(state,capacity) &&
+       complete_saves==2u && resume_saves==0u && retro_unserialize(state,capacity);
+  }
+  if(!ok) fprintf(stderr,"small complete ring duplicated required bytes: capacity=%zu\n",capacity);
+  free(state);
+  stub_capacity_flags=0;
+  retro_unload_game();
+  retro_deinit();
+  return ok;
+}
+
 /* A small cold frame is not a small session when authored calls create surfaces later. Keep the
  * ordinary reserve before any surface exists; a fixed frontend cannot grow its ring afterwards. */
 static int deferred_surfaces_keep_the_ordinary_reserve(int negotiation_result){
@@ -736,6 +765,9 @@ int main(void){
      !small_complete_ring_covers_growth_and_reset(1) ||
      !small_complete_ring_covers_growth_and_reset(0) ||
      !small_complete_ring_covers_growth_and_reset(-1) ||
+     !small_complete_ring_counts_required_bytes_once(1) ||
+     !small_complete_ring_counts_required_bytes_once(0) ||
+     !small_complete_ring_counts_required_bytes_once(-1) ||
      !deferred_surfaces_keep_the_ordinary_reserve(0) ||
      !deferred_surfaces_keep_the_ordinary_reserve(-1) ||
      !authored_raster_below_session_reserve_keeps_complete_form() ||
