@@ -5594,7 +5594,21 @@ static int resident_stretched_sprite_function(GmlRender *r,int sprite,int frame,
   return 1;
 }
 
+static int resident_view_sprite_region(GmlRender *r,int sprite,int subimg,
+  double sx,double sy,double sw,double sh,double x,double y,double xs,double ys,
+  double rotation,const uint32_t colour[4],double alpha,int part);
+
 void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, double dy, double dw, double dh, uint32_t blend, double alpha){
+  if(gml_render_view_rotation_active(r) && sprite>=0 && sprite<r->n_spr){
+    GmlSprite *source=&r->spr[sprite];
+    if(source->w>0 && source->h>0 && dw>0.0 && dh>0.0){
+      const uint32_t colour[4]={blend,blend,blend,blend};
+      /* Stretch the logical canvas. The source sampler retains physical trim;
+       * the sprite origin and authored crop extent do not redefine this box. */
+      if(resident_view_sprite_region(r,sprite,frame,0.0,0.0,source->w,source->h,
+           dx,dy,dw/source->w,dh/source->h,0.0,colour,alpha,0)) return;
+    }
+  }
   /* The ordinary stretched CPU blit contributes no pixels at zero alpha. Do not materialise
    * preceding device work for that no-op; special draw states retain their existing barrier. */
   if(r && r->resident_application_pass && alpha==0.0 &&

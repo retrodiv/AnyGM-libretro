@@ -599,6 +599,13 @@ static void check_view_sprite_nonuniform_scale_and_mirroring(void){
          !(frame[148*WIDTH+95]&0xFFFFFFu),
          "camera/local turns cancel before nonuniform sprite projection");
   memset(frame,0,sizeof frame);
+  gml_draw_sprite_stretched(&render,0,0,75,25,8,6,0xFFFFFFu,1.0);
+  expect(covered_pixels()==288 &&
+         (frame[151*WIDTH+90]&0xFFFFFFu)==0xFF0000u &&
+         (frame[170*WIDTH+90]&0xFFFFFFu)==0x0000FFu &&
+         !(frame[151*WIDTH+87]&0xFFFFFFu),
+         "view stretched sprite rotates its origin-free canvas before nonuniform projection");
+  memset(frame,0,sizeof frame);
   const double positioned_x[4]={73,77,77,73},positioned_y[4]={24,24,26,26};
   gml_draw_sprite_pos(&render,0,0,positioned_x,positioned_y,1.0);
   expect(covered_pixels()==48 &&
