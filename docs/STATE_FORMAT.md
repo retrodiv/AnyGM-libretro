@@ -20,9 +20,20 @@ failed partial reads leave the canonical image unpublished and invalid as a
 current resource. See R03-P9-INCREMENTAL-CHECKPOINT in
 [the renderer map](RENDERER_BACKENDS.md) for owners and controls.
 
-The current AnyGM save-state schema is `66`. It is the format transported by
+The current AnyGM save-state schema is `67`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `67` introduces VM schema `42`. A final signed 32-bit field owns the DS-map
+identity of a suspended broadcast callback, or zero when absent. The existing DS
+pool and parked frames retain the payload values and continuation. Restore rejects
+negative identities, missing maps and payload ownership without an active chain.
+Resumption binds the map only while the event runs; completion or cancellation
+releases it. The fixed trailer exists before the first frame, including when zero,
+so this field does not introduce a later size increase. Public and VM older schemas
+reject transactionally; other embedded schemas and the public API remain unchanged.
+Sprite/sequence message tables are immutable content-derived data and are rebuilt
+from the content rather than serialized.
 
 Schema `66` introduces VM schema `41`. Particle records now carry group identity,
 local reference coordinates and interior depth in addition to the existing

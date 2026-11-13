@@ -997,6 +997,38 @@ int gml_colgrid_mode(GmlVM *vm){
   return state->collision_grid_mode;
 }
 
+int gml_broadcast_map_live(GmlVM *vm,int map){
+  return vm && map>0 && ds_map_slot(vm,map)!=NULL;
+}
+void gml_broadcast_map_release(GmlVM *vm,int map){
+  if(vm && map>0) ds_map_destroy_id(vm,map);
+}
+/* A broadcast payload uses the existing DS-map owner until its callback finishes,
+ * including a parked callback. Reentrant dispatch restores the enclosing map. */
+void gml_fire_broadcast_message(GmlVM *vm,const char *type,const char *message,int element){
+  if(!vm || !vm->win || !type || !message) return;
+  int map=ds_map_create_id(vm);
+  if(map<0) return;
+  if(!ds_map_put_static_key(vm,map,"event_type",vstr(type),1) ||
+     !ds_map_put_static_key(vm,map,"message",vstr(message),1) ||
+     !ds_map_put_static_key(vm,map,"element_id",vreal(element),1)){
+    ds_map_destroy_id(vm,map);return;
+  }
+  GmlVal *slot=gml_varmap_get(&vm->globals,"event_data");
+  GmlVal previous=slot?*slot:vreal(-1);
+  int had_wait=vm->wait.active;
+  *gml_varmap_put(&vm->globals,"event_data")=vreal(map);
+  int extent=vm->inst_count;uint32_t first_new_id=vm->next_id;
+  for(int i=0;i<extent;i++){
+    GmlInstance *instance=&vm->inst[i];
+    if(instance->active && !instance->marked && !instance->deactivated &&
+       instance->id<first_new_id) gml_run_event(vm,instance,"Other_76");
+  }
+  *gml_varmap_put(&vm->globals,"event_data")=previous;
+  if(!had_wait && vm->wait.active) vm->wait.broadcast_map=map;
+  else ds_map_destroy_id(vm,map);
+}
+
 /* Fire GM's "gamepad discovered" async event (ev_async_system / Other_75) so games that only enable
  * gamepad input once a pad is detected recognize our single virtual pad. GM delivers it via the
  * async_load ds_map; we build {event_type:"gamepad discovered", pad_index:0}, point the async_load

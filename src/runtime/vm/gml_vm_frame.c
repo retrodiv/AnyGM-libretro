@@ -97,6 +97,98 @@ void gml_vm_draw_instance_sprite(GmlVM *vm,GmlInstance *instance,double alpha){
   gml_render_skeleton_state_set(render,NULL);
 }
 
+enum { BROADCAST_PENDING_LIMIT=1048576 };
+
+static int broadcast_pending_compare(const void *left,const void *right){
+  const GmlBroadcastPending *a=left,*b=right;
+  if(a->phase!=b->phase) return a->phase<b->phase?-1:1;
+  return (a->order>b->order)-(a->order<b->order);
+}
+static int broadcast_append(GmlVM *vm,const GmlBroadcastKey *key,int kind,int element,double phase){
+  if(vm->n_broadcast_pending>=BROADCAST_PENDING_LIMIT) return 0;
+  if(vm->n_broadcast_pending==vm->cap_broadcast_pending){
+    int capacity=vm->cap_broadcast_pending?vm->cap_broadcast_pending*2:32;
+    GmlBroadcastPending *items=realloc(vm->broadcast_pending,(size_t)capacity*sizeof *items);
+    if(!items) return 0;
+    vm->broadcast_pending=items;vm->cap_broadcast_pending=capacity;
+  }
+  int ordinal=vm->n_broadcast_pending++;
+  vm->broadcast_pending[ordinal]=(GmlBroadcastPending){key->message,phase,element,kind,ordinal};
+  return 1;
+}
+int gml_vm_broadcast_queue(GmlVM *vm,const GmlBroadcastTrack *track,int kind,int element,
+                           double before,double after,double length,int playback){
+  if(!vm || !track || !track->count || before==after) return 1;
+  if(!isfinite(before) || !isfinite(after) || !isfinite(length) || length<=0 ||
+     playback<0 || playback>2) return 0;
+  int previous=vm->n_broadcast_pending,forward=after>before;
+  double period=playback==1?length:playback==2?2*length:0;
+  if(!isfinite(period)) return 0;
+  for(int i=0;i<track->count;i++){
+    const GmlBroadcastKey *key=&track->keys[i];
+    if(!key->message || !isfinite(key->frame)) goto fail;
+    if(key->frame<0 || key->frame>=length) continue;
+    int phases=playback==2 && key->frame>0?2:1;
+    for(int phase=0;phase<phases;phase++){
+      double local=phase?period-key->frame:key->frame;
+      if(!period){
+        int crosses=forward?(local>=before && local<after):(local>after && local<=before);
+        if(crosses && !broadcast_append(vm,key,kind,element,forward?local:-local)) goto fail;
+      }else{
+        double first=forward?ceil((before-local)/period):floor((before-local)/period);
+        double stop=forward?ceil((after-local)/period):floor((after-local)/period);
+        double count=forward?stop-first:first-stop;
+        if(!isfinite(count) || count<0 || count>BROADCAST_PENDING_LIMIT-vm->n_broadcast_pending)
+          goto fail;
+        for(int n=0;n<(int)count;n++){
+          double at=local+(first+(forward?n:-n))*period;
+          if(!broadcast_append(vm,key,kind,element,forward?at:-at)) goto fail;
+        }
+      }
+    }
+  }
+  if(!forward) for(int i=previous;i<vm->n_broadcast_pending;i++)
+    vm->broadcast_pending[i].order=-vm->broadcast_pending[i].order;
+  if(vm->n_broadcast_pending>previous+1)
+    qsort(vm->broadcast_pending+previous,(size_t)(vm->n_broadcast_pending-previous),
+          sizeof *vm->broadcast_pending,broadcast_pending_compare);
+  return 1;
+fail:
+  vm->n_broadcast_pending=previous;return 0;
+}
+void gml_vm_broadcast_flush(GmlVM *vm,int kind){
+  if(!vm || !vm->n_broadcast_pending) return;
+  GmlBroadcastPending *pending=vm->broadcast_pending;int count=vm->n_broadcast_pending;
+  vm->broadcast_pending=NULL;vm->n_broadcast_pending=vm->cap_broadcast_pending=0;
+  for(int i=0;i<count;i++){
+    GmlBroadcastPending *message=&pending[i];
+    if(message->kind!=kind){
+      GmlBroadcastKey key={0,message->message};
+      (void)broadcast_append(vm,&key,message->kind,message->element,message->phase);
+      continue;
+    }
+    if(kind==2){
+      if(vm->pending_room>=0) continue;
+      int live=0;
+      for(int element=0;element<vm->n_rte;element++)
+        if(vm->rte[element].used && vm->rte[element].type==9 &&
+           vm->rte[element].id==message->element){live=1;break;}
+      if(!live) continue;
+    }
+    gml_fire_broadcast_message(vm,kind==2?"sequence event":"sprite event",
+                               message->message,message->element);
+  }
+  free(pending);
+}
+static void queue_instance_broadcasts(GmlVM *vm,GmlInstance *instance,int sprite,
+                                       double before,double after,int frames){
+  if(sprite<0 || sprite>=vm->n_sprite_messages || !vm->sprite_messages[sprite].count) return;
+  int element=gml_vm_instance_element_id(vm,instance);
+  if(element>=0)
+    (void)gml_vm_broadcast_queue(vm,&vm->sprite_messages[sprite],1,element,
+                                 before,after,frames,1);
+}
+
 static void advance_instance_animation(GmlVM *vm,GmlInstance *in,
                                        GmlRender *render,const char *anim_dbg){
   int nf=render?gml_sprite_frames(render,(int)in->sprite_index):0;
@@ -140,6 +232,7 @@ static void advance_instance_animation(GmlVM *vm,GmlInstance *in,
      * retain the existing >= boundary test for exact integer steps. */
     double ni=classic_runtime ? (in->image_index+step)
                               : (double)((float)in->image_index+(float)step);
+    queue_instance_broadcasts(vm,in,(int)in->sprite_index,in->image_index,ni,nf);
     /* Preserve the accumulated fractional index until wrap and display-frame selection. */
     int wrapped=nf>0 && ((ni>=nf)||(ni<0));
     if(nf>0){ while(ni>=nf) ni-=nf; while(ni<0) ni+=nf; }
@@ -294,7 +387,10 @@ void gml_vm_frame_advance_layers(GmlVM *vm){
     if(!e->used || e->type!=9 || e->sequence_paused ||
        e->sprite<0 || e->sprite>=vm->n_sequences) continue;
     const GmlSequence *s=&vm->sequences[e->sprite];
+    double before=e->image_index;
     e->image_index+=sequence_head_rate(vm,s);
+    (void)gml_vm_broadcast_queue(vm,&s->messages,2,e->id,before,e->image_index,
+                                 s->length,s->playback);
   }
   { GmlRender *R=(GmlRender*)vm->render;
     for(int i=0;i<vm->n_rte;i++){
@@ -315,7 +411,11 @@ void gml_vm_frame_advance_layers(GmlVM *vm){
         if(speed_type==0) delta/=fmax(gml_room_speed(vm),1);
       } else
         delta=gml_sprite_animation_delta(R,e->sprite,e->image_speed,gml_room_speed(vm));
+      double before=e->image_index;
       e->image_index += delta;
+      if(e->sprite>=0 && e->sprite<vm->n_sprite_messages)
+        (void)gml_vm_broadcast_queue(vm,&vm->sprite_messages[e->sprite],1,e->id,
+                                     before,e->image_index,nf,1);
       if(nf>0){
         while(e->image_index>=nf) e->image_index-=nf;
         while(e->image_index<0) e->image_index+=nf;
@@ -381,6 +481,8 @@ static void gml_vm_apply_pending_room(GmlVM *vm,int advance_entered_phase){
 }
 
 static void gml_vm_finish_step(GmlVM *vm,int previous_alloc_base){
+  free(vm->broadcast_pending);vm->broadcast_pending=NULL;
+  vm->n_broadcast_pending=vm->cap_broadcast_pending=0;
   for(int i=0;i<vm->inst_count;i++) vm->inst[i].room_transition_survivor=0;
   vm->step_alloc_base=previous_alloc_base;
   vm->step_active=0;
@@ -697,6 +799,7 @@ void gml_vm_step(GmlVM *vm){
     }
   }
   VMPROF_MARK(input);
+  gml_vm_broadcast_flush(vm,2);
   /* Normal Step in classic formats is grouped by ascending object resource, with insertion order
    * inside each exact object. Each object takes its extent when that group begins: an earlier
    * object can create an instance whose later object group still sees it, while a same-object
@@ -740,6 +843,7 @@ void gml_vm_step(GmlVM *vm){
       }
     }
   }
+  gml_vm_broadcast_flush(vm,1);
   VMPROF_MARK(step0);
   if(gml_vm_finish_classic_room_request(vm,prev_alloc_base)){
     VMPROF_MARK(rest);

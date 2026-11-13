@@ -95,8 +95,13 @@ typedef struct {
   GmlSeqTrack *tracks;
   int n_tracks;
 } GmlSeqGraphic;
+typedef struct { double frame; const char *message; } GmlBroadcastKey;
+typedef struct { GmlBroadcastKey *keys; int count, capacity; } GmlBroadcastTrack;
+typedef struct {
+  const char *message; double phase; int element, kind, order;
+} GmlBroadcastPending;
 typedef struct { char *name; double length, speed; int playback, speed_type, origin_x, origin_y;
-                 GmlSeqGraphic *graphics; int n_graphics; } GmlSequence;
+                 GmlSeqGraphic *graphics; int n_graphics; GmlBroadcastTrack messages; } GmlSequence;
 /* The evaluated value of `channel` at `head`, or `fallback` when the track has no usable keys. */
 double gml_sequence_value(const GmlSeqGraphic *g, const char *track, int channel, double head,
                           double fallback);
@@ -326,6 +331,7 @@ typedef struct GmlWait {
   int parking;         /* a park is unwinding the C stack; each frame in the chain adds itself */
   int expected_depth;  /* execution depth of the frame that must park next */
   int n_frames;        /* frames[0] is the run that blocked; frames[n_frames-1] is the event's own */
+  int broadcast_map;   /* an event payload owned until this parked chain finishes; zero if absent */
   GmlWaitFrame frames[GML_WAIT_MAX_FRAMES];
 } GmlWait;
 
@@ -366,6 +372,8 @@ typedef struct GmlVM {
   GmlPath *paths; int n_paths;
   int n_authored_paths;      /* paths parsed from PATH; anything above came from path_add */
   GmlSequence *sequences; int n_sequences;
+  GmlBroadcastTrack *sprite_messages; int n_sprite_messages;
+  GmlBroadcastPending *broadcast_pending; int n_broadcast_pending, cap_broadcast_pending;
   GmlTimeline *timelines; int n_timelines, cap_timelines;
   GmlColEvent *col_events; int n_col_events;
   GmlColPairCache *col_pair_cache; int col_pair_cache_cap;
@@ -595,6 +603,7 @@ GmlRtLayer *gml_rt_layer_find_by_order(GmlVM *vm, int order);
 GmlRtLayer *gml_rt_layer_new(GmlVM *vm);
 GmlRtElem  *gml_rt_elem_find(GmlVM *vm, int id);
 GmlRtElem  *gml_rt_elem_new(GmlVM *vm);
+int gml_vm_instance_element_id(GmlVM *vm,GmlInstance *instance);
 
 int     gml_vm_init(GmlVM *vm, GmlWin *win,const AnygmHostServices *host);
 int     gml_vm_init_launch(GmlVM *vm,GmlWin *win,const AnygmHostServices *host,
@@ -742,6 +751,9 @@ void         gml_obj_alive_adjust(GmlVM *vm, int obj, int delta);   /* family li
 void         gml_obj_alive_recount(GmlVM *vm);                       /* rebuild from the pool (state load) */
 int          gml_colgrid_collect(GmlVM *vm, double l, double t, double r, double b, int **out);
 void         gml_fire_gamepad_connected(GmlVM *vm);
+void gml_fire_broadcast_message(GmlVM *vm,const char *type,const char *message,int element);
+int  gml_broadcast_map_live(GmlVM *vm,int map);
+void gml_broadcast_map_release(GmlVM *vm,int map);
 void gml_fire_async_saveload(GmlVM *vm);  /* drain queued Other_72 (async save/load) events */ /* dispatch GM gamepad-discovered async event */
 void gml_fire_async_http(GmlVM *vm);      /* drain queued Other_62 (async HTTP, always-fail offline) events */
 void gml_fire_async_audio(GmlVM *vm);     /* drain PCM queue completion notices (Other_74) */

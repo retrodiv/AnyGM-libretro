@@ -11,8 +11,10 @@
 #include "gml_value_internal.h"
 #include "gml_vm.h"
 #include "gml_vm_internal.h"
+#include "gml_builtin.h"
 
 #include <stdio.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -28,7 +30,7 @@ static void fail(const char *label){
  * pass by covering only its first entries. */
 static const char *const recognized_names[]={
   "undefined","game_id","room","room_speed","fps","delta_time","view_current","view_enabled",
-  "background_color","event_type","mouse_x","mouse_button","mouse_lastbutton","current_time","os_type","os_windows",
+  "background_color","event_type","event_data","mouse_x","mouse_button","mouse_lastbutton","current_time","os_type","os_windows",
   "room_width","room_height","instance_count","health","lives","score","id","object_index",
   "sprite_width","image_number","x","y","xprevious","sprite_index","image_index","image_alpha",
   "depth","visible","solid","hspeed","vspeed","direction","speed","layer",
@@ -378,9 +380,170 @@ static void game_identity_semantics(void){
   gml_vm_free(&vm);
 }
 
+static void event_data_outside_payload_events(void){
+  GmlWin win={.bytecode=17};
+  GmlVM vm={.win=&win};
+  vm.inst=calloc(1,sizeof *vm.inst);
+  if(!vm.inst){fail("event data receiver allocation");return;}
+  vm.inst_count=vm.inst_cap=1;
+  vm.inst[0].id=100001;vm.inst[0].active=1;vm.cur_self=vm.inst;
+  const int events[]={0,3,8};
+  const int scopes[]={IT_SELF,IT_GLOBAL,IT_OTHER};
+  vm.cur_other=vm.inst;
+  for(unsigned e=0;e<sizeof events/sizeof events[0];e++){
+    vm.event_type=events[e];
+    unsigned long unset=gml_vm_unset_reads(&vm);
+    GmlVal identifier=gml_vm_identifier_get(&vm,"event_data");
+    if(identifier.t!=V_REAL || identifier.d!=-1)fail("event_data identifier outside payload events");
+    for(unsigned i=0;i<sizeof scopes/sizeof scopes[0];i++){
+      GmlVal value=gml_vm_variable_get_h(&vm,scopes[i],"event_data",gml_value_name_hash("event_data"));
+      if(value.t!=V_REAL || value.d!=-1)fail("event_data scoped read outside payload events");
+    }
+    if(gml_vm_unset_reads(&vm)!=unset)fail("event_data must not use an unset variable fallback");
+  }
+  gml_vm_assign_current_scope(&vm,"event_data",vreal(7));
+  GmlVal reflect[]={vstr("event_data"),vreal(99)};
+  gml_builtin_call(&vm,"variable_global_set",reflect,2);
+  GmlVal reflected=gml_builtin_call(&vm,"variable_global_get",reflect,1);
+  if(reflected.t!=V_REAL || reflected.d!=-1 ||
+     gml_builtin_call(&vm,"variable_global_exists",reflect,1).d!=1)
+    fail("event_data remains read-only through global reflection");
+  GmlVal assigned=gml_vm_identifier_get(&vm,"event_data");
+  if(assigned.t!=V_REAL || assigned.d!=-1 || gml_varmap_get(&vm.cur_self->vars,"event_data"))
+    fail("event_data must not be shadowed by an ordinary instance write");
+  GmlInstance *record=gml_struct_new(&vm);
+  if(!record)fail("event data struct allocation");
+  else{
+    *gml_varmap_put(&record->vars,"event_data")=vreal(42);
+    int found=0;GmlVal field=gml_inst_var_get_val(&vm,vobject((uint32_t)record->id),"event_data",&found);
+    if(!found || field.t!=V_REAL || field.d!=42)fail("event_data struct field retains ordinary ownership");
+  }
+  vm.win=NULL;gml_vm_free(&vm);
+}
+
+static void event_data_broadcast_payload(void){
+  GmlWin win={.bytecode=17,.size=4,.owns=1,.n_code=1};
+  win.data=calloc(4,1);win.code=calloc(1,sizeof *win.code);
+  if(!win.data || !win.code){fail("broadcast code allocation");gml_win_free(&win);return;}
+  GmlCode *code=win.code;code->name="gml_Object_payload_receiver_Other_76";
+  code->n_insn=7;code->insn=calloc(7,sizeof *code->insn);
+  code->insn_pc=calloc(7,sizeof *code->insn_pc);code->branch_index=calloc(7,sizeof *code->branch_index);
+  if(!code->insn || !code->insn_pc || !code->branch_index){fail("broadcast instruction allocation");gml_win_free(&win);return;}
+  const char *payload="event_data",*capture="captured_map",*seen="seen_payload";
+  code->insn[0]=(GmlInsn){.kind=OP_PUSH,.type1=DT_VAR,.inst=IT_SELF,.reftype=0xa0,.refname=payload,.refhash=gml_value_name_hash(payload)};
+  code->insn[1]=(GmlInsn){.kind=OP_POP,.type1=DT_VAR,.type2=DT_VAR,.inst=IT_GLOBAL,.reftype=0xa0,.refname=seen,.refhash=gml_value_name_hash(seen)};
+  code->insn[2]=code->insn[0];
+  code->insn[3]=(GmlInsn){.kind=OP_PUSH,.type1=DT_VAR,.inst=IT_GLOBAL,.reftype=0xa0,.refname=capture,.refhash=gml_value_name_hash(capture)};
+  code->insn[4]=(GmlInsn){.kind=OP_CALL,.argc=2,.refname="ds_map_copy",.funcval_ci=-2};
+  code->insn[5]=(GmlInsn){.kind=OP_POPZ};code->insn[6]=(GmlInsn){.kind=OP_EXIT};
+  GmlVM vm={.win=&win,.next_id=100002,.n_objects=1,.inst_count=1,.inst_cap=1};
+  vm.objects=calloc(1,sizeof *vm.objects);vm.inst=calloc(1,sizeof *vm.inst);
+  if(!vm.objects || !vm.inst){fail("broadcast receiver allocation");vm.win=NULL;gml_vm_free(&vm);gml_win_free(&win);return;}
+  vm.objects[0].name="payload_receiver";vm.objects[0].parent=-1;
+  vm.inst[0].id=100001;vm.inst[0].obj=0;vm.inst[0].active=1;vm.cur_self=vm.inst;
+  GmlVal saved=gml_builtin_call(&vm,"ds_map_create",NULL,0);
+  *gml_varmap_put(&vm.globals,capture)=saved;
+  for(int nested=0;nested<2;nested++){
+    if(nested)*gml_varmap_put(&vm.globals,payload)=saved;
+    gml_fire_broadcast_message(&vm,"sprite event","pulse",77);
+    const char *keys[]={"event_type","message","element_id"};
+    for(int i=0;i<3;i++){
+      GmlVal args[]={saved,vstr(keys[i])};GmlVal value=gml_builtin_call(&vm,"ds_map_find_value",args,2);
+      if(i==2 ? value.t!=V_REAL || value.d!=77 : value.t!=V_STR || strcmp(value.s,i==0?"sprite event":"pulse"))
+        fail("broadcast handler must observe all payload fields");
+    }
+    GmlVal current=gml_vm_identifier_get(&vm,payload);
+    if(current.t!=V_REAL || current.d!=(nested?saved.d:-1))fail("broadcast must restore outer payload scope");
+    GmlVal expired=vreal(gml_global_num(&vm,seen));
+    GmlVal args[]={expired,vstr("message")};
+    if(expired.d<0 || expired.d==saved.d || gml_builtin_call(&vm,"ds_map_find_value",args,2).t!=V_UNDEF)
+      fail("broadcast payload map must be destroyed after its callback");
+  }
+  vm.win=NULL;gml_vm_free(&vm);gml_win_free(&win);
+}
+
+static void event_message_word(uint8_t *data,size_t at,uint32_t value){
+  for(unsigned i=0;i<4;i++)data[at+i]=(uint8_t)(value>>(i*8));
+}
+static void event_message_metadata(void){
+  for(int variant=0;variant<7;variant++){
+    uint8_t data[1024]={0};char *strings[]={"pulse"};uint32_t offsets[]={300};
+    GmlWin win={.bytecode=17,.data=data,.size=sizeof data,.strs=strings,
+      .str_charoff=offsets,.n_strs=1,.n_chunks=2};
+    memcpy(win.chunks[0].name,"SPRT",5);win.chunks[0].off=16;win.chunks[0].size=384;
+    memcpy(win.chunks[1].name,"SEQN",5);win.chunks[1].off=400;win.chunks[1].size=300;
+    event_message_word(data,16,1);event_message_word(data,20,64);
+    event_message_word(data,120,UINT32_MAX);event_message_word(data,124,2);
+    event_message_word(data,140,192);event_message_word(data,192,1);
+    event_message_word(data,228,1);event_message_word(data,248,1);
+    event_message_word(data,256,1);event_message_word(data,260,300);
+    event_message_word(data,400,1);event_message_word(data,404,1);event_message_word(data,408,480);
+    event_message_word(data,480,300);event_message_word(data,484,1);
+    event_message_word(data,488,UINT32_C(0x3f800000));event_message_word(data,492,1);
+    event_message_word(data,496,UINT32_C(0x40800000));event_message_word(data,512,1);
+    event_message_word(data,516,UINT32_C(0x3f800000));event_message_word(data,532,1);
+    event_message_word(data,540,1);event_message_word(data,544,300);
+    if(variant==1)event_message_word(data,244,1);
+    if(variant==2)event_message_word(data,192,2);
+    if(variant==3)win.chunks[0].size=244;
+    if(variant==4)event_message_word(data,232,UINT32_C(0x7fc00000));
+    if(variant==5)event_message_word(data,228,4097);
+    if(variant==6)event_message_word(data,260,301);
+    GmlVM vm={.win=&win};
+    if(!gml_vm_rooms_init(&vm))fail("broadcast metadata initialization");
+    int count=vm.n_sprite_messages?vm.sprite_messages[0].count:0;
+    if(count!=(variant?0:1))fail("sprite broadcast metadata must retain valid and refuse malformed stores");
+    if(!variant && (vm.sprite_messages[0].keys[0].frame!=0 ||
+       strcmp(vm.sprite_messages[0].keys[0].message,"pulse")))fail("sprite broadcast key and string");
+    if(vm.n_sequences!=1 || vm.sequences[0].messages.count!=1 ||
+       vm.sequences[0].messages.keys[0].frame!=1 ||
+       strcmp(vm.sequences[0].messages.keys[0].message,"pulse"))fail("sequence broadcast uses the same bounded store");
+    vm.win=NULL;gml_vm_free(&vm);
+  }
+}
+static void event_message_crossings(void){
+  GmlBroadcastKey keys[]={{3,"c"},{0,"a"},{1,"b"}};
+  GmlBroadcastTrack track={.keys=keys,.count=3};
+  const struct { double before,after;int playback;const char *order; } cases[]={
+    {0,1,1,"a"},{1,2,1,"b"},{3,5,1,"ca"},{1,-1,1,"ba"},
+    {0,9,1,"abcabca"},{0,8,2,"abccb"},{0,10,0,"abc"},{2,2,1,""}
+  };
+  for(unsigned test=0;test<sizeof cases/sizeof cases[0];test++){
+    GmlVM vm={0};
+    if(!gml_vm_broadcast_queue(&vm,&track,1,77,cases[test].before,cases[test].after,4,cases[test].playback) ||
+       vm.n_broadcast_pending!=(int)strlen(cases[test].order))fail("broadcast crossing count");
+    else for(int i=0;i<vm.n_broadcast_pending;i++)
+      if(vm.broadcast_pending[i].message[0]!=cases[test].order[i] ||
+         vm.broadcast_pending[i].element!=77 || vm.broadcast_pending[i].kind!=1)
+        fail("broadcast crossing order and source identity");
+    free(vm.broadcast_pending);
+  }
+  GmlBroadcastKey duplicates[]={{1,"b"},{1,"d"}};
+  GmlBroadcastTrack repeated={.keys=duplicates,.count=2};
+  for(int backward=0;backward<2;backward++){
+    GmlVM test={0};
+    if(!gml_vm_broadcast_queue(&test,&repeated,1,77,1,backward?0:2,4,1) ||
+       test.n_broadcast_pending!=2 ||
+       test.broadcast_pending[0].message[0]!=(backward?'d':'b') ||
+       test.broadcast_pending[1].message[0]!=(backward?'b':'d'))
+      fail("broadcast duplicate keys retain direction-dependent order");
+    free(test.broadcast_pending);
+  }
+  GmlVM vm={0};
+  if(!gml_vm_broadcast_queue(&vm,&track,1,77,0,1,4,1) || vm.n_broadcast_pending!=1 ||
+     gml_vm_broadcast_queue(&vm,&track,1,77,0,1e20,4,1) || vm.n_broadcast_pending!=1 ||
+     gml_vm_broadcast_queue(&vm,&track,1,77,NAN,1,4,1) || vm.n_broadcast_pending!=1)
+    fail("broadcast refuses nonfinite/unbounded work transactionally");
+  free(vm.broadcast_pending);
+}
+
 int main(void){
   special_name_gate();
   game_identity_semantics();
+  event_data_outside_payload_events();
+  event_data_broadcast_payload();
+  event_message_metadata();
+  event_message_crossings();
   global_lookup_semantics();
   argument_and_receiver_resolution();
   draw_item_sort_order();

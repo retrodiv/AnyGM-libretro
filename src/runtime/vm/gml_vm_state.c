@@ -18,7 +18,7 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=41 };
+enum { GML_VM_STATE_SCHEMA=42 };
 enum { STATE_MAX_TILEMAPS=512, STATE_TILEMAP_RECORD_BYTES=56 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 /* IDs are assigned in canonical traversal order, never from addresses. Zero is the null array;
@@ -2510,6 +2510,7 @@ static void sw_vm(StateW *s, GmlVM *vm){
   if(request_length>GML_VM_GAME_LOAD_PATH_MAX){ s->ok=0;return; }
   sw_u32(s,(uint32_t)request_length);
   if(request_length) sw_raw(s,vm->pending_game_load,request_length);
+  sw_i32(s,vm->wait.broadcast_map);
   vm_state_profile_globals(vm);
   if(save_time){
     uint64_t save_t4=anygm_host_monotonic_time_ns(vm->host);
@@ -2945,6 +2946,12 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
         else vm->pending_game_load=request;
       }
     }
+  }
+  if(s.ok){
+    int map=sr_i32(&s);
+    if(map<0 || (map && (!vm->wait.active || !gml_broadcast_map_live(vm,map)))){
+      state_debug(vm,"bad parked broadcast payload",s.pos,(uint32_t)map); s.ok=0;
+    }else vm->wait.broadcast_map=map;
   }
   /* Rebind immutable grids before restoring their saved handles. The temporary
    * construction IDs never escape this state transaction. */

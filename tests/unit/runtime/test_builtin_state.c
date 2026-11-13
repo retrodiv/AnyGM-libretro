@@ -856,7 +856,61 @@ static int exception_wait_state_roundtrip(void){
   return ok;
 }
 
+static int broadcast_wait_state_roundtrip(void){
+  GmlCode entry={.name="neutral_parked_payload",.length=128};
+  GmlWin win={.bytecode=17,.code=&entry,.n_code=1};GmlVM vm={0};
+  if(gml_vm_init(&vm,&win,NULL)) return 0;
+  GmlVal map=gml_builtin_call(&vm,"ds_map_create",NULL,0);
+  GmlVal put[]={map,vstr("message"),vstr("retained")};
+  gml_builtin_call(&vm,"ds_map_add",put,3);
+  vm.wait.active=1;vm.wait.n_frames=1;vm.wait.frames[0].ci=0;
+  vm.wait.broadcast_map=(int)map.d;
+  size_t size=gml_vm_state_size(&vm),written=0,used=0,repeated=0;
+  unsigned char *before=malloc(size?size:1),*after=malloc(size?size:1);
+  int ok=map.d>0 && size && before && after &&
+    gml_vm_state_save(&vm,before,size,&written) && written==size;
+  if(ok){
+    gml_vm_wait_cancel(&vm);
+    ok=!gml_broadcast_map_live(&vm,(int)map.d) &&
+      gml_vm_state_load(&vm,before,written,&used) && used==written &&
+      vm.wait.active && vm.wait.broadcast_map==(int)map.d &&
+      gml_broadcast_map_live(&vm,(int)map.d);
+  }
+  if(ok){
+    GmlVal args[]={map,vstr("message")};
+    GmlVal message=gml_builtin_call(&vm,"ds_map_find_value",args,2);
+    ok=message.t==V_STR && !strcmp(message.s,"retained") &&
+      gml_vm_state_save(&vm,after,size,&repeated) && repeated==written &&
+      !memcmp(before,after,written);
+  }
+  const uint32_t bad_maps[]={UINT32_MAX,INT32_MAX};
+  for(size_t i=0;i<sizeof bad_maps/sizeof *bad_maps && ok;i++){
+    memcpy(after,before,written);
+    for(unsigned k=0;k<4;k++) after[written-4+k]=(unsigned char)(bad_maps[i]>>(8*k));
+    GmlVM rejected={0};
+    if(gml_vm_init(&rejected,&win,NULL)){ok=0;break;}
+    ok=!gml_vm_state_load(&rejected,after,written,&used);
+    gml_vm_free(&rejected);
+  }
+  if(ok){
+    /* A live DS map still cannot be owned by an absent parked chain. */
+    int retained=vm.wait.broadcast_map;vm.wait.broadcast_map=0;
+    gml_vm_wait_cancel(&vm);vm.wait.broadcast_map=retained;
+    ok=gml_vm_state_save(&vm,after,size,&repeated);
+    GmlVM rejected={0};
+    if(gml_vm_init(&rejected,&win,NULL)) ok=0;
+    else ok=ok && !gml_vm_state_load(&rejected,after,repeated,&used);
+    gml_vm_free(&rejected);
+    vm.wait.broadcast_map=0;gml_broadcast_map_release(&vm,retained);
+  }
+  free(before);free(after);gml_vm_free(&vm);
+  if(!ok) fputs("parked broadcast payload state failed\n",stderr);
+  else puts("parked broadcast state: owned map, exact resave, cancellation and three malformed controls passed");
+  return ok;
+}
+
 int main(void){
+  if(!broadcast_wait_state_roundtrip()) return 1;
 #ifdef ANYGM_TEST_STATE_ALLOC_FAILURE
   if(!writer_allocation_failure_is_bounded()) return 1;
 #endif

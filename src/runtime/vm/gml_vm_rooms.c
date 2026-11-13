@@ -91,7 +91,7 @@ fail:
 }
 
 /* ---- sequences (SEQN) ----
- * Every cursor below is bounded by the SEQN chunk. Track headers are recursive, followed by a
+ * Every cursor below is bounded by its containing chunk. Track headers are recursive, followed by a
  * model-specific keyframe store; in particular, a graphic track's asset-key store is variable
  * length and is not padding. Unsupported embedded animation curves reject only that sequence's
  * drawing metadata, leaving its length available to playback-control builtins. */
@@ -190,10 +190,15 @@ void gml_vm_sequences_clear(GmlVM *vm){
   for(int i=0;i<vm->n_sequences;i++){
     seq_sequence_graphics_clear(&vm->sequences[i]);
     free(vm->sequences[i].name);
+    free(vm->sequences[i].messages.keys);
   }
   free(vm->sequences);
   vm->sequences=NULL;
   vm->n_sequences=0;
+  for(int i=0;i<vm->n_sprite_messages;i++) free(vm->sprite_messages[i].keys);
+  free(vm->sprite_messages);vm->sprite_messages=NULL;vm->n_sprite_messages=0;
+  free(vm->broadcast_pending);vm->broadcast_pending=NULL;
+  vm->n_broadcast_pending=vm->cap_broadcast_pending=0;
 }
 
 static const GmlSeqTrack *seq_find_track(const GmlSeqGraphic *graphic, const char *name,
@@ -513,7 +518,8 @@ fail:
   return 0;
 }
 
-static int seq_skip_broadcast_store(SeqReader *reader, SeqParseBudget *budget){
+static int seq_parse_broadcast_store(SeqReader *reader, SeqParseBudget *budget,
+                                      GmlBroadcastTrack *track){
   uint32_t count=0;
   if(!seq_reader_u32(reader,&count) || count>SEQ_MAX_KEYS_PER_TRACK ||
      !seq_budget_take(&budget->keys,count,SEQ_MAX_KEYS_TOTAL)) return 0;
@@ -526,8 +532,25 @@ static int seq_skip_broadcast_store(SeqReader *reader, SeqParseBudget *budget){
       uint32_t index=0, messages=0;
       if(!seq_reader_u32(reader,&index) || !seq_reader_u32(reader,&messages) ||
          messages>SEQ_MAX_MESSAGES_PER_CHANNEL ||
-         !seq_budget_take(&budget->messages,messages,SEQ_MAX_MESSAGES_TOTAL) ||
-         !seq_reader_skip(reader,(size_t)messages*4u)) return 0;
+         !seq_budget_take(&budget->messages,messages,SEQ_MAX_MESSAGES_TOTAL)) return 0;
+      if(!track){
+        if(!seq_reader_skip(reader,(size_t)messages*4u)) return 0;
+        continue;
+      }
+      for(uint32_t message=0;message<messages;message++){
+        uint32_t pointer=0;
+        if(!seq_reader_u32(reader,&pointer)) return 0;
+        const char *text=seq_string_at(reader->win,pointer);
+        if(!text) return 0;
+        if(disabled) continue;
+        if(track->count==track->capacity){
+          int capacity=track->capacity?track->capacity*2:16;
+          GmlBroadcastKey *keys=realloc(track->keys,(size_t)capacity*sizeof *keys);
+          if(!keys) return 0;
+          track->keys=keys;track->capacity=capacity;
+        }
+        track->keys[track->count++]=(GmlBroadcastKey){key,text};
+      }
     }
   }
   return 1;
@@ -551,7 +574,9 @@ static int seq_parse_sequence(GmlWin *win, const GmlChunk *chunk, uint32_t offse
   const char *name=seq_string_at(win,name_offset);
   sequence->name=name?strdup(name):NULL;
   if(name && !sequence->name) return 0;
-  if(!seq_skip_broadcast_store(&reader,budget)) return 0;
+  if(!seq_parse_broadcast_store(&reader,budget,&sequence->messages)){
+    free(sequence->messages.keys);sequence->messages=(GmlBroadcastTrack){0};return 0;
+  }
   uint32_t tracks=0;
   if(!seq_reader_u32(&reader,&tracks) || tracks>SEQ_MAX_TOP_TRACKS) return 0;
   if(!tracks) return 1;
@@ -560,6 +585,39 @@ static int seq_parse_sequence(GmlWin *win, const GmlChunk *chunk, uint32_t offse
   for(uint32_t i=0;i<tracks;i++)
     if(!seq_parse_track(&reader,budget,0,sequence,NULL,1)) return 0;
   return 1;
+}
+
+/* Special sprite sequences retain the same bounded keyframe store as SEQN.
+ * Their offset points to a version word, followed by the ordinary sequence header. */
+static void parse_sprite_messages(GmlVM *vm){
+  GmlWin *win=vm?vm->win:NULL;
+  const GmlChunk *chunk=gml_chunk(win,"SPRT");
+  if(!win || !chunk || chunk->size<4 || (size_t)chunk->off+chunk->size>win->size) return;
+  SeqReader table={win,chunk->off,(size_t)chunk->off+chunk->size};uint32_t count=0;
+  if(!seq_reader_u32(&table,&count) || count>SEQ_MAX_KEYS_TOTAL ||
+     !seq_reader_has(&table,(size_t)count*4u)) return;
+  SeqParseBudget budget={0};
+  for(uint32_t i=0;i<count;i++){
+    uint32_t record=0;
+    if(!seq_reader_u32(&table,&record)) break;
+    if(record<chunk->off || record>table.end || table.end-record<80) continue;
+    const uint8_t *data=win->data;
+    if(gml_vm_read_u32_le(data,record+56)!=UINT32_MAX ||
+       gml_vm_read_u32_le(data,record+60)<2) continue;
+    uint32_t sequence=gml_vm_read_u32_le(data,record+76);
+    if(sequence<chunk->off || sequence>table.end || table.end-sequence<40 ||
+       gml_vm_read_u32_le(data,sequence)!=1) continue;
+    if(!vm->sprite_messages){
+      vm->sprite_messages=calloc(count,sizeof *vm->sprite_messages);
+      if(!vm->sprite_messages) return;
+      vm->n_sprite_messages=(int)count;
+    }
+    SeqReader reader={win,(size_t)sequence+36,table.end};
+    GmlBroadcastTrack *track=&vm->sprite_messages[i];
+    if(!seq_parse_broadcast_store(&reader,&budget,track)){
+      free(track->keys);*track=(GmlBroadcastTrack){0};
+    }
+  }
 }
 
 static void parse_sequences(GmlVM *vm){
@@ -1181,6 +1239,7 @@ int gml_vm_rooms_init(GmlVM *vm){
   if(!parse_paths(vm)) return 0;
   parse_timelines(vm);
   parse_sequences(vm);
+  parse_sprite_messages(vm);
   return 1;
 }
 

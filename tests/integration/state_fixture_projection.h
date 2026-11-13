@@ -144,7 +144,7 @@ static void fixture_map(FixtureProjection *p){
  * against the live fixture. Direct state controls cover mutation/restoration of these fields. */
 static int project_fixture_playback(AnygmEngine *engine,uint8_t **data,size_t *written){
   uint8_t *bytes=*data;
-  if(*written<112 || (uint32_t)read_u64(bytes+4)!=66 || engine->render.n_spr<0)return 0;
+  if(*written<112 || (uint32_t)read_u64(bytes+4)!=67 || engine->render.n_spr<0)return 0;
   /* The historical fixture contains no dynamic sprite information or nine-slice.
    * Validate each current metadata word before omitting this new trailer. */
   size_t metadata_start=112+(size_t)read_u64(bytes+64);
@@ -257,6 +257,10 @@ static int project_fixture_vm(AnygmEngine *engine,uint8_t **data,size_t *written
   size_t size=(size_t)read_u64(bytes+80);
   if(start>*written || size>*written-start || size<132)return 0;
   size_t wire_size=size;
+  /* Only an absent parked payload is neutral in this historical pin. */
+  if(engine->vm.wait.broadcast_map || size<4 ||
+     memcmp(bytes+start+size-4,(const uint8_t[4]){0},4))return 0;
+  size-=4;
   /* Only an absent pending file request is neutral in this historical pin. */
   if(engine->vm.pending_game_load || size<4 ||
      memcmp(bytes+start+size-4,(const uint8_t[4]){0},4))return 0;
@@ -277,7 +281,7 @@ static int project_fixture_vm(AnygmEngine *engine,uint8_t **data,size_t *written
   if((uint32_t)read_u64(p->input+timeline_at)!=0 ||
      (uint32_t)read_u64(p->input+timeline_at+4)!=(uint32_t)engine->vm.n_objects){free(p);return 0;}
   fixture_copy(p,132);
-  if((uint32_t)read_u64(p->output+4)!=41)p->ok=0;
+  if((uint32_t)read_u64(p->output+4)!=42)p->ok=0;
   write_u32(p->output+4,19);
   for(unsigned i=0;i<16;i++)(void)fixture_value(p,0);
   fixture_copy(p,76+26*4+616*8+10*4); /* RNG and unchanged software-3D scalars */
@@ -418,7 +422,7 @@ static int fixture_projection_controls(AnygmEngine *engine,const uint8_t *baseli
     free(engine->vm.pending_game_load);engine->vm.pending_game_load=NULL;
     free(bytes);
   }
-  const uint32_t unknown_roots[]={50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,67};
+  const uint32_t unknown_roots[]={50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,68};
   for(unsigned i=0;i<sizeof unknown_roots/sizeof unknown_roots[0] && ok;i++){
     uint8_t *bytes=NULL;size_t count=0;
     ok=save_state(engine,&bytes,&count);

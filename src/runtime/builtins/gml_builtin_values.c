@@ -1204,9 +1204,13 @@ GmlVal gml_builtin_try_values_variables(GmlVM *vm, const char *nm, GmlVal *a, in
     return vreal(0);
   }
   if(!strcmp(nm,"variable_clone")) return gml_variable_clone(vm,a,n);
-  if(!strcmp(nm,"variable_global_exists")) return vreal(gml_varmap_get(&vm->globals,S(vm,a,n,0))!=NULL);
+  if(!strcmp(nm,"variable_global_exists")){
+    const char *key=S(vm,a,n,0);
+    return vreal(!strcmp(key,"event_data") || gml_varmap_get(&vm->globals,key)!=NULL);
+  }
   if(!strcmp(nm,"variable_global_get")){
     const char *key=S(vm,a,n,0);
+    if(!strcmp(key,"event_data")) return gml_vm_identifier_get(vm,key);
     if(gml_input_text_variable(key)) return gml_input_text_value(vm,key);
     GmlVal *p=gml_varmap_get(&vm->globals,key);
     if(!p) return vundef();
@@ -1216,6 +1220,7 @@ GmlVal gml_builtin_try_values_variables(GmlVM *vm, const char *nm, GmlVal *a, in
   if(!strcmp(nm,"variable_global_set")){
     if(n>1){
       const char *key=S(vm,a,n,0);
+      if(!strcmp(key,"event_data")) return vreal(0);
       GmlVal *p=gml_varmap_get(&vm->globals,key);
       if(p) *p=var_store_clone(a[1]);
       else {

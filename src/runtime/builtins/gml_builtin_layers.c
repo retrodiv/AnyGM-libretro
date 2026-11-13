@@ -49,6 +49,28 @@ static GmlRtLayer *instance_element_layer(GmlVM *vm,const GmlRtElem *element){
   return instance && instance->draw_layer_order>=0
     ?gml_rt_layer_find_by_order(vm,instance->draw_layer_order):NULL;
 }
+static int instance_element_create(GmlVM *vm,GmlRtLayer *layer,GmlInstance *instance){
+  /* Keep lazy instance identities in the existing serialized element namespace. */
+  GmlRtElem *element=gml_rt_elem_new(vm);
+  if(!element) return -1;
+  element->type=GML_LAYER_ELEMENT_INSTANCE;
+  element->layer=layer->id;
+  element->instance_id=(int)instance->id;
+  element->instance_slot=(int)(instance-vm->inst);
+  element->visible=0;
+  return element->id;
+}
+int gml_vm_instance_element_id(GmlVM *vm,GmlInstance *instance){
+  if(!vm || !instance || !layer_instance_present(vm,instance) || instance->draw_layer_order<0)
+    return -1;
+  GmlRtLayer *layer=gml_rt_layer_find_by_order(vm,instance->draw_layer_order);
+  if(!layer) return -1;
+  for(int i=0;i<vm->n_rte;i++){
+    GmlRtElem *element=&vm->rte[i];
+    if(element->used && layer_element_instance(vm,element)==instance) return element->id;
+  }
+  return instance_element_create(vm,layer,instance);
+}
 static GmlRtLayer *layer_argument(GmlVM *vm,GmlVal *args,int count){
   double handle=N(args,count,0);
   return count>0 && (args[0].t==V_STR || (handle>=0 && handle<=INT_MAX))
@@ -101,16 +123,8 @@ static GmlVal layer_elements(GmlVM *vm,GmlRtLayer *layer){
     if(!layer_instance_present(vm,instance) || instance->draw_layer_order!=layer->order) continue;
     int id=instance_elements[slot].id;
     if(!id){
-      /* Keep instance element IDs in the same namespace as the other elements.
-       * Mint them on enumeration and retain them in the serialized element table. */
-      GmlRtElem *element=gml_rt_elem_new(vm);
-      if(!element) break;
-      element->type=GML_LAYER_ELEMENT_INSTANCE;
-      element->layer=layer->id;
-      element->instance_id=(int)instance->id;
-      element->instance_slot=slot;
-      element->visible=0;
-      id=element->id;
+      id=instance_element_create(vm,layer,instance);
+      if(id<0) break;
     }
     append_layer_element(result,moved,&moved_count,id,instance_elements[slot].order);
   }

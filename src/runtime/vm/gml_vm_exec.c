@@ -548,7 +548,7 @@ static const char *const g_special_var_names[]={
   "brush_color","brush_style","pen_color","pen_size",
   "bs_hollow","bs_solid",
   "bboxmode_automatic","bboxmode_fullimage","bboxmode_manual",
-  "event_type","event_number","mouse_x","mouse_y","mouse_button","mouse_lastbutton",
+  "event_type","event_number","event_data","mouse_x","mouse_y","mouse_button","mouse_lastbutton",
   "current_time","current_second","current_minute","current_hour","current_day","current_weekday",
   "current_month","current_year","os_type","os_windows","os_uwp","os_xboxone","os_ps3","os_ps4","os_psvita",
   "timezone_local","timezone_utc",
@@ -807,6 +807,10 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   if(!strcmp(name,"background_color")||!strcmp(name,"background_colour")){
     return vreal((double)(gml_vm_room_background_argb(vm)&0xFFFFFFu));
   }
+  if(!strcmp(name,"event_data")){
+    GmlVal *payload=gml_varmap_get_hashed(&vm->globals,name,nh);
+    return payload?*payload:vreal(-1);
+  }
   if(!strcmp(name,"event_type")) return vreal(vm->event_type);
   if(!strcmp(name,"event_number")) return vreal(vm->event_number);
   if(!strcmp(name,"current_time")) return vreal(current_time_value(vm));
@@ -946,7 +950,8 @@ static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal
       return;
     }
   }
-  if(!strcmp(name,"game_id") || !strcmp(name,"instance_id") || !strcmp(name,"mouse_button")) return;
+  if(!strcmp(name,"game_id") || !strcmp(name,"instance_id") || !strcmp(name,"mouse_button") ||
+     !strcmp(name,"event_data")) return;
   if(!strcmp(name,"room")){
     int target=(int)asnum(v);
     gml_vm_warm_audio_for_room(vm,target);
@@ -3144,6 +3149,7 @@ static void wait_frame_release(GmlWaitFrame *frame){
 void gml_vm_wait_cancel(GmlVM *vm){
   if(!vm) return;
   for(int i=0;i<vm->wait.n_frames;i++) wait_frame_release(&vm->wait.frames[i]);
+  gml_broadcast_map_release(vm,vm->wait.broadcast_map);
   memset(&vm->wait,0,sizeof vm->wait);
   vm->wait_requested=0;
 }
@@ -4363,9 +4369,18 @@ int gml_vm_wait_resume(GmlVM *vm){
   const char *save_event=vm->cur_event;
   int save_scope=vm->wait_event_scope, save_event_obj=vm->cur_event_obj;
   int save_type=vm->event_type, save_number=vm->event_number;
+  GmlVal *payload=gml_varmap_get(&vm->globals,"event_data");
+  GmlVal previous_payload=payload?*payload:vreal(-1);
+  if(resumed.broadcast_map)
+    *gml_varmap_put(&vm->globals,"event_data")=vreal(resumed.broadcast_map);
   vm->wait_event_scope=1;   /* the outermost parked frame is the event's own code run */
   GmlVal r=vm_run_code_impl(vm,0,NULL,NULL,NULL,0,resumed.frames,resumed.n_frames-1);
   if(r.t==V_STR && r.d!=0) free((char*)r.s);   /* discarded owned return: free it */
+  if(resumed.broadcast_map){
+    *gml_varmap_put(&vm->globals,"event_data")=previous_payload;
+    if(vm->wait.active) vm->wait.broadcast_map=resumed.broadcast_map;
+    else gml_broadcast_map_release(vm,resumed.broadcast_map);
+  }
   vm->wait_event_scope=save_scope;
   vm->cur_event=save_event; vm->cur_event_obj=save_event_obj;
   vm->event_type=save_type; vm->event_number=save_number;

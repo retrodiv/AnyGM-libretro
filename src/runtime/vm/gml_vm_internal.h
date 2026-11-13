@@ -104,6 +104,9 @@ void gml_vm_instances_sort_slots(GmlVM *vm, int *slots, int count);
  * already was under qsort; see gml_vm_draw_item_cmp. */
 typedef struct { double depth; int seq, type, idx, order, element_order, classic, obj, placed; } GmlDrawItem;
 int gml_vm_draw_item_cmp(const void *pa, const void *pb);
+int gml_vm_broadcast_queue(GmlVM *vm,const GmlBroadcastTrack *track,int kind,int element,
+                           double before,double after,double length,int playback);
+void gml_vm_broadcast_flush(GmlVM *vm,int kind);
 void gml_vm_draw_items_sort(GmlDrawItem *items, GmlDrawItem *aux, int *run_starts, int n);
 void gml_vm_instances_prepare_step(GmlVM *vm, int extent);
 GmlInstance *gml_vm_instances_alloc(GmlVM *vm);
