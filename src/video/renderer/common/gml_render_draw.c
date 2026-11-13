@@ -362,7 +362,8 @@ int gml_render_native_triangle_valid(const GmlRenderDrawOp *operation){
   int alpha_target=surface ||
     (t->image.resource_class==GML_RENDER_RESOURCE_APPLICATION && source_over);
   int coloured=p->kind==GML_RENDER_PRIMITIVE_NATIVE_COLOURED_TRIANGLE;
-  if((p->kind!=GML_RENDER_PRIMITIVE_NATIVE_TRIANGLE && !coloured) ||
+  int bilinear=p->kind==GML_RENDER_PRIMITIVE_NATIVE_BILINEAR_TRIANGLE;
+  if((p->kind!=GML_RENDER_PRIMITIVE_NATIVE_TRIANGLE && !coloured && !bilinear) ||
      (t->image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
       t->image.resource_class!=GML_RENDER_RESOURCE_APPLICATION && !surface) ||
      t->pixel_format!=GML_RENDER_PIXEL_ARGB8888 || !t->width || !t->height ||
@@ -381,6 +382,15 @@ int gml_render_native_triangle_valid(const GmlRenderDrawOp *operation){
   }
   if(surface && !source_over)
     for(unsigned v=0;v<3u;v++) if(p->triangle[v][5]!=1.0) return 0;
+  if(bilinear){
+    if(p->authored_region.x || p->authored_region.y ||
+       !p->authored_region.width || !p->authored_region.height ||
+       p->authored_region.width>65536u || p->authored_region.height>65536u) return 0;
+    for(unsigned c=0;c<4u;c++) if(p->corner_colour[c]>>24!=255u) return 0;
+    for(unsigned v=0;v<3u;v++) for(unsigned c=0;c<2u;c++)
+      if(!isfinite(p->triangle_uv[v][c]) || p->triangle_uv[v][c]<0.0 ||
+         p->triangle_uv[v][c]>1.0) return 0;
+  }
   return 1;
 }
 

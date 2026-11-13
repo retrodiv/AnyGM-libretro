@@ -3028,6 +3028,68 @@ static int scene_coloured_triangle_case(void){
   return 1;
 }
 
+static int scene_bilinear_triangle_case(void){
+  for(unsigned api=0;api<2u;api++) for(unsigned owner=0;owner<4u;owner++)
+  for(unsigned variant=0;variant<8u;variant++){
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
+    GmlRenderDeviceServices device={0};anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),
+      "bilinear triangle context");
+    gml_gpu_device_services(gpu,&device);
+    GmlRenderDrawOp ops[2]={0};
+    ops[0].opcode=GML_RENDER_OP_CLEAR;
+    ops[0].target=(GmlRenderTargetRef){.image={owner==2u?GML_RENDER_RESOURCE_SCREEN:owner?GML_RENDER_RESOURCE_APPLICATION:GML_RENDER_RESOURCE_SURFACE,1u,1u,2u},
+      .storage_version=1u,.width=32u,.height=24u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+      .region={0,0,32u,24u}};ops[0].payload.clear_colour=owner<2u?0xFF273859u:0x40273859u;
+    ops[1]=ops[0];ops[1].opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;
+    ops[1].scene_family=GML_RENDER_SCENE_PRIMITIVE;
+    ops[1].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    ops[1].target.image.content_version++;
+    GmlRenderPrimitiveRect *p=&ops[1].payload.primitive;
+    p->kind=GML_RENDER_PRIMITIVE_NATIVE_BILINEAR_TRIANGLE;p->region=ops[1].target.region;
+    p->alpha=1.0;p->alpha_blend=1u;p->pixel_write_mask=15u;
+    p->rectangle_flags=owner<2u?GML_RENDER_RECTANGLE_TARGET_ALPHA|GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA:0u;
+    p->authored_region=(GmlRenderRect){0,0,17,9};
+    const uint32_t colours[4]={0xFFFF0000u,0xFF00FF00u,0xFF0000FFu,0xFFFFFFFFu};
+    memcpy(p->corner_colour,colours,sizeof colours);
+    const double uv[3][2]={{0,0},{1,0},{1,1}};
+    memcpy(p->triangle_uv,uv,sizeof uv);
+    for(unsigned v=0;v<3u;v++){
+      p->triangle[v][0]=v==0u?2:18;p->triangle[v][1]=v==2u?16:4;
+      p->triangle[v][2]=p->triangle[v][3]=p->triangle[v][4]=1;
+      p->triangle[v][5]=.37;
+    }
+    if(variant==1u)p->triangle_uv[1][0]=NAN;
+    if(variant==2u)p->triangle_uv[1][0]=1.01;
+    if(variant==3u)p->authored_region.width=0;
+    if(variant==4u)p->authored_region.height=65537u;
+    if(variant==5u)p->corner_colour[0]&=0xFFFFFFu;
+    if(variant==6u)p->rectangle_flags=owner<2u?GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA:GML_RENDER_RECTANGLE_TARGET_ALPHA;
+    if(variant==7u)p->pixel_write_mask=7u;
+    GmlRenderDrawBatch batch={ops,2u,NULL,0u};
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    if(variant)REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+      !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls(),
+      "untyped or malformed preserving triangle rejects before any prefix writes");
+    else REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==2u &&
+      anygm_test_graphics_scene_draw_calls()==(owner<2u?1:2) && !anygm_test_graphics_scene_copies() &&
+      !anygm_test_graphics_read_pixels(),"preserving recipes use one pass while ordinary targets stamp covered opaque alpha");
+    if(!variant){
+      float instance[GL_SCENE_INSTANCE_FLOATS];
+      REQUIRE(anygm_test_graphics_instance_bytes(instance,sizeof instance)==sizeof instance,
+        "bilinear triangle instance captured");
+      for(unsigned v=0;v<4u;v++) for(unsigned c=0;c<2u;c++)
+        REQUIRE(instance[8u+v*2u+c]==(float)p->triangle_uv[v==3u?2u:v][c],
+          "normalized bilinear coordinates survive device stream compaction");
+      for(unsigned v=0;v<4u;v++) for(unsigned c=0;c<4u;c++)
+        REQUIRE(instance[16u+v*4u+c]==(float)p->triangle[v==3u?2u:v][c+2u],
+          "distinct endpoint colours and alpha survive device stream compaction");
+    }
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_opaque_surface_triangle_case(void){
   for(unsigned api=0;api<2u;api++) for(unsigned variant=0;variant<6u;variant++){
     GmlRenderDrawOp ops[3]={0};
@@ -8482,6 +8544,7 @@ int main(int argc,char **argv){
     {"scene_native_triangles",scene_native_triangle_batch_case},
     {"scene_source_alpha_triangles",scene_source_alpha_triangle_case},
     {"scene_coloured_triangles",scene_coloured_triangle_case},
+    {"scene_bilinear_triangles",scene_bilinear_triangle_case},
     {"scene_opaque_surface_triangles",scene_opaque_surface_triangle_case},
     {"scene_native_textured_triangles",scene_native_textured_triangle_case},
     {"scene_hot_constant_programs",scene_hot_constant_programs_case},

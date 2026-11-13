@@ -503,7 +503,13 @@ static int resident_rectangle_state_eligible(GmlRender *r,int cpu_passthrough){
 }
 
 static int resident_native_triangles(GmlRender *r,
-  const GmlRenderCpuBackendTriangle *triangles,uint32_t count,int view_rotation){
+  const GmlRenderCpuBackendTriangle *triangles,uint32_t count,int view_rotation,
+  const uint32_t bilinear_colour[4],const double bilinear_size[2]){
+  if((bilinear_colour!=NULL)!=(bilinear_size!=NULL)) return 0;
+  if(bilinear_size && (!view_rotation || count!=2u ||
+     !isfinite(bilinear_size[0]) || !isfinite(bilinear_size[1]) ||
+     bilinear_size[0]<1 || bilinear_size[0]>65536 ||
+     bilinear_size[1]<1 || bilinear_size[1]>65536)) return 0;
   int surface=view_rotation && r && r->target_id>0;
   int preserving_application=view_rotation &&
     gml_render_target_is_first_generation_application_surface(r);
@@ -540,6 +546,14 @@ static int resident_native_triangles(GmlRender *r,
     if(view_rotation) for(unsigned v=1;v<3u;v++) for(unsigned c=2;c<5u;c++)
       if(p->triangle[v][c]!=p->triangle[0][c])
         p->kind=GML_RENDER_PRIMITIVE_NATIVE_COLOURED_TRIANGLE;
+    if(bilinear_size){
+      static const double uv[2][3][2]={{{0,0},{1,0},{1,1}},{{0,0},{1,1},{0,1}}};
+      p->kind=GML_RENDER_PRIMITIVE_NATIVE_BILINEAR_TRIANGLE;
+      p->authored_region=(GmlRenderRect){0,0,(uint32_t)bilinear_size[0],(uint32_t)bilinear_size[1]};
+      memcpy(p->triangle_uv,uv[i],sizeof p->triangle_uv);
+      for(unsigned c=0;c<4u;c++)
+        p->corner_colour[c]=gml_render_cpu_backend_color_to_xrgb(bilinear_colour[c]);
+    }
     if(surface || preserving_application) for(unsigned v=0;v<3u;v++) if(p->triangle[v][5]<1.0){
       p->rectangle_flags|=GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA;
       fractional_surface=1;
@@ -570,7 +584,7 @@ native_done:
 
 int gml_render_cpu_backend_native_triangles(GmlRender *r,
   const GmlRenderCpuBackendTriangle *triangles,uint32_t count){
-  return resident_native_triangles(r,triangles,count,0);
+  return resident_native_triangles(r,triangles,count,0,NULL,NULL);
 }
 
 int gml_render_cpu_backend_vertex_spans(GmlRender *r,
@@ -1498,7 +1512,7 @@ static int resident_point_function(GmlRender *r,int x,int y,uint32_t colour){
   return 1;
 }
 
-static int view_point_coordinate(const GmlRender *r,int *x,int *y){
+static int view_point_coordinate(GmlRender *r,int *x,int *y){
   if(!gml_render_view_rotation_active(r) || gml_d3_is_active(r)) return 1;
   /* A point remains one destination pixel; project its centre before device filling. */
   double px=(double)*x+.5,py=(double)*y+.5;
@@ -1550,8 +1564,8 @@ static int world_view_line(GmlRender *r,double x1,double y1,double x2,double y2,
     vertex[2]=(colours[c]&255u)/255.0;vertex[3]=((colours[c]>>8)&255u)/255.0;
     vertex[4]=((colours[c]>>16)&255u)/255.0;vertex[5]=r->alpha;
   }
-  if(!resident_native_triangles(r,triangles,2,1))
-    gml_render_cpu_primitive_quad(r,x,y,colours,r->alpha);
+  if(!resident_native_triangles(r,triangles,2,1,NULL,NULL))
+    gml_render_cpu_primitive_quad(r,x,y,colours,r->alpha,NULL);
   return 1;
 }
 
@@ -1604,7 +1618,7 @@ static int world_view_opaque_rectangle(GmlRender *r,int x1,int y1,int x2,int y2,
     vertex[2]=(colour&255u)/255.0;vertex[3]=((colour>>8)&255u)/255.0;
     vertex[4]=((colour>>16)&255u)/255.0;vertex[5]=1.0;
   }
-  if(resident_native_triangles(r,triangles,2,1)) return 1;
+  if(resident_native_triangles(r,triangles,2,1,NULL,NULL)) return 1;
   for(unsigned i=0;i<2;i++){
     const unsigned *c=corners[i];
     gml_render_cpu_triangle_pixel_centres(r,x[c[0]],y[c[0]],x[c[1]],y[c[1]],
@@ -1613,10 +1627,63 @@ static int world_view_opaque_rectangle(GmlRender *r,int x1,int y1,int x2,int y2,
   return 1;
 }
 
+typedef struct {double x[4],y[4];} GmlViewPrimitiveQuad;
+
+static int world_view_rectangle(GmlRender *r,int x1,int y1,int x2,int y2,
+                                const uint32_t colour[4],int outline){
+  if(!gml_render_view_rotation_active(r) || gml_d3_is_active(r)) return 0;
+  if(r->alpha<=0 && !(r->alphablend && gml_render_blend_uses_destination_colour(r->blendmode))) return 1;
+  if(x1>x2){int swap=x1;x1=x2;x2=swap;}
+  if(y1>y2){int swap=y1;y1=y2;y2=swap;}
+  double size[2]={(double)x2-x1+1,(double)y2-y1+1};
+  double regions[4][4]={{x1,y1,(double)x2+1,outline?(double)y1+1:(double)y2+1}};
+  unsigned count=1;
+  if(outline){
+    if(y2>y1){
+      double bottom[4]={x1,y2,(double)x2+1,(double)y2+1};
+      memcpy(regions[count++],bottom,sizeof bottom);
+    }
+    if((double)y2-y1>1){
+      double left[4]={x1,(double)y1+1,(double)x1+1,y2};
+      memcpy(regions[count++],left,sizeof left);
+      if(x2>x1){
+        double right[4]={x2,(double)y1+1,(double)x2+1,y2};
+        memcpy(regions[count++],right,sizeof right);
+      }
+    }
+  }
+  int gradient=!outline && (colour[0]!=colour[1] || colour[0]!=colour[2] || colour[0]!=colour[3]);
+  uint32_t corners[4];
+  for(unsigned c=0;c<4u;c++) corners[c]=outline?colour[0]:colour[c];
+  GmlViewPrimitiveQuad quads[4];GmlRenderCpuBackendTriangle triangles[8]={0};
+  static const unsigned indices[2][3]={{0,1,2},{0,2,3}};
+  for(unsigned q=0;q<count;q++){
+    GmlViewPrimitiveQuad *quad=&quads[q];const double *box=regions[q];
+    for(unsigned c=0;c<4u;c++){
+      quad->x[c]=(c==1u || c==2u)?box[2]:box[0];
+      quad->y[c]=c>=2u?box[3]:box[1];
+      gml_render_view_rotate_point(r,&quad->x[c],&quad->y[c]);
+    }
+    for(unsigned t=0;t<2u;t++) for(unsigned v=0;v<3u;v++){
+      unsigned c=indices[t][v];double *vertex=triangles[q*2u+t].vertex[v];
+      uint32_t rgb=gradient?0xFFFFFFu:corners[c];
+      vertex[0]=quad->x[c];vertex[1]=quad->y[c];
+      vertex[2]=(rgb&255u)/255.0;vertex[3]=((rgb>>8)&255u)/255.0;
+      vertex[4]=((rgb>>16)&255u)/255.0;vertex[5]=r->alpha;
+    }
+  }
+  if(resident_native_triangles(r,triangles,count*2u,1,gradient?corners:NULL,gradient?size:NULL)) return 1;
+  for(unsigned q=0;q<count;q++)
+    gml_render_cpu_primitive_quad(r,quads[q].x,quads[q].y,corners,r->alpha,gradient?size:NULL);
+  return 1;
+}
+
 void gml_render_primitive_rectangle(GmlRender *render,
                                     int x1,int y1,int x2,int y2,
                                     uint32_t color,int outline){
   if(world_view_opaque_rectangle(render,x1,y1,x2,y2,color,outline)) return;
+  const uint32_t corners[4]={color,color,color,color};
+  if(world_view_rectangle(render,x1,y1,x2,y2,corners,outline)) return;
   if(outline && resident_outline_rectangle(render,x1,y1,x2,y2,color)) return;
   if(!outline && gml_render_shade_target_rect(render,x1,y1,x2,y2,color,render?render->alpha:1.0))
     return;
@@ -1632,6 +1699,8 @@ void gml_render_primitive_rectangle_color(GmlRender *render,
                                           uint32_t color1,uint32_t color2,
                                           uint32_t color3,uint32_t color4,
                                           int outline){
+  const uint32_t corners[4]={color1,color2,color3,color4};
+  if(world_view_rectangle(render,x1,y1,x2,y2,corners,outline)) return;
   if(outline && resident_outline_rectangle(render,x1,y1,x2,y2,color1)) return;
   if(!outline && color1==color2 && color2==color3 && color3==color4 &&
      gml_render_shade_target_rect(render,x1,y1,x2,y2,color1,render?render->alpha:1.0)) return;
@@ -1730,7 +1799,7 @@ static int world_view_triangle(GmlRender *r,double x1,double y1,double x2,double
       vertex[4]=((colour>>16)&255u)/255.0;vertex[5]=alpha;
     }
   }
-  if(!resident_native_triangles(r,triangles,count,1))
+  if(!resident_native_triangles(r,triangles,count,1,NULL,NULL))
     gml_render_cpu_triangle_alpha(r,x[0],y[0],x[1],y[1],x[2],y[2],colour,alpha,outline);
   return 1;
 }

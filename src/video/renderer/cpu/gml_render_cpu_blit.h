@@ -47,7 +47,8 @@ void gml_render_cpu_blit_view_sprite_region(GmlRender *render,GmlSprite *sprite,
   double rotation,const uint32_t colour[4],double alpha,GmlRenderSceneFamily family);
 /* Physical primitive corners reuse the existing general quad raster and blend owner. */
 void gml_render_cpu_primitive_quad(GmlRender *render,const double x[4],const double y[4],
-                                  const uint32_t colour[4],double alpha);
+                                  const uint32_t colour[4],double alpha,
+                                  const double bilinear_size[2]);
 void gml_render_cpu_blit_view_atlas(GmlRender *render,const GmlTpag *page,
   double sx,double sy,double sw,double sh,const double x[4],const double y[4],
   uint32_t colour,double alpha,GmlRenderSceneFamily family);

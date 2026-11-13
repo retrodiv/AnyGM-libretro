@@ -635,7 +635,14 @@
   "    o_color=(u_filter==182 || u_filter==183)?vec4(0.0,0.0,0.0,1.0):sampled;return;\n" \
   "  }\n" \
   "  // Native triangle alpha-zero edges own no covered write, including the stamp.\n" \
-  "  if((u_filter==32 || u_filter==33 || u_filter==177) && u_alpha_test==0 && v_colour.a<=0.0) discard;\n" \
+  "  if((u_filter==32 || u_filter==33 || (u_filter>=177 && u_filter<=179)) && u_alpha_test==0 && v_colour.a<=0.0) discard;\n" \
+  "  if(u_filter==178 || u_filter==179){\n" \
+  "    vec2 uv=clamp((v_texcoord*v_map.zw-vec2(0.5))/max(v_map.zw-vec2(1.0),vec2(1.0)),vec2(0.0),vec2(1.0));\n" \
+  "    if(v_map.z<=1.0) uv.x=0.0; if(v_map.w<=1.0) uv.y=0.0;\n" \
+  "    vec3 top=mix(vec3(rectangle_rgb(v_span_x.x)),vec3(rectangle_rgb(v_span_x.y)),uv.x);\n" \
+  "    vec3 bottom=mix(vec3(rectangle_rgb(v_span_x.w)),vec3(rectangle_rgb(v_span_x.z)),uv.x);\n" \
+  "    o_color=vec4(mix(top,bottom,uv.y)/255.0,v_colour.a); return;\n" \
+  "  }\n" \
   "  if(u_filter==31 || u_filter==32 || u_filter==177){ o_color=v_colour; return; }\n" \
   "  // R03_SHADER_STUDIO_ALPHA_RECT: a coverage-only pass stamps written alpha.\n" \
   "  if(u_filter==33){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \

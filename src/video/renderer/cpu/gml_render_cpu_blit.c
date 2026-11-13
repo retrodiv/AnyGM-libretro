@@ -7308,7 +7308,8 @@ static void blit_sprite_general_coloured_impl(GmlRender *r, GmlSprite *sprite,
                                                   double alpha,
                                                   const double placed_x[4],
                                                   const double placed_y[4],
-                                                  const GmlTpag *background_page,int tile_edges){
+                                                  const GmlTpag *background_page,int tile_edges,
+                                                  const double bilinear_size[2]){
   if(!r || !r->fb || (!background_page && (!sprite || sprite->n_frames<=0)) || !corner_colour ||
      !isfinite(sx) || !isfinite(sy) || !isfinite(sw) || !isfinite(sh) ||
      !isfinite(x) || !isfinite(y) || !isfinite(xs) || !isfinite(ys) ||
@@ -7409,9 +7410,17 @@ static void blit_sprite_general_coloured_impl(GmlRender *r, GmlSprite *sprite,
                       (source_x-logical_x)/source_width,
                       (source_y-logical_y)/source_height,interpolate,sample);
     font_distance_sample(r,&sample[0],&sample[1],&sample[2],&sample[3]);
-    /* The authored rectangle is two triangles, not a bilinear four-corner gradient. */
     double weight[4];
-    if(u>=v){ weight[0]=1.0-u; weight[1]=u-v; weight[2]=v; weight[3]=0.0; }
+    if(bilinear_size){
+      /* Rectangle colours belong to their endpoint pixel centres, including
+       * after a view turns the continuous rectangle geometry. */
+      double bu=bilinear_size[0]>1?fmax(0,fmin(1,(u*bilinear_size[0]-.5)/(bilinear_size[0]-1))):0;
+      double bv=bilinear_size[1]>1?fmax(0,fmin(1,(v*bilinear_size[1]-.5)/(bilinear_size[1]-1))):0;
+      weight[0]=(1-bu)*(1-bv);weight[1]=bu*(1-bv);
+      weight[2]=bu*bv;weight[3]=(1-bu)*bv;
+    }
+    /* Ordinary general sprites retain their two authored triangles. */
+    else if(u>=v){ weight[0]=1.0-u; weight[1]=u-v; weight[2]=v; weight[3]=0.0; }
     else { weight[0]=1.0-v; weight[1]=0.0; weight[2]=u; weight[3]=v-u; }
     for(int channel=0;channel<3;channel++){
       int shift=channel==0?0:(channel==1?8:16);
@@ -7454,7 +7463,7 @@ void gml_render_cpu_blit_sprite_general_coloured(GmlRender *r,GmlSprite *sprite,
   GmlRenderDispatchCpuScope scope;
   gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_SPRITE);
   blit_sprite_general_coloured_impl(r,sprite,subimg,sx,sy,sw,sh,x,y,xs,ys,rotation,
-                                    colour,alpha,NULL,NULL,NULL,0);
+                                    colour,alpha,NULL,NULL,NULL,0,NULL);
   gml_render_dispatch_cpu_scope_end(r,&scope);
 }
 
@@ -7466,12 +7475,13 @@ void gml_render_cpu_blit_view_sprite_region(GmlRender *r,GmlSprite *sprite,int s
   GmlRenderDispatchCpuScope scope;
   gml_render_dispatch_cpu_scope_begin(r,&scope,family);
   blit_sprite_general_coloured_impl(r,sprite,subimg,sx,sy,sw,sh,0.0,0.0,1.0,1.0,
-                                    rotation,colour,alpha,x,y,NULL,0);
+                                    rotation,colour,alpha,x,y,NULL,0,NULL);
   gml_render_dispatch_cpu_scope_end(r,&scope);
 }
 
 void gml_render_cpu_primitive_quad(GmlRender *r,const double x[4],const double y[4],
-                                  const uint32_t colour[4],double alpha){
+                                  const uint32_t colour[4],double alpha,
+                                  const double bilinear_size[2]){
   if(!r || !x || !y || !colour || !gml_render_cpu_draw_barrier(r)) return;
   uint8_t white[4]={255,255,255,255};
   GmlSprite source={.w=1,.h=1,.n_frames=1,.runtime_rgba=white};
@@ -7484,7 +7494,7 @@ void gml_render_cpu_primitive_quad(GmlRender *r,const double x[4],const double y
   GmlRenderDispatchCpuScope scope;
   gml_render_dispatch_cpu_scope_begin(r,&scope,GML_RENDER_SCENE_PRIMITIVE);
   blit_sprite_general_coloured_impl(r,&source,0,0,0,1,1,0,0,1,1,0,
-                                    colour,alpha,placed_x,placed_y,NULL,1);
+                                    colour,alpha,placed_x,placed_y,NULL,1,bilinear_size);
   gml_render_dispatch_cpu_scope_end(r,&scope);
 }
 
@@ -7500,7 +7510,7 @@ void gml_render_cpu_blit_view_atlas(GmlRender *r,const GmlTpag *page,
   int saved_filter=r->interp;
   if(family==GML_RENDER_SCENE_TILE && r->classic) r->interp=0;
   blit_sprite_general_coloured_impl(r,NULL,0,sx,sy,sw,sh,0,0,1,1,0,
-                                    corners,alpha,x,y,page,family==GML_RENDER_SCENE_TILE);
+                                    corners,alpha,x,y,page,family==GML_RENDER_SCENE_TILE,NULL);
   r->interp=saved_filter;
   gml_render_dispatch_cpu_scope_end(r,&scope);
 }
