@@ -784,6 +784,7 @@ int gml_render_target_pixel(GmlRender *r,int x,int y,uint32_t *pixel){
   if(pixel) *pixel=0;
   if(!r || !pixel) return 0;
   gml_render_maybe_prepare_draw(r);
+  if(!gml_render_application_scene_flush(r)) return 0;
   if(!r->fb || x<0 || y<0 || x>=r->fbw || y>=r->fbh) return 0;
   current=r->fb;
   width=r->fbw;

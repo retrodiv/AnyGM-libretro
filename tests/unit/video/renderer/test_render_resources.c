@@ -20239,6 +20239,23 @@ static int resident_surface_feedback_authority(void){
   return 1;
 }
 
+static int target_pixel_observes_pending_scene(void){
+  uint32_t base[16]={0},pixels[4]={0xFF315779u},pixel=0;
+  FakeDevice fake={.on_demand=1,.readback_colour=0xFF426486u};
+  GmlRender *r=calloc(1,sizeof *r);
+  GmlRenderDeviceServices device=service(&fake);
+  GmlRenderResourceSource source=source_view(pixels,1);
+  device.observe_on_demand=fake_observe_on_demand;
+  CHECK(r && !gml_render_init(r,NULL));
+  gml_render_bind_device(r,&device);
+  CHECK(gml_render_begin_resident_base(r,base,4,4,0,0));
+  CHECK(paired_root_append(r,&source) && r->pending_scene_batch && !fake.submits);
+  CHECK(gml_render_target_pixel(r,1,1,&pixel) && pixel==fake.readback_colour);
+  CHECK(fake.submits==1 && fake.readbacks==1 && r->resident_application_pass);
+  gml_render_free(r);free(r);
+  return 1;
+}
+
 static int target_pixel_observes_resident_result(void){
   GmlRender *render=(GmlRender*)calloc(1,sizeof *render);
   GmlVM vm={0};
@@ -20875,7 +20892,9 @@ int main(void){
   const char *selected=getenv("GML_RENDER_RESOURCE_CASE");
   if(selected){
     int passed;
-    if(!strcmp(selected,"state-without-context")) passed=state_without_context();
+    if(!strcmp(selected,"target-pixel-pending-scene")) passed=target_pixel_observes_pending_scene();
+    else if(!strcmp(selected,"target-pixel-resident-result")) passed=target_pixel_observes_resident_result();
+    else if(!strcmp(selected,"state-without-context")) passed=state_without_context();
     else if(!strcmp(selected,"metadata-pending-state")) passed=metadata_state_capacity_preserves_pending_pixels();
     else if(!strcmp(selected,"zero-base-runtime-state")) passed=zero_base_runtime_sprite_state();
     else if(!strcmp(selected,"opaque-clear-complement")) passed=opaque_rectangle_clear_complement();
@@ -21249,6 +21268,7 @@ int main(void){
   passed+=resident_surface_rotated_authority();
   passed+=resident_large_rotated_multiply();
   passed+=resident_surface_feedback_authority();
+  passed+=target_pixel_observes_pending_scene();
   passed+=target_pixel_observes_resident_result();
   passed+=nearest_subrectangle_mirrors();
   passed+=source_free_primitive_rect_replay();
