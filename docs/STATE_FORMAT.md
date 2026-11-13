@@ -20,9 +20,23 @@ failed partial reads leave the canonical image unpublished and invalid as a
 current resource. See R03-P9-INCREMENTAL-CHECKPOINT in
 [the renderer map](RENDERER_BACKENDS.md) for owners and controls.
 
-The current AnyGM save-state schema is `68`. It is the format transported by
+The current AnyGM save-state schema is `70`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `70` introduces VM schema `45`. Scalar DS-map records use the same bounded
+raw-or-compressed block framing and LZ codec as scalar grids. Keys, typed keys,
+values, child metadata and entry order are preserved. Compression is cached by
+the existing map owner and invalidated by existing mutations. Both scalar owners
+validate decoded element bounds before resource allocation, consume the complete
+block, and retain its exact encoded bytes for later snapshots. Other embedded
+schemas and frontend capacity policy are unchanged; older root and VM schemas
+reject transactionally.
+
+Schema `69` introduced VM schema `44` and the bounded deferred local-account
+selection queue after the video trailer. Requests retain their identity and pad
+index, and older states are rejected transactionally. Schema `70` retains this
+queue along with the scalar-map block encoding.
 
 Schema `68` introduces VM schema `43` and audio schema `6`. The VM trailer adds
 an independently owned suspended Social-event map, followed by a movie-presence

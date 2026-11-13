@@ -698,11 +698,11 @@ void gml_builtin_state_write_ini_ds(const GmlBuiltinState *state,
       free(view);
     }
     unsigned char scalar=map->state_scalar_blob_checked==2;
-    gml_vm_state_write_raw(writer,&scalar,1);
     if(scalar){
       gml_vm_state_write_raw(writer,map->state_scalar_blob,map->state_scalar_blob_size);
       continue;
     }
+    gml_vm_state_write_raw(writer,&scalar,1);
     for(int j=0;j<map->len;j++){
       GmlDSMapEntry *entry=&map->entry[j];
       gml_vm_state_write_owned_string(writer,entry->key,&entry->state_string_encoding[0],
@@ -843,46 +843,45 @@ int gml_builtin_state_read_ini_ds(GmlBuiltinState *state,
     }
     map->len=gml_vm_state_read_i32(reader);
     map->last_lookup=-1;
-    if(map->len<0 || map->len>100000 ||
-       (size_t)map->len>gml_vm_state_reader_remaining(reader)/10){
+    if(map->len<0 || map->len>100000){
       gml_vm_state_reader_fail(reader,"bad ds_map len",(uint32_t)map->len);
       map->len=0;
+    }
+    GmlVmStateReader *scalar_reader=NULL;
+    int scalar=gml_vm_state_begin_scalar_block(reader,(uint32_t)map->len,8,&scalar_reader);
+    if(scalar<0){ map->len=0;break; }
+    if(!scalar && (size_t)map->len>gml_vm_state_reader_remaining(reader)/10){
+      gml_vm_state_reader_fail(reader,"bad ds_map len",(uint32_t)map->len);
+      map->len=0;break;
     }
     map->cap=map->len;
     map->entry=map->cap?calloc((size_t)map->cap,sizeof(*map->entry)):NULL;
     if(map->cap && !map->entry){
-      gml_vm_state_reader_fail(reader,"ds_map allocation failed",(uint32_t)map->cap);
+      gml_vm_state_reader_fail(reader,"ds_map allocation failed",id);
       map->len=map->cap=0;
+      if(scalar) gml_vm_state_end_scalar_block(reader,scalar_reader,
+                         &map->state_scalar_blob,&map->state_scalar_blob_size);
       break;
     }
-    unsigned char scalar=0;
-    gml_vm_state_read_raw(reader,&scalar,1);
-    if(scalar>1){
-      gml_vm_state_reader_fail(reader,"bad ds_map scalar form",scalar);
-      scalar=0;
-    }
-    size_t scalar_start=gml_vm_state_reader_position(reader);
-    for(int j=0;j<map->len && gml_vm_state_reader_ok(reader);j++){
-      map->entry[j].key=scalar?gml_vm_state_read_isolated_string(reader):
-                               gml_vm_state_read_string(reader);
-      map->entry[j].key_val=scalar?gml_vm_state_read_isolated_value(reader):
-                                   gml_vm_state_read_value(reader);
-      map->entry[j].val=scalar?gml_vm_state_read_isolated_value(reader):
-                               gml_vm_state_read_value(reader);
-      int kind=gml_vm_state_read_i32(reader);
+    GmlVmStateReader *entries_reader=scalar?scalar_reader:reader;
+    for(int j=0;j<map->len && gml_vm_state_reader_ok(entries_reader);j++){
+      map->entry[j].key=scalar?gml_vm_state_read_isolated_string(entries_reader):
+                               gml_vm_state_read_string(entries_reader);
+      map->entry[j].key_val=scalar?gml_vm_state_read_isolated_value(entries_reader):
+                                   gml_vm_state_read_value(entries_reader);
+      map->entry[j].val=scalar?gml_vm_state_read_isolated_value(entries_reader):
+                               gml_vm_state_read_value(entries_reader);
+      int kind=gml_vm_state_read_i32(entries_reader);
       if(kind<0 || kind>2){
-        gml_vm_state_reader_fail(reader,"bad ds_map child kind",(uint32_t)kind);
+        gml_vm_state_reader_fail(entries_reader,"bad ds_map child kind",(uint32_t)kind);
         kind=0;
       }
       map->entry[j].child_kind=(unsigned char)kind;
       gml_arr_mark_escaped(map->entry[j].key_val);
       gml_arr_mark_escaped(map->entry[j].val);
     }
-    if(scalar && gml_vm_state_reader_ok(reader) &&
-       gml_vm_state_reader_copy_range(reader,scalar_start,
-                                      gml_vm_state_reader_position(reader),
-                                      &map->state_scalar_blob,
-                                      &map->state_scalar_blob_size))
+    if(scalar && gml_vm_state_end_scalar_block(reader,scalar_reader,
+                              &map->state_scalar_blob,&map->state_scalar_blob_size))
       map->state_scalar_blob_checked=2;
   }
   if(!gml_vm_state_reader_ok(reader)) return 0;

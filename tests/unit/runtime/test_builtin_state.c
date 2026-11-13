@@ -431,6 +431,95 @@ static int ds_owned_string_memo_roundtrip(void){
   return ok;
 }
 
+static uint32_t map_block_u32(const unsigned char *p){
+  return (uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);
+}
+static void map_block_put_u32(unsigned char *p,uint32_t value){
+  for(unsigned i=0;i<4;i++) p[i]=(unsigned char)(value>>(8*i));
+}
+
+/* Many individually short runtime strings need sharing across entries, not another copy of each
+ * isolated entry. Prove compact bytes, exact typed contents, ordering, mutation and resave. */
+static int scalar_map_block_roundtrip(void){
+  enum { count=1024 };
+  GmlWin win={0};GmlVM source={0},restored={0};
+  unsigned char *before=NULL,*after=NULL,*damaged=NULL;
+  int ok=!gml_vm_init(&source,&win,NULL) && !gml_vm_init(&restored,&win,NULL);
+  size_t empty=ok?gml_vm_state_size(&source):0,logical=0;
+  GmlVal map=ok?call(&source,"ds_map_create",NULL,0):vundef();
+  char key[96],text[160];
+  for(int i=0;i<count && ok;i++){
+    snprintf(key,sizeof key,"neutral_dictionary_key_with_shared_prefix_%04d",i);
+    snprintf(text,sizeof text,"Repeated authored message prefix, entry %04d and repeated suffix.",i);
+    GmlVal args[]={map,vstr(key),i%8?vint64(INT64_C(9007199254740992)+i):vstr(text)};
+    call(&source,"ds_map_add",args,3);
+    logical+=strlen(key)+(i%8?8:strlen(text));
+  }
+  size_t size=ok?gml_vm_state_size(&source):0,written=0,repeated=0,used=0;
+  printf("scalar map block sizes: empty=%zu populated=%zu logical=%zu\n",empty,size,logical);
+  before=malloc(size?size:1);after=malloc(size?size:1);damaged=malloc(size?size:1);
+  ok=ok && empty && size>empty && size-empty<logical/2 && before && after && damaged &&
+    gml_vm_state_save(&source,before,size,&written) && written==size &&
+    gml_vm_state_save(&source,after,size,&repeated) && repeated==written &&
+    !memcmp(before,after,written);
+  size_t block=0;
+  if(ok){
+    unsigned char marker[9];map_block_put_u32(marker,(uint32_t)map.d);
+    map_block_put_u32(marker+4,count);marker[8]=2;
+    int matches=0;
+    for(size_t at=0;at+17<=written;at++) if(!memcmp(before+at,marker,sizeof marker)){
+      block=at+8;matches++;
+    }
+    ok=matches==1 && map_block_u32(before+block+1)>map_block_u32(before+block+5) &&
+       map_block_u32(before+block+5)<=written-block-9;
+  }
+  for(int mutation=0;mutation<6 && ok;mutation++){
+    memcpy(damaged,before,written);
+    if(mutation==0) damaged[block]=3; /* Unknown form. */
+    if(mutation==1) map_block_put_u32(damaged+block+1,0); /* Count cannot fit decoded bytes. */
+    if(mutation==2) memcpy(damaged+block+5,damaged+block+1,4); /* Compressed >= raw. */
+    if(mutation==3) map_block_put_u32(damaged+block+5,UINT32_MAX); /* Truncated stored extent. */
+    if(mutation==4){ /* A match cannot refer to decoded output before the block starts. */
+      damaged[block+9]=0;damaged[block+10]=damaged[block+11]=0;
+    }
+    if(mutation==5) map_block_put_u32(damaged+block+1,UINT32_MAX); /* Decoded budget. */
+    GmlVM rejected={0};int initialized=!gml_vm_init(&rejected,&win,NULL);
+    ok=initialized && !gml_vm_state_load(&rejected,damaged,written,&used);
+    if(initialized) gml_vm_free(&rejected);
+  }
+  if(ok) ok=gml_vm_state_load(&restored,before,written,&used) && used==written;
+  GmlVal next=ok?call(&restored,"ds_map_find_first",&map,1):vundef();
+  for(int i=0;i<count && ok;i++){
+    snprintf(key,sizeof key,"neutral_dictionary_key_with_shared_prefix_%04d",i);
+    snprintf(text,sizeof text,"Repeated authored message prefix, entry %04d and repeated suffix.",i);
+    GmlVal find[]={map,vstr(key)},value=call(&restored,"ds_map_find_value",find,2);
+    ok=next.t==V_STR && next.s && !strcmp(next.s,key) &&
+      (i%8?(gml_val_number_kind(value)==GML_NUM_INT64 && value.integer==INT64_C(9007199254740992)+i):
+            (value.t==V_STR && value.s && !strcmp(value.s,text)));
+    if(value.t==V_STR && value.d!=0) free((void *)value.s);
+    if(next.t==V_STR && next.d!=0) free((void *)next.s);
+    if(i+1<count){GmlVal args[]={map,vstr(key)};next=call(&restored,"ds_map_find_next",args,2);}
+  }
+  if(ok) ok=gml_vm_state_save(&restored,after,size,&repeated) &&
+    repeated==written && !memcmp(before,after,written);
+  if(ok){
+    GmlVal replace[]={map,vstr("neutral_dictionary_key_with_shared_prefix_0511"),vint64(INT64_MIN)};
+    call(&restored,"ds_map_replace",replace,3);
+    size_t changed=gml_vm_state_size(&restored),changed_written=0;
+    unsigned char *bytes=malloc(changed?changed:1);
+    ok=bytes && gml_vm_state_save(&restored,bytes,changed,&changed_written) &&
+       (changed_written!=written || memcmp(bytes,before,written));
+    if(ok) ok=gml_vm_state_load(&source,bytes,changed_written,&used);
+    GmlVal find[]={map,replace[1]};GmlVal value=ok?call(&source,"ds_map_find_value",find,2):vundef();
+    ok=ok && gml_val_number_kind(value)==GML_NUM_INT64 && value.integer==INT64_MIN;
+    free(bytes);
+  }
+  free(before);free(after);free(damaged);gml_vm_free(&source);gml_vm_free(&restored);
+  if(!ok) fputs("scalar map block: compact bytes, ordered typed values, mutation or malformed rejection failed\n",stderr);
+  else puts("scalar map block: compact ordered typed roundtrip, mutation and six malformed controls passed");
+  return ok;
+}
+
 static int boxed_object_state_roundtrip(void){
   GmlWin win={0};
   GmlVM source={0},restored={0};
@@ -1074,6 +1163,7 @@ int main(void){
 #endif
   if(!exception_wait_state_roundtrip()) return 1;
   if(!typed_numeric_state_roundtrip()) return 1;
+  if(!scalar_map_block_roundtrip()) return 1;
   if(!array_zero_bits_roundtrip()) return 1;
   if(!ds_owned_string_memo_roundtrip()) return 1;
   if(!repeated_map_heap_roundtrip(0) || !repeated_map_heap_roundtrip(1)) return 1;

@@ -91,7 +91,7 @@ static size_t neutral_vm_body_end(AnygmEngine *engine,const uint8_t *bytes,size_
     start+=(size_t)part;
   }
   uint64_t length=read_u64(bytes+80);
-  if(length<49 || length>size-start || (uint32_t)read_u64(bytes+start+4)!=44)
+  if(length<49 || length>size-start || (uint32_t)read_u64(bytes+start+4)!=45)
     return SIZE_MAX;
   size_t end=start+(size_t)length;
   if(!neutral_async_video_tail(engine,bytes,end)) return SIZE_MAX;
@@ -114,7 +114,7 @@ static int neutral_vm_body_end_controls(AnygmEngine *engine,
     return fail("current neutral VM trailer was not located");
   uint8_t *candidate=malloc(size);
   if(!candidate) return fail("neutral trailer control allocation");
-  const uint32_t roots[]={53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,70},vms[]={31,32,33,34,35,36,37,38,39,40,41,42,43,45};
+  const uint32_t roots[]={53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,71},vms[]={31,32,33,34,35,36,37,38,39,40,41,42,43,44,46};
   size_t vm_start=STATE_HEADER_SIZE+(size_t)read_u64(bytes+64)+
                   (size_t)read_u64(bytes+72);
   int ok=1;

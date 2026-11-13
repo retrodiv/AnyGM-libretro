@@ -66,6 +66,13 @@ char *gml_vm_state_read_string(GmlVmStateReader *reader);
 GmlVal gml_vm_state_read_value(GmlVmStateReader *reader);
 char *gml_vm_state_read_isolated_string(GmlVmStateReader *reader);
 GmlVal gml_vm_state_read_isolated_value(GmlVmStateReader *reader);
+/* A successful block owns an isolated bounded cursor until end, including on decode failure.
+ * Zero consumes the general marker; minus one rejects framing before allocating resource entries.
+ * End requires exact decoded consumption and retains the exact encoded bytes for the next save. */
+int gml_vm_state_begin_scalar_block(GmlVmStateReader *reader, uint32_t count,
+                                     size_t minimum_bytes, GmlVmStateReader **block);
+int gml_vm_state_end_scalar_block(GmlVmStateReader *reader, GmlVmStateReader *block,
+                                   unsigned char **bytes, uint32_t *size);
 /* One means a scalar blob was consumed, zero means the general marker was consumed, and minus one
  * means malformed input. A successful scalar read retains the exact wire bytes for the next save. */
 int gml_vm_state_read_scalar_grid_blob(GmlVmStateReader *reader, GmlVal *values,
