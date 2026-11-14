@@ -70,7 +70,11 @@ ANYGM_VIDEO_SOURCES := \
 PKG_CONFIG ?= pkg-config
 ANYGM_FFMPEG_PACKAGES := libavformat libavcodec libavutil libswscale libswresample
 ANYGM_CROSS_PROVIDER := $(strip $(CROSS_COMPILE) $(filter android,$(platform)))
-ifeq ($(ANYGM_CROSS_PROVIDER),)
+ifeq ($(VIDEO_PROVIDER),none)
+FFMPEG_CFLAGS ?=
+FFMPEG_LIBS ?=
+ANYGM_FFMPEG_DISCOVERED :=
+else ifeq ($(ANYGM_CROSS_PROVIDER),)
 FFMPEG_CFLAGS ?= $(shell $(PKG_CONFIG) --cflags $(ANYGM_FFMPEG_PACKAGES) 2>/dev/null)
 FFMPEG_LIBS ?= $(shell $(PKG_CONFIG) --libs $(ANYGM_FFMPEG_PACKAGES) 2>/dev/null)
 ANYGM_FFMPEG_DISCOVERED := $(shell $(PKG_CONFIG) --exists $(ANYGM_FFMPEG_PACKAGES) 2>/dev/null && printf 1)

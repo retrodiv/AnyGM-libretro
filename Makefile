@@ -88,7 +88,10 @@ ARFLAGS := rcs
 endif
 REPRODUCIBLE_CFLAGS ?= -ffile-prefix-map=$(CURDIR)=. -fdebug-prefix-map=$(CURDIR)=.
 
-CPPFLAGS += $(addprefix -I,$(ANYGM_RUNTIME_INCLUDE_DIRS)) $(FFMPEG_CFLAGS)
+CPPFLAGS += $(addprefix -I,$(ANYGM_RUNTIME_INCLUDE_DIRS))
+ifeq ($(ANYGM_VIDEO_PROVIDER_DYNAMIC),1)
+CPPFLAGS += $(FFMPEG_CFLAGS)
+endif
 LIBRETRO_CPPFLAGS := $(CPPFLAGS) $(addprefix -I,$(ANYGM_LIBRETRO_INCLUDE_DIRS))
 TEST_CPPFLAGS := $(CPPFLAGS) -Itests/support -Itests/unit/content/classic
 CFLAGS += -std=gnu11 -Wall -Wextra $(REPRODUCIBLE_CFLAGS)

@@ -22,6 +22,49 @@ import build_ffmpeg as builder
 
 
 class ProviderPreparation(unittest.TestCase):
+    def test_none_provider_ignores_host_sdk_discovery_and_flags(self):
+        for supplied_flags in (False, True):
+            with self.subTest(supplied_flags=supplied_flags), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                marker = root / "called"
+                script = root / "pkg-config"
+                script.write_text('#!/bin/sh\ntouch "$MARKER"\n'
+                                  'case "$1" in\n'
+                                  '  --cflags) printf "%s\\n" -I/host/include ;;\n'
+                                  '  --libs) printf "%s\\n" -lhost_provider ;;\n'
+                                  'esac\n')
+                script.chmod(0o755)
+                command = ["make", "-s", "-f", "Makefile", "-f", "-",
+                           "VIDEO_PROVIDER=none", f"PKG_CONFIG={script}", "provider-flags"]
+                if supplied_flags:
+                    command += ["FFMPEG_CFLAGS=-I/host/include", "FFMPEG_LIBS=-lhost_provider"]
+                result = subprocess.run(command, cwd=ROOT,
+                    env=dict(os.environ, MARKER=str(marker)), input="provider-flags:\n"
+                    "\t@printf '%s\\n' '$(CPPFLAGS)' '$(LIBRETRO_CPPFLAGS)' '$(VIDEO_PROVIDER_LDLIBS)'\n",
+                    capture_output=True, text=True, timeout=60)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertFalse(marker.exists(), "disabled video must not query the host SDK")
+                self.assertNotIn("/host/include", result.stdout)
+                self.assertNotIn("host_provider", result.stdout)
+                self.assertIn("-DANYGM_VIDEO_PROVIDER_DYNAMIC=0", result.stdout)
+
+    def test_native_auto_provider_keeps_sdk_discovery_and_flags(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            script = root / "pkg-config"
+            script.write_text('#!/bin/sh\ncase "$1" in\n'
+                              '  --cflags) printf "%s\\n" -I/native-sdk/include ;;\n'
+                              'esac\n')
+            script.chmod(0o755)
+            result = subprocess.run(["make", "-s", "-f", "Makefile", "-f", "-",
+                "VIDEO_PROVIDER=auto", "CROSS_COMPILE=", "platform=unix",
+                f"PKG_CONFIG={script}", "provider-flags"], cwd=ROOT,
+                input="provider-flags:\n\t@printf '%s\\n' '$(CPPFLAGS)'\n",
+                capture_output=True, text=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("-I/native-sdk/include", result.stdout)
+            self.assertIn("-DANYGM_VIDEO_PROVIDER_DYNAMIC=1", result.stdout)
+
     def test_partial_shared_library_is_rejected_before_install(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

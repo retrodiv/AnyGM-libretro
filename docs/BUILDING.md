@@ -74,7 +74,8 @@ the platform-targets section below spells out. `CC`, `CXX`, `AR`,
 `VIDEO_PROVIDER` selects movie support. Its default, `auto`, enables the dynamic
 FFmpeg provider when native target headers are discoverable and otherwise builds
 a working core whose movies complete immediately. `dynamic` requires FFmpeg 8
-target headers through `FFMPEG_CFLAGS`; `none` explicitly builds the fallback.
+target headers through `FFMPEG_CFLAGS`; `none` explicitly builds the fallback
+without querying pkg-config or adding FFmpeg SDK flags to compiler commands.
 Cross builds never query host pkg-config, so target headers must be selected
 explicitly. `FFMPEG_LIBS` is used only by the provider qualification probe: the
 core and static runtime resolve the five shared libraries at runtime and retain
