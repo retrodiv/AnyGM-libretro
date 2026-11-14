@@ -88,6 +88,7 @@ static unsigned state_trace_calls;
 static char state_trace_message[768];
 static int serialization_reply;
 static int simulate_state_cost;
+static size_t stub_state_capacity_reserve;
 static size_t state_written;
 static AnygmResult state_save_result,state_resume_result,state_load_result;
 
@@ -357,7 +358,9 @@ size_t anygm_state_resume_size(AnygmEngine *engine){
 }
 size_t anygm_state_capacity_hint(const AnygmEngine *engine){ (void)engine; return 0; }
 size_t anygm_state_resume_capacity_hint(const AnygmEngine *engine){ (void)engine; return 0; }
-size_t anygm_state_capacity_reserve(const AnygmEngine *engine){ (void)engine; return 0; }
+size_t anygm_state_capacity_reserve(const AnygmEngine *engine){
+  (void)engine; return stub_state_capacity_reserve;
+}
 uint32_t anygm_state_capacity_flags(const AnygmEngine *engine){ (void)engine; return 0; }
 AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written){
   (void)engine; (void)data; (void)capacity;
@@ -450,6 +453,7 @@ static void begin(const char *value,int available,unsigned preferred,int desktop
   state_trace_calls=0;
   state_trace_message[0]='\0';
   simulate_state_cost=0;
+  stub_state_capacity_reserve=0;
   state_written=0;
   state_save_result=state_resume_result=state_load_result=ANYGM_OK;
   last_video_pixels=NULL;
@@ -959,6 +963,7 @@ static int state_call_profile_contract(void){
   REQUIRE(load(),"unprofiled state session loads");
   g_libretro.frame_profile_clock=profile_clock;
   g_libretro.frame_profile_userdata=&simulated_ns;
+  REQUIRE(retro_serialize_size()==1048576u,"unconfigured state session keeps compact capacity");
   REQUIRE(retro_serialize_size()>0 && retro_serialize(state,sizeof state) &&
           retro_unserialize(state,sizeof state),"unprofiled state operations work");
   REQUIRE(!clock_calls && !state_trace_calls,"disabled state profiling does not sample or log");
@@ -967,6 +972,8 @@ static int state_call_profile_contract(void){
     REQUIRE(profile_setting("1"),"enable existing call-boundary profiler");
     serialization_reply=reply;
     begin(NULL,0,0,1,1);
+    /* Keep the profiled return/timing controls independent of the compact default. */
+    stub_state_capacity_reserve=4194304u;
     REQUIRE(load(),"profiled state session loads");
     g_libretro.frame_profile_clock=profile_clock;
     g_libretro.frame_profile_userdata=&simulated_ns;
