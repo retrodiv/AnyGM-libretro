@@ -515,6 +515,17 @@ typedef enum GmlRenderSceneFamily {
   GML_RENDER_SCENE_FAMILY_COUNT=8
 } GmlRenderSceneFamily;
 
+/* A complete projected native triangle. Camera, clipping and culling are shared
+ * preparation; device rasterization owns coverage. Each vertex is x,y,
+ * reciprocal distance, affine raw depth, and straight normalized RGBA. */
+typedef struct GmlRenderDepthTriangle {
+  GmlRenderImageRef previous_colour;
+  uint64_t depth_epoch,depth_version,next_depth_version;
+  double vertex[3][8];
+  uint32_t hidden,write_depth,normalized,blend;
+  uint32_t stamp_alpha,zero_alpha_writes;
+} GmlRenderDepthTriangle;
+
 typedef struct GmlRenderDrawOp {
   uint64_t sequence;
   uint32_t opcode;
@@ -530,6 +541,7 @@ typedef struct GmlRenderDrawOp {
     GmlRenderCopyRegion copy;
     GmlRenderPrimitiveRect primitive;
     GmlRenderLayerEffect effect;
+    GmlRenderDepthTriangle depth_triangle;
     /* Lent through this submission. Shader output is non-reconstructible and must checkpoint. */
     const struct GmlPlanShader *shader;
   } payload;

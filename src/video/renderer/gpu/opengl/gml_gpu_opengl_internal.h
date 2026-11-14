@@ -135,6 +135,7 @@ typedef struct GlSceneImage {
   GmlRenderImageRef ref;
   GLuint texture,framebuffer;
   GLuint depth_renderbuffer;
+  GLuint triangle_texture,triangle_framebuffer;
   /* Front is published; the other plane is disposable submission staging.
    * Both names share this image's storage and context lifetime. */
   GLuint raw_depth_texture[2],raw_depth_framebuffer[2];
@@ -205,6 +206,11 @@ typedef struct GlSceneProgram {
   int rotated_alpha16_modern_nearest;
 } GlSceneProgram;
 
+typedef struct GlDepthTriangleProgram {
+  GLuint program;
+  GLint extent,depth,colour,flags,policy;
+} GlDepthTriangleProgram;
+
 typedef struct GlScene {
   GlSceneImage images[GL_SCENE_MAX_IMAGES];
   /* Exactly one bounded baseline for each owned frame-target class, never per surface. */
@@ -215,6 +221,8 @@ typedef struct GlScene {
   int checkpoint_program_failed;
   GlSceneProgram main_program,filtered_program,compact_programs[GL_SCENE_COMPACT_PROGRAM_COUNT];
   GLuint vertex_buffer,vertex_array,instance_buffer,instance_array;
+  GlDepthTriangleProgram depth_triangle_program[2];
+  GLuint depth_triangle_buffer,depth_triangle_array;
   GLuint upload_buffer;
   size_t upload_capacity;
   /* Zero is unmeasured, positive retains staging, negative selects client bytes. */
@@ -316,6 +324,10 @@ int gml_gpu_opengl_build_program(GmlGpuBackend *backend,char *error,size_t error
 GlSceneProgram *gml_gpu_opengl_scene_draw_program(GmlGpuBackend *backend,uint32_t filter,int native_flags,
   char *error,size_t error_capacity);
 int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error_capacity);
+int gml_gpu_opengl_depth_triangle_programs(GmlGpuBackend *backend,char *error,size_t error_capacity);
+int gml_gpu_opengl_depth_triangle_valid(GmlGpuBackend *backend,const GmlRenderDrawBatch *batch);
+int gml_render_gpu_opengl_depth_triangle(GmlGpuBackend *backend,const GmlRenderDrawBatch *batch,
+                                   uintptr_t frontend_framebuffer,char *error,size_t error_capacity);
 unsigned gml_gpu_opengl_prepare_fixed_scene_draws(GmlGpuBackend *backend,GLuint source_texture);
 /* Zero leaves the driver-clear path available; negative means an emitted draw failed. */
 int gml_gpu_opengl_fill_region_quad(GmlGpuBackend *backend,GlSceneImage *target,

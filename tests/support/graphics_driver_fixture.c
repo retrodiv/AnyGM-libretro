@@ -346,6 +346,7 @@ static void fake_BindTexture(GLenum target,GLuint name){
   if(g_fake.active_unit<FAKE_TEXTURE_UNITS) g_fake.bound_texture[g_fake.active_unit]=name;
 }
 static void fake_ActiveTexture(GLenum unit){ note_call(); g_fake.active_unit=unit-GL_TEXTURE0; }
+static void fake_BindSampler(GLuint unit,GLuint sampler){(void)unit;(void)sampler;note_call();}
 static void fake_TexParameteri(GLenum t,GLenum p,GLint v){
   (void)t; note_call();
   GLuint name=g_fake.active_unit<FAKE_TEXTURE_UNITS?g_fake.bound_texture[g_fake.active_unit]:0;
@@ -1064,6 +1065,7 @@ void (*anygm_test_graphics_proc(void *userdata,const char *name))(void){
     {"glDeleteTextures",(void*)fake_DeleteTextures},
     {"glBindTexture",(void*)fake_BindTexture},
     {"glActiveTexture",(void*)fake_ActiveTexture},
+    {"glBindSampler",(void*)fake_BindSampler},
     {"glTexParameteri",(void*)fake_TexParameteri},
     {"glTexImage2D",(void*)fake_TexImage2D},
     {"glTexSubImage2D",(void*)fake_TexSubImage2D},

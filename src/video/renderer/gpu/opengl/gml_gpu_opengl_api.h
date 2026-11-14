@@ -46,6 +46,7 @@ typedef void GLvoid;
 #define GL_STENCIL_TEST 0x0B90
 #define GL_CULL_FACE 0x0B44
 #define GL_SCISSOR_TEST 0x0C11
+#define GL_RASTERIZER_DISCARD 0x8C89
 #define GL_DITHER 0x0BD0
 #define GL_FRAMEBUFFER_SRGB 0x8DB9
 #define GL_MULTISAMPLE 0x809D
@@ -272,6 +273,7 @@ typedef struct GmlGlApi {
   void     (*DeleteBuffers)(GLsizei n,const GLuint *buffers);
   void     (*Uniform1fv)(GLint location,GLsizei count,const GLfloat *value);
   void     (*Uniform2fv)(GLint location,GLsizei count,const GLfloat *value);
+  void     (*BindSampler)(GLuint unit,GLuint sampler);
   void     (*Uniform3fv)(GLint location,GLsizei count,const GLfloat *value);
   void     (*Uniform4fv)(GLint location,GLsizei count,const GLfloat *value);
   void     (*Uniform1iv)(GLint location,GLsizei count,const GLint *value);

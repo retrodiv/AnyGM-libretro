@@ -203,6 +203,9 @@ static int scene_same_version(GmlRenderImageRef a,GmlRenderImageRef b){
 }
 
 static void scene_delete_raw_depth(GmlGpuBackend *backend,GlSceneImage *image){
+  if(image->triangle_framebuffer) backend->gl.DeleteFramebuffers(1,&image->triangle_framebuffer);
+  if(image->triangle_texture) backend->gl.DeleteTextures(1,&image->triangle_texture);
+  image->triangle_framebuffer=image->triangle_texture=0;
   for(unsigned i=0;i<2u;i++){
     if(image->raw_depth_framebuffer[i])
       backend->gl.DeleteFramebuffers(1,&image->raw_depth_framebuffer[i]);
@@ -235,6 +238,8 @@ void gml_gpu_opengl_scene_forget(GmlGpuBackend *backend){
   memset(&scene->filtered_program,0,sizeof scene->filtered_program);
   memset(scene->compact_programs,0,sizeof scene->compact_programs);
   scene->vertex_buffer=scene->vertex_array=0;
+  memset(scene->depth_triangle_program,0,sizeof scene->depth_triangle_program);
+  scene->depth_triangle_buffer=scene->depth_triangle_array=0;
   scene->instance_buffer=scene->instance_array=0;
   scene->upload_buffer=0;
   scene->upload_capacity=0;
@@ -276,6 +281,11 @@ void gml_gpu_opengl_scene_destroy(GmlGpuBackend *backend,int context_is_current)
     if(scene->checkpoint_framebuffer)
       backend->gl.DeleteFramebuffers(1,&scene->checkpoint_framebuffer);
     if(scene->main_program.program) backend->gl.DeleteProgram(scene->main_program.program);
+    for(unsigned pass=0;pass<2u;pass++)
+      if(scene->depth_triangle_program[pass].program)
+        backend->gl.DeleteProgram(scene->depth_triangle_program[pass].program);
+    if(scene->depth_triangle_array) backend->gl.DeleteVertexArrays(1,&scene->depth_triangle_array);
+    if(scene->depth_triangle_buffer) backend->gl.DeleteBuffers(1,&scene->depth_triangle_buffer);
     if(scene->filtered_program.program) backend->gl.DeleteProgram(scene->filtered_program.program);
     for(size_t index=0;index<sizeof scene->compact_programs/sizeof scene->compact_programs[0];index++)
       if(scene->compact_programs[index].program)
@@ -334,6 +344,7 @@ void gml_gpu_opengl_scene_reset(GmlGpuBackend *backend,const GmlGpuContext *cont
   memcpy(&backend->gl.field,&proc,sizeof proc); \
 } while(0)
   GL_SCENE_LOAD(GetIntegerv,"glGetIntegerv");
+  GL_SCENE_LOAD(BindSampler,"glBindSampler");
   GL_SCENE_LOAD(CopyTexSubImage2D,"glCopyTexSubImage2D");
   GL_SCENE_LOAD(InvalidateFramebuffer,"glInvalidateFramebuffer");
   GL_SCENE_LOAD(ClearBufferfv,"glClearBufferfv");
@@ -408,9 +419,13 @@ int gml_gpu_opengl_scene_capabilities(const GmlGpuBackend *backend,GmlRenderDevi
                              (UINT64_C(1)<<GML_RENDER_OP_RECOVER_EMPTY_SCREEN);
   if(backend->gl.BlitFramebuffer)
     caps->supported_operations|=UINT64_C(1)<<GML_RENDER_OP_COPY_IMAGE;
+  if(backend->gl.BlitFramebuffer && backend->gl.BindSampler)
+    caps->supported_operations|=UINT64_C(1)<<GML_RENDER_OP_SOFTWARE3D_PASS;
   caps->supported_families=GML_RENDER_FAMILY_TEXTURE|GML_RENDER_FAMILY_PRIMITIVE|
                            GML_RENDER_FAMILY_EFFECT|GML_RENDER_FAMILY_SHADER|
                            GML_RENDER_FAMILY_SURFACE;
+  if(backend->gl.BlitFramebuffer && backend->gl.BindSampler)
+    caps->supported_families|=GML_RENDER_FAMILY_SOFTWARE3D;
   caps->supports_rgb_alpha_separate=backend->gl.BlendFuncSeparate &&
                                      backend->gl.BlendEquationSeparate;
   caps->soft_cache_bytes=128u*1024u*1024u;
@@ -1400,6 +1415,33 @@ static GlSceneImage *depth_transfer_image(GmlGpuBackend *backend,
   return image;
 }
 
+static int scene_raw_depth_storage(GmlGpuBackend *backend,GlSceneImage *image,unsigned back){
+  const uint32_t width=image->width,height=image->height;
+  if(!image->raw_depth_texture[back]){
+    backend->gl.GenTextures(1,&image->raw_depth_texture[back]);
+    if(!image->raw_depth_texture[back]) return 0;
+    backend->gl.BindTexture(GL_TEXTURE_2D,image->raw_depth_texture[back]);
+    backend->gl.TexImage2D(GL_TEXTURE_2D,0,GL_R32UI,(GLsizei)width,(GLsizei)height,
+                            0,GL_RED_INTEGER,GL_UNSIGNED_INT,NULL);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+    if(backend->gl.GetError()!=GL_NO_ERROR){
+      backend->gl.DeleteTextures(1,&image->raw_depth_texture[back]);
+      image->raw_depth_texture[back]=0;return 0;
+    }
+  }else backend->gl.BindTexture(GL_TEXTURE_2D,image->raw_depth_texture[back]);
+  if(!image->raw_depth_framebuffer[back])
+    backend->gl.GenFramebuffers(1,&image->raw_depth_framebuffer[back]);
+  if(!image->raw_depth_framebuffer[back]) return 0;
+  backend->gl.BindFramebuffer(GL_FRAMEBUFFER,image->raw_depth_framebuffer[back]);
+  backend->gl.FramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,
+                                    image->raw_depth_texture[back],0);
+  return backend->gl.CheckFramebufferStatus(GL_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE &&
+    backend->gl.GetError()==GL_NO_ERROR;
+}
+
 int gml_gpu_opengl_depth_upload(GmlGpuBackend *backend,const GmlRenderDepthUpload *transfer){
   if(!transfer || !transfer->bytes) return 0;
   GlSceneImage *image=depth_transfer_image(backend,&transfer->plane,
@@ -1416,28 +1458,7 @@ int gml_gpu_opengl_depth_upload(GmlGpuBackend *backend,const GmlRenderDepthUploa
   GlDepthTransferState state;depth_transfer_begin(backend,&state,0);
   unsigned back=image->raw_depth_front^1u;
   int success=0;
-  if(!image->raw_depth_texture[back]){
-    backend->gl.GenTextures(1,&image->raw_depth_texture[back]);
-    if(!image->raw_depth_texture[back]) goto depth_upload_end;
-    backend->gl.BindTexture(GL_TEXTURE_2D,image->raw_depth_texture[back]);
-    backend->gl.TexImage2D(GL_TEXTURE_2D,0,GL_R32UI,(GLsizei)width,(GLsizei)height,
-                            0,GL_RED_INTEGER,GL_UNSIGNED_INT,NULL);
-    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
-    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
-    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
-    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
-    if(backend->gl.GetError()!=GL_NO_ERROR){
-      backend->gl.DeleteTextures(1,&image->raw_depth_texture[back]);
-      image->raw_depth_texture[back]=0;goto depth_upload_end;
-    }
-  }else backend->gl.BindTexture(GL_TEXTURE_2D,image->raw_depth_texture[back]);
-  if(!image->raw_depth_framebuffer[back])
-    backend->gl.GenFramebuffers(1,&image->raw_depth_framebuffer[back]);
-  if(!image->raw_depth_framebuffer[back]) goto depth_upload_end;
-  backend->gl.BindFramebuffer(GL_FRAMEBUFFER,image->raw_depth_framebuffer[back]);
-  backend->gl.FramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,
-                                    image->raw_depth_texture[back],0);
-  if(backend->gl.CheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE) goto depth_upload_end;
+  if(!scene_raw_depth_storage(backend,image,back)) goto depth_upload_end;
   backend->gl.TexSubImage2D(GL_TEXTURE_2D,0,0,0,(GLsizei)width,(GLsizei)height,
                              GL_RED_INTEGER,GL_UNSIGNED_INT,backend->scene.scratch);
   success=backend->gl.GetError()==GL_NO_ERROR;
@@ -1471,6 +1492,190 @@ int gml_gpu_opengl_depth_readback(GmlGpuBackend *backend,const GmlRenderDepthRea
   for(uint32_t y=0;y<height;y++) for(uint32_t x=0;x<width;x++)
     memcpy((uint8_t*)transfer->bytes+(size_t)y*transfer->stride_bytes+(size_t)x*4u,
            backend->scene.scratch+(size_t)(height-1u-y)*row_bytes+(size_t)x*16u,4u);
+  return 1;
+}
+
+int gml_gpu_opengl_depth_triangle_valid(GmlGpuBackend *backend,const GmlRenderDrawBatch *batch){
+  if(!backend || !backend->loaded || !backend->scene.available || !backend->gl.BlitFramebuffer ||
+     !backend->gl.BindSampler || !batch || !batch->operations || batch->operation_count!=1u ||
+     !batch->states || !batch->state_count) return 0;
+  const GmlRenderDrawOp *op=batch->operations;
+  const GmlRenderDepthTriangle *triangle=&op->payload.depth_triangle;
+  if(op->opcode!=GML_RENDER_OP_SOFTWARE3D_PASS || op->source_count ||
+     op->state_index>=batch->state_count || op->scene_family!=GML_RENDER_SCENE_PRIMITIVE ||
+     op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+     op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 || !op->target.storage_version ||
+     op->target.region.x || op->target.region.y || op->target.region.width!=op->target.width ||
+     op->target.region.height!=op->target.height || op->target.width>16384u || op->target.height>16384u ||
+     !scene_same_logical(triangle->previous_colour,op->target.image) ||
+     triangle->previous_colour.content_version==UINT64_MAX ||
+     op->target.image.content_version!=triangle->previous_colour.content_version+1u ||
+     !triangle->depth_epoch || !triangle->depth_version || triangle->depth_version==UINT64_MAX ||
+     triangle->next_depth_version!=triangle->depth_version+1u ||
+     triangle->hidden>1u || triangle->write_depth>1u || triangle->normalized>1u ||
+     triangle->blend>1u || triangle->stamp_alpha>1u || triangle->zero_alpha_writes>1u) return 0;
+  GmlRenderDepthPlaneRef plane={triangle->previous_colour,op->target.width,op->target.height,
+                                triangle->depth_epoch,triangle->depth_version};
+  GlSceneImage *image=depth_transfer_image(backend,&plane,op->target.width*4u,
+                                          (size_t)op->target.width*op->target.height*4u);
+  if(!image || image->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+     image->raw_depth_epoch!=triangle->depth_epoch || image->raw_depth_version!=triangle->depth_version ||
+     !image->raw_depth_texture[image->raw_depth_front] ||
+     !image->raw_depth_framebuffer[image->raw_depth_front]) return 0;
+  const GmlRenderDrawStateSnapshot *state=&batch->states[op->state_index];
+  if(state->write_mask>15u || state->alpha_test_enabled || state->source_alpha_key ||
+     state->source_palette.enabled || state->sampler_count || state->material_identity ||
+     state->material_version || state->coverage_policy || state->alpha!=255u ||
+     state->colour!=0xffffffffu ||
+     (!state->clip.width && !state->clip.height && (state->clip.x || state->clip.y)) ||
+     ((state->clip.width || state->clip.height) &&
+      !scene_region_valid(state->clip,op->target.width,op->target.height))) return 0;
+  if(triangle->blend && (state->rgb_source_factor!=GML_RENDER_BLEND_SOURCE_ALPHA ||
+     state->rgb_destination_factor!=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA ||
+     state->alpha_source_factor!=GML_RENDER_BLEND_ONE ||
+     state->alpha_destination_factor!=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA ||
+     state->rgb_equation!=GML_RENDER_BLEND_ADD || state->alpha_equation!=GML_RENDER_BLEND_ADD)) return 0;
+  for(unsigned v=0;v<3u;v++){
+    for(unsigned component=0;component<8u;component++)
+      if(!isfinite(triangle->vertex[v][component])) return 0;
+    if(fabs(triangle->vertex[v][0])>65536.0 || fabs(triangle->vertex[v][1])>65536.0 ||
+       triangle->vertex[v][2]<1e-8 || triangle->vertex[v][2]>1e8 ||
+       fabs(triangle->vertex[v][3])>1e20) return 0;
+    for(unsigned component=4u;component<8u;component++)
+      if(triangle->vertex[v][component]<0 || triangle->vertex[v][component]>1) return 0;
+  }
+  double area=(triangle->vertex[1][0]-triangle->vertex[0][0])*
+    (triangle->vertex[2][1]-triangle->vertex[0][1])-
+    (triangle->vertex[1][1]-triangle->vertex[0][1])*(triangle->vertex[2][0]-triangle->vertex[0][0]);
+  return isfinite(area) && fabs(area)>1e-9;
+}
+
+static int triangle_colour_storage(GmlGpuBackend *backend,GlSceneImage *image){
+  if(!image->framebuffer) backend->gl.GenFramebuffers(1,&image->framebuffer);
+  if(!image->framebuffer) return 0;
+  backend->gl.BindFramebuffer(GL_FRAMEBUFFER,image->framebuffer);
+  backend->gl.FramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,image->texture,0);
+  if(backend->gl.CheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE ||
+     backend->gl.GetError()!=GL_NO_ERROR) return 0;
+  if(!image->triangle_texture){
+    backend->gl.GenTextures(1,&image->triangle_texture);
+    if(!image->triangle_texture) return 0;
+    backend->gl.BindTexture(GL_TEXTURE_2D,image->triangle_texture);
+    backend->gl.TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,(GLsizei)image->width,(GLsizei)image->height,
+                            0,GL_RGBA,GL_UNSIGNED_BYTE,NULL);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+    if(backend->gl.GetError()!=GL_NO_ERROR){
+      backend->gl.DeleteTextures(1,&image->triangle_texture);image->triangle_texture=0;return 0;
+    }
+  }
+  if(!image->triangle_framebuffer) backend->gl.GenFramebuffers(1,&image->triangle_framebuffer);
+  if(!image->triangle_framebuffer) return 0;
+  backend->gl.BindFramebuffer(GL_FRAMEBUFFER,image->triangle_framebuffer);
+  backend->gl.FramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,image->triangle_texture,0);
+  if(image->depth_renderbuffer)
+    backend->gl.FramebufferRenderbuffer(GL_FRAMEBUFFER,GL_DEPTH_ATTACHMENT,GL_RENDERBUFFER,image->depth_renderbuffer);
+  return backend->gl.CheckFramebufferStatus(GL_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE &&
+    backend->gl.GetError()==GL_NO_ERROR;
+}
+
+static int depth_triangle_candidate(GmlGpuBackend *backend,const GmlRenderDrawBatch *batch,
+                                      char *error,size_t error_capacity){
+  if(!gml_gpu_opengl_depth_triangle_valid(backend,batch)) return 0;
+  const GmlRenderDrawOp *op=batch->operations;
+  const GmlRenderDepthTriangle *triangle=&op->payload.depth_triangle;
+  const GmlRenderDrawStateSnapshot *state=&batch->states[op->state_index];
+  GlScene *scene=&backend->scene;
+  GlSceneImage *image=gml_gpu_opengl_scene_image(backend,triangle->previous_colour);
+  unsigned back=image->raw_depth_front^1u;
+  float vertices[24],extent[2]={(float)image->width,(float)image->height};
+  GLint flags[4]={(GLint)triangle->hidden,(GLint)triangle->write_depth,
+                  (GLint)triangle->normalized,(GLint)triangle->blend};
+  GLint policy[4]={(GLint)triangle->stamp_alpha,(GLint)triangle->zero_alpha_writes,0,0};
+  for(unsigned v=0;v<3u;v++) for(unsigned c=0;c<8u;c++)
+    vertices[v*8u+c]=(float)(triangle->vertex[v][c]*(c>=4u?triangle->vertex[v][2]:1.0));
+  if(!gml_gpu_opengl_depth_triangle_programs(backend,error,error_capacity)) return 0;
+  backend->gl.ActiveTexture(GL_TEXTURE0);backend->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
+  if(!triangle_colour_storage(backend,image) || !scene_raw_depth_storage(backend,image,back)) return 0;
+  if(!scene->depth_triangle_array) backend->gl.GenVertexArrays(1,&scene->depth_triangle_array);
+  if(!scene->depth_triangle_buffer) backend->gl.GenBuffers(1,&scene->depth_triangle_buffer);
+  if(!scene->depth_triangle_array || !scene->depth_triangle_buffer) return 0;
+  backend->gl.BindVertexArray(scene->depth_triangle_array);
+  backend->gl.BindBuffer(GL_ARRAY_BUFFER,scene->depth_triangle_buffer);
+  backend->gl.BufferData(GL_ARRAY_BUFFER,sizeof vertices,vertices,GL_STREAM_DRAW);
+  for(unsigned attr=0;attr<2u;attr++){
+    backend->gl.EnableVertexAttribArray(attr);
+    backend->gl.VertexAttribPointer(attr,4,GL_FLOAT,GL_FALSE,8*sizeof(float),
+                                     (const void*)(uintptr_t)(attr*4u*sizeof(float)));
+  }
+  if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
+  backend->gl.Disable(GL_BLEND);backend->gl.Disable(GL_DEPTH_TEST);backend->gl.Disable(GL_STENCIL_TEST);
+  backend->gl.Disable(GL_CULL_FACE);backend->gl.Disable(GL_DITHER);backend->gl.Disable(GL_SCISSOR_TEST);
+  backend->gl.Disable(GL_RASTERIZER_DISCARD);
+  if(backend->api==GML_GPU_API_OPENGL_CORE) backend->gl.Disable(GL_FRAMEBUFFER_SRGB);
+  backend->gl.DepthMask(GL_FALSE);backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+  GLuint read_fbo[2]={image->framebuffer,image->raw_depth_framebuffer[image->raw_depth_front]};
+  GLuint draw_fbo[2]={image->triangle_framebuffer,image->raw_depth_framebuffer[back]};
+  for(unsigned pass=0;pass<2u;pass++){
+    backend->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,read_fbo[pass]);
+    backend->gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER,draw_fbo[pass]);
+    backend->gl.BlitFramebuffer(0,0,(GLint)image->width,(GLint)image->height,
+      0,0,(GLint)image->width,(GLint)image->height,GL_COLOR_BUFFER_BIT,GL_NEAREST);
+    if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
+  }
+  backend->gl.ActiveTexture(GL_TEXTURE0);
+  backend->gl.BindTexture(GL_TEXTURE_2D,image->raw_depth_texture[image->raw_depth_front]);
+  backend->gl.BindSampler(0,0);
+  backend->gl.ActiveTexture(GL_TEXTURE1);backend->gl.BindTexture(GL_TEXTURE_2D,image->texture);
+  backend->gl.BindSampler(1,0);
+  backend->gl.Viewport(0,0,(GLsizei)image->width,(GLsizei)image->height);
+  if(state->clip.width){
+    backend->gl.Enable(GL_SCISSOR_TEST);
+    backend->gl.Scissor(state->clip.x,(GLint)image->height-state->clip.y-(GLint)state->clip.height,
+                         (GLsizei)state->clip.width,(GLsizei)state->clip.height);
+  }
+  for(unsigned pass=0;pass<2u;pass++){
+    GlDepthTriangleProgram *program=&scene->depth_triangle_program[pass];
+    backend->gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER,draw_fbo[pass]);
+    backend->gl.UseProgram(program->program);
+    backend->gl.Uniform2fv(program->extent,1,extent);backend->gl.Uniform1i(program->depth,0);
+    backend->gl.Uniform4iv(program->flags,1,flags);
+    if(!pass){
+      backend->gl.Uniform1i(program->colour,1);backend->gl.Uniform4iv(program->policy,1,policy);
+      backend->gl.ColorMask((state->write_mask&1u)!=0,(state->write_mask&2u)!=0,
+                             (state->write_mask&4u)!=0,(state->write_mask&8u)!=0);
+    }else backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+    backend->gl.DrawArrays(GL_TRIANGLES,0,3);
+    if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
+  }
+  return 1;
+}
+
+int gml_render_gpu_opengl_depth_triangle(GmlGpuBackend *backend,const GmlRenderDrawBatch *batch,
+                                   uintptr_t frontend_framebuffer,char *error,size_t error_capacity){
+  if(!gml_gpu_opengl_depth_triangle_valid(backend,batch)) return 0;
+  int success=depth_triangle_candidate(backend,batch,error,error_capacity);
+  backend->gl.ActiveTexture(GL_TEXTURE1);backend->gl.BindTexture(GL_TEXTURE_2D,0);
+  backend->gl.ActiveTexture(GL_TEXTURE0);backend->gl.BindTexture(GL_TEXTURE_2D,0);
+  backend->gl.BindBuffer(GL_ARRAY_BUFFER,0);backend->gl.BindVertexArray(0);
+  backend->gl.UseProgram(0);backend->gl.Disable(GL_SCISSOR_TEST);
+  backend->gl.BindFramebuffer(GL_FRAMEBUFFER,(GLuint)frontend_framebuffer);
+  if(backend->gl.GetError()!=GL_NO_ERROR) success=0;
+  if(!success) return 0;
+  const GmlRenderDrawOp *op=batch->operations;
+  const GmlRenderDepthTriangle *triangle=&op->payload.depth_triangle;
+  GlSceneImage *image=gml_gpu_opengl_scene_image(backend,triangle->previous_colour);
+  /* No published storage was written above. Swap the pair only after success,
+   * including cleanup, so a refused call retains both previous versions. */
+  GLuint old_texture=image->texture,old_fbo=image->framebuffer;
+  image->texture=image->triangle_texture;image->framebuffer=image->triangle_framebuffer;
+  image->triangle_texture=old_texture;image->triangle_framebuffer=old_fbo;
+  image->raw_depth_front^=1u;image->raw_depth_version=triangle->next_depth_version;
+  image->ref=op->target.image;image->target=image->valid=image->rendered_origin=image->framebuffer_complete=1;
+  image->alpha_opaque=image->alpha_bounds_known=image->opaque_white_known=0;
+  image->content_source_version=0;
   return 1;
 }
 

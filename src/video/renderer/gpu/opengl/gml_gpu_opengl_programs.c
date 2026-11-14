@@ -102,6 +102,44 @@ int gml_gpu_opengl_build_program(GmlGpuBackend *backend,char *error,size_t error
   return 1;
 }
 
+int gml_gpu_opengl_depth_triangle_programs(GmlGpuBackend *backend,char *error,size_t error_capacity){
+  const char *prefix=backend->api==GML_GPU_API_OPENGLES3?
+    GML_GPU_OPENGL_PREFIX_ES:GML_GPU_OPENGL_PREFIX_DESKTOP;
+  char vertex_source[sizeof(GML_GPU_OPENGL_DEPTH_TRIANGLE_VERTEX)+256u];
+  char fragment_source[sizeof(GML_GPU_OPENGL_DEPTH_TRIANGLE_FRAGMENT)+256u];
+  for(unsigned pass=0;pass<2u;pass++){
+    GlDepthTriangleProgram *p=&backend->scene.depth_triangle_program[pass];
+    if(p->program) continue;
+    snprintf(vertex_source,sizeof vertex_source,"%s%s",prefix,GML_GPU_OPENGL_DEPTH_TRIANGLE_VERTEX);
+    snprintf(fragment_source,sizeof fragment_source,"%s%s%s",prefix,
+      pass?"#define DEPTH_WRITE\n":"",GML_GPU_OPENGL_DEPTH_TRIANGLE_FRAGMENT);
+    GLuint vertex=compile_stage(backend,GL_VERTEX_SHADER,vertex_source,error,error_capacity);
+    if(!vertex) return 0;
+    GLuint fragment=compile_stage(backend,GL_FRAGMENT_SHADER,fragment_source,error,error_capacity);
+    if(!fragment){backend->gl.DeleteShader(vertex);return 0;}
+    GLuint program=backend->gl.CreateProgram();GLint linked=0;
+    if(program){
+      backend->gl.AttachShader(program,vertex);backend->gl.AttachShader(program,fragment);
+      backend->gl.LinkProgram(program);backend->gl.GetProgramiv(program,GL_LINK_STATUS,&linked);
+    }
+    backend->gl.DeleteShader(vertex);backend->gl.DeleteShader(fragment);
+    if(!program || !linked){
+      if(program) backend->gl.DeleteProgram(program);
+      gml_gpu_opengl_record_error(error,error_capacity,"native depth triangle program refused");return 0;
+    }
+    p->extent=backend->gl.GetUniformLocation(program,"u_extent");
+    p->depth=backend->gl.GetUniformLocation(program,"u_depth");
+    p->colour=backend->gl.GetUniformLocation(program,"u_colour");
+    p->flags=backend->gl.GetUniformLocation(program,"u_flags");
+    p->policy=backend->gl.GetUniformLocation(program,"u_policy");
+    if(p->extent<0 || p->depth<0 || p->flags<0 || (!pass && (p->colour<0 || p->policy<0))){
+      backend->gl.DeleteProgram(program);return 0;
+    }
+    p->program=program;
+  }
+  return 1;
+}
+
 typedef struct {
   const char *defines;
   int surface_body;

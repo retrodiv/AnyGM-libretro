@@ -43,6 +43,67 @@ static GmlGpuContext fake_context(GmlGpuApi api){
 }
 
 /* Transport failure and lifetime only; real-context controls own raw bits. */
+static int scene_depth_triangle_transaction_case(void){
+  for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++)
+  for(unsigned failure=0;failure<3u;failure++){
+    anygm_test_graphics_reset();GmlGpuContext context=fake_context(api);
+    GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"native triangle context adopted");
+    gml_gpu_device_services(gpu,&device);
+    GmlRenderDrawOp seed={.opcode=GML_RENDER_OP_CLEAR};
+    seed.target=(GmlRenderTargetRef){.image={GML_RENDER_RESOURCE_SURFACE,903u,1u,1u},
+      .storage_version=1u,.width=8u,.height=8u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+      .region={0,0,8u,8u}};
+    GmlRenderDrawBatch clear={&seed,1u,NULL,0u};
+    REQUIRE(device.submit(device.context,&clear).status==GML_RENDER_EXEC_ACCEPTED,"native triangle owner seeded");
+    uint32_t depth[64]={0};
+    GmlRenderDepthUpload upload={{seed.target.image,8u,8u,1u,1u},depth,sizeof depth,32u};
+    REQUIRE(device.upload_depth(device.context,&upload),"native triangle raw depth seeded");
+    GmlRenderDrawStateSnapshot state={.write_mask=15u,.colour=0xffffffffu,.alpha=255u};
+    GmlRenderDrawOp draw={.opcode=GML_RENDER_OP_SOFTWARE3D_PASS,
+      .scene_family=GML_RENDER_SCENE_PRIMITIVE,.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT};
+    draw.target=seed.target;draw.target.image.content_version++;
+    GmlRenderDepthTriangle *t=&draw.payload.depth_triangle;
+    t->previous_colour=seed.target.image;t->depth_epoch=t->depth_version=1u;t->next_depth_version=2u;
+    t->hidden=t->write_depth=1u;
+    const double vertices[3][8]={{1,1,1,.25,1,0,0,1},{7,1,1,.25,1,0,0,1},{1,7,1,.25,1,0,0,1}};
+    memcpy(t->vertex,vertices,sizeof vertices);
+    GmlRenderDrawBatch batch={&draw,1u,&state,1u};
+    GlSceneImage *image=gml_gpu_opengl_scene_image(gpu->backend,seed.target.image);
+    GLuint old_texture=image->texture,old_framebuffer=image->framebuffer;
+    unsigned front=image->raw_depth_front;
+    state.clip.x=1;
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_UNSUPPORTED &&
+      !anygm_test_graphics_draw_calls(),"malformed empty clip refuses before a candidate draw");
+    state.clip.x=0;
+    /* The retained driver fixture calls its three-vertex hook terminal. */
+    if(failure) anygm_test_graphics_fail_terminal_draw_at(failure);
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    if(failure){
+      REQUIRE(result.status==GML_RENDER_EXEC_RESOURCE_ERROR && !result.accepted_prefix &&
+        !result.uncertain_target_count && !result.all_destinations_uncertain &&
+        image->texture==old_texture && image->framebuffer==old_framebuffer &&
+        image->raw_depth_front==front && image->raw_depth_version==1u &&
+        image->ref.content_version==1u,"either pass failure preserves the published pair");
+      anygm_test_graphics_fail_terminal_draw_at(0);
+      result=device.submit(device.context,&batch);
+    }
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==1u &&
+      image->texture!=old_texture && image->framebuffer!=old_framebuffer &&
+      image->raw_depth_front!=front && image->raw_depth_version==2u &&
+      image->ref.content_version==2u && !anygm_test_graphics_read_pixels(),
+      "successful complete native triangle jointly publishes without observation");
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_UNSUPPORTED,
+      "stale native triangle is fenced before writing");
+    GmlGpuCounters counters={0};gml_gpu_counters(gpu,&counters);
+    REQUIRE(counters.scene_operations[GML_RENDER_OP_SOFTWARE3D_PASS]==1u &&
+      counters.scene_families[GML_RENDER_SCENE_PRIMITIVE]==1u,
+      "only committed native triangles count as GPU primitive work");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_raw_depth_transport_case(void){
   for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++){
     anygm_test_graphics_reset();GmlGpuContext context=fake_context(api);
@@ -1322,6 +1383,7 @@ static int scene_service_contract_case(void){
     GML_RENDER_OP_COMPOSE_SURFACE,GML_RENDER_OP_PRESENT_IMAGE
   };
   const uint64_t supported_operations=(UINT64_C(1)<<GML_RENDER_OP_CLEAR)|
+    (UINT64_C(1)<<GML_RENDER_OP_SOFTWARE3D_PASS)|
     (UINT64_C(1)<<GML_RENDER_OP_COPY_IMAGE)|
     (UINT64_C(1)<<GML_RENDER_OP_TEXTURED_QUAD)|
     (UINT64_C(1)<<GML_RENDER_OP_COLOURED_PRIMITIVE)|
@@ -1329,6 +1391,7 @@ static int scene_service_contract_case(void){
     (UINT64_C(1)<<GML_RENDER_OP_CONTENT_SHADER_DRAW)|
     (UINT64_C(1)<<GML_RENDER_OP_RECOVER_EMPTY_SCREEN);
   const uint32_t supported_families=GML_RENDER_FAMILY_TEXTURE|
+    GML_RENDER_FAMILY_SOFTWARE3D|
     GML_RENDER_FAMILY_PRIMITIVE|GML_RENDER_FAMILY_EFFECT|GML_RENDER_FAMILY_SHADER|
     GML_RENDER_FAMILY_SURFACE;
   GmlGpu *gpu;
@@ -8805,6 +8868,7 @@ int main(int argc,char **argv){
     {"scene_gui_filtered_background_batch",scene_gui_filtered_background_batch_case},
     {"scene_clamped_atlas_window",scene_clamped_atlas_window_case},
     {"scene_raw_depth_transport",scene_raw_depth_transport_case},
+    {"scene_depth_triangle_transaction",scene_depth_triangle_transaction_case},
     {"scene_gui_half_point",scene_gui_half_point_case},
     {"scene_numbered_integer_sourceover",scene_numbered_integer_sourceover_case},
     {"scene_integer_endpoint_sprite",scene_integer_endpoint_sprite_case},

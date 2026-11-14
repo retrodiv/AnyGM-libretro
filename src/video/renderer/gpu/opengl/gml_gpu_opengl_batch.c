@@ -3669,6 +3669,15 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
   uint32_t index=0u;
   int pending_blend=0,pending_alpha_test=-1;
   result.status=GML_RENDER_EXEC_UNSUPPORTED;
+  if(batch && batch->operations && batch->operation_count &&
+     batch->operations[0].opcode==GML_RENDER_OP_SOFTWARE3D_PASS){
+    if(!gml_gpu_opengl_depth_triangle_valid(backend,batch)) return result;
+    result.status=GML_RENDER_EXEC_RESOURCE_ERROR;
+    if(gml_render_gpu_opengl_depth_triangle(backend,batch,frontend_framebuffer,error,error_capacity)){
+      result.status=GML_RENDER_EXEC_ACCEPTED;result.accepted_prefix=1u;
+    }
+    return result;
+  }
   if(!scene_preflight(backend,batch)) return result;
   result.status=GML_RENDER_EXEC_RESOURCE_ERROR;
   if(!scene_prepare_geometry(backend)) return result;
