@@ -845,7 +845,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     family==GML_RENDER_SCENE_BACKGROUND;
   int selected_unwrapped=selected_background || sprite_part_function || (tile_function && !quarter_tile);
   int full_axis_preset=family==GML_RENDER_SCENE_SPRITE && r &&
-    ((physical_sprite_page==15 && !r->fog_flat && r->blendmode>=3 && r->blendmode<=11 &&
+    ((physical_sprite_page==15 && !r->fog_flat && r->blendmode>=3 && r->blendmode<=GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA &&
       r->blendmode!=6 && r->blendmode!=7 && r->blendmode!=8) ||
      (physical_sprite_page==22 && r->fog_flat && r->blendmode==3));
   int preset_atlas=selected_unwrapped || whole_background || full_axis_preset || quarter_tile;
@@ -1014,7 +1014,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
      (!r->alphablend && !integer_atlas) ||
      (r->blendmode && !replace && !fog_rotated_normal && !(integer_atlas && r->blendmode==2) &&
       !(scaled_sprite && r->blendmode==1) && !destination_factor_sprite &&
-      !(preset_atlas && r->blendmode>=0 && r->blendmode<=11)) || r->blend_equation!=1 ||
+      !(preset_atlas && r->blendmode>=0 && r->blendmode<=GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA)) || r->blend_equation!=1 ||
      r->blend_equation_alpha!=1 || (r->color_write_mask!=0x0Fu && !scaled_sprite &&
       !((selected_background || whole_background || tile_function) && r->color_write_mask<=15u)) ||
      gml_render_classic_vertical_phase_blocks_scene(r) || r->rotated_batch_count || r->rotated_batch_building ||
@@ -1626,6 +1626,9 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
         state.rgb_destination_factor=r->blendmode==7?GML_RENDER_BLEND_DESTINATION_ALPHA:GML_RENDER_BLEND_ZERO;
         state.alpha_source_factor=preserve?GML_RENDER_BLEND_ONE_MINUS_DESTINATION_ALPHA:GML_RENDER_BLEND_ONE;
         state.alpha_destination_factor=preserve && r->blendmode==7?GML_RENDER_BLEND_DESTINATION_ALPHA:GML_RENDER_BLEND_ZERO;
+      }else if(r->blendmode==GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA){
+        state.rgb_source_factor=state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_COLOUR;
+        state.rgb_destination_factor=state.alpha_destination_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
       }else{
         state.rgb_source_factor=state.alpha_source_factor=r->blendmode==GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR
           ?GML_RENDER_BLEND_DESTINATION_ALPHA:GML_RENDER_BLEND_DESTINATION_COLOUR;
@@ -4283,7 +4286,7 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     anygm_policy_has_modern_layer_semantics(r->win);
   int fog_rotated_alias=fog_sourceover_alias && !fog_axis;
   int axis_preset=r && family==GML_RENDER_SCENE_SPRITE && !r->fog_flat &&
-    r->blendmode>=3 && r->blendmode<=11 && r->blendmode!=6 &&
+    r->blendmode>=3 && r->blendmode<=GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA && r->blendmode!=6 &&
     r->blendmode!=7 && r->blendmode!=8 && isfinite(rotation) &&
     (fabs(fmod(rotation,360.0))<0.001 || fabs(fabs(fmod(rotation,360.0))-360.0)<0.001);
   int zero_factor_alpha=axis_preset && r->alphablend &&

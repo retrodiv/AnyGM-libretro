@@ -5539,7 +5539,7 @@ static int scene_integer_function_sprite_case(void){
   for(unsigned background=0;background<3u;background++)
   for(unsigned alpha_test=0;alpha_test<2u;alpha_test++)
   for(unsigned api=0;api<2u;api++) for(unsigned rounded=0;rounded<3u;rounded++)
-  for(unsigned target_kind=0;target_kind<4u;target_kind++) for(unsigned blend=0;blend<13u;blend++){
+  for(unsigned target_kind=0;target_kind<4u;target_kind++) for(unsigned blend=0;blend<14u;blend++){
     if(blend>=7u && !background && rounded==2u) continue;
     uint8_t pixels[16]={208,32,16,128,16,208,32,255,32,16,208,0,192,176,160,64};
     GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,31u,1u,1u};
@@ -5603,6 +5603,11 @@ static int scene_integer_function_sprite_case(void){
         state.alpha_destination_factor=target_kind==2u?GML_RENDER_BLEND_ONE_MINUS_DESTINATION_ALPHA:GML_RENDER_BLEND_ZERO;
         state.coverage_policy=target_kind==2u?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
       }
+      if(blend==13u){
+        state.rgb_source_factor=state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_COLOUR;
+        state.rgb_destination_factor=state.alpha_destination_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+        state.coverage_policy=target_kind==2u?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+      }
     }
     state.sampler_count=1u;
     state.samplers[0]=(GmlRenderSamplingPolicy){.filter=GML_RENDER_FILTER_NEAREST,
@@ -5649,6 +5654,13 @@ static int scene_integer_function_sprite_case(void){
         factors[2]==(target_kind==2u?GL_DST_ALPHA:GL_ONE) &&
         factors[3]==(target_kind==2u?GL_ONE_MINUS_DST_ALPHA:GL_ZERO),
         "destination-alpha sprite mask programs every separate blend factor");
+    }
+    if(blend==13u){
+      unsigned factors[4]={0};anygm_test_graphics_blend_factors(factors);
+      REQUIRE(factors[0]==GL_SRC_COLOR && factors[1]==GL_SRC_ALPHA &&
+        factors[2]==(target_kind==2u?GL_SRC_ALPHA:GL_ONE) &&
+        factors[3]==(target_kind==2u?GL_SRC_ALPHA:GL_ZERO),
+        "source-colour sprite programs independent RGB and target-alpha factors");
     }
     if(background){
       GmlRenderDrawStateSnapshot original=state;
