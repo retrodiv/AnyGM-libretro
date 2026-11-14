@@ -21381,6 +21381,7 @@ int main(void){
   passed+=resident_lazy_native_atlas();
   passed+=resident_unit_texel_magnification();
   passed+=opaque_rectangle_clear_complement();
-  printf("render resource cases: passed=%d failed=%d\n",passed,333-passed);
-  return passed==334?EXIT_SUCCESS:EXIT_FAILURE;
+  enum { total=336 };
+  printf("render resource cases: passed=%d failed=%d\n",passed,total-passed);
+  return passed==total?EXIT_SUCCESS:EXIT_FAILURE;
 }
