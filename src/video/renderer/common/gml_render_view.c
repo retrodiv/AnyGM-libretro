@@ -42,6 +42,15 @@ void gml_render_view_rotate_point(const GmlRender *r,double *x,double *y){
   *y=r->view_centre_y+(r->view_sine*dx+r->view_cosine*dy)*sy;
 }
 
+void gml_render_view_unrotate_point(const GmlRender *r,double *x,double *y){
+  if(!x || !y || !gml_render_view_rotation_active(r)) return;
+  double sx=r->world_transform_active?r->world_scale_x:1.0;
+  double sy=r->world_transform_active?r->world_scale_y:1.0;
+  double dx=(*x-r->view_centre_x)/sx,dy=(*y-r->view_centre_y)/sy;
+  *x=r->view_centre_x+(r->view_cosine*dx+r->view_sine*dy)*sx;
+  *y=r->view_centre_y+(-r->view_sine*dx+r->view_cosine*dy)*sy;
+}
+
 int gml_render_view_visible_bounds(const GmlRender *r,double *x,double *y,
                                     double *width,double *height){
   if(!gml_render_view_rotation_active(r) || r->fbw<=0 || r->fbh<=0) return 0;

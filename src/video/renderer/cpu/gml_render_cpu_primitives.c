@@ -508,6 +508,14 @@ int gml_render_circle_filled_spans(GmlRender *R,double cx,double cy,double rx,do
   int n=gml_render_circle_filled_vertices(R,cx,cy,rx,ry,vx,vy);
   /* Keep the CPU polygon's exact scanline inclusion and clipping for resident spans. */
   double span_y0=floor(cy-ry),span_y1=ceil(cy+ry);
+  if(gml_render_view_rotation_active(R) && !gml_d3_is_active(R)){
+    double min_y=INFINITY,max_y=-INFINITY;
+    for(int i=0;i<n;i++){
+      gml_render_view_rotate_point(R,&vx[i],&vy[i]);
+      min_y=fmin(min_y,vy[i]);max_y=fmax(max_y,vy[i]);
+    }
+    span_y0=floor(min_y);span_y1=ceil(max_y);
+  }
   if(span_y1<0.0 || span_y0>=(double)R->fbh) return 1;
   int y0=span_y0<0.0?0:(int)span_y0;
   int y1=span_y1>=(double)R->fbh?R->fbh-1:(int)span_y1;
@@ -648,6 +656,7 @@ static void draw_circle_colour_prim_ex(GmlRender *R,double cx,double cy,double r
   n=(n/4)*4; if(n<4) n=4;
   double vx[64],vy[64],edge_nx[64],edge_ny[64];
   double step=2.0*M_PI/n,apothem=cos(M_PI/n);
+  int view=gml_render_view_rotation_active(R) && !gml_d3_is_active(R);
   for(int i=0;i<n;i++){
     double a=i*step,mid=(i+.5)*step;
     vx[i]=cx+cos(a)*rx;
@@ -656,6 +665,14 @@ static void draw_circle_colour_prim_ex(GmlRender *R,double cx,double cy,double r
     edge_ny[i]=-sin(mid);
   }
   double span_y0=floor(cy-ry),span_y1=ceil(cy+ry);
+  if(view){
+    double min_y=INFINITY,max_y=-INFINITY;
+    for(int i=0;i<n;i++){
+      gml_render_view_rotate_point(R,&vx[i],&vy[i]);
+      min_y=fmin(min_y,vy[i]);max_y=fmax(max_y,vy[i]);
+    }
+    span_y0=floor(min_y);span_y1=ceil(max_y);
+  }
   if(span_y1<0.0 || span_y0>=(double)R->fbh) return;
   int y0=span_y0<0.0?0:(int)span_y0;
   int y1=span_y1>=(double)R->fbh?R->fbh-1:(int)span_y1;
@@ -674,7 +691,15 @@ static void draw_circle_colour_prim_ex(GmlRender *R,double cx,double cy,double r
     int x1=last>=(double)R->fbw?R->fbw-1:(int)last;
     double ny=(py-cy)/ry;
     double nx=(x0+0.5-cx)/rx;
-    int edge=0,direction=ny>=0.0?1:-1;
+    double nx_step=1.0/rx,ny_step=0;
+    if(view){
+      double source_x=x0+.5,source_y=py,next_x=source_x+1,next_y=py;
+      gml_render_view_unrotate_point(R,&source_x,&source_y);
+      gml_render_view_unrotate_point(R,&next_x,&next_y);
+      nx=(source_x-cx)/rx;ny=(source_y-cy)/ry;
+      nx_step=(next_x-source_x)/rx;ny_step=(next_y-source_y)/ry;
+    }
+    int edge=0,direction=(view?ny*nx_step-nx*ny_step:ny)>=0.0?1:-1;
     double edge_dot=nx*edge_nx[0]+ny*edge_ny[0];
     for(int i=1;i<n;i++){
       double dot=nx*edge_nx[i]+ny*edge_ny[i];
@@ -693,7 +718,7 @@ static void draw_circle_colour_prim_ex(GmlRender *R,double cx,double cy,double r
         edge=next; edge_dot=next_dot;
       }
       draw_px_fan(R,x,y,inner,outer,edge_dot/apothem);
-      nx+=1.0/rx;
+      if(view){nx+=nx_step;ny+=ny_step;} else nx+=1.0/rx;
       edge_dot=nx*edge_nx[edge]+ny*edge_ny[edge];
     }
   }

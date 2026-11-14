@@ -1714,10 +1714,57 @@ void gml_render_primitive_rectangle_color(GmlRender *render,
   gml_render_cpu_rectangle_color(render,x1,y1,x2,y2,color1,color2,color3,color4,outline);
 }
 
+static int world_view_circle(GmlRender *r,double cx,double cy,double rx,double ry,
+                             uint32_t inner,uint32_t outer,int outline){
+  if(!gml_render_view_rotation_active(r) || gml_d3_is_active(r)) return 0;
+  if(!isfinite(cx) || !isfinite(cy) || !isfinite(rx) || !isfinite(ry) || rx<0 || ry<0) return 1;
+  if(r->alpha<=0 && !(r->alphablend && gml_render_blend_uses_destination_colour(r->blendmode))) return 1;
+  if(!(rx>0) || !(ry>0)){
+    if(cx>=INT_MIN && cx<INT_MAX && cy>=INT_MIN && cy<INT_MAX)
+      gml_render_primitive_point(r,(int)floor(cx),(int)floor(cy),inner);
+    return 1;
+  }
+  double x[64],y[64];
+  int n=gml_render_circle_filled_vertices(r,cx,cy,rx,ry,x,y);
+  if(inner!=outer){
+    /* Retain the colour-circle owner's historical angle expression. */
+    double step=2.0*M_PI/n;
+    for(int i=0;i<n;i++){
+      double angle=i*step;
+      x[i]=cx+cos(angle)*rx;y[i]=cy-sin(angle)*ry;
+    }
+  }
+  if(outline){
+    for(int i=0;i<n;i++){
+      int next=(i+1)%n;
+      (void)world_view_line(r,lround(x[i]),lround(y[i]),lround(x[next]),lround(y[next]),
+                            outer,outer,1,0);
+    }
+    return 1;
+  }
+  double centre_x=cx,centre_y=cy;
+  gml_render_view_rotate_point(r,&centre_x,&centre_y);
+  for(int i=0;i<n;i++) gml_render_view_rotate_point(r,&x[i],&y[i]);
+  GmlRenderCpuBackendTriangle triangles[64]={0};
+  for(int i=0;i<n;i++) for(unsigned v=0;v<3u;v++){
+    int at=v==1u?i:(i+1)%n;uint32_t colour=v?outer:inner;
+    double *vertex=triangles[i].vertex[v];
+    vertex[0]=v?x[at]:centre_x;vertex[1]=v?y[at]:centre_y;
+    vertex[2]=(colour&255u)/255.0;vertex[3]=((colour>>8)&255u)/255.0;
+    vertex[4]=((colour>>16)&255u)/255.0;vertex[5]=r->alpha;
+  }
+  if(!resident_native_triangles(r,triangles,(uint32_t)n,1,NULL,NULL)){
+    if(inner==outer) gml_render_cpu_circle(r,cx,cy,rx,ry,inner,0);
+    else gml_render_cpu_circle_color(r,cx,cy,rx,ry,inner,outer,0);
+  }
+  return 1;
+}
+
 void gml_render_primitive_circle(GmlRender *render,
                                  int center_x,int center_y,int radius_x,int radius_y,
                                  uint32_t color,int outline){
   if(resident_primitive_alpha_noop(render)) return;
+  if(world_view_circle(render,center_x,center_y,radius_x,radius_y,color,color,outline)) return;
   if(outline && resident_outline_circle(render,(double)center_x,(double)center_y,
                                         (double)radius_x,(double)radius_y,color,0)) return;
   if(!outline && resident_filled_circle(render,(double)center_x,(double)center_y,
@@ -1732,6 +1779,7 @@ void gml_render_primitive_circle_subpixel(GmlRender *render,
                                           double radius_x,double radius_y,
                                           uint32_t color,int outline){
   if(resident_primitive_alpha_noop(render)) return;
+  if(world_view_circle(render,center_x,center_y,radius_x,radius_y,color,color,outline)) return;
   if(outline && resident_outline_circle(render,center_x,center_y,
                                         radius_x,radius_y,color,0)) return;
   if(!outline && resident_filled_circle(render,center_x,center_y,radius_x,radius_y,color)) return;
@@ -1743,6 +1791,7 @@ void gml_render_primitive_circle_color(GmlRender *render,
                                        int center_x,int center_y,int radius_x,int radius_y,
                                        uint32_t inner,uint32_t outer,int outline){
   if(resident_primitive_alpha_noop(render)) return;
+  if(world_view_circle(render,center_x,center_y,radius_x,radius_y,inner,outer,outline)) return;
   if(outline && resident_outline_circle(render,(double)center_x,(double)center_y,
                                         (double)radius_x,(double)radius_y,
                                         inner==outer?inner:outer,inner!=outer)) return;
@@ -1759,6 +1808,7 @@ void gml_render_primitive_circle_color_subpixel(GmlRender *render,
                                                 double radius_x,double radius_y,
                                                 uint32_t inner,uint32_t outer,int outline){
   if(resident_primitive_alpha_noop(render)) return;
+  if(world_view_circle(render,center_x,center_y,radius_x,radius_y,inner,outer,outline)) return;
   if(outline && resident_outline_circle(render,center_x,center_y,radius_x,radius_y,
                                         inner==outer?inner:outer,inner!=outer)) return;
   if(!outline && inner==outer &&

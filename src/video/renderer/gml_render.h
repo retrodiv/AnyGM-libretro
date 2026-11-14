@@ -751,6 +751,7 @@ void gml_render_world_set_logical_extent(GmlRender *r,int width,int height);
 void gml_render_world_set_view_rotation(GmlRender *r,double angle,double width,double height);
 int gml_render_view_rotation_active(const GmlRender *r);
 void gml_render_view_rotate_point(const GmlRender *r,double *x,double *y);
+void gml_render_view_unrotate_point(const GmlRender *r,double *x,double *y);
 int gml_render_view_visible_bounds(const GmlRender *r,double *x,double *y,
                                     double *width,double *height);
 typedef struct {
