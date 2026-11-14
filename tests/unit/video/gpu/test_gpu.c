@@ -2871,7 +2871,7 @@ static int scene_native_textured_triangle_case(void){
 
 static int scene_native_triangle_batch_case(void){
   for(unsigned owner=0;owner<2u;owner++)
-  for(unsigned api=0;api<2u;api++) for(unsigned variant=0;variant<9u;variant++){
+  for(unsigned api=0;api<2u;api++) for(unsigned variant=0;variant<10u;variant++){
     GmlRenderDrawOp ops[3]={0};
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
     GmlRenderDeviceServices device={0};anygm_test_graphics_reset();
@@ -2904,9 +2904,12 @@ static int scene_native_triangle_batch_case(void){
     if(variant==5u)ops[2].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
     if(variant==7u)ops[2].payload.primitive.triangle[2][5]=-0.1;
     if(variant==8u)anygm_test_graphics_fail_compile_containing("#define GML_SCENE_CONSTANT_FILTER 33");
+    if(variant==9u)for(unsigned i=1;i<3u;i++)
+      ops[i].payload.primitive.rectangle_flags=1u<<GML_RENDER_RECTANGLE_BLEND_SHIFT;
     GmlRenderDrawBatch batch={ops,3u,NULL,0u};
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
-    if(variant && variant!=8u)REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+    if(variant && variant!=8u && variant!=9u)
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
       !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls(),
       "malformed native triangle batch refuses before all writes");
     else{
@@ -2927,6 +2930,10 @@ static int scene_native_triangle_batch_case(void){
       }
       REQUIRE(!anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
         "native triangle needs no image snapshot or ordinary readback");
+      if(variant==9u){
+        REQUIRE(anygm_test_graphics_additive_blend_configurations()==1u,
+          "selected-view additive triangles use fixed device blending");
+      }
     }
     gml_gpu_destroy(gpu,1);
   }

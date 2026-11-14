@@ -165,6 +165,7 @@ unsigned anygm_test_graphics_finish_calls(void);
 unsigned anygm_test_graphics_last_draw_framebuffer(void);
 int anygm_test_graphics_blend_enabled(void);
 unsigned anygm_test_graphics_blend_configurations(void);
+unsigned anygm_test_graphics_additive_blend_configurations(void);
 unsigned anygm_test_graphics_scene_copies(void);
 uint64_t anygm_test_graphics_scene_copied_pixels(void);
 int anygm_test_graphics_depth_enabled(void);

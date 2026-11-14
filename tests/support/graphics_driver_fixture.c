@@ -90,6 +90,7 @@ typedef struct FakeDriver {
   unsigned sampler_location_count;
   GLint scene_sampler;
   GLenum blend_factors[4];
+  unsigned additive_blend_configurations;
   unsigned shader_stage[256];
   AnygmTestGraphicsIndirect indirect;
   unsigned indirect_failure,indirect_buffer;
@@ -240,6 +241,8 @@ static void fake_BlendFuncSeparate(GLenum a,GLenum b,GLenum c,GLenum d){
   g_fake.blend_factors[2]=c;g_fake.blend_factors[3]=d;
   if(a==GL_SRC_ALPHA && b==GL_ONE_MINUS_SRC_ALPHA &&
      c==GL_ONE && d==GL_ONE_MINUS_SRC_ALPHA) g_fake.blend_configurations++;
+  if(a==GL_SRC_ALPHA && b==GL_ONE &&
+     c==GL_SRC_ALPHA && d==GL_ONE_MINUS_SRC_ALPHA) g_fake.additive_blend_configurations++;
 }
 static void fake_BlendEquationSeparate(GLenum a,GLenum b){ (void)a;(void)b; note_call(); }
 static void fake_CopyTexSubImage2D(GLenum a,GLint b,GLint c,GLint d,GLint e,GLint f,
@@ -1238,6 +1241,9 @@ void anygm_test_graphics_blend_factors(unsigned factors[4]){
   for(unsigned index=0;index<4u;index++) factors[index]=g_fake.blend_factors[index];
 }
 unsigned anygm_test_graphics_blend_configurations(void){ return g_fake.blend_configurations; }
+unsigned anygm_test_graphics_additive_blend_configurations(void){
+  return g_fake.additive_blend_configurations;
+}
 unsigned anygm_test_graphics_scene_copies(void){ return g_fake.scene_copies; }
 void anygm_test_graphics_last_blit(int coordinates[8]){
   for(unsigned i=0;i<8u;i++) coordinates[i]=g_fake.last_blit[i];

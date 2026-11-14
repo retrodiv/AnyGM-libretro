@@ -3659,6 +3659,9 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
        op->payload.primitive.kind==GML_RENDER_PRIMITIVE_NATIVE_COLOURED_TRIANGLE));
     int native_source_alpha=native_triangle && !native_textured &&
       (op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA);
+    unsigned native_blend=native_triangle?
+      (op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_BLEND_MASK)>>
+       GML_RENDER_RECTANGLE_BLEND_SHIFT:0u;
     int native_opaque_surface=native_triangle && !native_textured && !native_source_alpha &&
       op->target.image.resource_class==GML_RENDER_RESOURCE_SURFACE;
     int primitive_alpha_test=native_triangle && !native_opaque_surface?0:-1;
@@ -3707,7 +3710,8 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
          rectangle_blend?(int)(GL_SCENE_BLEND_RECTANGLE_BASE+2u*rectangle_blend+
            ((op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)!=0u)):
          (op->payload.primitive.alpha<1.0 || vertex_span)?3:0):0):
-      native_triangle?(native_opaque_surface?0:3):inverse_rect?GL_SCENE_BLEND_INVERSE_RECT:
+      native_triangle?(native_blend==1u?16:native_opaque_surface?0:3):
+      inverse_rect?GL_SCENE_BLEND_INVERSE_RECT:
       (particle || alpha_rect?(int)op->payload.primitive.alpha_blend:0);
     /* Opaque plain rectangles already carry their final uniform RGBA. Use the established
      * direct-colour sampler instead of executing the general rectangle program per fragment. */

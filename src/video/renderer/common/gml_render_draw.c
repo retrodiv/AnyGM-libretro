@@ -359,6 +359,8 @@ int gml_render_native_triangle_valid(const GmlRenderDrawOp *operation){
   const GmlRenderTargetRef *t=&operation->target;
   int surface=t->image.resource_class==GML_RENDER_RESOURCE_SURFACE;
   int source_over=(p->rectangle_flags&GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA)!=0u;
+  unsigned blend=(p->rectangle_flags&GML_RENDER_RECTANGLE_BLEND_MASK)>>
+                 GML_RENDER_RECTANGLE_BLEND_SHIFT;
   int alpha_target=surface ||
     (t->image.resource_class==GML_RENDER_RESOURCE_APPLICATION && source_over);
   int coloured=p->kind==GML_RENDER_PRIMITIVE_NATIVE_COLOURED_TRIANGLE;
@@ -372,8 +374,10 @@ int gml_render_native_triangle_valid(const GmlRenderDrawOp *operation){
      p->region.x || p->region.y || p->region.width!=t->width || p->region.height!=t->height ||
      p->alpha!=1.0 || p->alpha_blend!=1u || p->interpolate ||
      (source_over && !alpha_target) ||
+     (blend>1u || (blend && (surface || source_over))) ||
      p->rectangle_flags!=((alpha_target?GML_RENDER_RECTANGLE_TARGET_ALPHA:0u)|
-                         (source_over?GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA:0u)) ||
+                         (source_over?GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA:0u)|
+                         (blend<<GML_RENDER_RECTANGLE_BLEND_SHIFT)) ||
      p->pixel_write_mask!=15u) return 0;
   for(unsigned v=0;v<3u;v++) for(unsigned c=0;c<6u;c++){
     double value=p->triangle[v][c];

@@ -15208,7 +15208,20 @@ static int resident_native_triangle_alpha_case(unsigned alpha_case){
           !fake.readbacks && !memcmp(shadow,r->fb,sizeof shadow));
     r->color_write_mask=7u;CHECK(!gml_render_cpu_backend_native_triangles(r,NULL,0u));
     r->color_write_mask=15u;r->blendmode=1;
-    CHECK(!gml_render_cpu_backend_native_triangles(r,NULL,0u));
+    gml_render_world_set_view_rotation(r,0.0,W,H);
+    if(gui) CHECK(!gml_render_cpu_backend_native_triangles(r,NULL,0u));
+    else{
+      CHECK(gml_render_cpu_backend_native_triangles(r,NULL,0u));
+      pair[1]=pair[0];before=fake.submits;
+      CHECK(gml_render_cpu_backend_native_triangles(r,pair,2u) &&
+            gml_render_scene_submit_pending(r) && fake.submits==before+1 &&
+            fake.last_batch_operations==2u &&
+            ((fake.last_primitive.payload.primitive.rectangle_flags&
+              GML_RENDER_RECTANGLE_BLEND_MASK)>>GML_RENDER_RECTANGLE_BLEND_SHIFT)==1u &&
+            gml_render_native_triangle_valid(&fake.last_primitive) && !fake.readbacks &&
+            !fake.rgb_queries && !memcmp(shadow,r->fb,sizeof shadow));
+    }
+    r->blendmode=2;CHECK(!gml_render_cpu_backend_native_triangles(r,NULL,0u));
     r->blendmode=0;r->alpha_test_enable=1;
     CHECK(!gml_render_cpu_backend_native_triangles(r,NULL,0u));r->alpha_test_enable=0;
     r->active_shader=0;r->shader_pal[0].grayscale=1;

@@ -513,12 +513,15 @@ static int resident_native_triangles(GmlRender *r,
   int surface=view_rotation && r && r->target_id>0;
   int preserving_application=view_rotation &&
     gml_render_target_is_first_generation_application_surface(r);
+  int additive=view_rotation && r && r->alphablend && r->blendmode==1 &&
+    r->blend_equation==GML_RENDER_BLEND_ADD &&
+    r->blend_equation_alpha==GML_RENDER_BLEND_ADD && !surface && !preserving_application;
   if(!resident_primitive_state_eligible_rule(r,1) ||
      (!view_rotation && (r->classic || !anygm_policy_has_modern_layer_semantics(r->win) ||
        r->target_sp || r->target_id!=-1 || gml_render_target_preserves_alpha(r))) ||
      gml_d3_is_active(r) ||
      r->classic_phase_scene_target || r->fog_flat || r->alpha_test_enable ||
-     !r->alphablend || r->blendmode || r->color_write_mask!=15u ||
+     !r->alphablend || (r->blendmode && !additive) || r->color_write_mask!=15u ||
      r->app_interp_phase[0] || r->app_interp_phase[1] || r->app_interp_phase[2] ||
      count>65536u || (count && !triangles)) return 0;
   if(!count) return triangles==NULL;
@@ -537,6 +540,8 @@ static int resident_native_triangles(GmlRender *r,
       .region={0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
     GmlRenderPrimitiveRect *p=&op->payload.primitive;
     p->region=op->target.region;p->kind=GML_RENDER_PRIMITIVE_NATIVE_TRIANGLE;
+    if(additive)
+      p->rectangle_flags=1u<<GML_RENDER_RECTANGLE_BLEND_SHIFT;
     if(surface)
       p->rectangle_flags=GML_RENDER_RECTANGLE_TARGET_ALPHA;
     if(preserving_application)
