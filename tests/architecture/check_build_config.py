@@ -16,6 +16,29 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class IncrementalBuild(unittest.TestCase):
+    def test_aarch64_math_uses_baseline_symbol_versions(self):
+        prefix = "aarch64-linux-gnu-"
+        if sys.platform != "linux" or not all(shutil.which(prefix + tool)
+                for tool in ("gcc", "g++", "ar", "objdump")):
+            self.skipTest("requires the Linux AArch64 cross toolchain")
+        destination = self.root / "src/host"
+        destination.mkdir(parents=True)
+        for name in ("anygm_libm_compat.c", "anygm_libm_compat.h"):
+            shutil.copyfile(ROOT / "src/host" / name, destination / name)
+        (self.root / "probe.c").write_text(
+            '#include <math.h>\n'
+            '__attribute__((visibility("default"))) double retro_api_version(double x) '
+            '{ return remainder(x, 360.0) + sqrtf((float)x) + atan2f((float)x, 1.0f); }\n')
+        self.build(CC=prefix + "gcc", CXX=prefix + "g++", AR=prefix + "ar",
+                   CFLAGS="-O0 -fno-builtin",
+                   ANYGM_RUNTIME_SOURCES="probe.c src/host/anygm_libm_compat.c")
+        symbols = subprocess.check_output([prefix + "objdump", "-T",
+            str(self.root / "anygm_libretro.so")], text=True, timeout=10)
+        for name in ("sqrtf", "atan2f", "remainder"):
+            lines = [line for line in symbols.splitlines() if line.split()[-1:] == [name]]
+            self.assertEqual(len(lines), 1, symbols)
+            self.assertIn("(GLIBC_2.17)", lines[0])
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)

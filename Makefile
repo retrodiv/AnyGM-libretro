@@ -174,9 +174,9 @@ ifneq (,$(findstring linux,$(ANYGM_TARGET_TRIPLE)))
 # Android compiler triples also contain "linux", but Android uses bionic and
 # does not compile the glibc wrappers in src/host/anygm_libm_compat.c.
 ifeq (,$(findstring android,$(ANYGM_TARGET_TRIPLE)))
-# Pin sqrtf/atan2f to an older glibc symbol version than a newer aarch64-linux
+# Pin wrapped math calls to an older glibc symbol version than a newer aarch64-linux
 # cross toolchain binds by default.
-GLIBC_MATH_WRAP_LDFLAGS := -Wl,--wrap=sqrtf -Wl,--wrap=atan2f
+GLIBC_MATH_WRAP_LDFLAGS := -Wl,--wrap=sqrtf -Wl,--wrap=atan2f -Wl,--wrap=remainder
 CORE_PLATFORM_LDFLAGS += $(GLIBC_MATH_WRAP_LDFLAGS)
 TEST_PLATFORM_LDFLAGS += $(GLIBC_MATH_WRAP_LDFLAGS)
 TEST_PLATFORM_OBJECTS += $(BUILD_DIR)/obj/src/host/anygm_libm_compat.o
