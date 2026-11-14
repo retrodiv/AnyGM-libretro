@@ -1073,7 +1073,7 @@ engine extent through `gml_gpu_prepare_scene`. CPU scene selection does not call
 Preparation requires accessible owning-context dispatch. Once per context, it executes the existing
 terminal and automatic-composition pipelines into a private 1x1 target and waits during preparation.
 GLES also prepares native sprite and numbered-surface filters, unblended region overwrites, alpha-blended rectangles,
-integer-tinted textures and common surface composition passes with the ordinary instanced stream
+integer-tinted textures with rounded or truncated modulation and common surface composition passes with the ordinary instanced stream
 and each pass's blending, alpha test and write mask. The tiny source and target are reused.
 A declined optional program retains normal lazy execution. The real frontend target is restored,
 and the private upload and draws are counted without scene-execution credit or image authority.

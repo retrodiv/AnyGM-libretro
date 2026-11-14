@@ -443,7 +443,7 @@ static const struct { uint32_t filter; int flags; } prepared_gles_filters[]={
   {34u,0},{35u,0},{36u,0},{43u,0},{51u,0},{53u,0},{55u,0},
   {26u,GL_SCENE_NATIVE_PLAIN},
   {38u,GL_SCENE_NATIVE_PLAIN|GL_SCENE_NATIVE_WHITE_TINT},
-  {40u,0},{41u,0},{79u,GL_SCENE_NATIVE_PLAIN},{84u,0}
+  {40u,0},{41u,0},{79u,GL_SCENE_NATIVE_PLAIN},{84u,0},{37u,0}
 };
 enum { PREPARED_GLES_FIXED_DRAWS=sizeof prepared_gles_filters/sizeof prepared_gles_filters[0],
        PREPARED_GLES_SCENE_DRAWS=1+PREPARED_GLES_FIXED_DRAWS };

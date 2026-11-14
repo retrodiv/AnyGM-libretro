@@ -3612,7 +3612,8 @@ unsigned gml_gpu_opengl_prepare_fixed_scene_draws(GmlGpuBackend *backend,GLuint 
     {40u,1,7u,0,1},   /* Integer-tinted texture colour. */
     {41u,0,8u,0,1},   /* Integer-tinted texture covered alpha. */
     {79u,3,15u,0,1},  /* Plain native sprite. */
-    {84u,3,15u,0,1}   /* Flat integer-tinted texture. */
+    {84u,3,15u,0,1},  /* Flat integer-tinted texture. */
+    {37u,3,15u,0,1}   /* Integer-tinted texture with truncated modulation. */
   };
   unsigned draws=0;
   for(unsigned i=0;i<sizeof passes/sizeof passes[0];i++)
