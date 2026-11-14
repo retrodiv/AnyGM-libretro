@@ -782,11 +782,43 @@ static int explicit_budget_sizes_the_cold_fixed_ring(int negotiation_result){
   return ok;
 }
 
+/* A capable frontend may first request a state after gameplay, without allocating a cold ring.
+ * Fixed frontends still need the explicit content budget when that first state exceeds one MiB. */
+static int first_size_query_after_gameplay_respects_negotiation(int negotiation_result){
+  stub_state_bytes=64u*1024u;
+  if(!begin_frontend(negotiation_result)) return 0;
+  retro_run();
+  stub_state_bytes=1500u*1024u;
+  stub_resume_state_bytes=stub_state_bytes;
+  stub_resume_hint_bytes=stub_state_bytes;
+  stub_hint_bytes=stub_state_bytes;
+  size_t capacity=retro_serialize_size();
+  uint8_t *state=malloc(capacity?capacity:1u);
+  if(!state) return 0;
+  int ok;
+  if(negotiation_result>0){
+    ok=capacity>=stub_state_bytes && retro_serialize(state,capacity) &&
+       complete_saves==1u && resume_saves==0u && retro_unserialize(state,capacity);
+  }else{
+    ok=capacity==1024u*1024u && !retro_serialize(state,capacity) &&
+       retro_serialize_size()==capacity && complete_saves==0u && resume_saves==0u;
+  }
+  if(!ok)
+    fprintf(stderr,"late first state query failed: negotiation=%d capacity=%zu required=%zu\n",
+            negotiation_result,capacity,stub_state_bytes);
+  free(state);
+  retro_unload_game();retro_deinit();
+  return ok;
+}
+
 int main(void){
   uint8_t byte=0;
   memset(&g_libretro,0,sizeof g_libretro);
   if(retro_serialize_size()!=0 || retro_serialize(&byte,1) || retro_unserialize(&byte,1) ||
      !stable_transport(1) || !stable_transport(0) || !stable_transport(-1) ||
+     !first_size_query_after_gameplay_respects_negotiation(1) ||
+     !first_size_query_after_gameplay_respects_negotiation(0) ||
+     !first_size_query_after_gameplay_respects_negotiation(-1) ||
      !fixed_ordinary_ring_covers_expected_runtime_growth(0) ||
      !fixed_ordinary_ring_covers_expected_runtime_growth(-1) ||
      !measured_growth_keeps_a_larger_fixed_reserve(1,0) ||

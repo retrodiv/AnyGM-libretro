@@ -803,10 +803,12 @@ semantics. `tests/integration/test_graphics_state.c::completed_frame_capacity_ca
 row-RLE and adjacent-row repetition at exact, near-fit, compact and failed capacities against
 the ordinary complete and explicit resume bytes, with canaries and unchanged live-state checks.
 
-A frontend that explicitly acknowledges variable sizes starts from the same content budget.
-Subsequent queries may grow monotonically through the established complete-state headroom
-calculation. Newly sized saves retain the completed picture while earlier compact slots remain
-loadable. The acknowledgement is required before any such advertised growth.
+A frontend that explicitly acknowledges variable sizes starts from the same content budget when
+it queries before the first frame. If its first query occurs after gameplay has completed a frame,
+that answer includes the established complete-state headroom, as a subsequent variable query
+would. Later answers may grow monotonically. Newly sized saves retain the completed picture while
+earlier compact slots remain loadable. The acknowledgement is required before any such advertised
+growth; declined and unsupported negotiations retain their fixed content budget.
 
 Completed-frame eligibility remains separate from allocation. Small complete images stay exact
 inside the compact ring whenever their actual encoding fits. A larger live geometry can use the

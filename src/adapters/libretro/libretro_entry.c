@@ -886,11 +886,13 @@ size_t retro_serialize_size(void){
    * every rewind snapshot but keeps the ring allocated from the first one; returning the complete
    * frame ceiling later makes RetroArch reject the snapshot before it calls retro_serialize(), so
    * the compact small-buffer path never gets a chance to run. */
+  /* A capable frontend can make its first query after gameplay, without a cold ring query.
+   * That first completed representation needs the same headroom as any later variable query. */
   if(!g_libretro.fixed_state_capacity ||
      (g_libretro.variable_state_supported && actual>g_libretro.fixed_state_capacity)){
     size_t previous=g_libretro.fixed_state_capacity;
     g_libretro.fixed_state_capacity=fixed_state_capacity(
-      actual,g_libretro.variable_state_supported && previous!=0,
+      actual,g_libretro.variable_state_supported && (previous!=0 || g_libretro.frame_completed),
       anygm_state_capacity_reserve(g_libretro.engine));
     /* Acknowledged growth is unusual enough to report once without flooding repeated queries. */
     if(previous && !g_libretro.state_capacity_growth_reported){
