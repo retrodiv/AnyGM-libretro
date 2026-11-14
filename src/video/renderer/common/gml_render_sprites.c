@@ -848,7 +848,10 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     ((physical_sprite_page==15 && !r->fog_flat && r->blendmode>=3 && r->blendmode<=GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA &&
       r->blendmode!=6 && r->blendmode!=7 && r->blendmode!=8) ||
      (physical_sprite_page==22 && r->fog_flat && r->blendmode==3));
-  int preset_atlas=selected_unwrapped || whole_background || full_axis_preset || quarter_tile;
+  int source_colour_text=r && family==GML_RENDER_SCENE_TEXT &&
+    (physical_sprite_page==13 || physical_sprite_page==14) &&
+    r->blendmode==GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA;
+  int preset_atlas=selected_unwrapped || whole_background || full_axis_preset || quarter_tile || source_colour_text;
   int background_replace=(selected_unwrapped || whole_background) && r && r->blendmode==6;
   int background_masked=preset_atlas && r && r->alphablend &&
     (r->blendmode==4 || r->blendmode==7 || r->blendmode==8 ||
@@ -1016,6 +1019,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
       !(scaled_sprite && r->blendmode==1) && !destination_factor_sprite &&
       !(preset_atlas && r->blendmode>=0 && r->blendmode<=GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA)) || r->blend_equation!=1 ||
      r->blend_equation_alpha!=1 || (r->color_write_mask!=0x0Fu && !scaled_sprite &&
+      !(source_colour_text && r->color_write_mask<=15u) &&
       !((selected_background || whole_background || tile_function) && r->color_write_mask<=15u)) ||
      gml_render_classic_vertical_phase_blocks_scene(r) || r->rotated_batch_count || r->rotated_batch_building ||
      r->pending_underlay || r->pending_presentation ||

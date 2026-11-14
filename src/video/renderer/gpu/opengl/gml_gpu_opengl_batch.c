@@ -763,7 +763,9 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
     region.width==1u && region.height==1u && q->filtered_draw_alpha==0.0 &&
     !q->corner_colour[0] && !q->corner_colour[1] &&
     !q->corner_colour[2] && !q->corner_colour[3] && state->write_mask==15u;
-  int background_blend=(background || (op->scene_family==GML_RENDER_SCENE_SPRITE && !row && !flat)) &&
+  int source_colour_text=op->scene_family==GML_RENDER_SCENE_TEXT && !row && !flat &&
+    (blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_PRESERVE || blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE);
+  int background_blend=(background || source_colour_text || (op->scene_family==GML_RENDER_SCENE_SPRITE && !row && !flat)) &&
     (blend==24 || blend==25 || blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_PRESERVE ||
      blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE || blend==GL_SCENE_BLEND_DEST_ALPHA_MASK ||
      blend==GL_SCENE_BLEND_DEST_ALPHA_MASK_OPAQUE ||

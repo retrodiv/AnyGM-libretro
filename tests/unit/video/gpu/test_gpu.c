@@ -5536,10 +5536,11 @@ static int scene_clipped_magnified_cell_case(void){
 }
 
 static int scene_integer_function_sprite_case(void){
-  for(unsigned background=0;background<3u;background++)
+  for(unsigned background=0;background<4u;background++)
   for(unsigned alpha_test=0;alpha_test<2u;alpha_test++)
   for(unsigned api=0;api<2u;api++) for(unsigned rounded=0;rounded<3u;rounded++)
   for(unsigned target_kind=0;target_kind<4u;target_kind++) for(unsigned blend=0;blend<14u;blend++){
+    if(background==3u && blend!=13u)continue;
     if(blend>=7u && !background && rounded==2u) continue;
     uint8_t pixels[16]={208,32,16,128,16,208,32,255,32,16,208,0,192,176,160,64};
     GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,31u,1u,1u};
@@ -5621,7 +5622,7 @@ static int scene_integer_function_sprite_case(void){
       op->target.image.content_version=index+1u;
       if(!index){op->opcode=GML_RENDER_OP_CLEAR;op->payload.clear_colour=0x40273859u;continue;}
       op->opcode=GML_RENDER_OP_TEXTURED_QUAD;
-      op->scene_family=background==2u?GML_RENDER_SCENE_TILE:
+      op->scene_family=background==3u?GML_RENDER_SCENE_TEXT:background==2u?GML_RENDER_SCENE_TILE:
         background?GML_RENDER_SCENE_BACKGROUND:GML_RENDER_SCENE_SPRITE;
       op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;op->sources=&source;op->source_count=1u;
       GmlRenderQuad *q=&op->payload.quad;q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
@@ -5664,7 +5665,9 @@ static int scene_integer_function_sprite_case(void){
     }
     if(background){
       GmlRenderDrawStateSnapshot original=state;
-      for(unsigned extension=0;extension<2u;extension++){
+      /* Text already admits its independent additive-alpha state. Only the
+       * invalid mask is a refusal control for the new text factor pair. */
+      for(unsigned extension=0;extension<(background==3u?1u:2u);extension++){
         state=original;
         for(unsigned i=0;i<3u;i++) ops[i].target.image.content_version=i+4u;
         if(!extension) state.write_mask=blend>=5u?16u:7u;
@@ -5774,7 +5777,7 @@ static int scene_integer_function_sprite_case(void){
         "wide nearest intervals through the upper bound retain grouped device execution");
     }
     /* Background and ordinary whole-sprite point magnification are limited
-     * by projected extent. Tile packets retain their separate scalar bound. */
+     * by projected extent. Tile and text packets retain their scalar bound. */
     const double background_scales[]={65.0,207.0,8192.0,16384.0};
     for(unsigned wide=0;wide<sizeof background_scales/sizeof background_scales[0];wide++)
     for(unsigned axis=0;axis<2u;axis++){
@@ -5792,12 +5795,12 @@ static int scene_integer_function_sprite_case(void){
       }
       int calls=anygm_test_graphics_scene_draw_calls(),clears=anygm_test_graphics_clear_calls();
       result=device.submit(device.context,&batch);
-      REQUIRE(result.status==(background!=2u?GML_RENDER_EXEC_ACCEPTED:GML_RENDER_EXEC_UNSUPPORTED) &&
-        result.accepted_prefix==(background!=2u?3u:0u) &&
-        anygm_test_graphics_scene_draw_calls()==calls+(background!=2u?draws:0) &&
-        (background!=2u || anygm_test_graphics_clear_calls()==clears) &&
+      REQUIRE(result.status==(background<2u?GML_RENDER_EXEC_ACCEPTED:GML_RENDER_EXEC_UNSUPPORTED) &&
+        result.accepted_prefix==(background<2u?3u:0u) &&
+        anygm_test_graphics_scene_draw_calls()==calls+(background<2u?draws:0) &&
+        (background<2u || anygm_test_graphics_clear_calls()==clears) &&
         !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
-        "wide background and sprite intervals group while tile bounds refuse before writes");
+        "wide background and sprite intervals group while tile and text bounds refuse before writes");
     }
     for(unsigned i=0;i<3u;i++) ops[i].target.image.content_version=200u+i;
     for(unsigned i=1u;i<3u;i++){
