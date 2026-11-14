@@ -262,6 +262,22 @@ static int scene_clear_depth(void *context,const GmlRenderTargetRef *target,doub
   return 1;
 }
 
+static int scene_depth_upload(void *context,const GmlRenderDepthUpload *transfer){
+  GmlGpu *gpu=context;
+  if(!context_accessible(gpu) || !gml_gpu_opengl_depth_upload(gpu->backend,transfer)) return 0;
+  gpu->counters.scene_depth_uploads++;
+  gpu->counters.scene_depth_uploaded_bytes+=(uint64_t)transfer->plane.width*transfer->plane.height*4u;
+  return 1;
+}
+
+static int scene_depth_readback(void *context,const GmlRenderDepthReadback *transfer){
+  GmlGpu *gpu=context;
+  if(!context_accessible(gpu) || !gml_gpu_opengl_depth_readback(gpu->backend,transfer)) return 0;
+  gpu->counters.scene_depth_readbacks++;
+  gpu->counters.scene_depth_readback_bytes+=(uint64_t)transfer->plane.width*transfer->plane.height*16u;
+  return 1;
+}
+
 void gml_gpu_device_services(GmlGpu *gpu,GmlRenderDeviceServices *out_services){
   if(!out_services) return;
   memset(out_services,0,sizeof *out_services);
@@ -279,6 +295,8 @@ void gml_gpu_device_services(GmlGpu *gpu,GmlRenderDeviceServices *out_services){
   out_services->has_rgb=scene_has_rgb;
   out_services->observe_on_demand=scene_observe_on_demand;
   out_services->clear_depth=scene_clear_depth;
+  out_services->upload_depth=scene_depth_upload;
+  out_services->readback_depth=scene_depth_readback;
 }
 
 int gml_gpu_execute_plan(GmlGpu *gpu,GmlRenderPlan *plan){

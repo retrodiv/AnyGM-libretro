@@ -42,6 +42,79 @@ static GmlGpuContext fake_context(GmlGpuApi api){
   return context;
 }
 
+/* Transport failure and lifetime only; real-context controls own raw bits. */
+static int scene_raw_depth_transport_case(void){
+  for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++){
+    anygm_test_graphics_reset();GmlGpuContext context=fake_context(api);
+    GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"raw depth context adopted");
+    gml_gpu_device_services(gpu,&device);
+    REQUIRE(device.upload_depth && device.readback_depth,"raw depth services exposed");
+    GmlRenderDrawOp seed={.opcode=GML_RENDER_OP_CLEAR};
+    seed.target=(GmlRenderTargetRef){.image={GML_RENDER_RESOURCE_SURFACE,901u,1u,1u},
+      .storage_version=1u,.width=8u,.height=5u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+      .region={0,0,8u,5u}};
+    seed.payload.clear_colour=0xff193a5cu;
+    GmlRenderDrawBatch batch={&seed,1u,NULL,0u};
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,"raw depth colour owner seeded");
+    unsigned char source[181],output[181],unchanged[181];
+    memset(source,0x93,sizeof source);memset(output,0xa7,sizeof output);
+    memcpy(unchanged,output,sizeof output);
+    GmlRenderDepthPlaneRef plane={seed.target.image,8u,5u,1u,1u};
+    GmlRenderDepthUpload upload={plane,source+1,180u,36u};
+    GmlRenderDepthReadback read={plane,output+1,180u,36u};
+    REQUIRE(device.upload_depth(device.context,&upload),"unaligned strided depth upload accepted");
+    GlSceneImage *image=gml_gpu_opengl_scene_image(gpu->backend,seed.target.image);
+    REQUIRE(image && image->raw_depth_epoch==1u && image->raw_depth_version==1u &&
+      image->ref.content_version==1u,"depth publication preserves colour version");
+    REQUIRE(!device.upload_depth(device.context,&upload),"duplicate depth version refused");
+    upload.plane.version=2u;
+    REQUIRE(device.upload_depth(device.context,&upload),"second depth version publishes distinct staging");
+    GLuint names[2]={image->raw_depth_texture[0],image->raw_depth_texture[1]};
+    unsigned front=image->raw_depth_front;
+    anygm_test_graphics_fail_texture_upload(names[front^1u]);upload.plane.version=3u;
+    REQUIRE(!device.upload_depth(device.context,&upload) && image->raw_depth_front==front &&
+      image->raw_depth_version==2u,"failed inactive upload preserves committed depth");
+    anygm_test_graphics_fail_texture_upload(0);
+    REQUIRE(!device.readback_depth(device.context,&read) && !memcmp(output,unchanged,sizeof output),
+      "stale read refuses transactionally");
+    read.plane.version=2u;anygm_test_graphics_fail_all_readbacks(1);
+    REQUIRE(!device.readback_depth(device.context,&read) && !memcmp(output,unchanged,sizeof output),
+      "driver read failure leaves destination untouched");
+    anygm_test_graphics_fail_all_readbacks(0);
+    REQUIRE(device.readback_depth(device.context,&read),"failed read is retryable");
+    REQUIRE(device.upload_depth(device.context,&upload),"failed staged upload is retryable");
+    GmlGpuCounters counters={0};gml_gpu_counters(gpu,&counters);
+    REQUIRE(counters.scene_depth_uploads==3u && counters.scene_depth_uploaded_bytes==480u &&
+      counters.scene_depth_readbacks==1u && counters.scene_depth_readback_bytes==640u &&
+      counters.scene_readbacks==0u && counters.scene_operations[GML_RENDER_OP_CLEAR]==1u,
+      "depth accounting remains separate from colour drawing and reads");
+    seed.target.width=4u;seed.target.region.width=4u;seed.target.image.content_version++;
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED &&
+      !device.readback_depth(device.context,&read) && anygm_test_graphics_texture_deleted(names[0]) &&
+      anygm_test_graphics_texture_deleted(names[1]),"colour resize retires both depth planes");
+    upload.plane=(GmlRenderDepthPlaneRef){seed.target.image,4u,5u,2u,1u};
+    REQUIRE(device.upload_depth(device.context,&upload),"resized owner starts a new depth domain");
+    read.plane=upload.plane;device.retire(device.context,seed.target.image);
+    REQUIRE(!device.readback_depth(device.context,&read),"retirement immediately fences depth access");
+    seed.target.image.incarnation++;
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,
+      "fresh incarnation materializes after deferred retirement");
+    upload.plane.colour=seed.target.image;
+    REQUIRE(device.upload_depth(device.context,&upload),"fresh incarnation owns its depth");
+    gml_gpu_context_lost(gpu);
+    REQUIRE(!device.upload_depth(device.context,&upload) && !device.readback_depth(device.context,&read),
+      "lost namespace refuses depth services");
+    REQUIRE(gml_gpu_context_reset(gpu,&context),"depth context replacement adopted");
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,
+      "replacement colour namespace seeded");
+    read.plane=upload.plane;
+    REQUIRE(!device.readback_depth(device.context,&read),"replacement never inherits forgotten depth");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 /* Packet bounds and origin handling only. Real driver/CPU pairs own pixels. */
 static int scene_clamped_atlas_window_case(void){
   GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,1u,1u,1u};
@@ -8731,6 +8804,7 @@ int main(int argc,char **argv){
     {"scene_gui_tinted_text",scene_gui_tinted_text_case},
     {"scene_gui_filtered_background_batch",scene_gui_filtered_background_batch_case},
     {"scene_clamped_atlas_window",scene_clamped_atlas_window_case},
+    {"scene_raw_depth_transport",scene_raw_depth_transport_case},
     {"scene_gui_half_point",scene_gui_half_point_case},
     {"scene_numbered_integer_sourceover",scene_numbered_integer_sourceover_case},
     {"scene_integer_endpoint_sprite",scene_integer_endpoint_sprite_case},

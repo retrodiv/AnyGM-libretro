@@ -135,6 +135,11 @@ typedef struct GlSceneImage {
   GmlRenderImageRef ref;
   GLuint texture,framebuffer;
   GLuint depth_renderbuffer;
+  /* Front is published; the other plane is disposable submission staging.
+   * Both names share this image's storage and context lifetime. */
+  GLuint raw_depth_texture[2],raw_depth_framebuffer[2];
+  uint64_t raw_depth_epoch,raw_depth_version;
+  unsigned raw_depth_front;
   GLuint content_source_texture,content_source_framebuffer;
   uint32_t content_source_width,content_source_height;
   uint64_t content_source_version;

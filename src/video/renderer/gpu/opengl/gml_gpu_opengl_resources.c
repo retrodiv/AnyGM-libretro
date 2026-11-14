@@ -202,7 +202,19 @@ static int scene_same_version(GmlRenderImageRef a,GmlRenderImageRef b){
   return scene_same_logical(a,b) && a.content_version==b.content_version;
 }
 
+static void scene_delete_raw_depth(GmlGpuBackend *backend,GlSceneImage *image){
+  for(unsigned i=0;i<2u;i++){
+    if(image->raw_depth_framebuffer[i])
+      backend->gl.DeleteFramebuffers(1,&image->raw_depth_framebuffer[i]);
+    if(image->raw_depth_texture[i]) backend->gl.DeleteTextures(1,&image->raw_depth_texture[i]);
+    image->raw_depth_framebuffer[i]=image->raw_depth_texture[i]=0;
+  }
+  image->raw_depth_epoch=image->raw_depth_version=0;
+  image->raw_depth_front=0;
+}
+
 static void scene_delete_image(GmlGpuBackend *backend,GlSceneImage *image){
+  scene_delete_raw_depth(backend,image);
   if(image->depth_renderbuffer) backend->gl.DeleteRenderbuffers(1,&image->depth_renderbuffer);
   if(image->content_source_framebuffer)
     backend->gl.DeleteFramebuffers(1,&image->content_source_framebuffer);
@@ -845,6 +857,7 @@ static int scene_upload_image(GmlGpuBackend *backend,const GmlRenderImageUpload 
     transfer->region.width==transfer->storage_width &&
     transfer->region.height==transfer->storage_height;
   if(first || resize){
+    scene_delete_raw_depth(backend,slot);
     if(slot->depth_renderbuffer){
       backend->gl.BindFramebuffer(GL_FRAMEBUFFER,slot->framebuffer);
       backend->gl.FramebufferRenderbuffer(GL_FRAMEBUFFER,GL_DEPTH_ATTACHMENT,GL_RENDERBUFFER,0);
@@ -1024,6 +1037,7 @@ GlSceneImage *gml_gpu_opengl_scene_target(GmlGpuBackend *backend,const GmlRender
   backend->gl.ActiveTexture(GL_TEXTURE0);
   backend->gl.BindTexture(GL_TEXTURE_2D,slot->texture);
   if(first || resize){
+    scene_delete_raw_depth(backend,slot);
     if(slot->depth_renderbuffer){
       backend->gl.BindFramebuffer(GL_FRAMEBUFFER,slot->framebuffer);
       backend->gl.FramebufferRenderbuffer(GL_FRAMEBUFFER,GL_DEPTH_ATTACHMENT,GL_RENDERBUFFER,0);
@@ -1331,6 +1345,133 @@ int gml_gpu_opengl_scene_readback(GmlGpuBackend *backend,const GmlRenderImageRea
   }
   if(transfer->result) *transfer->result=result;
   return success;
+}
+
+/* Depth is raw integer storage beside colour, not a colour image format. Keep
+ * all host transfer state local: a refused transfer must not poison a retry. */
+typedef struct GlDepthTransferState {
+  GLint active,texture,read,draw,buffer;
+  GLint packing[4];
+} GlDepthTransferState;
+
+static const GLenum depth_pack_tokens[2][4]={
+  {GL_UNPACK_ALIGNMENT,GL_UNPACK_ROW_LENGTH,GL_UNPACK_SKIP_ROWS,GL_UNPACK_SKIP_PIXELS},
+  {GL_PACK_ALIGNMENT,GL_PACK_ROW_LENGTH,GL_PACK_SKIP_ROWS,GL_PACK_SKIP_PIXELS}
+};
+
+static void depth_transfer_begin(GmlGpuBackend *backend,GlDepthTransferState *state,int read){
+  backend->gl.GetIntegerv(GL_ACTIVE_TEXTURE,&state->active);
+  backend->gl.ActiveTexture(GL_TEXTURE0);
+  backend->gl.GetIntegerv(GL_TEXTURE_BINDING_2D,&state->texture);
+  backend->gl.GetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&state->read);
+  backend->gl.GetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&state->draw);
+  backend->gl.GetIntegerv(read?GL_PIXEL_PACK_BUFFER_BINDING:GL_PIXEL_UNPACK_BUFFER_BINDING,
+                           &state->buffer);
+  backend->gl.BindBuffer(read?GL_PIXEL_PACK_BUFFER:GL_PIXEL_UNPACK_BUFFER,0);
+  for(unsigned i=0;i<4u;i++){
+    backend->gl.GetIntegerv(depth_pack_tokens[read][i],&state->packing[i]);
+    backend->gl.PixelStorei(depth_pack_tokens[read][i],i?0:4);
+  }
+}
+
+static void depth_transfer_end(GmlGpuBackend *backend,const GlDepthTransferState *state,int read){
+  for(unsigned i=0;i<4u;i++) backend->gl.PixelStorei(depth_pack_tokens[read][i],state->packing[i]);
+  backend->gl.BindBuffer(read?GL_PIXEL_PACK_BUFFER:GL_PIXEL_UNPACK_BUFFER,(GLuint)state->buffer);
+  backend->gl.BindTexture(GL_TEXTURE_2D,(GLuint)state->texture);
+  backend->gl.ActiveTexture((GLenum)state->active);
+  backend->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,(GLuint)state->read);
+  backend->gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER,(GLuint)state->draw);
+}
+
+static GlSceneImage *depth_transfer_image(GmlGpuBackend *backend,
+  const GmlRenderDepthPlaneRef *plane,uint32_t stride,size_t capacity){
+  if(!backend || !backend->loaded || !plane || !plane->epoch || !plane->version ||
+     !plane->width || !plane->height || plane->width>UINT32_MAX/4u ||
+     stride<plane->width*4u ||
+     (uint64_t)(plane->height-1u)*stride+(uint64_t)plane->width*4u>capacity ||
+     (uint64_t)plane->width*plane->height>SIZE_MAX/16u ||
+     (plane->colour.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
+      plane->colour.resource_class!=GML_RENDER_RESOURCE_APPLICATION &&
+      plane->colour.resource_class!=GML_RENDER_RESOURCE_SURFACE &&
+      plane->colour.resource_class!=GML_RENDER_RESOURCE_SCRATCH)) return NULL;
+  GlSceneImage *image=gml_gpu_opengl_scene_image(backend,plane->colour);
+  if(!image || image->source_partial || !image->rendered_origin ||
+     image->width!=plane->width || image->height!=plane->height) return NULL;
+  return image;
+}
+
+int gml_gpu_opengl_depth_upload(GmlGpuBackend *backend,const GmlRenderDepthUpload *transfer){
+  if(!transfer || !transfer->bytes) return 0;
+  GlSceneImage *image=depth_transfer_image(backend,&transfer->plane,
+                                          transfer->stride_bytes,transfer->byte_capacity);
+  if(!image || transfer->plane.epoch<image->raw_depth_epoch ||
+     (transfer->plane.epoch==image->raw_depth_epoch &&
+      transfer->plane.version<=image->raw_depth_version)) return 0;
+  const uint32_t width=transfer->plane.width,height=transfer->plane.height;
+  size_t row_bytes=(size_t)width*4u;
+  if(!scene_scratch_ready(&backend->scene,row_bytes*height)) return 0;
+  for(uint32_t y=0;y<height;y++)
+    memcpy(backend->scene.scratch+(size_t)(height-1u-y)*row_bytes,
+           (const uint8_t*)transfer->bytes+(size_t)y*transfer->stride_bytes,row_bytes);
+  GlDepthTransferState state;depth_transfer_begin(backend,&state,0);
+  unsigned back=image->raw_depth_front^1u;
+  int success=0;
+  if(!image->raw_depth_texture[back]){
+    backend->gl.GenTextures(1,&image->raw_depth_texture[back]);
+    if(!image->raw_depth_texture[back]) goto depth_upload_end;
+    backend->gl.BindTexture(GL_TEXTURE_2D,image->raw_depth_texture[back]);
+    backend->gl.TexImage2D(GL_TEXTURE_2D,0,GL_R32UI,(GLsizei)width,(GLsizei)height,
+                            0,GL_RED_INTEGER,GL_UNSIGNED_INT,NULL);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+    if(backend->gl.GetError()!=GL_NO_ERROR){
+      backend->gl.DeleteTextures(1,&image->raw_depth_texture[back]);
+      image->raw_depth_texture[back]=0;goto depth_upload_end;
+    }
+  }else backend->gl.BindTexture(GL_TEXTURE_2D,image->raw_depth_texture[back]);
+  if(!image->raw_depth_framebuffer[back])
+    backend->gl.GenFramebuffers(1,&image->raw_depth_framebuffer[back]);
+  if(!image->raw_depth_framebuffer[back]) goto depth_upload_end;
+  backend->gl.BindFramebuffer(GL_FRAMEBUFFER,image->raw_depth_framebuffer[back]);
+  backend->gl.FramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,
+                                    image->raw_depth_texture[back],0);
+  if(backend->gl.CheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE) goto depth_upload_end;
+  backend->gl.TexSubImage2D(GL_TEXTURE_2D,0,0,0,(GLsizei)width,(GLsizei)height,
+                             GL_RED_INTEGER,GL_UNSIGNED_INT,backend->scene.scratch);
+  success=backend->gl.GetError()==GL_NO_ERROR;
+depth_upload_end:
+  if(!success) backend->gl.GetError();
+  depth_transfer_end(backend,&state,0);
+  if(!success) return 0;
+  image->raw_depth_front=back;image->raw_depth_epoch=transfer->plane.epoch;
+  image->raw_depth_version=transfer->plane.version;
+  image->target=1; /* Volatile device authority must not be evicted as a source cache. */
+  return 1;
+}
+
+int gml_gpu_opengl_depth_readback(GmlGpuBackend *backend,const GmlRenderDepthReadback *transfer){
+  if(!transfer || !transfer->bytes) return 0;
+  GlSceneImage *image=depth_transfer_image(backend,&transfer->plane,
+                                          transfer->stride_bytes,transfer->byte_capacity);
+  if(!image || image->raw_depth_epoch!=transfer->plane.epoch ||
+     image->raw_depth_version!=transfer->plane.version ||
+     !image->raw_depth_framebuffer[image->raw_depth_front]) return 0;
+  const uint32_t width=transfer->plane.width,height=transfer->plane.height;
+  size_t row_bytes=(size_t)width*16u,bytes=row_bytes*height;
+  if(!scene_scratch_ready(&backend->scene,bytes)) return 0;
+  GlDepthTransferState state;depth_transfer_begin(backend,&state,1);
+  backend->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,image->raw_depth_framebuffer[image->raw_depth_front]);
+  backend->gl.ReadPixels(0,0,(GLsizei)width,(GLsizei)height,GL_RGBA_INTEGER,
+                           GL_UNSIGNED_INT,backend->scene.scratch);
+  int success=backend->gl.GetError()==GL_NO_ERROR;
+  depth_transfer_end(backend,&state,1);
+  if(!success) return 0;
+  for(uint32_t y=0;y<height;y++) for(uint32_t x=0;x<width;x++)
+    memcpy((uint8_t*)transfer->bytes+(size_t)y*transfer->stride_bytes+(size_t)x*4u,
+           backend->scene.scratch+(size_t)(height-1u-y)*row_bytes+(size_t)x*16u,4u);
+  return 1;
 }
 
 void gml_gpu_opengl_scene_retire(GmlGpuBackend *backend,GmlRenderImageRef image){

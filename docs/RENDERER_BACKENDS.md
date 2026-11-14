@@ -1742,6 +1742,18 @@ It does not add a generic scene-batch capability bit. The CPU executor records a
 lazy target-local clear and materializes it only for subsequent CPU depth tests;
 the device executor clears its own depth attachment without a CPU drawing replay.
 Existing `SOFTWARE3D_PASS` coverage and its counted CPU fallback remain unchanged.
+`GmlRenderDeviceServices.upload_depth/readback_depth` provide a separate raw
+binary32 transport beside the owning colour image. Two R32UI planes separate
+the published version from an upload candidate; a refused upload preserves the
+previous readable plane. Exact full-plane reads stage before publishing caller
+bytes. Epoch/version checks are independent of colour versions; colour resize,
+retirement and context loss discard the volatile plane. Transfer counters remain
+separate from colour draw/read counters. The neutral driver contract covers
+failed upload/read retry, resize, retirement and replacement contexts. These
+services are infrastructure only: software3D does not yet use them, no triangle
+or depth comparison is accelerated, and no persistent state representation
+changes. Device bit-transport controls do not establish original-runner fidelity
+or physical-device performance.
 Selected views apply their authored rectangle and angle to active default 3D
 projection at the view boundary. Starting 3D inside that view uses the same
 rectangle; explicit projections issued later in Draw override it. The view

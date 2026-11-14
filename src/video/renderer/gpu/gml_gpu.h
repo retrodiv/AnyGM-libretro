@@ -68,6 +68,9 @@ typedef struct GmlGpuCounters {
   uint64_t scene_families[GML_RENDER_SCENE_FAMILY_COUNT];
   uint64_t scene_uploads,scene_uploaded_bytes,scene_readbacks,scene_readback_bytes;
   uint64_t scene_readback_masks,scene_readback_mask_bytes;
+  /* Raw depth transport never counts as colour drawing or colour observation. */
+  uint64_t scene_depth_uploads,scene_depth_uploaded_bytes;
+  uint64_t scene_depth_readbacks,scene_depth_readback_bytes;
   uint64_t scene_rgb_queries,scene_rgb_query_refusals;
   uint64_t completed_frame_copies,completed_frame_copy_bytes;
   uint64_t completed_frame_reads,completed_frame_read_bytes;

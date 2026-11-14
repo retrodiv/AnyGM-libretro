@@ -6,6 +6,30 @@
 
 #include "gml_render_draw.h"
 
+/* Volatile raw depth belongs to the same physical colour image and context.
+ * Its epoch/version are independent of colour versions. Epochs increase when
+ * a depth domain is reset; versions increase within an epoch. Transfer words
+ * are opaque binary32 encodings, never colour channels or normalized depth. */
+typedef struct GmlRenderDepthPlaneRef {
+  GmlRenderImageRef colour;
+  uint32_t width,height;
+  uint64_t epoch,version;
+} GmlRenderDepthPlaneRef;
+
+typedef struct GmlRenderDepthUpload {
+  GmlRenderDepthPlaneRef plane;
+  const void *bytes;
+  size_t byte_capacity;
+  uint32_t stride_bytes;
+} GmlRenderDepthUpload;
+
+typedef struct GmlRenderDepthReadback {
+  GmlRenderDepthPlaneRef plane;
+  void *bytes;
+  size_t byte_capacity;
+  uint32_t stride_bytes;
+} GmlRenderDepthReadback;
+
 /* Renderer-facing service. Only engine_graphics binds it to a concrete device; shared draw
  * preparation and the software executor never include a GPU-private or graphics-API header. */
 typedef struct GmlRenderDeviceServices {
@@ -32,6 +56,12 @@ typedef struct GmlRenderDeviceServices {
                               GmlRenderRect region);
   /* Ordered side-plane operation; it never advances the colour image version. */
   int (*clear_depth)(void *context,const GmlRenderTargetRef *target,double depth);
+  /* Complete top-origin planes only. Upload publishes after all device work
+   * succeeds, leaving a previous plane readable after refusal. Readback writes
+   * the caller's bytes only after a complete successful read. Neither changes
+   * colour authority. Resize, retirement and context loss invalidate the plane. */
+  int (*upload_depth)(void *context,const GmlRenderDepthUpload *transfer);
+  int (*readback_depth)(void *context,const GmlRenderDepthReadback *transfer);
 } GmlRenderDeviceServices;
 
 #endif
