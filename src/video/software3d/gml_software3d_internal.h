@@ -112,6 +112,7 @@ typedef struct {
   int kind,w,h,stride,offset_x,offset_y;
   const uint8_t *rgba;
   const uint32_t *xrgb;
+  int native,handle,full_atlas;
 } GmlD3Texture;
 
 /* Software-3D-private raster operations shared by the fixed-function owners. */

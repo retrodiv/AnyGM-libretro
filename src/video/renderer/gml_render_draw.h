@@ -517,13 +517,16 @@ typedef enum GmlRenderSceneFamily {
 
 /* A complete projected native triangle. Camera, clipping and culling are shared
  * preparation; device rasterization owns coverage. Each vertex is x,y,
- * reciprocal distance, affine raw depth, and straight normalized RGBA. */
+ * reciprocal distance, affine raw depth, and straight normalized RGBA. Optional
+ * UVs are weighted by that same reciprocal distance for device interpolation. */
 typedef struct GmlRenderDepthTriangle {
   GmlRenderImageRef previous_colour;
   uint64_t depth_epoch,depth_version,next_depth_version;
   double vertex[3][8];
   uint32_t hidden,write_depth,normalized,blend;
   uint32_t stamp_alpha,zero_alpha_writes,alpha_source_squared;
+  double uv[3][2];
+  uint32_t textured,interpolate;
 } GmlRenderDepthTriangle;
 
 typedef struct GmlRenderDrawOp {

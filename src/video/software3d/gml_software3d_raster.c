@@ -379,7 +379,10 @@ static int d3_texture_from_backend_view(const GmlRenderCpuBackendTextureView *vi
 static int d3_texture(GmlRender *R, int handle, GmlD3Texture *out){
   if(out) memset(out,0,sizeof(*out));
   GmlRenderCpuBackendTextureView view;
-  if(!gml_render_cpu_backend_texture_view(R,handle,0,&view)) return 0;
+  int native=GML_GRAPHICS && g_d3.active && !g_d3.lighting && !g_d3.fog &&
+    gml_render_cpu_backend_depth_texture_eligible(R,handle);
+  if(!(native?gml_render_cpu_backend_texture_metadata(R,handle,0,&view):
+              gml_render_cpu_backend_texture_view(R,handle,0,&view))) return 0;
   GmlRenderCpuBackendDrawView draw;
   const struct AnygmHostServices *host=
     gml_render_cpu_backend_draw_view(R,&draw)?draw.host:NULL;
@@ -390,7 +393,13 @@ static int d3_texture(GmlRender *R, int handle, GmlD3Texture *out){
                     "[d3d] texture bg=%d tpag=%d atlas=%d rect=%dx%d\n",
                     view.resource_index,view.page_index,view.atlas_index,
                     view.width,view.height);
-  return d3_texture_from_backend_view(&view,out);
+  int result=d3_texture_from_backend_view(&view,out);
+  if(native && view.pixel_kind==GML_RENDER_CPU_BACKEND_PIXELS_XRGB && !view.xrgb){
+    if(out)*out=(GmlD3Texture){.kind=3,.w=view.width,.h=view.height,.stride=view.stride};
+    result=1;
+  }
+  if(result && out){out->native=native;out->handle=handle;}
+  return result;
 }
 /* vertex_texcoord receives texture-page UVs (for example those returned by
  * texture_get_uvs), whereas the legacy d3d helpers use sprite-local 0..1 UVs.
@@ -399,8 +408,25 @@ static int vertex_texture(GmlRender *R,int handle,GmlD3Texture *out){
   if(out) memset(out,0,sizeof(*out));
   if(handle==-1) return 1;
   GmlRenderCpuBackendTextureView view;
-  if(!gml_render_cpu_backend_texture_view(R,handle,1,&view)) return 0;
-  return d3_texture_from_backend_view(&view,out);
+  int native=GML_GRAPHICS && g_d3.active && !g_d3.lighting && !g_d3.fog &&
+    gml_render_cpu_backend_depth_texture_eligible(R,handle);
+  if(!(native?gml_render_cpu_backend_texture_metadata(R,handle,1,&view):
+              gml_render_cpu_backend_texture_view(R,handle,1,&view))) return 0;
+  int result=d3_texture_from_backend_view(&view,out);
+  if(native && view.pixel_kind==GML_RENDER_CPU_BACKEND_PIXELS_XRGB && !view.xrgb){
+    if(out)*out=(GmlD3Texture){.kind=3,.w=view.width,.h=view.height,.stride=view.stride};
+    result=1;
+  }
+  if(result && out){out->native=native;out->handle=handle;out->full_atlas=1;}
+  return result;
+}
+
+static int d3_texture_cpu(GmlRender *R,const GmlD3Texture **texture,GmlD3Texture *resolved){
+  if(!*texture || (*texture)->kind!=3) return 1;
+  GmlRenderCpuBackendTextureView view;
+  if(!gml_render_cpu_backend_texture_view(R,(*texture)->handle,(*texture)->full_atlas,&view) ||
+     !d3_texture_from_backend_view(&view,resolved)) return 0;
+  *texture=resolved;return 1;
 }
 static void d3_texture_texel(const GmlD3Texture *texture,int x,int y,int channel[4]){
   if(texture->kind==1){
@@ -461,7 +487,8 @@ static double d3_edge(double ax,double ay,double bx,double by,double px,double p
 typedef struct {
   double sx[3],sy[3],iz[3],uz[3],vz[3],riz[3],giz[3],biz[3],aiz[3];
   double depth_value[3],view_distance[3];
-  int flat_color;
+  int flat_color,flat_uv;
+  double constant_uv[2];
 } GmlD3Projection;
 
 static int d3_project_triangle(GmlRender *R,const GmlRenderCpuBackendDrawView *draw,
@@ -488,6 +515,9 @@ static int d3_project_triangle(GmlRender *R,const GmlRenderCpuBackendDrawView *d
    * keeping this work out of the per-pixel inner loop. */
   double u_phase=(d3->classic&&!draw->interpolate)?1.0/65536.0:0.0;
   double v_phase=(d3->classic&&!draw->interpolate)?-1.0/524288.0:0.0;
+  p->flat_uv=in[0].u==in[1].u && in[0].u==in[2].u &&
+             in[0].v==in[1].v && in[0].v==in[2].v;
+  p->constant_uv[0]=in[0].u+u_phase;p->constant_uv[1]=in[0].v+v_phase;
   for(int i=0;i<3;i++){
     if(d3->ortho){
       double ow=fabs(d3->ortho_w)>1e-9?d3->ortho_w:1;
@@ -517,6 +547,8 @@ static int d3_project_triangle(GmlRender *R,const GmlRenderCpuBackendDrawView *d
 }
 static void d3_raster_triangle_impl(GmlRender *R, const GmlD3Vertex in[3], const GmlD3Texture *texture,
                                int joined){
+  GmlD3Texture resolved;
+  if(!d3_texture_cpu(R,&texture,&resolved)) return;
   GmlRenderCpuBackendDrawView draw;
   if(!d3_depth_prepare(R) || !gml_render_cpu_backend_prepare_draw_view(R,&draw) ||
      !draw.pixels || draw.width<=0 || draw.height<=0) return;
@@ -597,8 +629,10 @@ static void d3_raster_triangle_impl(GmlRender *R, const GmlD3Vertex in[3], const
                                              (float)ztest<d3->depth[di])) continue;
     double sampled[4]={255,255,255,255};
     if(texture&&texture->kind){
-      double u=(b0*uz[0]+b1*uz[1]+b2*uz[2])/invz;
-      double v=(b0*vz[0]+b1*vz[1]+b2*vz[2])/invz;
+      /* Equal vertex attributes stay constant: weighted roundoff must not
+       * turn a transparent sample into a positive depth-writing fragment. */
+      double u=projected.flat_uv?projected.constant_uv[0]:(b0*uz[0]+b1*uz[1]+b2*uz[2])/invz;
+      double v=projected.flat_uv?projected.constant_uv[1]:(b0*vz[0]+b1*vz[1]+b2*vz[2])/invz;
       d3_sample(R,&draw,texture,u,v,sampled);
     }
     if(opaque_white&&sampled[3]>=255.0){
@@ -657,8 +691,9 @@ static void d3_raster_triangle_impl(GmlRender *R, const GmlD3Vertex in[3], const
 }
 static int d3_native_triangle(GmlRender *R,const GmlD3Vertex in[3],const GmlD3Texture *texture){
   if(!R || !GML_GRAPHICS || !g_d3.active || GML_GRAPHICS->view_projection_2d ||
-     g_d3.lighting || g_d3.fog || (texture && texture->kind) ||
-     !gml_render_cpu_backend_depth_triangle(R,NULL,NULL,NULL)) return 0;
+     g_d3.lighting || g_d3.fog || (texture && texture->kind && !texture->native) ||
+     !gml_render_cpu_backend_depth_triangle(R,NULL,NULL,
+       texture && texture->kind?texture->handle:-1,texture?texture->full_atlas:0,NULL)) return 0;
   GmlRenderCpuBackendDrawView draw;GmlD3Projection projected;
   if(!gml_render_cpu_backend_draw_view(R,&draw)) return 0;
   GmlD3DepthTarget *target=d3_depth_metadata(R,&draw);
@@ -667,12 +702,19 @@ static int d3_native_triangle(GmlRender *R,const GmlD3Vertex in[3],const GmlD3Te
                        projected.sx[2],projected.sy[2]);
   if(!isfinite(area) || fabs(area)<1e-9 || (g_d3.culling && area>=0)) return 1;
   GmlRenderDepthTriangle triangle={.depth_epoch=target->epoch,.depth_version=target->version,
-    .hidden=g_d3.hidden!=0,.write_depth=g_d3.zwrite!=0,.normalized=target->normalized!=0};
+    .hidden=g_d3.hidden!=0,.write_depth=g_d3.zwrite!=0,.normalized=target->normalized!=0,
+    .textured=texture && texture->kind,.interpolate=draw.interpolate!=0};
   for(unsigned i=0;i<3u;i++){
     triangle.vertex[i][0]=projected.sx[i];triangle.vertex[i][1]=projected.sy[i];
     triangle.vertex[i][2]=projected.iz[i];triangle.vertex[i][3]=projected.depth_value[i];
     triangle.vertex[i][4]=in[i].r/255.0;triangle.vertex[i][5]=in[i].g/255.0;
     triangle.vertex[i][6]=in[i].b/255.0;triangle.vertex[i][7]=in[i].alpha;
+    if(triangle.textured){
+      triangle.uv[i][0]=projected.flat_uv?projected.constant_uv[0]:projected.uz[i]/projected.iz[i];
+      triangle.uv[i][1]=projected.flat_uv?projected.constant_uv[1]:projected.vz[i]/projected.iz[i];
+      if(!isfinite(triangle.uv[i][0]) || !isfinite(triangle.uv[i][1]) ||
+         fabs(triangle.uv[i][0])>65536 || fabs(triangle.uv[i][1])>65536) return 0;
+    }
     for(unsigned c=0;c<8u;c++) if(!isfinite(triangle.vertex[i][c])) return 0;
     if(fabs(triangle.vertex[i][0])>65536 || fabs(triangle.vertex[i][1])>65536 ||
        triangle.vertex[i][2]<1e-8 || triangle.vertex[i][2]>1e8 ||
@@ -680,7 +722,8 @@ static int d3_native_triangle(GmlRender *R,const GmlD3Vertex in[3],const GmlD3Te
     for(unsigned c=4;c<8u;c++) if(triangle.vertex[i][c]<0 || triangle.vertex[i][c]>1) return 0;
   }
   GmlRenderDepthPlaneRef published;
-  if(!gml_render_cpu_backend_depth_triangle(R,&triangle,target->gpu_current?NULL:target->pixels,&published))
+  if(!gml_render_cpu_backend_depth_triangle(R,&triangle,target->gpu_current?NULL:target->pixels,
+     triangle.textured?texture->handle:-1,texture?texture->full_atlas:0,&published))
     return 0;
   target->device_plane=published;target->version=published.version;
   target->gpu_current=1;target->cpu_current=0;
@@ -1311,6 +1354,8 @@ static int d3_clip_segment_plane(GmlD3Vertex *a,GmlD3Vertex *b,double plane,int 
   return 1;
 }
 static void d3_emit_point_impl(GmlRender *R,GmlD3Vertex world,const GmlD3Texture *texture){
+  GmlD3Texture resolved;
+  if(!d3_texture_cpu(R,&texture,&resolved)) return;
   GmlRenderCpuBackendDrawView draw;
   if(!d3_depth_prepare(R) || !gml_render_cpu_backend_prepare_draw_view(R,&draw)) return;
   if(g_d3.lighting){ double factor[3]; if(d3_vertex_light_factor(R,&world,factor)) d3_apply_light_factor(&world,factor); }
@@ -1330,6 +1375,8 @@ static void d3_emit_point(GmlRender *R,GmlD3Vertex world,const GmlD3Texture *tex
   gml_render_cpu_backend_dispatch_end(R,&scope);
 }
 static void d3_emit_line_impl(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,const GmlD3Texture *texture){
+  GmlD3Texture resolved;
+  if(!d3_texture_cpu(R,&texture,&resolved)) return;
   GmlRenderCpuBackendDrawView draw;
   if(!d3_depth_prepare(R) || !gml_render_cpu_backend_prepare_draw_view(R,&draw)) return;
   if(g_d3.lighting){

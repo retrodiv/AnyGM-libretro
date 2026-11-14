@@ -582,7 +582,12 @@ static int batch_valid(const GmlRenderResource *resource,const GmlRenderDrawBatc
        operation->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
       if(operation->source_count || operation->sources) return 0;
     } else if(operation->opcode==GML_RENDER_OP_SOFTWARE3D_PASS){
-      if(operation->source_count || operation->sources || batch->operation_count!=1u ||
+      if(operation->payload.depth_triangle.textured>1u ||
+         operation->source_count!=operation->payload.depth_triangle.textured ||
+         (operation->source_count && (!operation->sources ||
+           !(source=find_input(sources,source_count,operation->sources[0])) ||
+           same_logical(source->image,resource->image))) ||
+         (!operation->source_count && operation->sources) || batch->operation_count!=1u ||
          !batch->states || operation->state_index>=batch->state_count ||
          operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT) return 0;
       state=&batch->states[operation->state_index];

@@ -132,7 +132,10 @@ int gml_gpu_opengl_depth_triangle_programs(GmlGpuBackend *backend,char *error,si
     p->colour=backend->gl.GetUniformLocation(program,"u_colour");
     p->flags=backend->gl.GetUniformLocation(program,"u_flags");
     p->policy=backend->gl.GetUniformLocation(program,"u_policy");
-    if(p->extent<0 || p->depth<0 || p->flags<0 || (!pass && (p->colour<0 || p->policy<0))){
+    p->source=backend->gl.GetUniformLocation(program,"u_source");
+    p->flat_uv=backend->gl.GetUniformLocation(program,"u_flat_uv");
+    if(p->extent<0 || p->depth<0 || p->flags<0 || p->policy<0 || p->source<0 ||
+       p->flat_uv<0 || (!pass && p->colour<0)){
       backend->gl.DeleteProgram(program);return 0;
     }
     p->program=program;

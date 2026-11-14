@@ -24,19 +24,21 @@
 /* Both passes use the same native coverage and fragment acceptance. The old
  * colour and integer depth are immutable inputs until joint publication. */
 #define GML_GPU_OPENGL_DEPTH_TRIANGLE_VERTEX \
-  "layout(location=0) in vec4 a_geometry;layout(location=1) in vec4 a_colour;\n" \
-  "uniform vec2 u_extent;out float v_reciprocal;out float v_depth;out vec4 v_colour;\n" \
+  "layout(location=0) in vec4 a_geometry;layout(location=1) in vec4 a_colour;" \
+  "layout(location=2) in vec2 a_uv;\n" \
+  "uniform vec2 u_extent;out float v_reciprocal;out float v_depth;out vec4 v_colour;out vec2 v_uv;\n" \
   "void main(){gl_Position=vec4(a_geometry.x*2.0/u_extent.x-1.0," \
   "1.0-a_geometry.y*2.0/u_extent.y,0.0,1.0);" \
-  "v_reciprocal=a_geometry.z;v_depth=a_geometry.w;v_colour=a_colour;}\n"
+  "v_reciprocal=a_geometry.z;v_depth=a_geometry.w;v_colour=a_colour;v_uv=a_uv;}\n"
 
 #define GML_GPU_OPENGL_DEPTH_TRIANGLE_FRAGMENT \
-  "in float v_reciprocal;in float v_depth;in vec4 v_colour;" \
-  "uniform usampler2D u_depth;uniform sampler2D u_colour;" \
-  "uniform ivec4 u_flags;uniform ivec4 u_policy;\n" \
+  "in float v_reciprocal;in float v_depth;in vec4 v_colour;in vec2 v_uv;" \
+  "uniform usampler2D u_depth;uniform sampler2D u_colour;uniform sampler2D u_source;" \
+  "uniform ivec4 u_flags;uniform ivec4 u_policy;uniform vec2 u_flat_uv;\n" \
   "#ifdef DEPTH_WRITE\nlayout(location=0) out uint result_depth;\n" \
   "#else\nlayout(location=0) out vec4 result_colour;\n#endif\n" \
   "void main(){vec4 source=clamp(v_colour/v_reciprocal,0.0,1.0);float z=v_depth;" \
+  "if(u_policy.w!=0)source*=texture(u_source,u_policy.w==2?u_flat_uv:v_uv/v_reciprocal);" \
   "if(u_flags.z!=0&&(isnan(z)||isinf(z)||z<0.0||z>1.0))discard;" \
   "float old=uintBitsToFloat(texelFetch(u_depth,ivec2(gl_FragCoord.xy),0).r);" \
   "if(u_flags.x!=0&&(u_flags.z!=0?z>old:z<old))discard;\n" \

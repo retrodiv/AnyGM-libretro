@@ -602,8 +602,12 @@ int gml_render_cpu_backend_depth_read(GmlRender *r,const GmlRenderDepthPlaneRef 
   return device->readback_depth(device->context,&read);
 }
 
-int gml_render_cpu_backend_depth_triangle(GmlRender *r,GmlRenderDepthTriangle *triangle,
-  const float *depth_pixels,GmlRenderDepthPlaneRef *published){
+static int vertex_texture_source(GmlRender *r,int texture,GmlRenderResourceSource *source,
+                                   int query,int allow_runtime);
+static int native_vertex_texture_source(GmlRender *r,int texture,int full_atlas,
+                                        GmlRenderResourceSource *source);
+
+static int resident_depth_triangle_eligible(GmlRender *r){
   const GmlRenderDeviceServices *device=gml_render_device(r);
   GmlRenderDeviceCaps caps={0};
   if(!resident_primitive_state_eligible_target(r,0,1) || r->color_write_mask!=15u ||
@@ -612,7 +616,23 @@ int gml_render_cpu_backend_depth_triangle(GmlRender *r,GmlRenderDepthTriangle *t
      r->app_interp_phase[2] || !device->upload_depth || !device->readback_depth ||
      !device->capabilities(device->context,&caps) ||
      !(caps.supported_operations&(UINT64_C(1)<<GML_RENDER_OP_SOFTWARE3D_PASS))) return 0;
-  if(!triangle) return 1;
+  return 1;
+}
+
+int gml_render_cpu_backend_depth_texture_eligible(GmlRender *r,int texture){
+  GmlRenderResourceSource source={0};
+  return resident_depth_triangle_eligible(r) &&
+    (texture==-1 || vertex_texture_source(r,texture,&source,1,1));
+}
+
+int gml_render_cpu_backend_depth_triangle(GmlRender *r,GmlRenderDepthTriangle *triangle,
+  const float *depth_pixels,int texture,int full_atlas,GmlRenderDepthPlaneRef *published){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  if(!resident_depth_triangle_eligible(r)) return 0;
+  GmlRenderResourceSource sampled={0};
+  if(!triangle) return texture==-1 || vertex_texture_source(r,texture,&sampled,1,1);
+  if((texture!=-1)!=(triangle->textured!=0) ||
+     (triangle->textured && !native_vertex_texture_source(r,texture,full_atlas,&sampled))) return 0;
   if(!published || triangle->depth_version==UINT64_MAX) return 0;
   if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
   gml_render_flush_pending_fill(r);
@@ -641,10 +661,12 @@ int gml_render_cpu_backend_depth_triangle(GmlRender *r,GmlRenderDepthTriangle *t
     GML_RENDER_PIXEL_ARGB8888,{0,0,source.width,source.height}};
   if(op.target.image.content_version==UINT64_MAX) return 0;
   op.target.image.content_version++;op.payload.depth_triangle=*triangle;
+  if(triangle->textured){op.source_count=1u;op.sources=&sampled.image;}
   GmlRenderDrawBatch batch={&op,1u,&state,1u};
   GmlRenderResourceExecution result=r->target_id>0?
-    gml_render_surface_scene_submit_deferred_shader(r,r->target_id,&batch,NULL,0u):
-    gml_render_application_scene_submit(r,&batch,NULL,0u);
+    gml_render_surface_scene_submit_deferred_shader(r,r->target_id,&batch,
+      triangle->textured?&sampled:NULL,op.source_count):
+    gml_render_application_scene_submit(r,&batch,triangle->textured?&sampled:NULL,op.source_count);
   if(result!=GML_RENDER_RESOURCE_EXEC_DEVICE) return 0;
   /* A CPU depth writer ends residency but retains the scene target. Resume
    * only after both planes have been uploaded and the native draw published. */

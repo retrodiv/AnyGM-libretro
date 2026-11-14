@@ -45,6 +45,7 @@ static GmlGpuContext fake_context(GmlGpuApi api){
 /* Transport failure and lifetime only; real-context controls own raw bits. */
 static int scene_depth_triangle_transaction_case(void){
   for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++)
+  for(unsigned textured=0;textured<3u;textured++)
   for(unsigned failure=0;failure<3u;failure++){
     anygm_test_graphics_reset();GmlGpuContext context=fake_context(api);
     GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
@@ -68,6 +69,17 @@ static int scene_depth_triangle_transaction_case(void){
     t->hidden=t->write_depth=1u;
     const double vertices[3][8]={{1,1,1,.25,1,0,0,1},{7,1,1,.25,1,0,0,1},{1,7,1,.25,1,0,0,1}};
     memcpy(t->vertex,vertices,sizeof vertices);
+    GmlRenderImageRef sampled={GML_RENDER_RESOURCE_ATLAS,907u,1u,1u};
+    if(textured){
+      uint8_t rgba[16]={255,0,0,255,0,255,0,0,0,0,255,255,255,255,255,255};
+      GmlRenderImageUpload source={.image=sampled,.storage_width=2u,.storage_height=2u,
+        .region={0,0,2u,2u},.pixel_format=GML_RENDER_PIXEL_RGBA8888,
+        .stride_bytes=8u,.byte_capacity=sizeof rgba,.bytes=rgba};
+      REQUIRE(device.upload(device.context,&source),"native textured triangle source uploaded");
+      t->textured=1u;t->interpolate=textured==2u;
+      t->uv[0][0]=-.25;t->uv[1][0]=1.75;t->uv[2][1]=2.25;
+      draw.source_count=1u;draw.sources=&sampled;
+    }
     GmlRenderDrawBatch batch={&draw,1u,&state,1u};
     GlSceneImage *image=gml_gpu_opengl_scene_image(gpu->backend,seed.target.image);
     GLuint old_texture=image->texture,old_framebuffer=image->framebuffer;
@@ -76,6 +88,18 @@ static int scene_depth_triangle_transaction_case(void){
     REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_UNSUPPORTED &&
       !anygm_test_graphics_draw_calls(),"malformed empty clip refuses before a candidate draw");
     state.clip.x=0;
+    if(textured){
+      draw.source_count=0;
+      REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_UNSUPPORTED,
+        "native texture flag requires exactly one bound source");
+      draw.source_count=1u;draw.sources=&seed.target.image;
+      REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_UNSUPPORTED,
+        "native target-source alias refuses before mutation");
+      draw.sources=&sampled;t->uv[0][0]=NAN;
+      REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_UNSUPPORTED,
+        "nonfinite native texture coordinates refuse before mutation");
+      t->uv[0][0]=-.25;
+    }
     /* The retained driver fixture calls its three-vertex hook terminal. */
     if(failure) anygm_test_graphics_fail_terminal_draw_at(failure);
     GmlRenderExecutionResult result=device.submit(device.context,&batch);

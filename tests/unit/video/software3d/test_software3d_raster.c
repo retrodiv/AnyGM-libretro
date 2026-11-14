@@ -2,6 +2,55 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "software3d_test_fixture.h"
+#include "gml_render_texture.h"
+
+int constant_uv_depth_fixture(void){
+  static const int generations[]={800,15,17};
+  for(unsigned generation=0;generation<3u;generation++)for(unsigned filter=0;filter<2u;filter++){
+    uint32_t pixels[24*24];for(unsigned p=0;p<24u*24u;p++)pixels[p]=0xff102030u;
+    GmlWin content={.bytecode=generations[generation]>100?0:generations[generation],
+      .classic_version=generations[generation]>100?generations[generation]:0};
+    GmlRender render={0};GmlVM vm={0};int ok=0;
+    if(gml_render_init(&render,NULL))return 0;
+    render.win=&content;render.classic=content.classic_version!=0;
+    vm.render=&render;vm.win=&content;gml_vm_software3d_reset(&vm);
+    render.atlas=calloc(1,sizeof *render.atlas);render.n_atlas=1;
+    if(!render.atlas)goto constant_done;
+    render.atlas[0].w=render.atlas[0].h=4;render.atlas[0].px=malloc(64u);
+    if(!render.atlas[0].px)goto constant_done;
+    memset(render.atlas[0].px,255,64u);render.atlas[0].px[(2u*4u+1u)*4u+3u]=0;
+    gml_render_begin(&render,pixels,24,24,0,0);render.interp=(int)filter;
+    call_numbers(&vm,"d3d_start",NULL,0);
+    call_numbers(&vm,"d3d_set_projection_ortho",(double[]){0,0,24,24,0},5);
+    call_numbers(&vm,"d3d_set_hidden",software3d_enable,1);
+    call_numbers(&vm,"d3d_set_zwriteenable",software3d_enable,1);
+    static const double xy[3][2]={{2,2},{20,2},{2,20}};
+    double point=render.classic?3.5:4;
+    /* The same-frame textured point is an independent sampler control. A
+     * constant-UV triangle must not acquire coverage absent from that point. */
+    for(unsigned shape=0;shape<2u;shape++){
+      for(unsigned p=0;p<24u*24u;p++)pixels[p]=0xff102030u;
+      if(!gml_software3d_clear_depth(&render,1))goto constant_done;
+      call_numbers(&vm,"d3d_primitive_begin_texture",(double[]){shape?4:1,(double)GML_TEX_ATLAS_TAG},2);
+      for(unsigned i=0;i<(shape?3u:1u);i++)call_numbers(&vm,"d3d_vertex_texture_colour",
+        (double[]){shape?xy[i][0]:point,shape?xy[i][1]:point,-4000,.375,.625,0xffffff,1},7);
+      call_numbers(&vm,"d3d_primitive_end",NULL,0);
+      call_numbers(&vm,"d3d_primitive_begin",(double[]){1},1);
+      call_numbers(&vm,"d3d_vertex_colour",(double[]){point,point,4000,0x01ff00,1},5);
+      call_numbers(&vm,"d3d_primitive_end",NULL,0);
+      if(pixels[4u*24u+4u]!=0xff00ff01u){
+        fprintf(stderr,"constant UV depth: generation=%d filter=%u shape=%u pixel=%08x expected=ff00ff01\n",
+          generations[generation],filter,shape,pixels[4u*24u+4u]);goto constant_done;
+      }
+    }
+    ok=1;
+constant_done:
+    gml_render_bind_software3d(&render,NULL);vm.render=NULL;vm.win=NULL;gml_vm_free(&vm);
+    gml_render_free(&render);
+    if(!ok)return 0;
+  }
+  return 1;
+}
 
 static void depth_clear_sample(GmlRender *render,int primitive,uint32_t colour){
   if(primitive==0) gml_software3d_draw_point_2d(render,4,4,colour,1);

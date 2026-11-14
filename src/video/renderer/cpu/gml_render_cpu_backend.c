@@ -45,6 +45,23 @@ static void backend_texture_view_page(GmlRenderCpuBackendTextureView *view,
   view->rgba=atlas->px;
 }
 
+int gml_render_cpu_backend_texture_metadata(GmlRender *R,int handle,int full_atlas,
+                                           GmlRenderCpuBackendTextureView *view){
+  if(((uint32_t)handle&GML_TEX_KIND_MASK)!=GML_TEX_SURF_TAG)
+    return gml_render_cpu_backend_texture_view(R,handle,full_atlas,view);
+  backend_texture_view_reset(view);
+  int id=(int)((uint32_t)handle&65535u);
+  if(!R || !view || id>GML_MAX_SURFACES) return 0;
+  int width=id?R->surface[id-1].w:R->app_w;
+  int height=id?R->surface[id-1].h:R->app_h;
+  if(width<=0 || height<=0 || !(id?R->surface[id-1].px:R->app_surface)) return 0;
+  view->pixel_kind=GML_RENDER_CPU_BACKEND_PIXELS_XRGB;
+  view->logical_width=view->width=view->full_width=width;
+  view->logical_height=view->height=view->full_height=height;
+  view->stride=width;view->resource_index=id;
+  return 1;
+}
+
 int gml_render_cpu_backend_texture_view(GmlRender *R,int handle,int full_atlas,
                                     GmlRenderCpuBackendTextureView *view){
   backend_texture_view_reset(view);

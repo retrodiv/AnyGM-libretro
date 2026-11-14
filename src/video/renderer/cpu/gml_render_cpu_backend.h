@@ -87,6 +87,10 @@ void gml_render_cpu_backend_draw_pixel_alpha(GmlRender *render,int x,int y,
 void gml_render_cpu_backend_draw_pixel(GmlRender *render,int x,int y,uint32_t color);
 int gml_render_cpu_backend_texture_view(GmlRender *render,int handle,int full_atlas,
                                     GmlRenderCpuBackendTextureView *view);
+/* Surface metadata does not observe its device-authoritative pixel plane. */
+int gml_render_cpu_backend_texture_metadata(GmlRender *render,int handle,int full_atlas,
+                                         GmlRenderCpuBackendTextureView *view);
+int gml_render_cpu_backend_depth_texture_eligible(GmlRender *render,int texture);
 int gml_render_cpu_backend_atlas_view(GmlRender *render,int atlas,
                                   GmlRenderCpuBackendTextureView *view);
 GmlSoftware3D *gml_render_cpu_backend_software3d(GmlRender *render);
@@ -115,9 +119,10 @@ int gml_render_cpu_backend_native_textured_triangles(GmlRender *render,int textu
 int gml_render_cpu_backend_native_triangles(GmlRender *render,
   const GmlRenderCpuBackendTriangle *triangles,uint32_t count);
 /* Active fixed-function triangles. A NULL triangle probes metadata admission.
- * Host depth bytes are supplied only when their version needs uploading. */
+ * Host depth bytes are supplied only when their version needs uploading.
+ * Texture -1 selects no source; full_atlas preserves vertex-buffer page UVs. */
 int gml_render_cpu_backend_depth_triangle(GmlRender *render,GmlRenderDepthTriangle *triangle,
-  const float *depth_pixels,GmlRenderDepthPlaneRef *published);
+  const float *depth_pixels,int texture,int full_atlas,GmlRenderDepthPlaneRef *published);
 int gml_render_cpu_backend_depth_read(GmlRender *render,const GmlRenderDepthPlaneRef *plane,
                                       float *pixels,size_t capacity);
 int gml_render_cpu_backend_vertex_spans(GmlRender *render,
