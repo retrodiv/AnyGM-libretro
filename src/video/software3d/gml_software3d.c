@@ -234,6 +234,7 @@ GmlSoftware3D *gml_software3d_create(void){
 
 void gml_software3d_reset(GmlSoftware3D *graphics){
   if(!graphics) return;
+  graphics->view_projection_2d=0;
   gml_software3d_depth_targets_clear(graphics);
   memset(&graphics->d3,0,sizeof(graphics->d3));
   graphics->d3.depth_frame=-1;

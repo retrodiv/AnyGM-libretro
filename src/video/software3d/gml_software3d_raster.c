@@ -32,6 +32,15 @@ static GmlSoftware3D *graphics_state_for_render(GmlRender *render){
   return gml_render_cpu_backend_software3d(render);
 }
 
+static void d3_project_selected_view(GmlRender *R,double *x,double *y,double phase){
+  GmlSoftware3D *graphics=graphics_state_for_render(R);
+  if(!graphics || !graphics->view_projection_2d || !gml_render_view_rotation_active(R)) return;
+  /* Transform the geometry before the retained device pixel-anchor phase. */
+  *x-=phase;*y-=phase;
+  gml_render_view_rotate_point(R,x,y);
+  *x+=phase;*y+=phase;
+}
+
 static double d3_dot(const double a[3], const double b[3]){
   return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
 }
@@ -460,6 +469,8 @@ static void d3_raster_triangle_impl(GmlRender *R, const GmlD3Vertex in[3], const
       view_distance[i]=in[i].z;
     }
   }
+  if(d3->ortho) for(int i=0;i<3;i++)
+    d3_project_selected_view(R,&sx[i],&sy[i],pixel_offset);
   double area=d3_edge(sx[0],sy[0],sx[1],sy[1],sx[2],sy[2]);
   if(!isfinite(area) || fabs(area)<1e-9) return;
   if(d3->culling && area>=0) return;
@@ -1135,6 +1146,7 @@ static int d3_project_vertex(GmlRender *R,const GmlRenderCpuBackendDrawView *dra
     double pixel_offset=g_d3.classic?0.5:0.0;
     *screen_x=vertex->x*draw->width/width+pixel_offset;
     *screen_y=vertex->y*draw->height/height+pixel_offset;
+    d3_project_selected_view(R,screen_x,screen_y,pixel_offset);
     *inverse_z=1;
     *depth=g_d3.depth_normalized?.5+vertex->z/32000.0:1000000.0-vertex->z;
     *distance=fabs(vertex->z);
@@ -1356,11 +1368,13 @@ static int vertex_batch_outside_scene(GmlRender *R,const GmlD3Vertex *vertex,
   /* Both classic triangle and point/line anchors lie in [0,.5]. Two pixels
    * also cover their floor/ceil/round envelope; bound arithmetic conservatively. */
   unsigned outside=15;
+  int view=gml_render_view_rotation_active(R);
   for(int i=0;i<count;i++){
     double x=vertex[i].x,y=vertex[i].y,z=vertex[i].z;
     if(!isfinite(x) || !isfinite(y) || !isfinite(z)) return 0;
     d3_transform_point(R,&x,&y,&z);
     x=(x-ox)*draw.width/ow; y=(y-oy)*draw.height/oh;
+    if(view) gml_render_view_rotate_point(R,&x,&y);
     if(!isfinite(x) || !isfinite(y) || !isfinite(z) || fabs(x)>0x1p30 || fabs(y)>0x1p30)
       return 0;
     unsigned planes=(x<-2?1u:0u)|(x>draw.width+2?2u:0u)|
@@ -1646,6 +1660,59 @@ static int vertex_native_colour_triangles(GmlRender *R,const GmlD3Vertex *vertex
   free(placed);return result;
 }
 
+static void vertex_native_attributes(double target[6],const GmlD3Vertex *source,
+                                      double x,double y){
+  target[0]=x;target[1]=y;
+  target[2]=source->r/255.0;target[3]=source->g/255.0;
+  target[4]=source->b/255.0;target[5]=source->alpha;
+}
+
+static int vertex_native_selected_points_lines(GmlRender *R,const GmlD3Vertex *vertex,
+                                                 int count,int primitive){
+  if(!gml_render_cpu_backend_native_triangles(R,NULL,0u) || !d3_depth_prepare(R)) return 0;
+  uint32_t segments=(uint32_t)(primitive==1?count:primitive==2?count/2:count-1);
+  if(segments>16384u) return 0;
+  GmlRenderCpuBackendTriangle *placed=calloc((size_t)segments*4u,sizeof *placed);
+  if(!placed) return 0;
+  uint32_t used=0;
+  double phase=g_d3.classic?0.5:0.0;
+  static const unsigned corners[2][3]={{0,1,2},{0,2,3}};
+  for(uint32_t i=0;i<segments;i++){
+    unsigned a=primitive==2?i*2u:i,b=primitive==1?a:a+1u;
+    const GmlD3Vertex *first=&vertex[a],*last=&vertex[b];
+    double dx=last->x-first->x,dy=last->y-first->y,length=hypot(dx,dy);
+    /* A zero-length line retains both endpoint samples, in their old order. */
+    unsigned stamps=primitive==1 || length>0?1u:2u;
+    for(unsigned stamp=0;stamp<stamps;stamp++){
+      double point[4][2];
+      if(primitive==1 || length==0){
+        double x=lround(first->x+phase),y=lround(first->y+phase);
+        point[0][0]=point[3][0]=x;point[1][0]=point[2][0]=x+1;
+        point[0][1]=point[1][1]=y;point[2][1]=point[3][1]=y+1;
+      }else{
+        double tx=dx/(2*length),ty=dy/(2*length),nx=-ty,ny=tx;
+        double ax=first->x+phase+.5-tx,ay=first->y+phase+.5-ty;
+        double bx=last->x+phase+.5+tx,by=last->y+phase+.5+ty;
+        point[0][0]=ax+nx;point[0][1]=ay+ny;
+        point[1][0]=bx+nx;point[1][1]=by+ny;
+        point[2][0]=bx-nx;point[2][1]=by-ny;
+        point[3][0]=ax-nx;point[3][1]=ay-ny;
+      }
+      for(unsigned triangle=0;triangle<2u;triangle++){
+        for(unsigned v=0;v<3u;v++){
+          unsigned c=corners[triangle][v];
+          const GmlD3Vertex *source=primitive==1 || length==0?
+            (stamp?last:first):(c==0u || c==3u?first:last);
+          vertex_native_attributes(placed[used].vertex[v],source,point[c][0],point[c][1]);
+        }
+        used++;
+      }
+    }
+  }
+  int result=gml_render_cpu_backend_native_triangles(R,placed,used);
+  free(placed);return result;
+}
+
 static int vertex_native_textured_triangles(GmlRender *R,const GmlD3Vertex *vertex,
                                                int count,int primitive,int texture,int immediate){
   if(!gml_render_cpu_backend_native_textured_triangles(R,texture,!immediate,NULL,0u) ||
@@ -1708,6 +1775,7 @@ static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
     .classic_filter=textured && draw.interpolate && g_d3.classic,
     .capacity=textured?65536u:8192u};
   int result=0,opaque=1,rgb_gradient=0;double minimum_alpha=1.0,maximum_alpha=0.0;
+  int view=gml_render_view_rotation_active(R);
   if(!projected) goto vertex_scene_done;
   for(int i=0;i<count;i++){
     const GmlD3Vertex *v=&vertex[i];
@@ -1726,6 +1794,7 @@ static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
     d3_transform_point(R,&projected[i].x,&projected[i].y,&projected[i].z);
     projected[i].x=(projected[i].x-ox)*draw.width/ow;
     projected[i].y=(projected[i].y-oy)*draw.height/oh;
+    if(view) gml_render_view_rotate_point(R,&projected[i].x,&projected[i].y);
     if(!isfinite(projected[i].x) || !isfinite(projected[i].y) || !isfinite(projected[i].z) ||
        fabs(projected[i].x)>32766 || fabs(projected[i].y)>32766) goto vertex_scene_done;
     if(v->alpha<1.0) opaque=0;
@@ -1733,11 +1802,11 @@ static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
     if(v->alpha>maximum_alpha) maximum_alpha=v->alpha;
     if(v->r!=vertex[0].r || v->g!=vertex[0].g || v->b!=vertex[0].b) rgb_gradient=1;
   }
-  /* Uniform-colour triangles retain their placed vertices for opaque, positive
-   * and zero-crossing alpha alike. The device interpolates and fills them;
-   * constructing coverage rows here only repeats the CPU raster work. Other
-   * colours, textures, blend policies and owners keep their existing paths. */
-  if(!textured && primitive>=4 && !rgb_gradient && maximum_alpha>0.0 &&
+  /* Placed colour triangles retain their vertices and alpha on the device.
+   * Varying RGB is admitted for selected views, including modern identity poses.
+   * The device interpolates and fills them; other material policies retain
+   * their existing admission instead of preparing CPU coverage rows here. */
+  if(!textured && primitive>=4 && maximum_alpha>0.0 &&
      (minimum_alpha==0.0 || minimum_alpha>=1.0/65536.0) &&
      vertex_native_colour_triangles(R,projected,count,primitive)){
     result=1;goto vertex_scene_done;
@@ -1745,6 +1814,16 @@ static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
   if(textured && primitive>=4 && !rgb_gradient && maximum_alpha>0.0 &&
      vertex_native_textured_triangles(R,projected,count,primitive,texture,immediate)){
     result=1;goto vertex_scene_done;
+  }
+  if(view){
+    if(maximum_alpha==0.0 && !draw.zero_alpha_writes)
+      result=d3_depth_prepare(R);
+    else if(!textured && primitive<4 && maximum_alpha>0.0 &&
+            (minimum_alpha==0.0 || minimum_alpha>=1.0/65536.0))
+      result=vertex_native_selected_points_lines(R,projected,count,primitive);
+    /* A turned draw never enters the old CPU-shaped device row executor.
+     * Excluded material policies retain the ordinary counted CPU fallback. */
+    goto vertex_scene_done;
   }
   /* Only a genuine local crop differs from the page-UV executor. Preserve
    * established full-page points/lines and excluded triangle policies; a local
@@ -1866,6 +1945,7 @@ static void vertex_submit_buffer(GmlRender *R,int id,int primitive,int texture_h
   GmlD3State saved;
   if(temporary){
     saved=g_d3;
+    GML_GRAPHICS->view_projection_2d=1;
     g_d3.active=1; g_d3.ortho=1; g_d3.hidden=0; g_d3.zwrite=0;
     g_d3.lighting=0; g_d3.fog=0; g_d3.culling=0; g_d3.smooth=1;
     double scale_x=draw.coordinate_scale_x>0?draw.coordinate_scale_x:1.0;
@@ -1917,6 +1997,7 @@ static void vertex_submit_buffer(GmlRender *R,int id,int primitive,int texture_h
     g_d3.depth=depth; g_d3.depth_cap=depth_cap;
     g_d3.depth_w=depth_w; g_d3.depth_h=depth_h; g_d3.depth_frame=depth_frame;
     g_d3.depth_normalized=depth_normalized;
+    GML_GRAPHICS->view_projection_2d=0;
   }
 }
 
@@ -2084,6 +2165,7 @@ static int d3_begin_2d_projection(GmlRender *R,const GmlRenderCpuBackendDrawView
   int temporary=!g_d3.active;
   if(temporary){
     *saved=g_d3;
+    GML_GRAPHICS->view_projection_2d=1;
     g_d3.active=1; g_d3.ortho=1; g_d3.hidden=0; g_d3.zwrite=0;
     g_d3.lighting=0; g_d3.fog=0; g_d3.culling=0; g_d3.smooth=1;
     g_d3.ortho_x=draw->camera_x; g_d3.ortho_y=draw->camera_y;
@@ -2101,6 +2183,7 @@ static void d3_end_2d_projection(GmlRender *R,const GmlD3State *saved,int tempor
     g_d3.depth=depth; g_d3.depth_cap=depth_cap;
     g_d3.depth_w=depth_w; g_d3.depth_h=depth_h; g_d3.depth_frame=depth_frame;
     g_d3.depth_normalized=depth_normalized;
+    GML_GRAPHICS->view_projection_2d=0;
   }
 }
 static int immediate_batch_scene(GmlRender *R){

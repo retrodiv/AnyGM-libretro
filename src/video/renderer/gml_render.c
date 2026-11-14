@@ -1079,6 +1079,7 @@ void gml_render_begin(GmlRender *r, uint32_t *fb, int w, int h, double cx, doubl
   r->world_scale_x=r->world_scale_y=1.0;
   r->view_rotation=0.0;r->view_cosine=1.0;r->view_sine=0.0;
   r->view_centre_x=r->view_centre_y=0.0;
+  r->view_centre_x=r->view_centre_y=0.0;
   r->view_target_id=-1;r->view_target_depth=0;
   r->projection_cam_x=cx; r->projection_cam_y=cy; r->cam_x=cx; r->cam_y=cy;
   gml_d3_sync_render_camera(r);

@@ -19,6 +19,7 @@ int gml_render_view_surface_begin(GmlRender *r,int surface,double cx,double cy){
 void gml_render_world_set_view_rotation(GmlRender *r,double angle,double width,double height){
   if(!r) return;
   r->view_rotation=0.0;r->view_cosine=1.0;r->view_sine=0.0;
+  r->view_centre_x=r->view_centre_y=0.0;
   if(!isfinite(angle) || !isfinite(width) || !isfinite(height) || width<=0 || height<=0)
     return;
   angle=remainder(angle,360.0);

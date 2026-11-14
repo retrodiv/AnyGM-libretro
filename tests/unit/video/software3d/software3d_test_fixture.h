@@ -66,6 +66,7 @@ int matrix_inverse_fixture(void);
 int surface_tiled_fixture(void);
 int rounded_geometry_fixture(void);
 int rounded_colour_fixture(void);
+int selected_view_projection_fixture(void);
 int renderer_state_boundary_fixture(void);
 int asset_lookup_fixture(void);
 int external_texture_group_fixture(void);

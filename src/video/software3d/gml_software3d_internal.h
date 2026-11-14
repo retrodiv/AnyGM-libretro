@@ -88,6 +88,8 @@ struct GmlSoftware3D {
   GmlD3Vertex *vertex_blend_scratch;
   int vertex_blend_scratch_capacity;
   GmlD3State d3;
+  /* Submission-local default 2D projection scope; never serialized. */
+  int view_projection_2d;
   GmlD3DepthTarget *depth_targets;
   double matrix_view[16],matrix_projection[16];
   GmlD3Vertex d3_prim[GML_D3_PRIM_MAX];

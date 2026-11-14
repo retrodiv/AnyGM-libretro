@@ -584,7 +584,15 @@ native_done:
 
 int gml_render_cpu_backend_native_triangles(GmlRender *r,
   const GmlRenderCpuBackendTriangle *triangles,uint32_t count){
-  return resident_native_triangles(r,triangles,count,0,NULL,NULL);
+  /* A selected modern view's identity pose shares its rotated colour/alpha
+   * contract. Unbound ordinary draws and GUI keep their existing admission. */
+  int placed=gml_render_view_rotation_active(r) ||
+    (r && !r->classic && !r->gui_pass_active &&
+     anygm_policy_has_modern_layer_semantics(r->win) &&
+     r->view_centre_x>0.0 && r->view_centre_y>0.0 &&
+     r->target_id==r->view_target_id && r->target_sp==r->view_target_depth);
+  return resident_native_triangles(r,triangles,count,
+    placed,NULL,NULL);
 }
 
 int gml_render_cpu_backend_vertex_spans(GmlRender *r,

@@ -377,6 +377,57 @@ done:
 int rounded_geometry_fixture(void){ return rounded_fixture(0); }
 int rounded_colour_fixture(void){ return rounded_fixture(1); }
 
+int selected_view_projection_fixture(void){
+  GmlRender render={0};GmlVM vm={0};
+  uint32_t pixels[64*64];int ok=1;
+  render.color=0xFFFFFFu;render.alpha=1;render.alphablend=1;
+  render.color_write_mask=15;render.blend_equation=render.blend_equation_alpha=1;
+  vm.render=&render;gml_vm_software3d_reset(&vm);
+  const double turns[4]={0,90,-90,27};
+  for(int mode=0;mode<3;mode++) for(int turn=0;turn<4;turn++){
+    memset(pixels,0,sizeof pixels);
+    gml_render_begin(&render,pixels,64,64,0,0);
+    gml_render_world_set_view_rotation(&render,turns[turn],64,64);
+    if(mode==1) gml_render_gui_begin(&render,64,64);
+    if(mode==2){
+      call_numbers(&vm,"d3d_start",NULL,0);
+      call_numbers(&vm,"d3d_set_projection_ortho",(double[]){0,0,64,64,0},5);
+      call_numbers(&vm,"d3d_set_hidden",software3d_disable,1);
+    }
+    gml_software3d_primitive_2d_begin(render.software3d,4,-1);
+    gml_software3d_primitive_2d_append(render.software3d,40,14,0,0,0xFFFFFFu,1);
+    gml_software3d_primitive_2d_append(render.software3d,52,14,0,0,0xFFFFFFu,1);
+    gml_software3d_primitive_2d_append(render.software3d,46,26,0,0,0xFFFFFFu,1);
+    gml_software3d_primitive_2d_end(&render);
+    double angle=mode==0?turns[turn]*M_PI/180.0:0;
+    int x=(int)floor(32+14.5*cos(angle)+13.5*sin(angle));
+    int y=(int)floor(32+14.5*sin(angle)-13.5*cos(angle));
+    if((pixels[y*64+x]&0xFFFFFFu)!=0xFFFFFFu){
+      fprintf(stderr,"selected view projection mode=%d turn=%g probe=%d,%d\n",
+              mode,turns[turn],x,y);ok=0;
+    }
+    if(mode==1) gml_render_gui_end(&render);
+    if(mode==2) call_numbers(&vm,"d3d_end",NULL,0);
+    GmlSoftware3DStatus status;
+    if(!gml_software3d_status_get(render.software3d,&status) || status.active) ok=0;
+  }
+  for(int turn=0;turn<2;turn++){
+    memset(pixels,0,sizeof pixels);
+    gml_render_begin(&render,pixels,64,64,0,0);
+    gml_render_world_set_view_rotation(&render,turn?27:0,64,64);
+    gml_software3d_primitive_2d_begin(render.software3d,4,-1);
+    gml_software3d_primitive_2d_append(render.software3d,65,38,0,0,0xFFFFFFu,1);
+    gml_software3d_primitive_2d_append(render.software3d,69,38,0,0,0xFFFFFFu,1);
+    gml_software3d_primitive_2d_append(render.software3d,67,44,0,0,0xFFFFFFu,1);
+    gml_software3d_primitive_2d_end(&render);
+    if((pixels[55*64+59]!=0)!=(turn!=0)){
+      fprintf(stderr,"selected view clipping turn=%d\n",turn);ok=0;
+    }
+  }
+  gml_render_free(&render);vm.render=NULL;gml_vm_free(&vm);
+  return ok;
+}
+
 
 int software3d_case_particles(Software3dRasterFixture *fixture){
   memset(fixture->pixels,0,sizeof(fixture->pixels));
