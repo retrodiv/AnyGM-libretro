@@ -5535,6 +5535,87 @@ static int scene_clipped_magnified_cell_case(void){
   return 1;
 }
 
+static int scene_runtime_source_colour_axis_case(void){
+  for(unsigned api=0;api<2u;api++)for(unsigned preserve=0;preserve<2u;preserve++){
+    uint8_t pixels[16]={208,32,16,0,16,208,32,255,32,16,208,0,192,176,160,64};
+    GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,UINT32_C(0x80000031),1u,1u};
+    GmlRenderImageRef target={preserve?GML_RENDER_RESOURCE_SURFACE:GML_RENDER_RESOURCE_APPLICATION,32u,1u,1u};
+    GmlRenderImageUpload upload={.image=source,.storage_width=2u,.storage_height=2u,
+      .region={0,0,2u,2u},.pixel_format=GML_RENDER_PIXEL_RGBA8888,
+      .stride_bytes=8u,.byte_capacity=sizeof pixels,.bytes=pixels};
+    GmlRenderDrawStateSnapshot state={0};GmlRenderDrawOp ops[2]={0};
+    GmlRenderDrawBatch batch={ops,2u,&state,1u};GmlRenderDeviceServices device;
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"runtime axis adopts context");
+    gml_gpu_device_services(gpu,&device);
+    REQUIRE(device.upload(device.context,&upload),"runtime axis uploads immutable frame");
+    state.write_mask=15u;state.alpha=255u;state.colour=0xFFFFFFFFu;
+    state.rgb_source_factor=state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_COLOUR;
+    state.rgb_destination_factor=state.alpha_destination_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+    state.coverage_policy=preserve?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+    state.sampler_count=1u;
+    state.samplers[0]=(GmlRenderSamplingPolicy){.filter=GML_RENDER_FILTER_NEAREST,
+      .edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE,.source_region={0,0,2u,2u},
+      .quantisation=GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC};
+    for(unsigned i=0;i<2u;i++){
+      ops[i].sequence=i+1u;
+      ops[i].target=(GmlRenderTargetRef){.image=target,.storage_version=1u,
+        .width=8u,.height=8u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,.region={0,0,8u,8u}};
+      ops[i].target.image.content_version=i+1u;
+    }
+    ops[0].opcode=GML_RENDER_OP_CLEAR;ops[0].payload.clear_colour=0x40273859u;
+    ops[1].opcode=GML_RENDER_OP_TEXTURED_QUAD;ops[1].scene_family=GML_RENDER_SCENE_SPRITE;
+    ops[1].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    ops[1].sources=&source;ops[1].source_count=1u;
+    GmlRenderQuad *q=&ops[1].payload.quad;
+    q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;q->sampling=state.samplers[0];
+    q->x[0]=q->x[3]=-0.25;q->x[1]=q->x[2]=3.125;
+    q->y[0]=q->y[1]=1.125;q->y[2]=q->y[3]=4.25;
+    q->u[1]=q->u[2]=1.0;q->v[2]=q->v[3]=1.0;
+    GmlRenderQuad pristine=*q;
+    for(unsigned alpha=0;alpha<2u;alpha++){
+      *q=pristine;q->filtered_draw_alpha=alpha?0.4:0.0;
+      for(unsigned c=0;c<4u;c++)q->corner_colour[c]=(alpha?0x66000000u:0u)|0x3470D0u;
+      for(unsigned i=0;i<2u;i++)ops[i].target.image.content_version=alpha*2u+i+1u;
+      GmlRenderExecutionResult result=device.submit(device.context,&batch);
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==2u &&
+        anygm_test_graphics_scene_draw_calls()==(int)((alpha+1u)*(preserve?1u:2u)) &&
+        !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
+        "runtime fractional axis and zero alpha use native drawing without a snapshot");
+    }
+    pristine=*q;unsigned draws=anygm_test_graphics_scene_draw_calls();
+    unsigned clears=anygm_test_graphics_clear_calls();
+    for(unsigned invalid=0;invalid<10u;invalid++){
+      *q=pristine;
+      if(invalid>=4u){
+        q->x[0]=q->x[3]=0.0;q->x[1]=q->x[2]=4.0;
+        q->y[0]=q->y[1]=1.0;q->y[2]=q->y[3]=4.0;
+      }
+      for(unsigned i=0;i<2u;i++)ops[i].target.image.content_version=i+5u;
+      if(invalid==0u)q->x[0]=NAN;
+      if(invalid==1u)q->x[3]+=0.125;
+      if(invalid==2u)q->x[1]=q->x[2]=q->x[0];
+      if(invalid==3u)q->x[1]=q->x[2]=65537.0;
+      if(invalid==4u)q->u[0]=q->u[3]=1.0;
+      if(invalid==5u)q->v[2]=q->v[3]=0.5;
+      if(invalid==6u)q->sampling.source_region.width=1u;
+      if(invalid==7u)q->span_y[3]=3.0;
+      if(invalid==8u)q->sampling.filter=GML_RENDER_FILTER_BILINEAR;
+      if(invalid==9u)q->span_active=1u;
+      GmlRenderExecutionResult result=device.submit(device.context,&batch);
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+        (unsigned)anygm_test_graphics_scene_draw_calls()==draws &&
+        (unsigned)anygm_test_graphics_clear_calls()==clears &&
+        !anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
+        "malformed runtime native axis refuses before the clear prefix");
+    }
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_integer_function_sprite_case(void){
   for(unsigned background=0;background<4u;background++)
   for(unsigned alpha_test=0;alpha_test<2u;alpha_test++)
@@ -8626,6 +8707,7 @@ int main(int argc,char **argv){
     {"scene_alpha_composition",scene_alpha_composition_case},
     {"scene_opaque_target_sourceover",scene_opaque_target_sourceover_case},
     {"scene_integer_function_sprite",scene_integer_function_sprite_case},
+    {"scene_runtime_source_colour_axis",scene_runtime_source_colour_axis_case},
     {"scene_clipped_magnified_cell",scene_clipped_magnified_cell_case},
     {"scene_positioned_samples",scene_positioned_samples_case},
     {"scene_source_alpha_key",scene_source_alpha_key_case},

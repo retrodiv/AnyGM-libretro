@@ -765,6 +765,20 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
     !q->corner_colour[2] && !q->corner_colour[3] && state->write_mask==15u;
   int source_colour_text=op->scene_family==GML_RENDER_SCENE_TEXT && !row && !flat &&
     (blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_PRESERVE || blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE);
+  int source_colour_runtime=source && op->scene_family==GML_RENDER_SCENE_SPRITE &&
+    (source->ref.identity&UINT32_C(0x80000000)) && !row && !flat &&
+    (blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_PRESERVE || blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE);
+  int runtime_rect=source_colour_runtime;
+  if(source_colour_runtime && !full_region(region,source->width,source->height)) return 0;
+  for(unsigned c=0;c<4u && runtime_rect;c++)
+    if(q->span_x[c] || q->span_y[c] ||
+       q->u[c]!=((c==1u || c==2u)?1.0:0.0) || q->v[c]!=(c>=2u?1.0:0.0) ||
+       !isfinite(q->x[c]) || !isfinite(q->y[c]) ||
+       fabs(q->x[c])>65536.0 || fabs(q->y[c])>65536.0) runtime_rect=0;
+  runtime_rect=runtime_rect && q->x[0]==q->x[3] && q->x[1]==q->x[2] &&
+    q->y[0]==q->y[1] && q->y[2]==q->y[3] &&
+    q->x[1]>q->x[0] && q->y[2]>q->y[0];
+  if(source_colour_runtime && !runtime_rect) return 0;
   int background_blend=(background || source_colour_text || (op->scene_family==GML_RENDER_SCENE_SPRITE && !row && !flat)) &&
     (blend==24 || blend==25 || blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_PRESERVE ||
      blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE || blend==GL_SCENE_BLEND_DEST_ALPHA_MASK ||
@@ -792,7 +806,7 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
        !state->alpha_test_enabled || state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA)) ||
      q->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE || q->sampling.logical_margin_mask ||
      !valid_region(region,source->width,source->height) || region.width>4096u || region.height>4096u ||
-     !exact_rect(op,NULL,NULL,NULL,NULL,1) || fabs(q->x[0])>65536.0 || fabs(q->y[0])>65536.0 ||
+     (!runtime_rect && !exact_rect(op,NULL,NULL,NULL,NULL,1)) || fabs(q->x[0])>65536.0 || fabs(q->y[0])>65536.0 ||
      !isfinite(q->filtered_draw_alpha) || q->filtered_draw_alpha<0.0 || q->filtered_draw_alpha>1.0 ||
      (q->filtered_draw_alpha==0.0 && !background_blend &&
       ((op->scene_family!=GML_RENDER_SCENE_SPRITE && !background && !text_empty) ||

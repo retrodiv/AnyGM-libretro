@@ -153,6 +153,14 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
      (quad->sampling.filter!=GML_RENDER_FILTER_BILINEAR &&
       quad->sampling.filter!=GML_RENDER_FILTER_NEAREST))) return 0;
   region=quad->sampling.source_region;
+  int runtime_source_colour=op->scene_family==GML_RENDER_SCENE_SPRITE &&
+    op->source_count==1u && op->sources &&
+    (op->sources[0].identity&UINT32_C(0x80000000)) &&
+    quad->shape==GML_RENDER_QUAD_AXIS_ALIGNED &&
+    quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC &&
+    region.x==0 && region.y==0 && region.width==source_width && region.height==source_height &&
+    state->rgb_source_factor==GML_RENDER_BLEND_SOURCE_COLOUR &&
+    state->rgb_destination_factor==GML_RENDER_BLEND_SOURCE_ALPHA;
   if((region.x<0 || region.y<0 || !region.width || !region.height ||
      (uint64_t)(uint32_t)region.x+region.width>source_width ||
      (uint64_t)(uint32_t)region.y+region.height>source_height) &&
@@ -346,6 +354,15 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
       vertex[24]=(float)(step_y-(double)vertex[17]);
     }
     vertex[27]=quad->span_active?1.0f:0.0f;
+    if(runtime_source_colour){
+      /* Keep one native rectangle and evaluate its affine UVs on device.
+       * This avoids triangle-dependent varying interpolation at texel ties. */
+      vertex[12]=(float)quad->x[0];vertex[13]=(float)quad->y[0];
+      vertex[14]=(float)(quad->x[1]-quad->x[0]);
+      vertex[15]=(float)(quad->y[2]-quad->y[0]);
+      vertex[16]=(float)op->target.height;vertex[17]=0.0f;
+      vertex[26]=3.0f;
+    }
   }
   if(rotated){
     for(uint32_t coordinate=0;coordinate<2;coordinate++)

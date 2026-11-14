@@ -9328,21 +9328,24 @@ static int resident_application_sprite_cpu_fallback(void){
 }
 
 static int resident_source_colour_alpha_dispatch_scope(void){
-  for(int path=0;path<4;path++){
+  for(int path=0;path<6;path++){
     GmlRender *render=calloc(1,sizeof *render);
     GmlWin content={.bytecode=15};
-    FakeDevice fake={.on_demand=1};
+    FakeDevice fake={.on_demand=1,.readback_colour=0xFF204060u};
     GmlRenderDeviceServices device=service(&fake);
-    int accelerated=path==0 || path==2;
-    if(accelerated) device.observe_on_demand=fake_observe_on_demand;
+    int accelerated=path<=2;
+    if(accelerated || path>=4) device.observe_on_demand=fake_observe_on_demand;
     GmlRenderJournalMetrics metrics={0};
     GmlRenderDispatchMetrics dispatch={0};
     CHECK(render && !gml_render_init(render,&content));
     CHECK(gml_render_application_surface_ensure_owned(render,4,4));
-    uint8_t *rgba=malloc(4);
+    int width=path==5?4096:1;
+    uint8_t *rgba=malloc((size_t)width*4u);
     CHECK(rgba);
-    rgba[0]=rgba[1]=rgba[2]=255u;rgba[3]=1u;
-    int sprite=gml_sprite_append_from_rgba(render,rgba,1,1,0,0,NULL);
+    for(int x=0;x<width;x++){
+      rgba[x*4]=rgba[x*4+1]=rgba[x*4+2]=255u;rgba[x*4+3]=1u;
+    }
+    int sprite=gml_sprite_append_from_rgba(render,rgba,width,1,0,0,NULL);
     int surface=gml_surface_create(render,1,1);
     CHECK(sprite>=0 && surface>0 && gml_surface_write_rgba8(render,surface,rgba,4));
     gml_render_bind_device(render,&device);
@@ -9351,13 +9354,13 @@ static int resident_source_colour_alpha_dispatch_scope(void){
     gml_render_flush_pending_fill(render);
     gml_render_dispatch_diagnostics_enable(render,1);
     render->blendmode=GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA;
-    render->alphablend=1;
+    render->alphablend=path!=4;
     render->color_write_mask=15u;
     if(path==0){
       render->alpha=1.0/255.0;
       gml_render_primitive_rectangle(render,0,0,3,3,0xFFFFFFu,0);
-    }else if(path==1){
-      gml_draw_sprite_ext(render,sprite,0,0,0,4,4,0,0xFFFFFFu,1);
+    }else if(path==1 || path>=4){
+      gml_draw_sprite_ext(render,sprite,0,0,0,path==5?8:4,4,0,0xFFFFFFu,1);
     }else if(path==2){
       gml_draw_surface_stretched(render,surface,0,0,4,4,0xFFFFFFu,1);
     }else{
@@ -9366,15 +9369,19 @@ static int resident_source_colour_alpha_dispatch_scope(void){
     CHECK(gml_render_scene_submit_pending(render));
     gml_render_prepare_draw(render);
     gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
+    if(path>=4) fprintf(stderr,"runtime boundary: path=%d resident=%d submits=%u reads=%u replay=%llu pixel=%08x\n",
+      path,render->resident_application_pass,fake.submits,fake.readbacks,
+      (unsigned long long)metrics.cpu_replays,render->app_surface_owned[5]);
     if(accelerated){
       CHECK(render->resident_application_pass && fake.submits==2 && !fake.readbacks &&
             !metrics.cpu_replays && render->app_surface_owned[5]==0u);
     }else
-      CHECK(!render->resident_application_pass && fake.submits==1 && !fake.readbacks &&
-            metrics.cpu_replays==1u && render->app_surface_owned[5]==0x01FFFFFFu);
+      CHECK(!render->resident_application_pass && fake.submits==1 && fake.readbacks==(unsigned)(path>=4) &&
+            metrics.cpu_replays==(path>=4?0u:1u) &&
+            render->app_surface_owned[5]==(path==4?0xFFFFFFFFu:0x01FFFFFFu));
     CHECK(gml_render_dispatch_metrics(render,&dispatch));
     unsigned family=path==0?GML_RENDER_SCENE_PRIMITIVE:
-      path==1?GML_RENDER_SCENE_SPRITE:GML_RENDER_SCENE_SURFACE;
+      path==1 || path>=4?GML_RENDER_SCENE_SPRITE:GML_RENDER_SCENE_SURFACE;
     uint64_t cpu_draws=0;
     /* The seed clear is replayed separately from the ordinary drawing call. */
     for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)

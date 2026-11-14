@@ -851,7 +851,9 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   int source_colour_text=r && family==GML_RENDER_SCENE_TEXT &&
     (physical_sprite_page==13 || physical_sprite_page==14) &&
     r->blendmode==GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA;
-  int preset_atlas=selected_unwrapped || whole_background || full_axis_preset || quarter_tile || source_colour_text;
+  int source_colour_runtime=r && runtime_function &&
+    r->blendmode==GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA;
+  int preset_atlas=selected_unwrapped || whole_background || full_axis_preset || quarter_tile || source_colour_text || source_colour_runtime;
   int background_replace=(selected_unwrapped || whole_background) && r && r->blendmode==6;
   int background_masked=preset_atlas && r && r->alphablend &&
     (r->blendmode==4 || r->blendmode==7 || r->blendmode==8 ||
@@ -1653,7 +1655,20 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
   }
   state.samplers[0]=operation.payload.quad.sampling;
-  if(runtime_geometry){
+  if(runtime_geometry && source_colour_runtime){
+    /* Submit the authored rectangle once. The device owns nearest sampling
+     * and coverage; no CPU coverage rows or constant-texel pieces are needed. */
+    const ResidentRuntimeNearest *g=runtime_geometry;
+    GmlRenderQuad *q=&operation.payload.quad;
+    double x=g->x-r->cam_x-g->sprite->originx*g->xs;
+    double y=g->y-r->cam_y-g->sprite->originy*g->ys;
+    double width=g->sprite->w*g->xs,height=g->sprite->h*g->ys;
+    if(width>16384.0 || height>16384.0 || fabs(x)>65536.0 || fabs(y)>65536.0 ||
+       fabs(x+width)>65536.0 || fabs(y+height)>65536.0) return 0;
+    q->x[0]=q->x[3]=x;q->x[1]=q->x[2]=x+width;
+    q->y[0]=q->y[1]=y;q->y[2]=q->y[3]=y+height;
+    if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
+  }else if(runtime_geometry){
     if(!resident_runtime_nearest_packets(r,page,&operation,&state,&source,runtime_geometry)) return 0;
   }else if(rotated_sample_rows){
     if(!resident_nearest_sample_rows(r,page,&operation,&state,&source,tile_regions,tile_region_count)) return 0;
@@ -4788,19 +4803,22 @@ static int resident_nearest_sprite_function(GmlRender *r,GmlSprite *sprite,int s
   if(sprite->runtime_rgba){
     /* Runtime pixels have a separate CPU geometry owner and no valid packaged
      * crop. Preserve their fenced source view and ordinary point packet. */
+    int source_colour=r->blendmode==GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA;
+    if(source_colour && (!r->alphablend || rotation!=0.0 || xs<=0.0 || ys<=0.0)) return 0;
     if(!r->resident_application_pass || sprite->spine || sprite->ns_enabled ||
        (sprite->runtime_opaque && !sprite->runtime_scene_binary) ||
        (r->interp && anygm_policy_has_modern_layer_semantics(r->win)) ||
        resident_sprite_program_blocks(r) || r->fog_flat ||
-       gml_d3_is_active(r) || r->blendmode<0 || r->blendmode>2 ||
+       gml_d3_is_active(r) || r->blendmode<0 || (r->blendmode>2 && !source_colour) ||
        r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
        gml_render_classic_vertical_phase_blocks_scene(r) || r->rotated_batch_count || r->rotated_batch_building ||
        r->pending_underlay || r->pending_presentation || !gml_render_scene_target_matches(r) ||
        !isfinite(x) || !isfinite(y) || !isfinite(rotation) ||
        fabs(x-r->cam_x)>65536.0 || fabs(y-r->cam_y)>65536.0 ||
        !isfinite(xs) || !isfinite(ys) || fabs(xs)<0x1p-14 || fabs(xs)>64.0 ||
-       fabs(ys)<0x1p-14 || fabs(ys)>64.0 || !isfinite(alpha) || alpha<=0.0 || alpha>1.0 ||
-       (r->alphablend && alpha<0x1p-64) || r->color_write_mask>15u ||
+       fabs(ys)<0x1p-14 || fabs(ys)>64.0 || !isfinite(alpha) ||
+       (source_colour?alpha<0.0:alpha<=0.0) || alpha>1.0 ||
+       (r->alphablend && alpha<0x1p-64 && !source_colour) || r->color_write_mask>15u ||
        !r->device.context || !r->device.observe_on_demand ||
        !r->device.observe_on_demand(r->device.context)) return 0;
     if(gml_render_interpolated_phase_blocks_scene(r)) return 0;

@@ -758,7 +758,14 @@
   "      at=clamp(at,ivec2(0),size-ivec2(1));\n" \
   "      if(v_step.x!=0.0) at.y=size.y-1-at.y;\n" \
   "      sampled=uvec4(floor(source_texel(at,0)*255.0+0.5));\n" \
-  "    }else sampled=uvec4(floor(source_texture(v_texcoord)*255.0+0.5));\n" \
+  "    }else {\n" \
+  "      vec2 uv=v_texcoord;\n" \
+  "      if(v_span_y.w==3.0 && (rule==44 || rule==45 || rule==48)){\n" \
+  "        vec2 pixel=vec2(gl_FragCoord.x,v_step.x-gl_FragCoord.y);\n" \
+  "        uv=(pixel-v_map.xy)/v_map.zw;\n" \
+  "      }\n" \
+  "      sampled=uvec4(floor(source_texture(uv)*255.0+0.5));\n" \
+  "    }\n" \
   "    if(u_alpha_test>=0 && sampled.a<=uint(u_alpha_test)) discard;\n" \
   "    if(u_source_alpha_key!=0){\n" \
   "      int channel=(u_source_alpha_key>>9)-1;\n" \
