@@ -52,7 +52,7 @@ typedef struct FakeDevice {
   int source_region_uploads,refuse_source_region;
   GmlRenderRect last_source_region;
   GmlRenderImageUpload last_upload;
-  uint8_t last_upload_rgba[4];
+  uint8_t last_upload_rgba[16];
   GmlRenderImageRef last_retired_image;
   double recovery_rect[4];
   uint32_t last_opcode,last_source_count,last_shader_identity;
@@ -87,7 +87,9 @@ static int fake_upload(void *context,const GmlRenderImageUpload *upload){
   if(upload) fake->last_upload=*upload;
   if(upload && upload->bytes && upload->byte_capacity>=4u &&
      upload->pixel_format==GML_RENDER_PIXEL_RGBA8888)
-    memcpy(fake->last_upload_rgba,upload->bytes,4u);
+    memcpy(fake->last_upload_rgba,upload->bytes,
+      upload->byte_capacity<sizeof fake->last_upload_rgba
+        ?upload->byte_capacity:sizeof fake->last_upload_rgba);
   return !fake->fail_upload && fake->uploads!=fake->fail_upload_at &&
     upload && upload->bytes && upload->byte_capacity;
 }
@@ -14993,6 +14995,58 @@ static int resident_rounded_empty_axis_geometry(void){
   return 1;
 }
 
+static int resident_native_runtime_textured_triangles(void){
+  enum { W=16,H=16 };
+  for(int full=0;full<2;full++) for(int surface=0;surface<2;surface++){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={.bytecode=17};
+    FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+    uint32_t screen[W*H]={0},shadow[W*H];CHECK(r);
+    CHECK(!gml_render_init(r,NULL));r->win=&content;
+    r->color_write_mask=15u;r->active_shader=-1;r->alphablend=1;
+    r->n_spr=1;r->spr=calloc(1,sizeof *r->spr);CHECK(r->spr);
+    GmlSprite *sprite=r->spr;sprite->w=sprite->h=2;sprite->n_frames=2;
+    sprite->runtime_rgba=malloc(32u);CHECK(sprite->runtime_rgba);
+    memset(sprite->runtime_rgba,0x21,16u);
+    memset(sprite->runtime_rgba+16u,0x57,16u);
+    device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
+    CHECK(gml_render_begin_resident_base(r,screen,W,H,0,0));
+    if(surface){int id=gml_surface_create(r,W,H);CHECK(id>0 && gml_surface_set_target(r,id));}
+    gml_render_set_pending_fill(r,0xFF273859u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));memcpy(shadow,r->fb,sizeof shadow);
+    int handle=(int)(GML_TEX_SPR_TAG|1u),uploads=fake.uploads;
+    CHECK(gml_render_cpu_backend_native_textured_triangles(r,handle,full,NULL,0u));
+    CHECK(!sprite->runtime_scene_incarnation && !sprite->runtime_scene_used && fake.uploads==uploads);
+    CHECK(!gml_render_cpu_backend_textured_vertex_spans(r,handle,NULL,0u));
+    GmlRenderCpuBackendTexturedTriangle triangle={0};
+    const double xy[3][2]={{2,2},{13,2},{2,13}},uv[3][2]={{0,0},{1,0},{0,1}};
+    for(unsigned v=0;v<3u;v++){
+      triangle.vertex[v][0]=xy[v][0];triangle.vertex[v][1]=xy[v][1];
+      for(unsigned c=2;c<6u;c++)triangle.vertex[v][c]=1;
+      memcpy(triangle.uv[v],uv[v],sizeof triangle.uv[v]);
+    }
+    CHECK(gml_render_cpu_backend_native_textured_triangles(r,handle,full,&triangle,1u) &&
+          gml_render_scene_submit_pending(r));
+    CHECK(fake.last_upload.storage_width==2u && fake.last_upload.storage_height==2u &&
+          fake.last_upload.image.identity==UINT32_C(0x80000001) &&
+          !memcmp(fake.last_upload_rgba,sprite->runtime_rgba+16u,16u));
+    GmlRenderImageRef original=fake.last_upload.image;
+    CHECK(sprite->runtime_scene_used && !fake.readbacks && !fake.rgb_queries &&
+          !memcmp(shadow,r->fb,sizeof shadow));
+    CHECK(gml_render_runtime_sprite_scene_retire(r,sprite));
+    CHECK(fake.last_retired_image.identity==original.identity &&
+          fake.last_retired_image.incarnation==original.incarnation);
+    memset(sprite->runtime_rgba+16u,0x69,16u);
+    CHECK(gml_render_cpu_backend_native_textured_triangles(r,handle,full,&triangle,1u) &&
+          gml_render_scene_submit_pending(r));
+    CHECK(fake.last_upload.image.identity==original.identity &&
+          fake.last_upload.image.incarnation!=original.incarnation &&
+          !memcmp(fake.last_upload_rgba,sprite->runtime_rgba+16u,16u) &&
+          !fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,sizeof shadow));
+    gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 /* A packed page must never become the repeat domain of a sprite-local
  * immediate primitive. The same handle still exposes page UVs to buffers. */
 static int resident_native_textured_triangles(void){
@@ -20958,6 +21012,7 @@ int main(void){
     else if(!strcmp(selected,"filtered-text-reduction")) passed=resident_filtered_font_magnification(0,0,1);
     else if(!strcmp(selected,"filtered-font-passthrough")) passed=resident_filtered_font_passthrough();
     else if(!strcmp(selected,"native-textured-triangles")) passed=resident_native_textured_triangles();
+    else if(!strcmp(selected,"native-runtime-textured-triangles")) passed=resident_native_runtime_textured_triangles();
     else if(!strcmp(selected,"native-zero-alpha-triangles")) passed=resident_native_zero_alpha_triangles();
     else if(!strcmp(selected,"native-positive-alpha-triangles")) passed=resident_native_positive_alpha_triangles();
     else if(!strcmp(selected,"filtered-near-unit-copy")) passed=resident_filtered_near_unit_copy();
@@ -21257,6 +21312,7 @@ int main(void){
   passed+=resident_rounded_empty_axis_geometry();
   passed+=resident_empty_vertex_batches();
   passed+=resident_native_textured_triangles();
+  passed+=resident_native_runtime_textured_triangles();
   passed+=resident_native_zero_alpha_triangles();
   passed+=resident_native_positive_alpha_triangles();
   passed+=resident_filtered_near_unit_copy();

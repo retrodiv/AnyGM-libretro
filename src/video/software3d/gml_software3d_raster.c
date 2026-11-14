@@ -1746,7 +1746,8 @@ static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
   if(g_d3.active || primitive<1 || primitive>6 || count>65536 ||
      count<(primitive==1?1:primitive<=3?2:3) ||
      !gml_render_cpu_backend_scene_draw_view(R,&draw) ||
-     !(textured?gml_render_cpu_backend_textured_vertex_spans(R,texture,NULL,0u):
+     !(textured?(gml_render_cpu_backend_native_textured_triangles(R,texture,!immediate,NULL,0u) ||
+                  gml_render_cpu_backend_textured_vertex_spans(R,texture,NULL,0u)):
                  gml_render_cpu_backend_vertex_spans(R,NULL,0u)) || draw.width<=0 || draw.height<=0 ||
      draw.width>16384 || draw.height>16384) return 0;
   if(textured && !gml_render_cpu_backend_vertex_texture_extent(R,texture,&texture_width,&texture_height))

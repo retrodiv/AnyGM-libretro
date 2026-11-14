@@ -657,7 +657,8 @@ vertex_done:
   return result;
 }
 
-static int vertex_texture_source(GmlRender *r,int texture,GmlRenderResourceSource *source,int query){
+static int vertex_texture_source(GmlRender *r,int texture,GmlRenderResourceSource *source,
+                                   int query,int allow_runtime){
   uint32_t encoded=(uint32_t)texture,kind=encoded&GML_TEX_KIND_MASK;
   if(texture==-1) return 0;
   if(kind==GML_TEX_SURF_TAG){
@@ -679,8 +680,16 @@ static int vertex_texture_source(GmlRender *r,int texture,GmlRenderResourceSourc
   /* The established resolver lends immutable atlas metadata without observing
    * a device image. Runtime RGBA sprites retain their separate mutable owner. */
   GmlRenderCpuBackendTextureView view;
-  if(!gml_render_cpu_backend_texture_view(r,texture,1,&view) || view.runtime ||
-     view.atlas_index<0 || view.pixel_kind!=GML_RENDER_CPU_BACKEND_PIXELS_RGBA) return 0;
+  if(!gml_render_cpu_backend_texture_view(r,texture,1,&view) ||
+     view.pixel_kind!=GML_RENDER_CPU_BACKEND_PIXELS_RGBA) return 0;
+  if(view.runtime){
+    if(!allow_runtime || view.resource_index<0 || view.resource_index>=r->n_spr ||
+       view.width<=0 || view.height<=0) return 0;
+    if(query){source->width=(uint32_t)view.width;source->height=(uint32_t)view.height;return 1;}
+    return gml_render_runtime_sprite_scene_source_view(
+      r,&r->spr[view.resource_index],(int)(encoded&0x3FFu),source);
+  }
+  if(view.atlas_index<0) return 0;
   if(query){source->width=(uint32_t)view.width;source->height=(uint32_t)view.height;return 1;}
   return gml_render_atlas_scene_source_view(r,view.atlas_index,source);
 }
@@ -691,10 +700,11 @@ static int vertex_texture_source(GmlRender *r,int texture,GmlRenderResourceSourc
 static int native_vertex_texture_source(GmlRender *r,int texture,int full_atlas,
                                         GmlRenderResourceSource *source){
   if(full_atlas || ((uint32_t)texture&GML_TEX_KIND_MASK)==GML_TEX_SURF_TAG)
-    return vertex_texture_source(r,texture,source,0);
+    return vertex_texture_source(r,texture,source,0,1);
   GmlRenderCpuBackendTextureView view;
-  if(!gml_render_cpu_backend_texture_view(r,texture,0,&view) || view.runtime ||
-     view.pixel_kind!=GML_RENDER_CPU_BACKEND_PIXELS_RGBA || view.page_index<0 ||
+  if(!gml_render_cpu_backend_texture_view(r,texture,0,&view)) return 0;
+  if(view.runtime) return vertex_texture_source(r,texture,source,0,1);
+  if(view.pixel_kind!=GML_RENDER_CPU_BACKEND_PIXELS_RGBA || view.page_index<0 ||
      view.width<=0 || view.height<=0 || view.source_x<0 || view.source_y<0 ||
      (uint64_t)(unsigned)view.source_x+(unsigned)view.width>(unsigned)view.full_width ||
      (uint64_t)(unsigned)view.source_y+(unsigned)view.height>(unsigned)view.full_height ||
@@ -725,7 +735,7 @@ int gml_render_cpu_backend_native_textured_triangles(GmlRender *r,int texture,
      texture==-1 || count>65536u || (count && !triangles)) return 0;
   /* Probe metadata without flushing a mutable source or queuing a draw. */
   GmlRenderResourceSource source={0};
-  if(!count) return !triangles && vertex_texture_source(r,texture,&source,1);
+  if(!count) return !triangles && vertex_texture_source(r,texture,&source,1,1);
   if(!native_vertex_texture_source(r,texture,full_atlas,&source) ||
      !source.width || !source.height || source.width>16384u || source.height>16384u) return 0;
   GmlRenderDrawOp *operations=calloc(count,sizeof *operations);
@@ -771,7 +781,7 @@ int gml_render_cpu_backend_vertex_texture_extent(GmlRender *r,int texture,int *w
   if(width) *width=0;
   if(height) *height=0;
   if(!width || !height || !resident_primitive_state_eligible_rule(r,1) ||
-     !vertex_texture_source(r,texture,&source,1) || source.width>16384u ||
+     !vertex_texture_source(r,texture,&source,1,1) || source.width>16384u ||
      source.height>16384u) return 0;
   *width=(int)source.width;*height=(int)source.height;return 1;
 }
@@ -782,7 +792,7 @@ int gml_render_cpu_backend_textured_vertex_spans(GmlRender *r,int texture,
      r->app_interp_phase[0] || r->app_interp_phase[1] || r->app_interp_phase[2] ||
      count>65536u || (count && !spans)) return 0;
   GmlRenderResourceSource source={0};
-  if(!vertex_texture_source(r,texture,&source,!count)) return 0;
+  if(!vertex_texture_source(r,texture,&source,!count,0)) return 0;
   if(!count) return spans==NULL;
   unsigned blend=(unsigned)r->blendmode;
   if(blend==3u || blend==6u) blend=2u;
