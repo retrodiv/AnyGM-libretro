@@ -1067,7 +1067,52 @@ static void check_selected_view_rectangles(void){
   }
 }
 
+static void check_selected_view_circles(void){
+  const double turns[3]={0,90,-90};
+  for(unsigned kind=0;kind<4u;kind++) for(unsigned ellipse=0;ellipse<2u;ellipse++)
+  for(unsigned fractional=0;fractional<2u;fractional++)
+  for(unsigned opacity=0;opacity<2u;opacity++) for(unsigned turn=0;turn<3u;turn++){
+    GmlRender render;
+    reset_render(&render,24);
+    render.alpha=opacity?.37:1;
+    double cx=fractional?140.25:140,cy=fractional?80.75:80;
+    double rx=10,ry=ellipse?6:10;
+    gml_render_world_set_view_rotation(&render,turns[turn],WIDTH,HEIGHT);
+    if(kind<2u){
+      if(fractional) gml_render_primitive_circle_subpixel(&render,cx,cy,rx,ry,0xFFFFFFu,kind&1u);
+      else gml_render_primitive_circle(&render,(int)cx,(int)cy,(int)rx,(int)ry,0xFFFFFFu,kind&1u);
+    } else {
+      if(fractional) gml_render_primitive_circle_color_subpixel(&render,cx,cy,rx,ry,0x0000FFu,0xFF0000u,kind&1u);
+      else gml_render_primitive_circle_color(&render,(int)cx,(int)cy,(int)rx,(int)ry,0x0000FFu,0xFF0000u,kind&1u);
+    }
+    double px=turn==1u?WIDTH-cy:turn==2u?cy:cx;
+    double py=turn==1u?cx:turn==2u?HEIGHT-cx:cy;
+    double ex=turn?ry:rx,ey=turn?rx:ry;
+    int ink=covered_pixels(),outside=0;
+    for(int y=0;y<HEIGHT;y++) for(int x=0;x<WIDTH;x++)
+      if((frame[y*WIDTH+x]&0xFFFFFFu) &&
+         (x<floor(px-ex)-2 || x>ceil(px+ex)+2 || y<floor(py-ey)-2 || y>ceil(py+ey)+2)) outside++;
+    uint32_t centre=frame[(int)floor(py)*WIDTH+(int)floor(px)]&0xFFFFFFu;
+    double sx=(kind&1u)?lround(cx+rx)+.5:cx+rx-1;
+    double sy=(kind&1u)?lround(cy)+.5:cy;
+    int edge_x=(int)floor(turn==1u?WIDTH-sy:turn==2u?sy:sx);
+    int edge_y=(int)floor(turn==1u?sx:turn==2u?HEIGHT-sx:sy);
+    int edge=0;
+    for(int y=edge_y-1;y<=edge_y+1;y++) for(int x=edge_x-1;x<=edge_x+1;x++){
+      uint32_t colour=frame[y*WIDTH+x]&0xFFFFFFu;
+      edge|=kind<2u?colour!=0:(colour&255u)>((colour>>16)&255u);
+    }
+    int ok=ink>0 && !outside && edge && ((kind&1u)?centre==0:centre!=0);
+    if(kind==2u) ok=ok && ((centre>>16)&255u)>(centre&255u);
+    fprintf(stderr,"selected circle kind=%u ellipse=%u fractional=%u alpha=%g turn=%g ink=%d outside=%d pass=%d\n",
+      kind,ellipse,fractional,render.alpha,turns[turn],ink,outside,ok);
+    expect(ok,"selected view places circle/ellipse polygon geometry, hollow rims and centre-to-edge colours");
+    gml_render_free(&render);
+  }
+}
+
 int main(void){
+  check_selected_view_circles();
   check_selected_view_rectangles();
   check_selected_view_lines();
   check_selected_view_point_and_triangles();
