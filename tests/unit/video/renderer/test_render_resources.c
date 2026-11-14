@@ -9327,6 +9327,73 @@ static int resident_application_sprite_cpu_fallback(void){
   return 1;
 }
 
+static int extended_rectangle_replay_state(void){
+  static const int tuples[][4]={{2,2,2,2},{1,1,1,1},{11,6,2,6},{2,11,11,2},
+    {3,4,5,6},{7,8,9,10},{9,10,7,8},{4,3,6,5},{2,1,1,2}};
+  static const unsigned masks[]={15u,5u,8u};
+  uint32_t expected[9],actual[9],seed[9];
+  GmlRender *reference=calloc(1,sizeof *reference);CHECK(reference);
+  GmlRenderDrawOp op={.opcode=GML_RENDER_OP_COLOURED_PRIMITIVE,
+    .reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT,.scene_family=GML_RENDER_SCENE_PRIMITIVE};
+  op.target=(GmlRenderTargetRef){.image={.resource_class=GML_RENDER_RESOURCE_SURFACE},
+    .storage_version=1u,.width=3u,.height=3u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,.region={0,0,3u,3u}};
+  GmlRenderPrimitiveRect *p=&op.payload.primitive;
+  p->kind=GML_RENDER_PRIMITIVE_RECTANGLE;p->region=p->authored_region=(GmlRenderRect){1,1,1u,1u};
+  p->alpha_blend=1u;p->colour=0xff906030u;
+  for(unsigned i=0;i<4u;i++)p->corner_colour[i]=p->colour;
+  reference->fb=reference->base_fb=expected;reference->fbw=reference->fbh=3;
+  reference->alphablend=1;reference->active_shader=-1;
+  GmlRenderDrawStateSnapshot state={.colour=0xffffffffu,.alpha=255u};
+  unsigned controls=0;
+  for(unsigned tuple=0;tuple<9u;tuple++)for(int rgb=1;rgb<=5;rgb++)for(int alpha=1;alpha<=5;alpha++)
+  for(unsigned mask=0;mask<3u;mask++)for(unsigned preserve=0;preserve<2u;preserve++)for(unsigned zero=0;zero<2u;zero++){
+    for(unsigned i=0;i<9u;i++)seed[i]=expected[i]=actual[i]=0x40204060u;
+    p->rectangle_flags=(GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA<<GML_RENDER_RECTANGLE_BLEND_SHIFT)|
+      (preserve?GML_RENDER_RECTANGLE_TARGET_ALPHA:0u);
+    p->alpha=zero?0.0:64.0/255.0;state.write_mask=masks[mask];
+    int mode=gml_render_blend_pack_factors(tuples[tuple]);
+    CHECK(gml_render_blend_snapshot_extended(&state,mode,rgb,alpha,!preserve));
+    reference->target_sp=(int)preserve;reference->blendmode=mode;
+    reference->blend_equation=rgb;reference->blend_equation_alpha=alpha;
+    reference->color_write_mask=(uint8_t)masks[mask];reference->alpha=p->alpha;
+    gml_render_cpu_rectangle_color(reference,1,1,1,1,0x306090u,0x306090u,0x306090u,0x306090u,0);
+    CHECK(gml_render_cpu_replay_one(actual,3,3,&op,&state,NULL));
+    if(memcmp(actual,expected,sizeof actual))fprintf(stderr,
+      "extended rectangle replay: tuple=%u eq=%d,%d mask=%u preserve=%u zero=%u actual=%08x expected=%08x\n",
+      tuple,rgb,alpha,masks[mask],preserve,zero,actual[4],expected[4]);
+    CHECK(!memcmp(actual,expected,sizeof actual));
+    memcpy(actual,seed,sizeof actual);
+    GmlRenderResource *resource=gml_render_resource_create(target_ref(1u,1u),3u,3u,
+      GML_RENDER_PIXEL_ARGB8888,actual,(GmlRenderResourceLimits){0});
+    CHECK(resource);
+    op.target.image=gml_render_resource_image_ref(resource);op.target.image.content_version++;
+    GmlRenderDrawBatch batch={&op,1u,&state,1u};
+    /* A device checkpoint is actual-byte state, not an approximate CPU
+     * recipe. Without a device, the resource must refuse before publication. */
+    CHECK(gml_render_resource_submit(resource,NULL,&batch,NULL,0u)==GML_RENDER_RESOURCE_EXEC_FAILED);
+    CHECK(!memcmp(actual,seed,sizeof actual));
+    gml_render_resource_destroy(resource);controls++;
+  }
+  GmlRenderDrawStateSnapshot valid=state;
+  unsigned valid_flags=p->rectangle_flags;
+  for(unsigned invalid=0;invalid<7u;invalid++){
+    state=valid;p->rectangle_flags=valid_flags;
+    if(invalid==0)state.rgb_source_factor=12u;
+    if(invalid==1)state.write_mask=16u;
+    if(invalid==2)state.alpha_equation=GML_RENDER_BLEND_NATIVE_MIN+1u;
+    if(invalid==3)state.coverage_policy^=1u;
+    if(invalid==4)state.sampler_count=1u;
+    if(invalid==5)p->rectangle_flags|=GML_RENDER_RECTANGLE_OUTLINE;
+    if(invalid==6)state.clip.width=1u;
+    memcpy(actual,seed,sizeof actual);
+    CHECK(!gml_render_cpu_replay_one(actual,3,3,&op,&state,NULL));
+    CHECK(!memcmp(actual,seed,sizeof actual));
+  }
+  free(reference);
+  printf("extended rectangle replay: exact replay/checkpoint-refusal pairs=%u; seven malformed states refuse transactionally\n",controls);
+  return controls==2700u;
+}
+
 static int resident_source_colour_alpha_dispatch_scope(void){
   for(int path=0;path<6;path++){
     GmlRender *render=calloc(1,sizeof *render);
@@ -21048,6 +21115,7 @@ int main(void){
     int passed;
     if(!strcmp(selected,"target-pixel-pending-scene")) passed=target_pixel_observes_pending_scene();
     else if(!strcmp(selected,"preserved-device-failure")) passed=preserved_device_failure_keeps_authority();
+    else if(!strcmp(selected,"extended-rectangle-replay")) passed=extended_rectangle_replay_state();
     else if(!strcmp(selected,"source-colour-alpha-dispatch")) passed=resident_source_colour_alpha_dispatch_scope();
     else if(!strcmp(selected,"rectangle-function-matrix")) passed=resident_rectangle_function_matrix();
     else if(!strcmp(selected,"target-pixel-resident-result")) passed=target_pixel_observes_resident_result();
@@ -21241,6 +21309,7 @@ int main(void){
   passed+=resident_outline_coverage_public_order();
   passed+=resident_atlas_uv_refusal_preserves_queued_prefix();
   passed+=resident_application_sprite_cpu_fallback();
+  passed+=extended_rectangle_replay_state();
   passed+=resident_source_colour_alpha_dispatch_scope();
   passed+=resident_empty_sprite_preserves_queued_draws();
   passed+=resident_black_additive_sprite_noop();
@@ -21450,7 +21519,7 @@ int main(void){
   passed+=resident_lazy_native_atlas();
   passed+=resident_unit_texel_magnification();
   passed+=opaque_rectangle_clear_complement();
-  enum { total=337 };
+  enum { total=338 };
   printf("render resource cases: passed=%d failed=%d\n",passed,total-passed);
   return passed==total?EXIT_SUCCESS:EXIT_FAILURE;
 }

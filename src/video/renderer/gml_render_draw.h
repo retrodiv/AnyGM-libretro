@@ -227,7 +227,8 @@ typedef enum GmlRenderBlendFactor {
   GML_RENDER_BLEND_DESTINATION_ALPHA=7,
   GML_RENDER_BLEND_ONE_MINUS_SOURCE_COLOUR=8,
   GML_RENDER_BLEND_ONE_MINUS_DESTINATION_ALPHA=9,
-  GML_RENDER_BLEND_ONE_MINUS_DESTINATION_COLOUR=10
+  GML_RENDER_BLEND_ONE_MINUS_DESTINATION_COLOUR=10,
+  GML_RENDER_BLEND_SOURCE_ALPHA_SATURATE=11
 } GmlRenderBlendFactor;
 
 /* Software selectors for colour-dependent fixed-function factor pairs. */
@@ -315,7 +316,13 @@ typedef enum GmlRenderBlendEquation {
   GML_RENDER_BLEND_FIXED_MAX=13,
   GML_RENDER_BLEND_FIXED_REVERSE_SUBTRACT=14,
   GML_RENDER_BLEND_FIXED_SUBTRACT=15,
-  GML_RENDER_BLEND_FIXED_MIN=16
+  GML_RENDER_BLEND_FIXED_MIN=16,
+  /* Independent native factor tuples; distinct from legacy/exact arithmetic. */
+  GML_RENDER_BLEND_NATIVE_ADD=17,
+  GML_RENDER_BLEND_NATIVE_MAX=18,
+  GML_RENDER_BLEND_NATIVE_REVERSE_SUBTRACT=19,
+  GML_RENDER_BLEND_NATIVE_SUBTRACT=20,
+  GML_RENDER_BLEND_NATIVE_MIN=21
 } GmlRenderBlendEquation;
 
 enum {
@@ -361,6 +368,38 @@ typedef struct GmlRenderDrawStateSnapshot {
   double additive_draw_alpha;
   GmlRenderSourcePalette source_palette;
 } GmlRenderDrawStateSnapshot;
+
+static inline int gml_render_blend_snapshot_native(const GmlRenderDrawStateSnapshot *s){
+  return s && s->write_mask<=15u && s->rgb_equation>=GML_RENDER_BLEND_NATIVE_ADD &&
+    s->rgb_equation<=GML_RENDER_BLEND_NATIVE_MIN &&
+    s->alpha_equation>=GML_RENDER_BLEND_NATIVE_ADD && s->alpha_equation<=GML_RENDER_BLEND_NATIVE_MIN &&
+    s->rgb_source_factor>=1u && s->rgb_source_factor<=11u &&
+    s->rgb_destination_factor>=1u && s->rgb_destination_factor<=11u &&
+    s->alpha_source_factor>=1u && s->alpha_source_factor<=11u &&
+    s->alpha_destination_factor>=1u && s->alpha_destination_factor<=11u &&
+    s->coverage_policy<=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+}
+static inline int gml_render_blend_snapshot_extended(GmlRenderDrawStateSnapshot *s,
+  int mode,int rgb_equation,int alpha_equation,int opaque){
+  static const unsigned char native[]={0,1,2,5,8,3,4,7,9,6,10,11};
+  int f[4];
+  if(!s || !gml_render_blend_is_extended(mode) || rgb_equation<1 || rgb_equation>5 ||
+     alpha_equation<1 || alpha_equation>5)return 0;
+  gml_render_blend_mode_factors(mode,f);
+  s->rgb_source_factor=native[f[0]];s->rgb_destination_factor=native[f[1]];
+  s->alpha_source_factor=native[f[2]];s->alpha_destination_factor=native[f[3]];
+  s->rgb_equation=GML_RENDER_BLEND_NATIVE_ADD+(unsigned)rgb_equation-1u;
+  s->alpha_equation=GML_RENDER_BLEND_NATIVE_ADD+(unsigned)alpha_equation-1u;
+  s->coverage_policy=opaque?GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA:0u;
+  return 1;
+}
+static inline int gml_render_blend_snapshot_mode(const GmlRenderDrawStateSnapshot *s){
+  static const unsigned char original[]={0,1,2,5,6,3,9,7,4,8,10,11};
+  if(!gml_render_blend_snapshot_native(s))return -1;
+  return gml_render_blend_pack_factors((int[]){original[s->rgb_source_factor],
+    original[s->rgb_destination_factor],original[s->alpha_source_factor],original[s->alpha_destination_factor]});
+}
+
 
 typedef enum GmlRenderQuadShape {
   GML_RENDER_QUAD_AXIS_ALIGNED=1,

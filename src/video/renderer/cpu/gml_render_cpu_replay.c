@@ -316,6 +316,18 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
   if(operation->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
     if(operation->payload.primitive.kind==GML_RENDER_PRIMITIVE_RECTANGLE){
       const GmlRenderPrimitiveRect *p=&operation->payload.primitive;
+      if(state && (state->rgb_equation>=GML_RENDER_BLEND_NATIVE_ADD ||
+                   state->alpha_equation>=GML_RENDER_BLEND_NATIVE_ADD) &&
+         (!gml_render_blend_snapshot_native(state) ||
+          (p->rectangle_flags&~(GML_RENDER_RECTANGLE_CLASSIC|GML_RENDER_RECTANGLE_TARGET_ALPHA|GML_RENDER_RECTANGLE_BLEND_MASK)) ||
+          ((p->rectangle_flags&GML_RENDER_RECTANGLE_BLEND_MASK)>>GML_RENDER_RECTANGLE_BLEND_SHIFT)!=GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA ||
+          state->coverage_policy!=((p->rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)?0u:1u) ||
+          state->sampler_count ||
+          state->material_identity || state->material_version || state->source_alpha_key ||
+          state->source_palette.enabled || state->alpha_test_enabled ||
+          state->colour!=0xffffffffu || state->alpha!=255u ||
+          state->clip.x || state->clip.y || state->clip.width || state->clip.height))return 0;
+
       /* Vertex rows and source-over squares are actual-byte device checkpoints,
        * not this rectangle writer's recipes. Refusal returns to their original executor. */
       if(p->rectangle_flags&(GML_RENDER_RECTANGLE_VERTEX_SPAN|
@@ -330,9 +342,15 @@ int gml_render_cpu_replay_one(uint32_t *target,uint32_t width,uint32_t height,
       render->blendmode=(int)((p->rectangle_flags&GML_RENDER_RECTANGLE_BLEND_MASK)>>
                               GML_RENDER_RECTANGLE_BLEND_SHIFT);
       render->blend_equation=render->blend_equation_alpha=1;
+      if(gml_render_blend_snapshot_native(state)){
+        render->blendmode=gml_render_blend_snapshot_mode(state);
+        render->blend_equation=(int)state->rgb_equation-GML_RENDER_BLEND_NATIVE_ADD+1;
+        render->blend_equation_alpha=(int)state->alpha_equation-GML_RENDER_BLEND_NATIVE_ADD+1;
+      }
       render->alpha=p->alpha;
       render->color_write_mask=(p->rectangle_flags&GML_RENDER_RECTANGLE_PIXEL_SPAN)?
         p->pixel_write_mask:15u;
+      if(gml_render_blend_snapshot_native(state))render->color_write_mask=(uint8_t)state->write_mask;
       uint32_t colours[4];
       for(unsigned c=0;c<4u;c++){
         uint32_t xrgb=p->corner_colour[c];

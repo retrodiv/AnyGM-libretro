@@ -2194,10 +2194,13 @@ void gml_render_application_resource_dispose(GmlRender *r){
 GmlRenderResourceExecution gml_render_application_scene_submit(
   GmlRender *r,const GmlRenderDrawBatch *batch,
   const GmlRenderResourceSource *sources,uint32_t source_count){
-  /* Extended factor tuples retain ordinary counted CPU execution. Previously queued
-   * packets still flush through their captured state; device reads remain available. */
+  /* Only explicitly captured native-factor packets extend public admission.
+   * Other tuples retain counted CPU execution; queued packets and device reads
+   * continue through their established state and observation boundaries. */
   if(r && r->alphablend && gml_render_blend_is_extended(r->blendmode) &&
-     !gml_render_blend_factor_pair(r->blendmode,7,8))
+     !gml_render_blend_factor_pair(r->blendmode,7,8) &&
+     !(batch && batch->operation_count==1u && batch->states && batch->state_count==1u &&
+       gml_render_blend_snapshot_native(&batch->states[0])))
     return GML_RENDER_RESOURCE_EXEC_FAILED;
   GmlRenderResource *resource=r && r->resident_application_pass &&
     gml_render_scene_target_matches(r)

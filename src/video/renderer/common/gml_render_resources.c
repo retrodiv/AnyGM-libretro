@@ -581,6 +581,13 @@ static int batch_valid(const GmlRenderResource *resource,const GmlRenderDrawBatc
     }else if(operation->opcode==GML_RENDER_OP_CLEAR ||
        operation->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
       if(operation->source_count || operation->sources) return 0;
+      if(operation->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE && batch->states && batch->state_count){
+        if(operation->state_index>=batch->state_count)return 0;
+        state=&batch->states[operation->state_index];
+        if((state->rgb_equation>=GML_RENDER_BLEND_NATIVE_ADD ||
+            state->alpha_equation>=GML_RENDER_BLEND_NATIVE_ADD) &&
+           !gml_render_blend_snapshot_native(state))return 0;
+      }
     } else if(operation->opcode==GML_RENDER_OP_SOFTWARE3D_PASS){
       if(operation->payload.depth_triangle.textured>1u ||
          operation->source_count!=operation->payload.depth_triangle.textured ||

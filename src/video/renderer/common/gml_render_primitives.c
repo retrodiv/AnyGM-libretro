@@ -482,8 +482,10 @@ static int resident_primitive_state_eligible_target(GmlRender *r,int cpu_passthr
      !device || !device->observe_on_demand ||
      !device->observe_on_demand(device->context) || !gml_render_scene_target_matches(r) ||
      (r->active_shader>=0 && (!cpu_passthrough || !gml_render_shader_cpu_passthrough(r))) || r->blendmode<0 ||
-     r->blendmode>GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA || r->blend_equation!=1 ||
-     r->blend_equation_alpha!=1 || r->color_write_mask>15u ||
+     !gml_render_blend_mode_valid(r->blendmode) ||
+     (gml_render_blend_is_extended(r->blendmode)?
+       (r->blend_equation<1 || r->blend_equation>5 || r->blend_equation_alpha<1 || r->blend_equation_alpha>5):
+       (r->blend_equation!=1 || r->blend_equation_alpha!=1)) || r->color_write_mask>15u ||
      r->pending_presentation || r->rotated_batch_count || r->rotated_batch_building ||
      (gml_render_classic_vertical_phase_blocks_scene(r) &&
        (!r->classic_phase_resource || !gml_render_classic_phase_resource_bind(r))) ||
@@ -493,7 +495,8 @@ static int resident_primitive_state_eligible_target(GmlRender *r,int cpu_passthr
 }
 
 static int resident_primitive_state_eligible_rule(GmlRender *r,int cpu_passthrough){
-  return resident_primitive_state_eligible_target(r,cpu_passthrough,0);
+  return resident_primitive_state_eligible_target(r,cpu_passthrough,0) &&
+    !gml_render_blend_is_extended(r->blendmode);
 }
 
 static int resident_primitive_state_eligible(GmlRender *r){
@@ -504,8 +507,10 @@ static int resident_rectangle_state_eligible(GmlRender *r,int cpu_passthrough){
   /* Rectangle CPU writers ignore a selected program only when the existing
    * classifier proves that neither a software effect nor an external executor
    * applies. Lines keep their separate, unqualified program boundary. */
-  return resident_primitive_state_eligible_rule(r,cpu_passthrough) &&
-    (r->color_write_mask==15u || (!r->alphablend && r->color_write_mask==8u));
+  return resident_primitive_state_eligible_target(r,cpu_passthrough,0) &&
+    (!gml_render_blend_is_extended(r->blendmode) || r->alphablend) &&
+    (r->color_write_mask==15u || (!r->alphablend && r->color_write_mask==8u) ||
+     (r->alphablend && gml_render_blend_is_extended(r->blendmode)));
 }
 
 static int resident_native_triangles(GmlRender *r,
@@ -980,9 +985,12 @@ static int resident_rectangle_function(GmlRender *r,int x1,int y1,int x2,int y2,
   if(x2<0 || y2<0 || x1>=r->fbw || y1>=r->fbh) return 1;
   if(x1 < -32768 || y1 < -32768 || x2>32767 || y2>32767) return 0;
   int gradient=!outline && (c1!=c2 || c1!=c3 || c1!=c4);
+  int extended=r->alphablend && gml_render_blend_is_extended(r->blendmode);
+  if(extended && (gradient || outline))return 0;
   /* Filled gradients use the scalar row writer: ordinary presets are ignored,
    * while destination-colour pairs keep their distinct CPU executor. */
-  unsigned blend=gradient && !destination?0u:(unsigned)r->blendmode;
+  unsigned blend=extended?GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA:
+    gradient && !destination?0u:(unsigned)r->blendmode;
   /* The primitive pixel writer's remaining internal codes share inverse colour. */
   if(blend==3u || blend==6u) blend=2u;
   /* The existing filled scalar writer returns at an alpha below its first
@@ -1001,6 +1009,7 @@ static int resident_rectangle_function(GmlRender *r,int x1,int y1,int x2,int y2,
     gml_render_set_pending_fill(r,gml_render_cpu_backend_color_to_xrgb(c1));
     return 1;
   }
+  if(extended && !gml_render_application_scene_flush(r))return 0;
   if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
   gml_render_flush_pending_fill(r);
   GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
@@ -1021,8 +1030,16 @@ static int resident_rectangle_function(GmlRender *r,int x1,int y1,int x2,int y2,
   resident_rectangle_payload(r,p,authored,
     (GmlRenderRect){left,top,(uint32_t)(right-left+1),(uint32_t)(bottom-top+1)},
     colours,outline,gradient,blend,alpha);
-  if(!gml_render_application_scene_enqueue_primitive(r,&operation)) return 0;
+  if(extended){
+    GmlRenderDrawStateSnapshot state={.colour=0xffffffffu,.alpha=255u,.write_mask=r->color_write_mask};
+    if(!gml_render_blend_snapshot_extended(&state,r->blendmode,r->blend_equation,
+       r->blend_equation_alpha,!gml_render_target_preserves_alpha(r)))return 0;
+    GmlRenderDrawBatch batch={&operation,1u,&state,1u};
+    GmlRenderResourceExecution result=gml_render_application_scene_submit(r,&batch,NULL,0u);
+    if(result==GML_RENDER_RESOURCE_EXEC_FAILED)return 0;
+  }else if(!gml_render_application_scene_enqueue_primitive(r,&operation)) return 0;
   r->fb_all_transparent=0;
+  if(extended && !(r->color_write_mask&8u))return 1;
   int opaque_write=!(p->rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA) || (!blend &&
     (alpha>=1.0 || (!r->alphablend && !outline && !gradient)));
   int full_cover=!outline && left==0 && top==0 && right==r->fbw-1 && bottom==r->fbh-1;

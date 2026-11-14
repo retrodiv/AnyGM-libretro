@@ -65,7 +65,15 @@ static int cleared_earlier(const GmlRenderImageRef *cleared,uint32_t count,
   return 0;
 }
 
+enum { GL_SCENE_BLEND_NATIVE_FACTORS=1<<23,GL_SCENE_BLEND_NATIVE_OPAQUE=1<<22 };
+
 static int qualified_blend(const GmlRenderDrawStateSnapshot *state){
+  if(gml_render_blend_snapshot_native(state))return GL_SCENE_BLEND_NATIVE_FACTORS|
+    (state->coverage_policy?GL_SCENE_BLEND_NATIVE_OPAQUE:0)|
+    (int)(state->rgb_source_factor|(state->rgb_destination_factor<<4u)|
+      (state->alpha_source_factor<<8u)|(state->alpha_destination_factor<<12u)|
+      ((state->rgb_equation-GML_RENDER_BLEND_NATIVE_ADD)<<16u)|
+      ((state->alpha_equation-GML_RENDER_BLEND_NATIVE_ADD)<<19u));
   if(state->rgb_source_factor==GML_RENDER_BLEND_SOURCE_COLOUR &&
      state->rgb_destination_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
      state->alpha_source_factor==GML_RENDER_BLEND_SOURCE_COLOUR &&
@@ -1628,6 +1636,20 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
     const GmlRenderDrawOp *op=&batch->operations[index];
     const GmlRenderTargetRef *target=&op->target;
     if(op->state_index<batch->state_count){
+      const GmlRenderDrawStateSnapshot *state=&batch->states[op->state_index];
+      if(op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE &&
+         (state->rgb_equation>=GML_RENDER_BLEND_NATIVE_ADD || state->alpha_equation>=GML_RENDER_BLEND_NATIVE_ADD)){
+        const GmlRenderPrimitiveRect *p=&op->payload.primitive;
+        if(!gml_render_blend_snapshot_native(state) || !gml_render_rectangle_valid(op) ||
+           (p->rectangle_flags&~(GML_RENDER_RECTANGLE_CLASSIC|GML_RENDER_RECTANGLE_TARGET_ALPHA|GML_RENDER_RECTANGLE_BLEND_MASK)) ||
+           ((p->rectangle_flags&GML_RENDER_RECTANGLE_BLEND_MASK)>>GML_RENDER_RECTANGLE_BLEND_SHIFT)!=GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA ||
+           state->coverage_policy!=((p->rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)?0u:1u) ||
+           state->write_mask>15u || state->alpha_test_enabled || state->source_alpha_key ||
+           state->source_palette.enabled || state->sampler_count || state->material_identity ||
+           state->material_version || state->colour!=0xffffffffu || state->alpha!=255u ||
+           state->clip.x || state->clip.y || state->clip.width || state->clip.height)return 0;
+      }
+
       const GmlRenderSourcePalette *palette=&batch->states[op->state_index].source_palette;
       if(!source_palette_valid(palette) ||
          (palette->enabled && (op->opcode!=GML_RENDER_OP_TEXTURED_QUAD ||
@@ -2908,6 +2930,14 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
         mode==0u?GL_SRC_COLOR:GL_DST_COLOR,preserve?GL_DST_ALPHA:GL_ONE,
         preserve?(mode==0u?GL_SRC_ALPHA:GL_DST_ALPHA):GL_ZERO);
       rgb_equation=equations[rgb];alpha_equation=preserve?equations[alpha]:GL_FUNC_ADD;
+    }else if(blend&GL_SCENE_BLEND_NATIVE_FACTORS){
+      static const GLenum factors[]={0,GL_ZERO,GL_ONE,GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA,
+        GL_SRC_COLOR,GL_DST_COLOR,GL_DST_ALPHA,GL_ONE_MINUS_SRC_COLOR,
+        GL_ONE_MINUS_DST_ALPHA,GL_ONE_MINUS_DST_COLOR,0x0308u};
+      static const GLenum equations[]={GL_FUNC_ADD,GL_MAX,GL_FUNC_REVERSE_SUBTRACT,GL_FUNC_SUBTRACT,GL_MIN};
+      backend->gl.BlendFuncSeparate(factors[blend&15],factors[(blend>>4)&15],
+        factors[(blend>>8)&15],factors[(blend>>12)&15]);
+      rgb_equation=equations[(blend>>16)&7];alpha_equation=equations[(blend>>19)&7];
     }else if(blend>=22 && blend<=25){
       int multiply=blend<=23,preserve=(blend&1)==0;
       backend->gl.BlendFuncSeparate(multiply?GL_DST_COLOR:GL_SRC_ALPHA,
@@ -2969,7 +2999,7 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
     backend->gl.BlendEquationSeparate(rgb_equation,alpha_equation);
     backend->gl.Enable(GL_BLEND);
   } else backend->gl.Disable(GL_BLEND);
-  int stamp_alpha=native_texture_stamp || blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE || filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==133u || filter==130u || filter==104u || filter==107u || filter==99u || filter==77u || filter==75u || filter==9u || filter==12u || filter==21u || filter==23u ||
+  int stamp_alpha=(blend&GL_SCENE_BLEND_NATIVE_OPAQUE)!=0 || native_texture_stamp || blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE || filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==133u || filter==130u || filter==104u || filter==107u || filter==99u || filter==77u || filter==75u || filter==9u || filter==12u || filter==21u || filter==23u ||
                   filter==25u || (filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER) || filter==35u || filter==39u || filter==40u ||
                   filter==46u || filter==47u || filter==53u || filter==60u ||
                   filter==66u || filter==69u || filter==71u || filter==80u ||
@@ -3050,7 +3080,8 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
       backend->gl.DrawArraysIndirect(GL_TRIANGLES,NULL);
     else backend->gl.DrawArraysInstanced(GL_TRIANGLES,0,6,(GLsizei)count);
   }
-  int rectangle_alpha_stamp=blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE && filter==34u;
+  int rectangle_alpha_stamp=(blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE ||
+    (blend&GL_SCENE_BLEND_NATIVE_OPAQUE)) && filter==34u;
   int surface_alpha_stamp=blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE && filter==51u;
   int atlas_alpha_stamp=blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE && (filter==44u || filter==45u);
   if(stamp_alpha && !skip_alpha && !rectangle_alpha_stamp && !surface_alpha_stamp && !atlas_alpha_stamp && (write_mask&8u) && filter!=GL_SCENE_NATIVE_POINT_OPAQUE_FILTER && filter!=23u && filter!=35u && filter!=39u && filter!=40u && filter!=53u && filter!=66u && filter!=21u && filter!=25u && filter!=32u && filter!=GL_SCENE_VIEW_BILINEAR_FILTER && filter!=80u){
@@ -3782,6 +3813,12 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
        primitive_blend==0 && op->payload.primitive.alpha==1.0 &&
        !(op->payload.primitive.rectangle_flags&~GML_RENDER_RECTANGLE_TARGET_ALPHA))
       primitive_filter=31u;
+    int native_factors=rectangle && batch->states && op->state_index<batch->state_count &&
+      gml_render_blend_snapshot_native(&batch->states[op->state_index]);
+    if(native_factors){
+      primitive_blend=qualified_blend(&batch->states[op->state_index]);primitive_filter=34u;
+      primitive_write_mask=batch->states[op->state_index].write_mask;
+    }
     if(pending_count && (particle || alpha_rect || rectangle || native_triangle
        ? pending_palette.enabled || !active_target || !same_logical(active_target->ref,op->target.image) ||
          pending_count==GL_SCENE_MAX_QUADS || pending_filter!=primitive_filter ||
