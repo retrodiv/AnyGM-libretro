@@ -3544,8 +3544,10 @@ static int scene_nearest_surface_function_case(void){
   const uint32_t pixels[4]={0x001267B9u,0x552679B3u,0xAAC39526u,0xFF7193C5u};
   for(unsigned api=0;api<2u;api++) for(unsigned target_kind=0;target_kind<3u;target_kind++)
   for(unsigned source_kind=0;source_kind<3u;source_kind++)
+  for(unsigned source_colour=0;source_colour<2u;source_colour++)
   for(unsigned selection=0;selection<3u;selection++)
   for(unsigned invalid=0;invalid<(selection?20u:12u);invalid++){
+    if(source_colour && selection)continue;
     anygm_test_graphics_reset();
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
     GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
@@ -3566,6 +3568,10 @@ static int scene_nearest_surface_function_case(void){
     state.rgb_destination_factor=state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.alpha_source_factor=GML_RENDER_BLEND_ONE;
     state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
+    if(source_colour){
+      state.rgb_source_factor=state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_COLOUR;
+      state.rgb_destination_factor=state.alpha_destination_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+    }
     state.samplers[0]=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_NEAREST,
       GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,2u,2u},GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION,0u};
     for(unsigned index=0;index<QUADS+1u;index++){
@@ -3583,6 +3589,7 @@ static int scene_nearest_surface_function_case(void){
       q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;q->sampling=state.samplers[0];q->filtered_draw_alpha=.4;
       q->x[0]=q->x[3]=-1;q->x[1]=q->x[2]=2;q->y[0]=q->y[1]=1;q->y[2]=q->y[3]=4;
       q->inverse_anchor[0]=-1;q->inverse_anchor[1]=1;q->inverse_x[0]=-3;q->inverse_y[1]=3;
+      if(source_colour)q->span_y[0]=4.0;
       if(selection){
         q->span_x[2]=selection==1u?-1.0:.25;q->span_x[3]=0.0;
         q->span_y[1]=selection==1u?4.0:1.5;q->span_y[2]=2.0;

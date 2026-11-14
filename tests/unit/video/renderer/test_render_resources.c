@@ -9333,7 +9333,8 @@ static int resident_source_colour_alpha_dispatch_scope(void){
     GmlWin content={.bytecode=15};
     FakeDevice fake={.on_demand=1};
     GmlRenderDeviceServices device=service(&fake);
-    if(path==0) device.observe_on_demand=fake_observe_on_demand;
+    int accelerated=path==0 || path==2;
+    if(accelerated) device.observe_on_demand=fake_observe_on_demand;
     GmlRenderJournalMetrics metrics={0};
     GmlRenderDispatchMetrics dispatch={0};
     CHECK(render && !gml_render_init(render,&content));
@@ -9365,7 +9366,7 @@ static int resident_source_colour_alpha_dispatch_scope(void){
     CHECK(gml_render_scene_submit_pending(render));
     gml_render_prepare_draw(render);
     gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
-    if(path==0){
+    if(accelerated){
       CHECK(render->resident_application_pass && fake.submits==2 && !fake.readbacks &&
             !metrics.cpu_replays && render->app_surface_owned[5]==0u);
     }else
@@ -9378,7 +9379,7 @@ static int resident_source_colour_alpha_dispatch_scope(void){
     /* The seed clear is replayed separately from the ordinary drawing call. */
     for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
       if(reason!=GML_RENDER_DISPATCH_REPLAY) cpu_draws+=dispatch.cpu[family][reason];
-    uint64_t expected_cpu=path?1u:0u,expected_gpu=path?0u:1u;
+    uint64_t expected_cpu=accelerated?0u:1u,expected_gpu=accelerated?1u:0u;
     if(cpu_draws!=expected_cpu || dispatch.gpu[family]!=expected_gpu ||
        dispatch.unclassified || dispatch.failed)
       fprintf(stderr,"colour-factor dispatch census: path=%d cpu=%llu gpu=%llu replay=%llu unclassified=%llu failed=%llu\n",

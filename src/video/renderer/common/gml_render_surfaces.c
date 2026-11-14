@@ -3105,6 +3105,7 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
   /* Ordinary whole-source draws use the same CPU preset leaf as tiled cells.
    * Partial selections retain their separately qualified state domain. */
   int full_presets=tiled || !selection;
+  int source_colour_alpha=r && r->blendmode==GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA;
   int destination_preset=full_presets && r &&
     gml_render_blend_uses_destination_colour(r->blendmode);
   int destination_blend=destination_preset && r->alphablend;
@@ -3118,7 +3119,8 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
      /* Internal automatic presentation is already in raster coordinates and
       * bypasses the persistent world projection and flat fog. */
      (!automatic && (gml_d3_is_active(r) || r->fog_flat)) ||
-     r->blendmode<0 || (full_presets?r->blendmode>11:(r->blendmode>2 && r->blendmode!=6)) ||
+     r->blendmode<0 || (full_presets?r->blendmode>GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA:(r->blendmode>2 && r->blendmode!=6)) ||
+     (source_colour_alpha && (r->blend_equation!=1 || r->blend_equation_alpha!=1)) ||
      (destination_preset?(r->blend_equation<1 || r->blend_equation>5 ||
                         r->blend_equation_alpha<1 || r->blend_equation_alpha>5):
                        (r->blend_equation!=1 || r->blend_equation_alpha!=1)) || r->color_write_mask>15u ||
@@ -3143,8 +3145,10 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
   if(!width || !height || (alpha<=0.0 && !destination_blend) ||
      left>=r->fbw || top>=r->fbh || left+width<=0.0 || top+height<=0.0) return 1;
   /* Destination factors can write even when the sampled opacity is zero.
-   * Keep their unqualified zero-opacity recipe on the counted CPU owner. */
-  if(alpha<=0.0) return 0;
+   * Source-colour/source-alpha retains straight source RGB in that case;
+   * other unqualified zero-opacity recipes stay with the CPU owner. */
+  if(alpha<=0.0 && !source_colour_alpha) return 0;
+  if(alpha<0.0) alpha=0.0;
   int unit=whole && width==sw && height==sh && signed_width>0 && signed_height>0;
   int opaque=surface_known_opaque(r,surf);
   /* The CPU's unit owner treats reference zero as its ordinary sparse
@@ -3347,6 +3351,9 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
       state.rgb_destination_factor=GML_RENDER_BLEND_ZERO;
       state.alpha_source_factor=preserve?GML_RENDER_BLEND_ONE_MINUS_DESTINATION_ALPHA:GML_RENDER_BLEND_ONE;
       state.alpha_destination_factor=GML_RENDER_BLEND_ZERO;
+    }else if(source_colour_alpha){
+      state.rgb_source_factor=state.alpha_source_factor=GML_RENDER_BLEND_SOURCE_COLOUR;
+      state.rgb_destination_factor=state.alpha_destination_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     }else{
       state.rgb_source_factor=state.alpha_source_factor=
         r->blendmode==GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR?
