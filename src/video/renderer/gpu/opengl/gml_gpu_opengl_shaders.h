@@ -591,7 +591,7 @@
   "    }\n" \
   "    if(blend>=2u){\n" \
   "      alpha=floor(alpha*255.0+0.5)/255.0;\n" \
-  "      if(blend!=4u && (flags&4u)==0u) alpha=1.0;\n" \
+  "      if(blend!=4u && blend!=12u && (flags&4u)==0u) alpha=1.0;\n" \
   "    }\n" \
   "    o_color=vec4((fan && blend==2u && v_span_active!=0.0?fan_rgb:vec3(rgb))/255.0,alpha); return;\n" \
   "  }\n" \

@@ -588,7 +588,7 @@ int gml_render_rectangle_valid(const GmlRenderDrawOp *operation){
        !isfinite(p->angle) || p->angle<4.0 || p->angle>64.0 || fmod(p->angle,4.0)!=0.0)
       return 0;
   }
-  if(blend>GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR || blend==3u || blend==6u ||
+  if(blend>GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA || blend==3u || blend==6u ||
      (p->alpha==0.0 &&
       !(p->pixel_write_mask==8u && !p->alpha_blend && !blend) &&
       (!p->alpha_blend || !gml_render_blend_uses_destination_colour((int)blend)))) return 0;

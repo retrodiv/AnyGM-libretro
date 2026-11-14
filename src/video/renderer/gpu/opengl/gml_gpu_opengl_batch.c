@@ -19,6 +19,8 @@ enum { GL_SCENE_MAX_EXACT_REPETITIONS=64, GL_SCENE_BLEND_INVERSE_RECT=12,
        GL_SCENE_BLEND_DEST_ALPHA_MASK=26,GL_SCENE_BLEND_DEST_ALPHA_MASK_OPAQUE=27,
        GL_SCENE_BLEND_RECTANGLE_BASE=32, GL_SCENE_BLEND_RECTANGLE_LIMIT=55,
        GL_SCENE_BLEND_RECTANGLE_ADD_BYTES=56,
+       GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_PRESERVE=58,
+       GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE=59,
        GL_SCENE_BLEND_SURFACE_DEST_BASE=64,GL_SCENE_BLEND_SURFACE_DEST_LIMIT=213 };
 
 static int same_logical(GmlRenderImageRef a,GmlRenderImageRef b){
@@ -2886,6 +2888,11 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
        blend==GL_SCENE_BLEND_RECTANGLE_ADD_BYTES+1){
       backend->gl.BlendFuncSeparate(GL_ONE,GL_ONE,GL_ONE,
         blend==GL_SCENE_BLEND_RECTANGLE_ADD_BYTES+1?GL_ONE:GL_ZERO);
+    }else if(blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_PRESERVE ||
+             blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE){
+      backend->gl.BlendFuncSeparate(GL_SRC_COLOR,GL_SRC_ALPHA,
+        blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_PRESERVE?GL_SRC_ALPHA:GL_ONE,
+        blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_PRESERVE?GL_SRC_ALPHA:GL_ZERO);
     } else if(blend>=GL_SCENE_BLEND_RECTANGLE_BASE && blend<=GL_SCENE_BLEND_RECTANGLE_LIMIT){
       unsigned mode=(unsigned)(blend-GL_SCENE_BLEND_RECTANGLE_BASE)/2u;
       int preserve=(blend&1)!=0;
@@ -2932,14 +2939,14 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
     backend->gl.BlendEquationSeparate(rgb_equation,alpha_equation);
     backend->gl.Enable(GL_BLEND);
   } else backend->gl.Disable(GL_BLEND);
-  int stamp_alpha=native_texture_stamp || filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==133u || filter==130u || filter==104u || filter==107u || filter==99u || filter==77u || filter==75u || filter==9u || filter==12u || filter==21u || filter==23u ||
+  int stamp_alpha=native_texture_stamp || blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE || filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==133u || filter==130u || filter==104u || filter==107u || filter==99u || filter==77u || filter==75u || filter==9u || filter==12u || filter==21u || filter==23u ||
                   filter==25u || (filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER) || filter==35u || filter==39u || filter==40u ||
                   filter==46u || filter==47u || filter==53u || filter==60u ||
                   filter==66u || filter==69u || filter==71u || filter==80u ||
                   filter==86u || filter==93u || filter==110u || filter==112u ||
                   filter==138u || filter==141u || filter==143u || filter==148u || filter==152u ||
                   filter==156u || filter==158u || filter==161u || filter==162u || filter==168u || filter==GL_SCENE_VIEW_SDF_OPAQUE_FILTER;
-  int skip_alpha=opaque && (native_texture_stamp || filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==40u || filter==21u || filter==25u || (filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER) || filter==35u || filter==66u || filter==80u);
+  int skip_alpha=opaque && (native_texture_stamp || blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE || filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==40u || filter==21u || filter==25u || (filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER) || filter==35u || filter==66u || filter==80u);
   target->alpha_opaque=0;
   backend->gl.ColorMask((write_mask&1u)!=0u,(write_mask&2u)!=0u,(write_mask&4u)!=0u,
                         (!stamp_alpha || filter==110u) && (write_mask&8u)!=0u);
@@ -3013,7 +3020,8 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
       backend->gl.DrawArraysIndirect(GL_TRIANGLES,NULL);
     else backend->gl.DrawArraysInstanced(GL_TRIANGLES,0,6,(GLsizei)count);
   }
-  if(stamp_alpha && !skip_alpha && (write_mask&8u) && filter!=GL_SCENE_NATIVE_POINT_OPAQUE_FILTER && filter!=23u && filter!=35u && filter!=39u && filter!=40u && filter!=53u && filter!=66u && filter!=21u && filter!=25u && filter!=32u && filter!=GL_SCENE_VIEW_BILINEAR_FILTER && filter!=80u){
+  int rectangle_alpha_stamp=blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE && filter==34u;
+  if(stamp_alpha && !skip_alpha && !rectangle_alpha_stamp && (write_mask&8u) && filter!=GL_SCENE_NATIVE_POINT_OPAQUE_FILTER && filter!=23u && filter!=35u && filter!=39u && filter!=40u && filter!=53u && filter!=66u && filter!=21u && filter!=25u && filter!=32u && filter!=GL_SCENE_VIEW_BILINEAR_FILTER && filter!=80u){
     /* The CPU screen writer keeps alpha opaque at every covered texel,
      * even when its prior alpha is unknown. Reuse the sampled vertices and
      * the same sampler and cutout in an alpha-only pass, preserving that recipe's coverage. */
@@ -3064,6 +3072,9 @@ restore_stream_state:
      (blend==1 && filter!=15u && filter!=17u));
   /* Constant RGB programs cannot change selector for the separate alpha stamp.
    * Submit that existing kernel through the same stream with complete state. */
+  if(rectangle_alpha_stamp && !skip_alpha && (write_mask&8u) &&
+     !flush_quads(backend,target,source,36u,0,count,8u,alpha_test,
+                  source_alpha_key,palette)) return 0;
   if(!skip_alpha && (filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==23u || filter==35u || filter==39u || filter==40u || filter==53u || filter==66u || filter==21u || filter==25u || (filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER) || filter==80u) && (write_mask&8u))
     if(!flush_quads(backend,target,source,filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER?GL_SCENE_NATIVE_POINT_STAMP_FILTER:filter==23u?24u:filter==35u?36u:(filter==39u || filter==40u)?41u:filter==53u?55u:filter==21u?22u:filter==25u?26u:(filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER)?33u:filter==80u?82u:72u,0,count,8u,alpha_test,
                     source_alpha_key,palette)) return 0;
@@ -3707,6 +3718,10 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
         ((op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)!=0u)):rectangle?
       (op->payload.primitive.alpha_blend?
         ((op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA)?1:
+         rectangle_blend==GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA?
+           ((op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)?
+             GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_PRESERVE:
+             GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE):
          rectangle_blend?(int)(GL_SCENE_BLEND_RECTANGLE_BASE+2u*rectangle_blend+
            ((op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)!=0u)):
          (op->payload.primitive.alpha<1.0 || vertex_span)?3:0):0):

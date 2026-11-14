@@ -3379,7 +3379,7 @@ static int scene_full_opaque_rectangle_clear_case(void){
 
 static int scene_rectangle_function_batch_case(void){
   enum { QUADS=2049 };
-  static const unsigned expected_factors[12][4]={
+  static const unsigned expected_factors[13][4]={
     {0,0,0,0},{GL_SRC_ALPHA,GL_ONE,GL_ONE,GL_ONE},
     {GL_ZERO,GL_ONE_MINUS_SRC_COLOR,GL_ZERO,GL_ONE_MINUS_SRC_ALPHA},{0,0,0,0},
     {GL_SRC_ALPHA,GL_ONE_MINUS_SRC_COLOR,GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA},
@@ -3388,11 +3388,12 @@ static int scene_rectangle_function_batch_case(void){
     {GL_ONE_MINUS_DST_COLOR,GL_ZERO,GL_ONE_MINUS_DST_ALPHA,GL_ZERO},
     {GL_DST_COLOR,GL_SRC_COLOR,GL_DST_ALPHA,GL_SRC_ALPHA},
     {GL_DST_COLOR,GL_DST_COLOR,GL_DST_ALPHA,GL_DST_ALPHA},
-    {GL_DST_ALPHA,GL_DST_COLOR,GL_DST_ALPHA,GL_DST_ALPHA}
+    {GL_DST_ALPHA,GL_DST_COLOR,GL_DST_ALPHA,GL_DST_ALPHA},
+    {GL_SRC_COLOR,GL_SRC_ALPHA,GL_SRC_ALPHA,GL_SRC_ALPHA}
   };
   for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++)
   for(unsigned opaque=0;opaque<2u;opaque++)
-  for(unsigned preset=0;preset<12u;preset++)
+  for(unsigned preset=0;preset<13u;preset++)
   for(unsigned preserve_alpha=0;preserve_alpha<2u;preserve_alpha++)
   for(unsigned blend=0;blend<3u;blend++)
   for(unsigned outline=0;outline<(preset==1u?2u:1u);outline++)
@@ -3435,10 +3436,15 @@ static int scene_rectangle_function_batch_case(void){
     }
     GmlRenderDrawBatch batch={ops,QUADS+1u,NULL,0u};
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
-    int passes=blend==1u && !preserve_alpha && !opaque &&
-      (!preset || preset==1u || preset==4u)?2:1;
+    int passes=!preserve_alpha && !opaque &&
+      ((blend==1u && (!preset || preset==1u || preset==4u)) ||
+       (blend && preset==12u))?2:1;
     REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==QUADS+1u,
             "rectangle matrix packets accepted");
+    if(anygm_test_graphics_scene_draw_calls()!=2*passes ||
+       anygm_test_graphics_scene_vertices()!=QUADS*6*passes)
+      fprintf(stderr,"rectangle batch: api=%u opaque=%u preset=%u preserve=%u blend=%u draws=%d expected=%d\n",
+        api,opaque,preset,preserve_alpha,blend,anygm_test_graphics_scene_draw_calls(),2*passes);
     REQUIRE(anygm_test_graphics_scene_draw_calls()==2*passes &&
             anygm_test_graphics_scene_vertices()==QUADS*6*passes,
             "only quad capacity splits compatible source-free rectangles");

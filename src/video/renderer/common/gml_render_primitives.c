@@ -480,7 +480,7 @@ static int resident_primitive_state_eligible_rule(GmlRender *r,int cpu_passthrou
   if(!r || !r->resident_application_pass || !device || !device->observe_on_demand ||
      !device->observe_on_demand(device->context) || !gml_render_scene_target_matches(r) ||
      (r->active_shader>=0 && (!cpu_passthrough || !gml_render_shader_cpu_passthrough(r))) || r->blendmode<0 ||
-     r->blendmode>GML_RENDER_BLEND_DEST_ALPHA_DEST_COLOUR || r->blend_equation!=1 ||
+     r->blendmode>GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA || r->blend_equation!=1 ||
      r->blend_equation_alpha!=1 || r->color_write_mask>15u ||
      r->pending_presentation || r->rotated_batch_count || r->rotated_batch_building ||
      (gml_render_classic_vertical_phase_blocks_scene(r) &&

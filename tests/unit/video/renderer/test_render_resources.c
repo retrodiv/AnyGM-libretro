@@ -5681,7 +5681,7 @@ static int resident_rectangle_function_matrix(void){
   static const int generations[]={530,700,800,13,15,17};
   static const double alphas[]={0.0,1.0,0.5,0.4,1.0/256.0,1.0/1024.0};
   for(unsigned generation=0;generation<6u;generation++)
-  for(unsigned preset=0;preset<12u;preset++)
+  for(unsigned preset=0;preset<13u;preset++)
   for(unsigned cutout=0;cutout<2u;cutout++)
   for(unsigned enabled=0;enabled<2u;enabled++)
   for(unsigned target_kind=0;target_kind<4u;target_kind++)
@@ -5780,7 +5780,7 @@ static int resident_rectangle_function_matrix(void){
       malformed=fake.last_primitive;
       malformed.payload.primitive.rectangle_flags=
         (malformed.payload.primitive.rectangle_flags&~GML_RENDER_RECTANGLE_BLEND_MASK)|
-        (12u<<GML_RENDER_RECTANGLE_BLEND_SHIFT);
+        (13u<<GML_RENDER_RECTANGLE_BLEND_SHIFT);
       CHECK(!gml_render_rectangle_valid(&malformed));
     }
     gml_render_free(cpu);gml_render_free(gpu);free(cpu);free(gpu);
@@ -9327,12 +9327,13 @@ static int resident_application_sprite_cpu_fallback(void){
   return 1;
 }
 
-static int resident_source_colour_alpha_cpu_fallback(void){
+static int resident_source_colour_alpha_dispatch_scope(void){
   for(int path=0;path<4;path++){
     GmlRender *render=calloc(1,sizeof *render);
     GmlWin content={.bytecode=15};
-    FakeDevice fake={0};
+    FakeDevice fake={.on_demand=1};
     GmlRenderDeviceServices device=service(&fake);
+    if(path==0) device.observe_on_demand=fake_observe_on_demand;
     GmlRenderJournalMetrics metrics={0};
     GmlRenderDispatchMetrics dispatch={0};
     CHECK(render && !gml_render_init(render,&content));
@@ -9361,10 +9362,15 @@ static int resident_source_colour_alpha_cpu_fallback(void){
     }else{
       gml_draw_surface_ext(render,surface,0,0,4,4,0,0xFFFFFFu,1);
     }
+    CHECK(gml_render_scene_submit_pending(render));
     gml_render_prepare_draw(render);
     gml_render_resource_journal_metrics(render->app_surface_resource,&metrics);
-    CHECK(!render->resident_application_pass && fake.submits==1 && !fake.readbacks &&
-          metrics.cpu_replays==1u && render->app_surface_owned[5]==0x01FFFFFFu);
+    if(path==0){
+      CHECK(render->resident_application_pass && fake.submits==2 && !fake.readbacks &&
+            !metrics.cpu_replays && render->app_surface_owned[5]==0u);
+    }else
+      CHECK(!render->resident_application_pass && fake.submits==1 && !fake.readbacks &&
+            metrics.cpu_replays==1u && render->app_surface_owned[5]==0x01FFFFFFu);
     CHECK(gml_render_dispatch_metrics(render,&dispatch));
     unsigned family=path==0?GML_RENDER_SCENE_PRIMITIVE:
       path==1?GML_RENDER_SCENE_SPRITE:GML_RENDER_SCENE_SURFACE;
@@ -9372,12 +9378,15 @@ static int resident_source_colour_alpha_cpu_fallback(void){
     /* The seed clear is replayed separately from the ordinary drawing call. */
     for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
       if(reason!=GML_RENDER_DISPATCH_REPLAY) cpu_draws+=dispatch.cpu[family][reason];
-    if(cpu_draws!=1u || dispatch.gpu[family] || dispatch.unclassified || dispatch.failed)
-      fprintf(stderr,"colour-factor fallback census: path=%d cpu=%llu gpu=%llu replay=%llu unclassified=%llu failed=%llu\n",
+    uint64_t expected_cpu=path?1u:0u,expected_gpu=path?0u:1u;
+    if(cpu_draws!=expected_cpu || dispatch.gpu[family]!=expected_gpu ||
+       dispatch.unclassified || dispatch.failed)
+      fprintf(stderr,"colour-factor dispatch census: path=%d cpu=%llu gpu=%llu replay=%llu unclassified=%llu failed=%llu\n",
               path,(unsigned long long)cpu_draws,(unsigned long long)dispatch.gpu[family],
               (unsigned long long)dispatch.cpu[family][GML_RENDER_DISPATCH_REPLAY],
               (unsigned long long)dispatch.unclassified,(unsigned long long)dispatch.failed);
-    CHECK(cpu_draws==1u && !dispatch.gpu[family] && !dispatch.unclassified && !dispatch.failed);
+    CHECK(cpu_draws==expected_cpu && dispatch.gpu[family]==expected_gpu &&
+          !dispatch.unclassified && !dispatch.failed);
     gml_render_free(render);free(render);
   }
   return 1;
@@ -20995,6 +21004,8 @@ int main(void){
   if(selected){
     int passed;
     if(!strcmp(selected,"target-pixel-pending-scene")) passed=target_pixel_observes_pending_scene();
+    else if(!strcmp(selected,"source-colour-alpha-dispatch")) passed=resident_source_colour_alpha_dispatch_scope();
+    else if(!strcmp(selected,"rectangle-function-matrix")) passed=resident_rectangle_function_matrix();
     else if(!strcmp(selected,"target-pixel-resident-result")) passed=target_pixel_observes_resident_result();
     else if(!strcmp(selected,"state-without-context")) passed=state_without_context();
     else if(!strcmp(selected,"metadata-pending-state")) passed=metadata_state_capacity_preserves_pending_pixels();
@@ -21185,7 +21196,7 @@ int main(void){
   passed+=resident_outline_coverage_public_order();
   passed+=resident_atlas_uv_refusal_preserves_queued_prefix();
   passed+=resident_application_sprite_cpu_fallback();
-  passed+=resident_source_colour_alpha_cpu_fallback();
+  passed+=resident_source_colour_alpha_dispatch_scope();
   passed+=resident_empty_sprite_preserves_queued_draws();
   passed+=resident_black_additive_sprite_noop();
   passed+=resident_collapsed_additive_sprite_scope();
