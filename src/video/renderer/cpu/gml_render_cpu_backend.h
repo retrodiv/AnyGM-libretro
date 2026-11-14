@@ -7,6 +7,7 @@
 
 #include "gml_render.h"
 #include "gml_render_texture.h"
+#include "gml_render_device.h"
 #include <stdatomic.h>
 
 /* Coarse diagnostic scope shared with non-reentrant software clients. Values
@@ -113,6 +114,12 @@ int gml_render_cpu_backend_native_textured_triangles(GmlRender *render,int textu
 /* Resolved native 2D geometry, not per-row CPU coverage. A null zero-count call probes state. */
 int gml_render_cpu_backend_native_triangles(GmlRender *render,
   const GmlRenderCpuBackendTriangle *triangles,uint32_t count);
+/* Active fixed-function triangles. A NULL triangle probes metadata admission.
+ * Host depth bytes are supplied only when their version needs uploading. */
+int gml_render_cpu_backend_depth_triangle(GmlRender *render,GmlRenderDepthTriangle *triangle,
+  const float *depth_pixels,GmlRenderDepthPlaneRef *published);
+int gml_render_cpu_backend_depth_read(GmlRender *render,const GmlRenderDepthPlaneRef *plane,
+                                      float *pixels,size_t capacity);
 int gml_render_cpu_backend_vertex_spans(GmlRender *render,
   const GmlRenderCpuBackendVertexSpan *spans,uint32_t count);
 /* Full texture-page UVs, not sprite-local coordinates. The optional scene

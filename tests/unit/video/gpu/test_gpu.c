@@ -81,6 +81,7 @@ static int scene_depth_triangle_transaction_case(void){
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
     if(failure){
       REQUIRE(result.status==GML_RENDER_EXEC_RESOURCE_ERROR && !result.accepted_prefix &&
+        result.previous_destinations_preserved &&
         !result.uncertain_target_count && !result.all_destinations_uncertain &&
         image->texture==old_texture && image->framebuffer==old_framebuffer &&
         image->raw_depth_front==front && image->raw_depth_version==1u &&
@@ -150,6 +151,12 @@ static int scene_raw_depth_transport_case(void){
       counters.scene_depth_readbacks==1u && counters.scene_depth_readback_bytes==640u &&
       counters.scene_readbacks==0u && counters.scene_operations[GML_RENDER_OP_CLEAR]==1u,
       "depth accounting remains separate from colour drawing and reads");
+    seed.target.image.content_version++;
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,
+      "colour advances independently of raw depth");
+    read.plane.version=3u;
+    REQUIRE(device.readback_depth(device.context,&read),
+      "depth read survives a colour version change within the same incarnation");
     seed.target.width=4u;seed.target.region.width=4u;seed.target.image.content_version++;
     REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED &&
       !device.readback_depth(device.context,&read) && anygm_test_graphics_texture_deleted(names[0]) &&

@@ -24,6 +24,8 @@ typedef struct GmlRenderDepthUpload {
 } GmlRenderDepthUpload;
 
 typedef struct GmlRenderDepthReadback {
+  /* Colour identity/incarnation associates storage; its content version may
+   * advance independently. Depth epoch/version must still match exactly. */
   GmlRenderDepthPlaneRef plane;
   void *bytes;
   size_t byte_capacity;

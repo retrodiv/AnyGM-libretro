@@ -5,6 +5,7 @@
 #include "gml_render_internal.h"
 #include "gml_render_surfaces_internal.h"
 #include "gml_render_plan.h"
+#include "gml_software3d.h"
 
 #include <math.h>
 #include <string.h>
@@ -809,7 +810,10 @@ int gml_render_automatic_surface_quad_valid(const GmlRenderQuad *q,
 
 static void render_unbind_device(GmlRender *render,int context_current){
   if(!render) return;
-  if(context_current) (void)gml_render_checkpoint_pending_resources(render);
+  if(context_current){
+    (void)gml_software3d_depth_observe(render);
+    (void)gml_render_checkpoint_pending_resources(render);
+  }
   /* A queued exact batch can replay through the CPU after the device binding is removed. A
    * non-reconstructible pending result instead becomes invalid when its context is already lost. */
   render->device_bound=0;
@@ -843,6 +847,8 @@ void gml_render_bind_device(GmlRender *render,const GmlRenderDeviceServices *ser
     return;
   }
   if(!gml_render_application_scene_flush(render)) return;
+  if(render->device_bound && render->device.context!=services->context &&
+     !gml_software3d_depth_observe(render)) return;
   if(!gml_render_checkpoint_pending_resources(render)) return;
   render->device=*services;
   render->device_bound=1;

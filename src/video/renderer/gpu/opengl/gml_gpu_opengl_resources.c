@@ -1399,7 +1399,7 @@ static void depth_transfer_end(GmlGpuBackend *backend,const GlDepthTransferState
 }
 
 static GlSceneImage *depth_transfer_image(GmlGpuBackend *backend,
-  const GmlRenderDepthPlaneRef *plane,uint32_t stride,size_t capacity){
+  const GmlRenderDepthPlaneRef *plane,uint32_t stride,size_t capacity,int independent_colour_version){
   if(!backend || !backend->loaded || !plane || !plane->epoch || !plane->version ||
      !plane->width || !plane->height || plane->width>UINT32_MAX/4u ||
      stride<plane->width*4u ||
@@ -1410,6 +1410,12 @@ static GlSceneImage *depth_transfer_image(GmlGpuBackend *backend,
       plane->colour.resource_class!=GML_RENDER_RESOURCE_SURFACE &&
       plane->colour.resource_class!=GML_RENDER_RESOURCE_SCRATCH)) return NULL;
   GlSceneImage *image=gml_gpu_opengl_scene_image(backend,plane->colour);
+  if(!image && independent_colour_version) for(unsigned i=0;i<GL_SCENE_MAX_IMAGES;i++){
+    GlSceneImage *candidate=&backend->scene.images[i];
+    if(candidate->valid && !candidate->retired && candidate->texture &&
+       candidate->context_epoch==backend->scene.context_epoch &&
+       scene_same_logical(candidate->ref,plane->colour)){image=candidate;break;}
+  }
   if(!image || image->source_partial || !image->rendered_origin ||
      image->width!=plane->width || image->height!=plane->height) return NULL;
   return image;
@@ -1445,7 +1451,7 @@ static int scene_raw_depth_storage(GmlGpuBackend *backend,GlSceneImage *image,un
 int gml_gpu_opengl_depth_upload(GmlGpuBackend *backend,const GmlRenderDepthUpload *transfer){
   if(!transfer || !transfer->bytes) return 0;
   GlSceneImage *image=depth_transfer_image(backend,&transfer->plane,
-                                          transfer->stride_bytes,transfer->byte_capacity);
+                                          transfer->stride_bytes,transfer->byte_capacity,0);
   if(!image || transfer->plane.epoch<image->raw_depth_epoch ||
      (transfer->plane.epoch==image->raw_depth_epoch &&
       transfer->plane.version<=image->raw_depth_version)) return 0;
@@ -1475,7 +1481,7 @@ depth_upload_end:
 int gml_gpu_opengl_depth_readback(GmlGpuBackend *backend,const GmlRenderDepthReadback *transfer){
   if(!transfer || !transfer->bytes) return 0;
   GlSceneImage *image=depth_transfer_image(backend,&transfer->plane,
-                                          transfer->stride_bytes,transfer->byte_capacity);
+                                          transfer->stride_bytes,transfer->byte_capacity,1);
   if(!image || image->raw_depth_epoch!=transfer->plane.epoch ||
      image->raw_depth_version!=transfer->plane.version ||
      !image->raw_depth_framebuffer[image->raw_depth_front]) return 0;
@@ -1513,11 +1519,12 @@ int gml_gpu_opengl_depth_triangle_valid(GmlGpuBackend *backend,const GmlRenderDr
      !triangle->depth_epoch || !triangle->depth_version || triangle->depth_version==UINT64_MAX ||
      triangle->next_depth_version!=triangle->depth_version+1u ||
      triangle->hidden>1u || triangle->write_depth>1u || triangle->normalized>1u ||
-     triangle->blend>1u || triangle->stamp_alpha>1u || triangle->zero_alpha_writes>1u) return 0;
+     triangle->blend>1u || triangle->stamp_alpha>1u || triangle->zero_alpha_writes>1u ||
+     triangle->alpha_source_squared>1u) return 0;
   GmlRenderDepthPlaneRef plane={triangle->previous_colour,op->target.width,op->target.height,
                                 triangle->depth_epoch,triangle->depth_version};
   GlSceneImage *image=depth_transfer_image(backend,&plane,op->target.width*4u,
-                                          (size_t)op->target.width*op->target.height*4u);
+                                          (size_t)op->target.width*op->target.height*4u,0);
   if(!image || image->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
      image->raw_depth_epoch!=triangle->depth_epoch || image->raw_depth_version!=triangle->depth_version ||
      !image->raw_depth_texture[image->raw_depth_front] ||
@@ -1532,7 +1539,8 @@ int gml_gpu_opengl_depth_triangle_valid(GmlGpuBackend *backend,const GmlRenderDr
       !scene_region_valid(state->clip,op->target.width,op->target.height))) return 0;
   if(triangle->blend && (state->rgb_source_factor!=GML_RENDER_BLEND_SOURCE_ALPHA ||
      state->rgb_destination_factor!=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA ||
-     state->alpha_source_factor!=GML_RENDER_BLEND_ONE ||
+     state->alpha_source_factor!=(triangle->alpha_source_squared?
+       GML_RENDER_BLEND_SOURCE_ALPHA:GML_RENDER_BLEND_ONE) ||
      state->alpha_destination_factor!=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA ||
      state->rgb_equation!=GML_RENDER_BLEND_ADD || state->alpha_equation!=GML_RENDER_BLEND_ADD)) return 0;
   for(unsigned v=0;v<3u;v++){
@@ -1593,7 +1601,8 @@ static int depth_triangle_candidate(GmlGpuBackend *backend,const GmlRenderDrawBa
   float vertices[24],extent[2]={(float)image->width,(float)image->height};
   GLint flags[4]={(GLint)triangle->hidden,(GLint)triangle->write_depth,
                   (GLint)triangle->normalized,(GLint)triangle->blend};
-  GLint policy[4]={(GLint)triangle->stamp_alpha,(GLint)triangle->zero_alpha_writes,0,0};
+  GLint policy[4]={(GLint)triangle->stamp_alpha,(GLint)triangle->zero_alpha_writes,
+                   (GLint)triangle->alpha_source_squared,0};
   for(unsigned v=0;v<3u;v++) for(unsigned c=0;c<8u;c++)
     vertices[v*8u+c]=(float)(triangle->vertex[v][c]*(c>=4u?triangle->vertex[v][2]:1.0));
   if(!gml_gpu_opengl_depth_triangle_programs(backend,error,error_capacity)) return 0;

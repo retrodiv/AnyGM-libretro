@@ -3675,7 +3675,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     result.status=GML_RENDER_EXEC_RESOURCE_ERROR;
     if(gml_render_gpu_opengl_depth_triangle(backend,batch,frontend_framebuffer,error,error_capacity)){
       result.status=GML_RENDER_EXEC_ACCEPTED;result.accepted_prefix=1u;
-    }
+    }else result.previous_destinations_preserved=1u;
     return result;
   }
   if(!scene_preflight(backend,batch)) return result;

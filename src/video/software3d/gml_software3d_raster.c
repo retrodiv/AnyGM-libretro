@@ -244,6 +244,12 @@ void gml_software3d_depth_targets_clear(GmlSoftware3D *graphics){
   graphics->d3.depth=NULL;graphics->d3.depth_cap=0;
   graphics->d3.depth_frame=-1;graphics->d3.depth_normalized=0;
 }
+static void d3_depth_new_epoch(GmlRender *R,GmlD3DepthTarget *target){
+  if(GML_GRAPHICS->depth_epoch_counter!=UINT64_MAX) GML_GRAPHICS->depth_epoch_counter++;
+  target->epoch=GML_GRAPHICS->depth_epoch_counter;target->version=1u;
+  target->gpu_current=target->cpu_current=0;
+}
+
 static GmlD3DepthTarget *d3_depth_target(GmlRender *R,
                                         const GmlRenderCpuBackendDrawView *draw){
   if(!GML_GRAPHICS || draw->width<=0 || draw->height<=0 ||
@@ -275,31 +281,65 @@ static GmlD3DepthTarget *d3_depth_target(GmlRender *R,
      target->height!=draw->height){
     target->frame=draw->frame;target->width=draw->width;target->height=draw->height;
     target->clear_value=0;target->normalized=0;target->pending=1;
+    d3_depth_new_epoch(R,target);
   }
   return target;
 }
-static int d3_depth_prepare(GmlRender *R){
-  GmlRenderCpuBackendDrawView draw;
-  if(!gml_render_cpu_backend_draw_view(R,&draw)) return 0;
-  GmlD3DepthTarget *target=d3_depth_target(R,&draw);
-  if(!target) return 0;
-  size_t count=(size_t)draw.width*(size_t)draw.height;
+static GmlD3DepthTarget *d3_depth_metadata(GmlRender *R,const GmlRenderCpuBackendDrawView *draw){
+  GmlD3DepthTarget *target=d3_depth_target(R,draw);
+  if(!target) return NULL;
+  size_t count=(size_t)draw->width*(size_t)draw->height;
   if(count>target->capacity){
     float *pixels=realloc(target->pixels,count*sizeof *pixels);
-    if(!pixels) return 0;
+    if(!pixels) return NULL;
     target->pixels=pixels;target->capacity=count;target->pending=1;
   }
   if(g_d3.depth_frame<0){
     target->clear_value=0;target->normalized=0;target->pending=1;
+    d3_depth_new_epoch(R,target);
   }
   if(target->pending){
     if(target->clear_value==0) memset(target->pixels,0,count*sizeof *target->pixels);
     else for(size_t index=0;index<count;index++) target->pixels[index]=target->clear_value;
     target->pending=0;
+    target->cpu_current=1;
   }
   g_d3.depth=target->pixels;g_d3.depth_cap=target->capacity;
-  g_d3.depth_w=draw.width;g_d3.depth_h=draw.height;g_d3.depth_frame=draw.frame;
+  g_d3.depth_w=draw->width;g_d3.depth_h=draw->height;g_d3.depth_frame=draw->frame;
   g_d3.depth_normalized=target->normalized;
+  return target;
+}
+
+static int d3_depth_cpu_observe(GmlRender *R,GmlD3DepthTarget *target){
+  if(target->gpu_current && !target->cpu_current){
+    if(!gml_render_cpu_backend_depth_read(R,&target->device_plane,target->pixels,target->capacity)) return 0;
+    target->cpu_current=1;
+  }
+  return target->cpu_current;
+}
+
+static void d3_depth_cpu_write(GmlRender *R,GmlD3DepthTarget *target){
+  target->gpu_current=0;
+  if(target->version!=UINT64_MAX) target->version++;
+  else {d3_depth_new_epoch(R,target);target->cpu_current=1;}
+}
+
+static int d3_depth_prepare(GmlRender *R){
+  GmlRenderCpuBackendDrawView draw;
+  if(!gml_render_cpu_backend_draw_view(R,&draw)) return 0;
+  GmlD3DepthTarget *target=d3_depth_metadata(R,&draw);
+  if(!target || !d3_depth_cpu_observe(R,target)) return 0;
+  d3_depth_cpu_write(R,target);
+  return 1;
+}
+
+int gml_software3d_depth_observe(GmlRender *R){
+  if(!R || !GML_GRAPHICS) return 1;
+  for(GmlD3DepthTarget *target=GML_GRAPHICS->depth_targets;target;target=target->next){
+    if(!target->gpu_current || target->pending) continue;
+    if(!d3_depth_cpu_observe(R,target)) return 0;
+    d3_depth_cpu_write(R,target);
+  }
   return 1;
 }
 int gml_software3d_clear_depth(GmlRender *R,double depth){
@@ -309,6 +349,7 @@ int gml_software3d_clear_depth(GmlRender *R,double depth){
   if(!target) return 0;
   target->clear_value=(float)fmax(0,fmin(1,depth));
   target->normalized=1;target->pending=1;
+  d3_depth_new_epoch(R,target);
   g_d3.depth=target->pixels;g_d3.depth_cap=target->capacity;
   g_d3.depth_w=draw.width;g_d3.depth_h=draw.height;g_d3.depth_normalized=1;
   g_d3.depth_frame=draw.frame;
@@ -417,35 +458,36 @@ static void d3_sample(GmlRender *R,const GmlRenderCpuBackendDrawView *draw,
 static double d3_edge(double ax,double ay,double bx,double by,double px,double py){
   return (px-ax)*(by-ay)-(py-ay)*(bx-ax);
 }
-static void d3_raster_triangle_impl(GmlRender *R, const GmlD3Vertex in[3], const GmlD3Texture *texture,
-                               int joined){
-  GmlRenderCpuBackendDrawView draw;
-  if(!d3_depth_prepare(R) || !gml_render_cpu_backend_prepare_draw_view(R,&draw) ||
-     !draw.pixels || draw.width<=0 || draw.height<=0) return;
-  /* Renderer leaf calls cannot replace this context during a raster operation. */
-  GmlD3State *d3=&gml_render_cpu_backend_software3d(R)->d3;
-  const char *fov_text=anygm_host_development_setting(draw.host,"GML_D3D_FOV");
+typedef struct {
+  double sx[3],sy[3],iz[3],uz[3],vz[3],riz[3],giz[3],biz[3],aiz[3];
+  double depth_value[3],view_distance[3];
+  int flat_color;
+} GmlD3Projection;
+
+static int d3_project_triangle(GmlRender *R,const GmlRenderCpuBackendDrawView *draw,
+  const GmlD3Vertex in[3],GmlD3Projection *p){
+  GmlD3State *d3=&g_d3;
+  const char *fov_text=anygm_host_development_setting(draw->host,"GML_D3D_FOV");
   double fov=fov_text?atof(fov_text):d3->fov;
   if(fov<1.0 || fov>170.0) fov=41.2;
   double tangent=tan(fov*M_PI/360.0);
-  double focal_y=(draw.height*0.5)/tangent;
-  double focal_x=d3->aspect>1e-9?(draw.width*0.5)/(tangent*d3->aspect):focal_y;
-  double sx[3],sy[3],iz[3],uz[3],vz[3],riz[3],giz[3],biz[3],aiz[3];
-  double depth_value[3],view_distance[3];
+  double focal_y=(draw->height*0.5)/tangent;
+  double focal_x=d3->aspect>1e-9?(draw->width*0.5)/(tangent*d3->aspect):focal_y;
+  double *sx=p->sx,*sy=p->sy,*iz=p->iz,*uz=p->uz,*vz=p->vz;
+  double *riz=p->riz,*giz=p->giz,*biz=p->biz,*aiz=p->aiz;
+  double *depth_value=p->depth_value,*view_distance=p->view_distance;
   int flat_color=in[0].r==in[1].r&&in[0].r==in[2].r&&
                  in[0].g==in[1].g&&in[0].g==in[2].g&&
                  in[0].b==in[1].b&&in[0].b==in[2].b&&
                  in[0].alpha==in[1].alpha&&in[0].alpha==in[2].alpha;
-  int opaque_white=flat_color&&in[0].r==255.0&&in[0].g==255.0&&in[0].b==255.0&&
-                   in[0].alpha>=1.0&&!d3->lighting&&!d3->fog&&
-                   (!draw.alpha_blend||draw.blend_mode==0);
+  p->flat_color=flat_color;
   /* The fixed-function viewport uses a half-pixel anchor represented just below 0.5.
    * Keeping the 11-bit phase avoids pushing boundary samples into the next texel. */
   double pixel_offset=d3->classic?0.5-1.0/2048.0:0.0;
   /* Bias the vertices once: perspective interpolation preserves a constant phase exactly, while
    * keeping this work out of the per-pixel inner loop. */
-  double u_phase=(d3->classic&&!draw.interpolate)?1.0/65536.0:0.0;
-  double v_phase=(d3->classic&&!draw.interpolate)?-1.0/524288.0:0.0;
+  double u_phase=(d3->classic&&!draw->interpolate)?1.0/65536.0:0.0;
+  double v_phase=(d3->classic&&!draw->interpolate)?-1.0/524288.0:0.0;
   for(int i=0;i<3;i++){
     if(d3->ortho){
       double ow=fabs(d3->ortho_w)>1e-9?d3->ortho_w:1;
@@ -454,23 +496,41 @@ static void d3_raster_triangle_impl(GmlRender *R, const GmlD3Vertex in[3], const
       if(!flat_color){
         riz[i]=in[i].r; giz[i]=in[i].g; biz[i]=in[i].b; aiz[i]=in[i].alpha;
       }
-      sx[i]=in[i].x*draw.width/ow+pixel_offset; sy[i]=in[i].y*draw.height/oh+pixel_offset;
+      sx[i]=in[i].x*draw->width/ow+pixel_offset; sy[i]=in[i].y*draw->height/oh+pixel_offset;
       depth_value[i]=d3->depth_normalized?.5+in[i].z/32000.0:1000000.0-in[i].z;
       view_distance[i]=fabs(in[i].z);
     } else {
-      if(in[i].z<=1e-6) return;
+      if(in[i].z<=1e-6) return 0;
       iz[i]=1.0/in[i].z; uz[i]=(in[i].u+u_phase)*iz[i]; vz[i]=(in[i].v+v_phase)*iz[i];
       if(!flat_color){
         riz[i]=in[i].r*iz[i]; giz[i]=in[i].g*iz[i]; biz[i]=in[i].b*iz[i]; aiz[i]=in[i].alpha*iz[i];
       }
-      sx[i]=draw.width*0.5+in[i].x*focal_x*iz[i]+pixel_offset;
-      sy[i]=draw.height*0.5-in[i].y*focal_y*iz[i]+pixel_offset;
+      sx[i]=draw->width*0.5+in[i].x*focal_x*iz[i]+pixel_offset;
+      sy[i]=draw->height*0.5-in[i].y*focal_y*iz[i]+pixel_offset;
       depth_value[i]=d3->depth_normalized?d3_normalized_perspective(d3,iz[i]):iz[i];
       view_distance[i]=in[i].z;
     }
   }
   if(d3->ortho) for(int i=0;i<3;i++)
     d3_project_selected_view(R,&sx[i],&sy[i],pixel_offset);
+  return 1;
+}
+static void d3_raster_triangle_impl(GmlRender *R, const GmlD3Vertex in[3], const GmlD3Texture *texture,
+                               int joined){
+  GmlRenderCpuBackendDrawView draw;
+  if(!d3_depth_prepare(R) || !gml_render_cpu_backend_prepare_draw_view(R,&draw) ||
+     !draw.pixels || draw.width<=0 || draw.height<=0) return;
+  /* Renderer leaf calls cannot replace this context during a raster operation. */
+  GmlD3State *d3=&gml_render_cpu_backend_software3d(R)->d3;
+  GmlD3Projection projected;
+  if(!d3_project_triangle(R,&draw,in,&projected)) return;
+  double *sx=projected.sx,*sy=projected.sy,*iz=projected.iz,*uz=projected.uz,*vz=projected.vz;
+  double *riz=projected.riz,*giz=projected.giz,*biz=projected.biz,*aiz=projected.aiz;
+  double *depth_value=projected.depth_value,*view_distance=projected.view_distance;
+  int flat_color=projected.flat_color;
+  int opaque_white=flat_color&&in[0].r==255.0&&in[0].g==255.0&&in[0].b==255.0&&
+                   in[0].alpha>=1.0&&!d3->lighting&&!d3->fog&&
+                   (!draw.alpha_blend||draw.blend_mode==0);
   double area=d3_edge(sx[0],sy[0],sx[1],sy[1],sx[2],sy[2]);
   if(!isfinite(area) || fabs(area)<1e-9) return;
   if(d3->culling && area>=0) return;
@@ -595,9 +655,42 @@ static void d3_raster_triangle_impl(GmlRender *R, const GmlD3Vertex in[3], const
   }
   }
 }
+static int d3_native_triangle(GmlRender *R,const GmlD3Vertex in[3],const GmlD3Texture *texture){
+  if(!R || !GML_GRAPHICS || !g_d3.active || GML_GRAPHICS->view_projection_2d ||
+     g_d3.lighting || g_d3.fog || (texture && texture->kind) ||
+     !gml_render_cpu_backend_depth_triangle(R,NULL,NULL,NULL)) return 0;
+  GmlRenderCpuBackendDrawView draw;GmlD3Projection projected;
+  if(!gml_render_cpu_backend_draw_view(R,&draw)) return 0;
+  GmlD3DepthTarget *target=d3_depth_metadata(R,&draw);
+  if(!target || !target->epoch || !d3_project_triangle(R,&draw,in,&projected)) return 0;
+  double area=d3_edge(projected.sx[0],projected.sy[0],projected.sx[1],projected.sy[1],
+                       projected.sx[2],projected.sy[2]);
+  if(!isfinite(area) || fabs(area)<1e-9 || (g_d3.culling && area>=0)) return 1;
+  GmlRenderDepthTriangle triangle={.depth_epoch=target->epoch,.depth_version=target->version,
+    .hidden=g_d3.hidden!=0,.write_depth=g_d3.zwrite!=0,.normalized=target->normalized!=0};
+  for(unsigned i=0;i<3u;i++){
+    triangle.vertex[i][0]=projected.sx[i];triangle.vertex[i][1]=projected.sy[i];
+    triangle.vertex[i][2]=projected.iz[i];triangle.vertex[i][3]=projected.depth_value[i];
+    triangle.vertex[i][4]=in[i].r/255.0;triangle.vertex[i][5]=in[i].g/255.0;
+    triangle.vertex[i][6]=in[i].b/255.0;triangle.vertex[i][7]=in[i].alpha;
+    for(unsigned c=0;c<8u;c++) if(!isfinite(triangle.vertex[i][c])) return 0;
+    if(fabs(triangle.vertex[i][0])>65536 || fabs(triangle.vertex[i][1])>65536 ||
+       triangle.vertex[i][2]<1e-8 || triangle.vertex[i][2]>1e8 ||
+       fabs(triangle.vertex[i][3])>1e20) return 0;
+    for(unsigned c=4;c<8u;c++) if(triangle.vertex[i][c]<0 || triangle.vertex[i][c]>1) return 0;
+  }
+  GmlRenderDepthPlaneRef published;
+  if(!gml_render_cpu_backend_depth_triangle(R,&triangle,target->gpu_current?NULL:target->pixels,&published))
+    return 0;
+  target->device_plane=published;target->version=published.version;
+  target->gpu_current=1;target->cpu_current=0;
+  return 1;
+}
+
 static void d3_raster_triangle(GmlRender *R,const GmlD3Vertex in[3],
                                 const GmlD3Texture *texture,int joined){
   GmlRenderCpuBackendDispatchScope scope;
+  if(d3_native_triangle(R,in,texture)) return;
   GmlSoftware3D *graphics=graphics_state_for_render(R);
   gml_render_cpu_backend_dispatch_begin(R,&scope,GML_RENDER_SCENE_PRIMITIVE,
                                          graphics && graphics->d3.hidden);
@@ -1301,8 +1394,7 @@ static void d3_primitive_flush(GmlRender *R){
   GmlD3Texture texture={0};
   if(g_d3_prim_texture!=-1) d3_texture(R,g_d3_prim_texture,&texture);
   g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
-  gml_render_cpu_backend_prepare_draw(R);
-  if(!d3_depth_prepare(R)) return;
+  if(!gml_software3d_depth_prepare_submission(R)) return;
   if(g_d3_prim_kind==1){
     for(int i=0;i<g_d3_prim_n;i++) d3_emit_point(R,g_d3_prim[i],&texture);
   } else if(g_d3_prim_kind==2){
@@ -1968,7 +2060,6 @@ static void vertex_submit_buffer(GmlRender *R,int id,int primitive,int texture_h
     }
   }
   g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
-  gml_render_cpu_backend_prepare_draw(R);
   if(primitive==1){
     for(int i=0;i<number;i++) d3_emit_point(R,vertex[i],&texture);
   } else if(primitive==2){
@@ -2007,6 +2098,10 @@ void gml_software3d_transform_point(GmlRender *render,double *x,double *y,double
 }
 int gml_software3d_depth_prepare(GmlRender *render){
   return d3_depth_prepare(render);
+}
+int gml_software3d_depth_prepare_submission(GmlRender *render){
+  GmlRenderCpuBackendDrawView draw;
+  return gml_render_cpu_backend_draw_view(render,&draw) && d3_depth_metadata(render,&draw)!=NULL;
 }
 int gml_software3d_texture(GmlRender *render,int handle,GmlD3Texture *texture){
   return d3_texture(render,handle,texture);

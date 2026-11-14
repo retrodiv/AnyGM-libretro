@@ -64,6 +64,9 @@ typedef struct GmlD3DepthTarget {
   const void *storage;
   float clear_value,*pixels;
   size_t capacity;
+  uint64_t epoch,version;
+  int gpu_current,cpu_current;
+  GmlRenderDepthPlaneRef device_plane;
   struct GmlD3DepthTarget *next;
 } GmlD3DepthTarget;
 #define GML_D3_PRIM_MAX 4096
@@ -91,6 +94,7 @@ struct GmlSoftware3D {
   /* Submission-local default 2D projection scope; never serialized. */
   int view_projection_2d;
   GmlD3DepthTarget *depth_targets;
+  uint64_t depth_epoch_counter;
   double matrix_view[16],matrix_projection[16];
   GmlD3Vertex d3_prim[GML_D3_PRIM_MAX];
   int d3_prim_kind,d3_prim_texture,d3_prim_n;
@@ -113,6 +117,7 @@ typedef struct {
 /* Software-3D-private raster operations shared by the fixed-function owners. */
 void gml_software3d_transform_point(GmlRender *render,double *x,double *y,double *z);
 int gml_software3d_depth_prepare(GmlRender *render);
+int gml_software3d_depth_prepare_submission(GmlRender *render);
 void gml_software3d_depth_targets_clear(GmlSoftware3D *graphics);
 int gml_software3d_texture(GmlRender *render,int handle,GmlD3Texture *texture);
 void gml_software3d_emit_triangle(GmlRender *render,const GmlD3Vertex vertices[3],

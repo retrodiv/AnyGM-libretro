@@ -103,6 +103,7 @@ void gml_software3d_reset(GmlSoftware3D *software3d);
  * remains lazy until a software fragment needs the plane. */
 int gml_software3d_clear_depth(struct GmlRender *render,double depth);
 void gml_software3d_depth_target_forget(GmlSoftware3D *graphics,int identity);
+int gml_software3d_depth_observe(struct GmlRender *render);
 int gml_software3d_status_get(const GmlSoftware3D *software3d,
                               GmlSoftware3DStatus *status);
 void gml_software3d_set_classic(GmlSoftware3D *software3d,int classic);

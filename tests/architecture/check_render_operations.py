@@ -227,6 +227,7 @@ DISPATCH_PORTS = {
     "gml_render_cpu_backend_resident_surface_stretched",
     "gml_render_cpu_backend_native_triangles",
     "gml_render_cpu_backend_native_textured_triangles",
+    "gml_render_cpu_backend_depth_triangle",
     "gml_render_cpu_backend_vertex_spans",
     "gml_render_cpu_backend_textured_vertex_spans",
     "gml_render_application_surface_owned_stage_base",
@@ -253,6 +254,8 @@ DISPATCH_CPU_BOUNDARIES = {
     "surface_pixels", "surface_pixels_observe", "surface_pixels_access",
 }
 DISPATCH_ADDITIONAL = {
+    "gml_render_cpu_backend_depth_triangle",
+    "gml_software3d_primitive_3d_end",
     "gml_render_clear_depth",
     "gml_render_cpu_backend_resident_surface_stretched",
     "gml_render_cpu_backend_native_triangles",
@@ -283,6 +286,7 @@ DISPATCH_HELPERS = {
     "resident_flat_eligible_rule", "resident_flat_eligible", "resident_line_bounds",
     "resident_rectangle_state_eligible", "resident_primitive_state_eligible", "resident_rectangle_payload",
     "resident_primitive_state_eligible_rule",
+    "resident_primitive_state_eligible_target",
     "resident_primitive_alpha_noop",
     "resident_classify_page", "resident_classify_clamped_page", "resident_identity_screen_gui",
     "resident_tile_source_metadata",

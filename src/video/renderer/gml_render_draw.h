@@ -523,7 +523,7 @@ typedef struct GmlRenderDepthTriangle {
   uint64_t depth_epoch,depth_version,next_depth_version;
   double vertex[3][8];
   uint32_t hidden,write_depth,normalized,blend;
-  uint32_t stamp_alpha,zero_alpha_writes;
+  uint32_t stamp_alpha,zero_alpha_writes,alpha_source_squared;
 } GmlRenderDepthTriangle;
 
 typedef struct GmlRenderDrawOp {
@@ -636,6 +636,9 @@ typedef struct GmlRenderExecutionResult {
   uint32_t accepted_prefix;
   uint32_t uncertain_target_count;
   uint32_t all_destinations_uncertain;
+  /* Every published destination and version is untouched, even if candidate
+   * work failed. Valid only with an empty accepted prefix/uncertainty set. */
+  uint32_t previous_destinations_preserved;
   GmlRenderImageRef uncertain_targets[GML_RENDER_MAX_UNCERTAIN_TARGETS];
 } GmlRenderExecutionResult;
 

@@ -143,8 +143,7 @@ static void d3_model_draw(GmlRender *R,const GmlD3Model *model,double x,double y
   GmlD3Texture texture={0};
   if(texture_handle!=-1) d3_texture(R,texture_handle,&texture);
   g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
-  gml_render_cpu_backend_prepare_draw(R);
-  if(!d3_depth_prepare(R)) return;
+  if(!gml_software3d_depth_prepare_submission(R)) return;
   for(int b=0;b<model->batch_n;b++){
     const GmlD3Batch *batch=&model->batch[b];
     if(batch->first<0 || batch->count<0 || batch->first+batch->count>model->vertex_n) continue;

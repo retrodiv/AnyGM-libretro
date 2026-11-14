@@ -475,9 +475,11 @@ static int resident_studio_alpha_rect(GmlRender *render,int x1,int y1,int x2,int
  * Keep the cheaper qualified flat paths, and batch ordinary rectangle presets
  * without a predecessor snapshot or CPU pixel transfer. Raw cutout does not
  * participate in these unchanged CPU rectangle writers. */
-static int resident_primitive_state_eligible_rule(GmlRender *r,int cpu_passthrough){
+static int resident_primitive_state_eligible_target(GmlRender *r,int cpu_passthrough,
+                                                     int resume_scene){
   const GmlRenderDeviceServices *device=gml_render_device(r);
-  if(!r || !r->resident_application_pass || !device || !device->observe_on_demand ||
+  if(!r || (!r->resident_application_pass && !(resume_scene && r->resident_scene_pass)) ||
+     !device || !device->observe_on_demand ||
      !device->observe_on_demand(device->context) || !gml_render_scene_target_matches(r) ||
      (r->active_shader>=0 && (!cpu_passthrough || !gml_render_shader_cpu_passthrough(r))) || r->blendmode<0 ||
      r->blendmode>GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA || r->blend_equation!=1 ||
@@ -488,6 +490,10 @@ static int resident_primitive_state_eligible_rule(GmlRender *r,int cpu_passthrou
      ((r->classic_interp_phase[0] || r->classic_interp_phase[1] || r->classic_interp_phase[2]) &&
       gml_render_interpolated_phase_blocks_scene(r)) || !isfinite(r->alpha)) return 0;
   return 1;
+}
+
+static int resident_primitive_state_eligible_rule(GmlRender *r,int cpu_passthrough){
+  return resident_primitive_state_eligible_target(r,cpu_passthrough,0);
 }
 
 static int resident_primitive_state_eligible(GmlRender *r){
@@ -585,6 +591,72 @@ static int resident_native_triangles(GmlRender *r,
   if(result){r->fb_all_transparent=0;r->fb_opaque_known=r->fb_all_opaque=opaque;}
 native_done:
   free(operations);return result;
+}
+
+int gml_render_cpu_backend_depth_read(GmlRender *r,const GmlRenderDepthPlaneRef *plane,
+                                      float *pixels,size_t capacity){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  if(!device || !device->readback_depth || !plane || !pixels ||
+     plane->width>UINT32_MAX/4u || (uint64_t)plane->width*plane->height>capacity) return 0;
+  GmlRenderDepthReadback read={*plane,pixels,capacity*sizeof *pixels,plane->width*4u};
+  return device->readback_depth(device->context,&read);
+}
+
+int gml_render_cpu_backend_depth_triangle(GmlRender *r,GmlRenderDepthTriangle *triangle,
+  const float *depth_pixels,GmlRenderDepthPlaneRef *published){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  GmlRenderDeviceCaps caps={0};
+  if(!resident_primitive_state_eligible_target(r,0,1) || r->color_write_mask!=15u ||
+     r->active_shader>=0 || r->blendmode || r->alpha_test_enable ||
+     r->classic_phase_scene_target || r->app_interp_phase[0] || r->app_interp_phase[1] ||
+     r->app_interp_phase[2] || !device->upload_depth || !device->readback_depth ||
+     !device->capabilities(device->context,&caps) ||
+     !(caps.supported_operations&(UINT64_C(1)<<GML_RENDER_OP_SOFTWARE3D_PASS))) return 0;
+  if(!triangle) return 1;
+  if(!published || triangle->depth_version==UINT64_MAX) return 0;
+  if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
+  gml_render_flush_pending_fill(r);
+  if(r->pending_fill || !gml_render_application_scene_flush(r)) return 0;
+  GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+  GmlRenderResourceSource source={0};
+  if(!target || !gml_render_resource_prepare_device_source(target,device,&source)) return 0;
+  GmlRenderDepthPlaneRef plane={source.image,source.width,source.height,
+                                triangle->depth_epoch,triangle->depth_version};
+  if(depth_pixels){
+    GmlRenderDepthUpload upload={plane,depth_pixels,(size_t)source.width*source.height*4u,source.width*4u};
+    if(!device->upload_depth(device->context,&upload)) return 0;
+  }
+  GmlRenderDrawStateSnapshot state={.write_mask=15u,.colour=0xffffffffu,.alpha=255u,
+    .rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA,
+    .rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
+    .alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA,
+    .alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
+    .rgb_equation=GML_RENDER_BLEND_ADD,.alpha_equation=GML_RENDER_BLEND_ADD};
+  triangle->previous_colour=source.image;triangle->next_depth_version=triangle->depth_version+1u;
+  triangle->blend=r->alphablend!=0;triangle->stamp_alpha=!gml_render_target_preserves_alpha(r);
+  triangle->alpha_source_squared=1u;triangle->zero_alpha_writes=0u;
+  GmlRenderDrawOp op={.opcode=GML_RENDER_OP_SOFTWARE3D_PASS,
+    .reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT,.scene_family=GML_RENDER_SCENE_PRIMITIVE};
+  op.target=(GmlRenderTargetRef){source.image,1u,source.width,source.height,
+    GML_RENDER_PIXEL_ARGB8888,{0,0,source.width,source.height}};
+  if(op.target.image.content_version==UINT64_MAX) return 0;
+  op.target.image.content_version++;op.payload.depth_triangle=*triangle;
+  GmlRenderDrawBatch batch={&op,1u,&state,1u};
+  GmlRenderResourceExecution result=r->target_id>0?
+    gml_render_surface_scene_submit_deferred_shader(r,r->target_id,&batch,NULL,0u):
+    gml_render_application_scene_submit(r,&batch,NULL,0u);
+  if(result!=GML_RENDER_RESOURCE_EXEC_DEVICE) return 0;
+  /* A CPU depth writer ends residency but retains the scene target. Resume
+   * only after both planes have been uploaded and the native draw published. */
+  if(!r->resident_application_pass){
+    r->resident_application_pass=1;
+    gml_render_dispatch_resident_admitted(r);
+  }
+  *published=(GmlRenderDepthPlaneRef){op.target.image,source.width,source.height,
+                                     triangle->depth_epoch,triangle->next_depth_version};
+  r->fb_all_transparent=0;r->fb_opaque_known=r->fb_all_opaque=0;
+  if(r->fb==r->app_surface_owned){r->app_surface_opaque=0;r->app_presentation_coverage_active=0;}
+  return 1;
 }
 
 int gml_render_cpu_backend_native_triangles(GmlRender *r,

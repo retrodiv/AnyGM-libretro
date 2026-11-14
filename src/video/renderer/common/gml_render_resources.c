@@ -581,6 +581,11 @@ static int batch_valid(const GmlRenderResource *resource,const GmlRenderDrawBatc
     }else if(operation->opcode==GML_RENDER_OP_CLEAR ||
        operation->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
       if(operation->source_count || operation->sources) return 0;
+    } else if(operation->opcode==GML_RENDER_OP_SOFTWARE3D_PASS){
+      if(operation->source_count || operation->sources || batch->operation_count!=1u ||
+         !batch->states || operation->state_index>=batch->state_count ||
+         operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT) return 0;
+      state=&batch->states[operation->state_index];
     } else {
       if(!batch->states || operation->state_index>=batch->state_count ||
          !operation->source_count || !operation->sources) return 0;
@@ -998,6 +1003,14 @@ static GmlRenderResourceExecution resource_submit(
   device_result=device->submit(device->context,batch);
   if(device_result.status!=GML_RENDER_EXEC_ACCEPTED ||
      device_result.accepted_prefix!=batch->operation_count){
+    if(device_result.previous_destinations_preserved && !device_result.accepted_prefix &&
+       !device_result.all_destinations_uncertain && !device_result.uncertain_target_count){
+      for(uint32_t index=old_source_count;index<resource->source_count;index++)
+        release_pin(&resource->sources[index]);
+      resource->source_count=old_source_count;resource->retained_bytes=old_retained_bytes;
+      resource->recipe_bytes=old_recipe_bytes;
+      return GML_RENDER_RESOURCE_EXEC_FAILED;
+    }
     if(gml_render_cpu_draws_disabled(resource->dispatch_owner) &&
        device_result.status==GML_RENDER_EXEC_UNSUPPORTED &&
        !device_result.accepted_prefix && !device_result.all_destinations_uncertain &&

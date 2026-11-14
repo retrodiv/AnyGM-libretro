@@ -46,7 +46,7 @@
   "if(source.a<=0.0&&u_policy.y==0)discard;" \
   "vec4 old_colour=texelFetch(u_colour,ivec2(gl_FragCoord.xy),0);" \
   "result_colour=u_flags.w!=0?vec4(source.rgb*source.a+old_colour.rgb*(1.0-source.a)," \
-  "source.a+old_colour.a*(1.0-source.a)):source;" \
+  "source.a*(u_policy.z!=0?source.a:1.0)+old_colour.a*(1.0-source.a)):source;" \
   "if(u_policy.x!=0)result_colour.a=1.0;\n#endif\n}\n"
 
 /* One device invocation consumes the existing exact predicates; the recovery fragment programs
