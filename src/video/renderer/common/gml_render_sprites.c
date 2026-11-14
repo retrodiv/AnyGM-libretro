@@ -851,8 +851,10 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   int source_colour_text=r && family==GML_RENDER_SCENE_TEXT &&
     (physical_sprite_page==13 || physical_sprite_page==14) &&
     r->blendmode==GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA;
+  int native_runtime=r && runtime_function && r->alphablend &&
+    gml_render_blend_is_extended(r->blendmode) && !r->alpha_test_enable;
   int source_colour_runtime=r && runtime_function &&
-    r->blendmode==GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA;
+    (r->blendmode==GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA || native_runtime);
   int preset_atlas=selected_unwrapped || whole_background || full_axis_preset || quarter_tile || source_colour_text || source_colour_runtime;
   int background_replace=(selected_unwrapped || whole_background) && r && r->blendmode==6;
   int background_masked=preset_atlas && r && r->alphablend &&
@@ -1018,9 +1020,9 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
      (r->alpha_test_enable && !integer_atlas) ||
      (!r->alphablend && !integer_atlas) ||
      (r->blendmode && !replace && !fog_rotated_normal && !(integer_atlas && r->blendmode==2) &&
-      !(scaled_sprite && r->blendmode==1) && !destination_factor_sprite &&
-      !(preset_atlas && r->blendmode>=0 && r->blendmode<=GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA)) || r->blend_equation!=1 ||
-     r->blend_equation_alpha!=1 || (r->color_write_mask!=0x0Fu && !scaled_sprite &&
+      !(scaled_sprite && r->blendmode==1) && !destination_factor_sprite && !native_runtime &&
+      !(preset_atlas && r->blendmode>=0 && r->blendmode<=GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA)) || (!native_runtime && (r->blend_equation!=1 ||
+     r->blend_equation_alpha!=1)) || (r->color_write_mask!=0x0Fu && !scaled_sprite &&
       !(source_colour_text && r->color_write_mask<=15u) &&
       !((selected_background || whole_background || tile_function) && r->color_write_mask<=15u)) ||
      gml_render_classic_vertical_phase_blocks_scene(r) || r->rotated_batch_count || r->rotated_batch_building ||
@@ -1029,7 +1031,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
      !isfinite(xs) || !isfinite(ys) || xs==0.0 || ys==0.0 ||
      !isfinite(draw_alpha) || draw_alpha<0.0 ||
      (!replacement_sprite && !background_replace &&
-      !(preset_atlas && gml_render_blend_uses_destination_colour(r->blendmode)) && draw_alpha==0.0) || draw_alpha>1.0 ||
+      !(preset_atlas && gml_render_blend_uses_destination_colour(r->blendmode)) && !native_runtime && draw_alpha==0.0) || draw_alpha>1.0 ||
      (family!=GML_RENDER_SCENE_TEXT && family!=GML_RENDER_SCENE_SPRITE && !integer_background && !tile_function &&
       draw_alpha!=1.0) ||
      (family==GML_RENDER_SCENE_TEXT && !text_function && draw_alpha<1.0 &&
@@ -1654,6 +1656,8 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
     state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
   }
+  if(native_runtime && !gml_render_blend_snapshot_extended(&state,r->blendmode,
+       r->blend_equation,r->blend_equation_alpha,!gml_render_target_preserves_alpha(r)))return 0;
   state.samplers[0]=operation.payload.quad.sampling;
   if(runtime_geometry && source_colour_runtime){
     /* Submit the authored rectangle once. The device owns nearest sampling
@@ -1667,7 +1671,10 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
        fabs(x+width)>65536.0 || fabs(y+height)>65536.0) return 0;
     q->x[0]=q->x[3]=x;q->x[1]=q->x[2]=x+width;
     q->y[0]=q->y[1]=y;q->y[2]=q->y[3]=y+height;
-    if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
+    if(native_runtime){
+      GmlRenderDrawBatch batch={&operation,1u,&state,1u};
+      if(gml_render_application_scene_submit(r,&batch,&source,1u)==GML_RENDER_RESOURCE_EXEC_FAILED)return 0;
+    }else if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
   }else if(runtime_geometry){
     if(!resident_runtime_nearest_packets(r,page,&operation,&state,&source,runtime_geometry)) return 0;
   }else if(rotated_sample_rows){
@@ -1688,7 +1695,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     if(r->fb==r->app_surface) r->app_surface_opaque=1;
   }
   if(((family==GML_RENDER_SCENE_TEXT && draw_alpha<1.0) || checkpoint_alpha_sprite ||
-     (integer_atlas && r->alphablend && (inverse_sprite || destination_factor_sprite || full_axis_preset || draw_alpha<1.0 || !page->scene_binary_alpha || adjacent_alpha))) &&
+     (integer_atlas && r->alphablend && (inverse_sprite || destination_factor_sprite || full_axis_preset || native_runtime || draw_alpha<1.0 || !page->scene_binary_alpha || adjacent_alpha))) &&
      (state.write_mask&8u) &&
      gml_render_target_preserves_alpha(r)){
     r->fb_opaque_known=0;
@@ -1697,7 +1704,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   }
   /* Enqueue conservatively invalidates application opacity. A complete nearest
    * replacement from an opaque page proves every target alpha without reading it. */
-  if(!source_alpha_key && (state.write_mask&8u) && !tile_regions && !runtime_geometry && !inverse_sprite && !full_axis_preset &&
+  if(!source_alpha_key && (state.write_mask&8u) && !tile_regions && !runtime_geometry && !inverse_sprite && !full_axis_preset && !native_runtime &&
      !(destination_factor_sprite && r->alphablend && gml_render_target_preserves_alpha(r)) &&
      (!r->alpha_test_enable || r->alpha_test_ref<255u) &&
      ((replace && !replacement_sprite) || (page->scene_fully_opaque && !adjacent_alpha)) && draw_alpha==1.0 && left==0.0 && top==0.0 &&
@@ -4803,14 +4810,17 @@ static int resident_nearest_sprite_function(GmlRender *r,GmlSprite *sprite,int s
   if(sprite->runtime_rgba){
     /* Runtime pixels have a separate CPU geometry owner and no valid packaged
      * crop. Preserve their fenced source view and ordinary point packet. */
-    int source_colour=r->blendmode==GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA;
+    int native_factors=r->alphablend && gml_render_blend_is_extended(r->blendmode) &&
+      !r->alpha_test_enable && r->blend_equation>=1 && r->blend_equation<=5 &&
+      r->blend_equation_alpha>=1 && r->blend_equation_alpha<=5;
+    int source_colour=r->blendmode==GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA || native_factors;
     if(source_colour && (!r->alphablend || rotation!=0.0 || xs<=0.0 || ys<=0.0)) return 0;
     if(!r->resident_application_pass || sprite->spine || sprite->ns_enabled ||
        (sprite->runtime_opaque && !sprite->runtime_scene_binary) ||
        (r->interp && anygm_policy_has_modern_layer_semantics(r->win)) ||
        resident_sprite_program_blocks(r) || r->fog_flat ||
        gml_d3_is_active(r) || r->blendmode<0 || (r->blendmode>2 && !source_colour) ||
-       r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
+       (!native_factors && (r->blend_equation!=1 || r->blend_equation_alpha!=1)) ||
        gml_render_classic_vertical_phase_blocks_scene(r) || r->rotated_batch_count || r->rotated_batch_building ||
        r->pending_underlay || r->pending_presentation || !gml_render_scene_target_matches(r) ||
        !isfinite(x) || !isfinite(y) || !isfinite(rotation) ||
@@ -4823,6 +4833,9 @@ static int resident_nearest_sprite_function(GmlRender *r,GmlSprite *sprite,int s
        !r->device.observe_on_demand(r->device.context)) return 0;
     if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
     if(!r->color_write_mask) return 1;
+    /* The single runtime rectangle completes its native RGB/alpha publication
+     * before a later factor can observe destination alpha. */
+    if(native_factors && !gml_render_application_scene_flush(r))return 0;
     GmlRenderResourceSource source={0};
     if(!gml_render_runtime_sprite_scene_source_view(r,sprite,subimg,&source)) return 0;
     GmlTpag runtime_page={.atlas=-1,.sw=sprite->w,.sh=sprite->h,

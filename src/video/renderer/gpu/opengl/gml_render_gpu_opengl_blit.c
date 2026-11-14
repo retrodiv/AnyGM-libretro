@@ -159,8 +159,9 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     quad->shape==GML_RENDER_QUAD_AXIS_ALIGNED &&
     quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC &&
     region.x==0 && region.y==0 && region.width==source_width && region.height==source_height &&
-    state->rgb_source_factor==GML_RENDER_BLEND_SOURCE_COLOUR &&
-    state->rgb_destination_factor==GML_RENDER_BLEND_SOURCE_ALPHA;
+    ((state->rgb_source_factor==GML_RENDER_BLEND_SOURCE_COLOUR &&
+      state->rgb_destination_factor==GML_RENDER_BLEND_SOURCE_ALPHA) ||
+     gml_render_blend_snapshot_native(state));
   if((region.x<0 || region.y<0 || !region.width || !region.height ||
      (uint64_t)(uint32_t)region.x+region.width>source_width ||
      (uint64_t)(uint32_t)region.y+region.height>source_height) &&

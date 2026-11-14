@@ -439,7 +439,8 @@ static uint32_t scene_filter(const GmlRenderQuad *quad,
     uint32_t base=quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND?38u:37u;
     uint32_t filter;
     if(qualified_blend(state)==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_PRESERVE ||
-       qualified_blend(state)==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE) filter=base+7u;
+       qualified_blend(state)==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE ||
+       gml_render_blend_snapshot_native(state)) filter=base+7u;
     else if(state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA) filter=83u;
     else if(state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA) filter=base+12u;
     else if((family==GML_RENDER_SCENE_BACKGROUND || family==GML_RENDER_SCENE_SPRITE || family==GML_RENDER_SCENE_TILE) &&
@@ -776,9 +777,12 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
     !q->corner_colour[2] && !q->corner_colour[3] && state->write_mask==15u;
   int source_colour_text=op->scene_family==GML_RENDER_SCENE_TEXT && !row && !flat &&
     (blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_PRESERVE || blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE);
+  int native_runtime=gml_render_blend_snapshot_native(state) && !state->alpha_test_enabled &&
+    op->scene_family==GML_RENDER_SCENE_SPRITE && source &&
+    (source->ref.identity&UINT32_C(0x80000000)) && !row && !flat;
   int source_colour_runtime=source && op->scene_family==GML_RENDER_SCENE_SPRITE &&
     (source->ref.identity&UINT32_C(0x80000000)) && !row && !flat &&
-    (blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_PRESERVE || blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE);
+    (blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_PRESERVE || blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE || native_runtime);
   int runtime_rect=source_colour_runtime;
   if(source_colour_runtime && !full_region(region,source->width,source->height)) return 0;
   for(unsigned c=0;c<4u && runtime_rect;c++)
@@ -790,12 +794,12 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
     q->y[0]==q->y[1] && q->y[2]==q->y[3] &&
     q->x[1]>q->x[0] && q->y[2]>q->y[0];
   if(source_colour_runtime && !runtime_rect) return 0;
-  int background_blend=(background || source_colour_text || (op->scene_family==GML_RENDER_SCENE_SPRITE && !row && !flat)) &&
+  int background_blend=native_runtime || ((background || source_colour_text || (op->scene_family==GML_RENDER_SCENE_SPRITE && !row && !flat)) &&
     (blend==24 || blend==25 || blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_PRESERVE ||
      blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE || blend==GL_SCENE_BLEND_DEST_ALPHA_MASK ||
      blend==GL_SCENE_BLEND_DEST_ALPHA_MASK_OPAQUE ||
     (blend>=GL_SCENE_BLEND_SURFACE_DEST_BASE && blend<=GL_SCENE_BLEND_SURFACE_DEST_LIMIT &&
-     state->rgb_equation==GML_RENDER_BLEND_ADD && state->alpha_equation==GML_RENDER_BLEND_ADD));
+     state->rgb_equation==GML_RENDER_BLEND_ADD && state->alpha_equation==GML_RENDER_BLEND_ADD)));
   if(!source || (op->scene_family!=GML_RENDER_SCENE_SPRITE &&
                 op->scene_family!=GML_RENDER_SCENE_BACKGROUND &&
                 op->scene_family!=GML_RENDER_SCENE_TILE &&
@@ -3086,7 +3090,8 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   int rectangle_alpha_stamp=(blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE ||
     (blend&GL_SCENE_BLEND_NATIVE_OPAQUE)) && filter==34u;
   int surface_alpha_stamp=blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE && filter==51u;
-  int atlas_alpha_stamp=blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE && (filter==44u || filter==45u);
+  int atlas_alpha_stamp=(blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE ||
+    (blend&GL_SCENE_BLEND_NATIVE_OPAQUE)) && (filter==44u || filter==45u);
   if(stamp_alpha && !skip_alpha && !rectangle_alpha_stamp && !surface_alpha_stamp && !atlas_alpha_stamp && (write_mask&8u) && filter!=GL_SCENE_NATIVE_POINT_OPAQUE_FILTER && filter!=23u && filter!=35u && filter!=39u && filter!=40u && filter!=53u && filter!=66u && filter!=21u && filter!=25u && filter!=32u && filter!=GL_SCENE_VIEW_BILINEAR_FILTER && filter!=80u){
     /* The CPU screen writer keeps alpha opaque at every covered texel,
      * even when its prior alpha is unknown. Reuse the sampled vertices and
