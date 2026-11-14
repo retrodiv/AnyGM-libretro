@@ -134,13 +134,24 @@ static int runtime_sprite_font_mapping_case(void){
 
 static int sprite_font_origin_policy_case(void){
   int ok=1;
-  for(int generation=0;generation<3;generation++){
+  for(int generation=0;generation<4;generation++){
     for(int runtime=0;runtime<2;runtime++){
       FontFixture *f=fixture_create();
       if(!f) return 0;
       GmlRender *r=&f->render;
       f->win.classic_version=generation==0?810:0;
-      f->win.bytecode=generation==1?16:17;
+      f->win.bytecode=generation==3?15:generation==1?16:17;
+      AnygmCompatibilityProfile profile;
+      if(generation==3){
+        /* Older instruction encoding can carry the later room-layer format. */
+        AnygmContentFacts facts={.schema_version=ANYGM_COMPATIBILITY_SCHEMA,
+          .bytecode_revision=15,.has_room_layers=1};
+        if(!anygm_compatibility_resolve(&facts,&profile,NULL,0)){
+          fixture_destroy(f);return 0;
+        }
+        f->win.has_room_layers=1;
+        f->win.compatibility=&profile;
+      }
       r->spr=calloc(1,sizeof *r->spr); r->n_spr=1;
       if(!r->spr){fixture_destroy(f);return 0;}
       GmlSprite *s=r->spr;
