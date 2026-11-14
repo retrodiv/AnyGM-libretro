@@ -3108,7 +3108,9 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
   /* Ordinary whole-source draws use the same CPU preset leaf as tiled cells.
    * Partial selections retain their separately qualified state domain. */
   int full_presets=tiled || !selection;
-  int source_colour_alpha=r && r->blendmode==GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA;
+  int native_factors=r && r->alphablend && !selection && !resolved_canvas && !automatic &&
+    !r->alpha_test_enable && gml_render_blend_is_extended(r->blendmode);
+  int source_colour_alpha=r && (r->blendmode==GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA || native_factors);
   int destination_preset=full_presets && r &&
     gml_render_blend_uses_destination_colour(r->blendmode);
   int destination_blend=destination_preset && r->alphablend;
@@ -3122,8 +3124,8 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
      /* Internal automatic presentation is already in raster coordinates and
       * bypasses the persistent world projection and flat fog. */
      (!automatic && (gml_d3_is_active(r) || r->fog_flat)) ||
-     r->blendmode<0 || (full_presets?r->blendmode>GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA:(r->blendmode>2 && r->blendmode!=6)) ||
-     (source_colour_alpha && (r->blend_equation!=1 || r->blend_equation_alpha!=1)) ||
+     r->blendmode<0 || (full_presets?(r->blendmode>GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA && !native_factors):(r->blendmode>2 && r->blendmode!=6)) ||
+     (source_colour_alpha && !native_factors && (r->blend_equation!=1 || r->blend_equation_alpha!=1)) ||
      (destination_preset?(r->blend_equation<1 || r->blend_equation>5 ||
                         r->blend_equation_alpha<1 || r->blend_equation_alpha>5):
                        (r->blend_equation!=1 || r->blend_equation_alpha!=1)) || r->color_write_mask>15u ||
@@ -3132,6 +3134,7 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
   int sw=surf==0?r->app_w:r->surface[slot].w;
   int sh=surf==0?r->app_h:r->surface[slot].h;
   int feedback=(surf==0?r->app_surface:r->surface[slot].px)==r->fb;
+  if(native_factors && feedback)return 0;
   int classic_application=r->classic && surf==0 && !feedback;
   if(selection && (!isfinite(selection->x) || !isfinite(selection->y) ||
       !isfinite(selection->width) || !isfinite(selection->height) ||
@@ -3248,6 +3251,7 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
      !unit && ordinary_full && !disabled_copy) replace=0;
   int selected=selection && !fast_unit && !ordinary_full &&
     (selection->x!=0.0 || selection->y!=0.0 || selection->width!=sw || selection->height!=sh);
+  if(native_factors && !gml_render_application_scene_flush(r))return 0;
   gml_render_flush_pending_fill(r);
   if(r->pending_fill || !r->resident_application_pass ||
      !(target=gml_render_scene_target_resource_ensure(r))) return 0;
@@ -3372,9 +3376,16 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
     q->span_y[0]=(destination_blend || (r->blendmode==3 && fast_unit))?4.0:0.0;
   }
   state.samplers[0]=q->sampling;state.sampler_count=1u;
-  surface_source_over_alpha_state(r,&state);
+  if(native_factors){
+    if(!gml_render_blend_snapshot_extended(&state,r->blendmode,r->blend_equation,
+       r->blend_equation_alpha,!gml_render_target_preserves_alpha(r)))return 0;
+    q->span_y[0]=4.0;
+  }else surface_source_over_alpha_state(r,&state);
   int retains_opaque=surface_scene_retains_opaque(r,&state);
-  if(!surface_feedback_enqueue(r,&operation,&state,&source,feedback)) return 0;
+  if(native_factors){
+    GmlRenderDrawBatch batch={&operation,1u,&state,1u};
+    if(gml_render_application_scene_submit(r,&batch,&source,1u)==GML_RENDER_RESOURCE_EXEC_FAILED)return 0;
+  }else if(!surface_feedback_enqueue(r,&operation,&state,&source,feedback)) return 0;
   if(write_mask&8u){
     r->fb_opaque_known=r->fb_all_opaque=retains_opaque;r->fb_all_transparent=0;
     if(r->fb==r->app_surface_owned) r->app_surface_opaque=r->app_presentation_coverage_active=0;

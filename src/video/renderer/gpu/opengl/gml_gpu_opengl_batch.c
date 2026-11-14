@@ -559,8 +559,11 @@ static int nearest_surface_function_valid(const GmlRenderDrawOp *op,
                                            const GlSceneImage *source){
   const GmlRenderQuad *q=&op->payload.quad;
   int blend=qualified_blend(state);
-  int source_colour_alpha=blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_PRESERVE ||
+  int native_factors=gml_render_blend_snapshot_native(state);
+  int source_colour_alpha=native_factors || blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_PRESERVE ||
     blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE;
+  if(native_factors && (q->span_y[0]!=4.0 || q->span_y[3] ||
+     q->span_x[0] || q->span_x[1] || state->alpha_test_enabled))return 0;
   int tiled=q->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_POINT;
   double width=q->x[1]-q->x[0],height=q->y[2]-q->y[0];
   if(!source || op->scene_family!=GML_RENDER_SCENE_SURFACE ||

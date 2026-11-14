@@ -9394,6 +9394,55 @@ static int extended_rectangle_replay_state(void){
   return controls==2700u;
 }
 
+static int resident_extended_surface_dispatch_scope(void){
+  static const unsigned masks[]={15u,5u,8u};
+  unsigned controls=0;
+  for(unsigned numbered=0;numbered<2u;numbered++)for(unsigned equations=0;equations<2u;equations++)
+  for(unsigned mask=0;mask<3u;mask++)for(unsigned blocked=0;blocked<2u;blocked++){
+    GmlWin content={.bytecode=17};GmlRender *r=calloc(1,sizeof *r);
+    FakeDevice fake={.on_demand=1,.readback_colour=0xff204060u};
+    GmlRenderDeviceServices device=service(&fake);device.observe_on_demand=fake_observe_on_demand;
+    CHECK(r && !gml_render_init(r,&content));
+    CHECK(gml_render_application_surface_ensure_owned(r,4,4));
+    int source=gml_surface_create(r,1,1),target=numbered?gml_surface_create(r,4,4):0;
+    const uint8_t rgba[]={186u,74u,42u,96u};
+    CHECK(source>0 && (!numbered || target>0) && gml_surface_write_rgba8(r,source,rgba,sizeof rgba));
+    gml_render_bind_device(r,&device);
+    CHECK(gml_render_begin_resident_owned_application(r,0,0,0));
+    if(numbered)CHECK(gml_surface_set_target(r,target));
+    gml_render_set_pending_fill(r,0xff204060u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));
+    unsigned seed_submits=(unsigned)fake.submits;uint32_t shadow[16];memcpy(shadow,r->fb,sizeof shadow);
+    int factors[]={3,4,5,6};r->blendmode=gml_render_blend_pack_factors(factors);
+    r->blend_equation=equations?4:1;r->blend_equation_alpha=equations?5:1;
+    r->alphablend=1;r->color_write_mask=(uint8_t)masks[mask];
+    r->alpha_test_enable=(int)blocked;r->alpha_test_ref=1u;
+    gml_render_dispatch_diagnostics_enable(r,1);
+    gml_draw_surface_stretched(r,source,0,0,4,4,0x654d2du,.5);
+    gml_draw_surface_stretched(r,source,1,1,3,3,0x237fabu,.25);
+    CHECK(gml_render_scene_submit_pending(r));
+    GmlRenderDispatchMetrics dispatch={0};uint64_t cpu=0;
+    CHECK(gml_render_dispatch_metrics(r,&dispatch));
+    for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+      if(reason!=GML_RENDER_DISPATCH_REPLAY)cpu+=dispatch.cpu[GML_RENDER_SCENE_SURFACE][reason];
+    CHECK(!dispatch.failed && !dispatch.unclassified && r->blendmode==gml_render_blend_pack_factors(factors));
+    if(!blocked){
+      CHECK(!cpu && dispatch.gpu[GML_RENDER_SCENE_SURFACE]==2u &&
+        (unsigned)fake.submits==seed_submits+2u && !fake.readbacks && !memcmp(shadow,r->fb,sizeof shadow));
+      CHECK(gml_render_blend_snapshot_native(&fake.last_quad_state) &&
+        gml_render_blend_snapshot_mode(&fake.last_quad_state)==r->blendmode &&
+        fake.last_quad_state.rgb_equation==GML_RENDER_BLEND_NATIVE_ADD+(unsigned)r->blend_equation-1u &&
+        fake.last_quad_state.alpha_equation==GML_RENDER_BLEND_NATIVE_ADD+(unsigned)r->blend_equation_alpha-1u &&
+        fake.last_quad_state.write_mask==masks[mask] && fake.last_quad_state.sampler_count==1u &&
+        fake.last_quad_state.coverage_policy==(numbered?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA));
+    }else CHECK(cpu==2u && !dispatch.gpu[GML_RENDER_SCENE_SURFACE] &&
+      (unsigned)fake.submits==seed_submits && fake.readbacks==1);
+    gml_render_free(r);free(r);controls++;
+  }
+  printf("extended surface dispatch: %u native-state/ordered-draw and counted alpha-test boundary controls\n",controls);
+  return controls==24u;
+}
+
 static int resident_source_colour_alpha_dispatch_scope(void){
   for(int path=0;path<6;path++){
     GmlRender *render=calloc(1,sizeof *render);
@@ -21116,6 +21165,7 @@ int main(void){
     if(!strcmp(selected,"target-pixel-pending-scene")) passed=target_pixel_observes_pending_scene();
     else if(!strcmp(selected,"preserved-device-failure")) passed=preserved_device_failure_keeps_authority();
     else if(!strcmp(selected,"extended-rectangle-replay")) passed=extended_rectangle_replay_state();
+    else if(!strcmp(selected,"extended-surface-dispatch")) passed=resident_extended_surface_dispatch_scope();
     else if(!strcmp(selected,"source-colour-alpha-dispatch")) passed=resident_source_colour_alpha_dispatch_scope();
     else if(!strcmp(selected,"rectangle-function-matrix")) passed=resident_rectangle_function_matrix();
     else if(!strcmp(selected,"target-pixel-resident-result")) passed=target_pixel_observes_resident_result();
@@ -21310,6 +21360,7 @@ int main(void){
   passed+=resident_atlas_uv_refusal_preserves_queued_prefix();
   passed+=resident_application_sprite_cpu_fallback();
   passed+=extended_rectangle_replay_state();
+  passed+=resident_extended_surface_dispatch_scope();
   passed+=resident_source_colour_alpha_dispatch_scope();
   passed+=resident_empty_sprite_preserves_queued_draws();
   passed+=resident_black_additive_sprite_noop();
@@ -21519,7 +21570,7 @@ int main(void){
   passed+=resident_lazy_native_atlas();
   passed+=resident_unit_texel_magnification();
   passed+=opaque_rectangle_clear_complement();
-  enum { total=338 };
+  enum { total=339 };
   printf("render resource cases: passed=%d failed=%d\n",passed,total-passed);
   return passed==total?EXIT_SUCCESS:EXIT_FAILURE;
 }
