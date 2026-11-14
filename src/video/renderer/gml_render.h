@@ -749,6 +749,9 @@ void gml_render_begin_retaining_target(GmlRender *r, uint32_t *fb, int w, int h,
 int gml_render_view_surface_begin(GmlRender *r,int surface,double cx,double cy);
 void gml_render_world_set_logical_extent(GmlRender *r,int width,int height);
 void gml_render_world_set_view_rotation(GmlRender *r,double angle,double width,double height);
+/* Selected-view rectangle in authored units, only while its target is active. */
+int gml_render_view_projection(const GmlRender *r,double *x,double *y,
+                                 double *width,double *height,double *angle);
 int gml_render_view_rotation_active(const GmlRender *r);
 void gml_render_view_rotate_point(const GmlRender *r,double *x,double *y);
 void gml_render_view_unrotate_point(const GmlRender *r,double *x,double *y);

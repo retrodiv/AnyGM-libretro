@@ -2037,6 +2037,21 @@ void gml_software3d_set_default_projection(GmlRender *render,double x,double y,
                                            double width,double height,double angle){
   d3_set_default_projection(render,x,y,width,height,angle);
 }
+void gml_software3d_set_view_projection(GmlRender *render,double x,double y,
+                                        double width,double height,double angle){
+  GmlSoftware3D *graphics=graphics_state_for_render(render);
+  if(!graphics || !graphics->d3.active) return;
+  if(graphics->d3.ortho){
+    double radians=angle*M_PI/180.0,cs=cos(radians),sn=sin(radians);
+    GmlSoftware3DControl control={0};
+    /* Express a centre rotation through the existing origin-based rectangle
+     * projection. Its ordinary explicit projection remains unchanged. */
+    control.ortho_x=x+(1-cs)*width*.5-sn*height*.5;
+    control.ortho_y=y+sn*width*.5+(1-cs)*height*.5;
+    control.ortho_w=width;control.ortho_h=height;control.ortho_angle=-angle;
+    gml_software3d_control_update(graphics,&control,GML_SOFTWARE3D_CONTROL_ORTHOGRAPHIC);
+  }else d3_set_default_projection(render,x,y,width,height,angle);
+}
 void gml_software3d_begin(GmlRender *render,double x,double y,
                           double width,double height,double angle){
   d3_set_default_projection(render,x,y,width,height,angle);

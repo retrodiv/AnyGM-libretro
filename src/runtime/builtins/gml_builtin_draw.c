@@ -1975,8 +1975,9 @@ GmlVal gml_builtin_try_draw_3d(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"d3d_start")){
     GmlRenderTargetMetrics target=builtin_target_metrics(R);
     double width=target.width>0?target.width:640,height=target.height>0?target.height:480;
-    gml_software3d_begin(
-      R,target.camera_x,target.camera_y,width,height,0);
+    double x=target.camera_x,y=target.camera_y,angle=0;
+    (void)gml_render_view_projection(R,&x,&y,&width,&height,&angle);
+    gml_software3d_begin(R,x,y,width,height,angle);
     return vreal(1);
   }
   if(!strcmp(nm,"d3d_end")){

@@ -242,6 +242,9 @@ void gml_software3d_set_default_projection(struct GmlRender *render,
                                            double x,double y,
                                            double width,double height,
                                            double angle);
+void gml_software3d_set_view_projection(struct GmlRender *render,
+                                        double x,double y,
+                                        double width,double height,double angle);
 void gml_software3d_draw_ellipsoid(struct GmlRender *render,
                                    double x1,double y1,double z1,
                                    double x2,double y2,double z2,int texture,

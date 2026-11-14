@@ -1740,6 +1740,13 @@ It does not add a generic scene-batch capability bit. The CPU executor records a
 lazy target-local clear and materializes it only for subsequent CPU depth tests;
 the device executor clears its own depth attachment without a CPU drawing replay.
 Existing `SOFTWARE3D_PASS` coverage and its counted CPU fallback remain unchanged.
+Selected views apply their authored rectangle and angle to active default 3D
+projection at the view boundary. Starting 3D inside that view uses the same
+rectangle; explicit projections issued later in Draw override it. The view
+boundary preserves orthographic or perspective mode and reuses the existing
+projection and raster owners. This shared geometry also applies to the counted
+3D fallback in OpenGL mode; it adds no native 3D admission. The neutral binding
+controls are advisory without original-runner picture evidence.
 The public API defaults a missing argument to far depth and uses finite normalized
 values clamped to zero through one. Native historical argument coercion and
 original-runner image fidelity have not been measured for this variant.

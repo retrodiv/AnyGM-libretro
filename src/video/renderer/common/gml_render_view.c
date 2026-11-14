@@ -29,6 +29,31 @@ void gml_render_world_set_view_rotation(GmlRender *r,double angle,double width,d
   r->view_centre_x=width*.5*(r->world_transform_active?r->world_scale_x:1.0);
   r->view_centre_y=height*.5*(r->world_transform_active?r->world_scale_y:1.0);
   r->view_target_id=r->target_id;r->view_target_depth=r->target_sp;
+  GmlSoftware3DStatus status={0};
+  double x,y,view_width,view_height,view_angle;
+  if(gml_software3d_status_get(r->software3d,&status) && status.active &&
+     gml_render_view_projection(r,&x,&y,&view_width,&view_height,&view_angle))
+    gml_software3d_set_view_projection(r,x,y,view_width,view_height,view_angle);
+}
+int gml_render_view_projection(const GmlRender *r,double *x,double *y,
+                                 double *width,double *height,double *angle){
+  if(!r || r->gui_pass_active || r->target_id!=r->view_target_id ||
+     r->target_sp!=r->view_target_depth ||
+     !isfinite(r->view_centre_x) || !isfinite(r->view_centre_y) ||
+     r->view_centre_x<=0 || r->view_centre_y<=0) return 0;
+  double sx=r->world_transform_active?r->world_scale_x:1.0;
+  double sy=r->world_transform_active?r->world_scale_y:1.0;
+  if(!isfinite(sx) || !isfinite(sy) || sx<=0 || sy<=0) return 0;
+  double left=r->projection_cam_x/sx,top=r->projection_cam_y/sy;
+  double logical_width=2*r->view_centre_x/sx,logical_height=2*r->view_centre_y/sy;
+  if(!isfinite(left) || !isfinite(top) ||
+     !isfinite(logical_width) || !isfinite(logical_height)) return 0;
+  if(x) *x=left;
+  if(y) *y=top;
+  if(width) *width=logical_width;
+  if(height) *height=logical_height;
+  if(angle) *angle=r->view_rotation;
+  return 1;
 }
 int gml_render_view_rotation_active(const GmlRender *r){
   return r && r->view_rotation!=0.0 && !r->gui_pass_active &&
