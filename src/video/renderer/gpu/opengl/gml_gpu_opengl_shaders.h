@@ -25,18 +25,19 @@
  * colour and integer depth are immutable inputs until joint publication. */
 #define GML_GPU_OPENGL_DEPTH_TRIANGLE_VERTEX \
   "layout(location=0) in vec4 a_geometry;layout(location=1) in vec4 a_colour;" \
-  "layout(location=2) in vec2 a_uv;\n" \
-  "uniform vec2 u_extent;out float v_reciprocal;out float v_depth;out vec4 v_colour;out vec2 v_uv;\n" \
+  "layout(location=2) in vec2 a_uv;layout(location=3) in float a_distance;\n" \
+  "uniform vec2 u_extent;out float v_reciprocal;out float v_depth;out vec4 v_colour;out vec2 v_uv;out float v_distance;\n" \
   "void main(){gl_Position=vec4(a_geometry.x*2.0/u_extent.x-1.0," \
   "1.0-a_geometry.y*2.0/u_extent.y,0.0,1.0);" \
-  "v_reciprocal=a_geometry.z;v_depth=a_geometry.w;v_colour=a_colour;v_uv=a_uv;}\n"
+  "v_reciprocal=a_geometry.z;v_depth=a_geometry.w;v_colour=a_colour;v_uv=a_uv;v_distance=a_distance;}\n"
 
 #define GML_GPU_OPENGL_DEPTH_TRIANGLE_FRAGMENT \
-  "in float v_reciprocal;in float v_depth;in vec4 v_colour;in vec2 v_uv;" \
+  "in float v_reciprocal;in float v_depth;in vec4 v_colour;in vec2 v_uv;in float v_distance;" \
   "uniform usampler2D u_depth;uniform sampler2D u_colour;uniform sampler2D u_source;" \
   "uniform ivec4 u_flags;uniform ivec4 u_policy;uniform vec2 u_flat_uv;\n" \
   "#ifdef DEPTH_WRITE\nlayout(location=0) out uint result_depth;\n" \
-  "#else\nlayout(location=0) out vec4 result_colour;\n#endif\n" \
+  "#else\nlayout(location=0) out vec4 result_colour;" \
+  "uniform vec4 u_shade,u_fog_colour;uniform vec2 u_fog_range;\n#endif\n" \
   "void main(){vec4 source=clamp(v_colour/v_reciprocal,0.0,1.0);float z=v_depth;" \
   "if(u_policy.w!=0)source*=texture(u_source,u_policy.w==2?u_flat_uv:v_uv/v_reciprocal);" \
   "if(u_flags.z!=0&&(isnan(z)||isinf(z)||z<0.0||z>1.0))discard;" \
@@ -46,6 +47,10 @@
   "if(u_flags.x==0||u_flags.y==0||source.a<=0.0)discard;result_depth=floatBitsToUint(z);\n" \
   "#else\n" \
   "if(source.a<=0.0&&u_policy.y==0)discard;" \
+  "if(u_shade.w!=0.0)source.rgb=clamp(source.rgb*u_shade.rgb,0.0,1.0);" \
+  "if(u_fog_colour.w!=0.0){float distance=(u_fog_colour.w==2.0||u_fog_colour.w==4.0)?v_distance:1.0/v_reciprocal;" \
+  "float amount=u_fog_colour.w>=3.0?(distance-u_fog_range.x)*u_fog_range.y:step(u_fog_range.y,distance);" \
+  "source.rgb=mix(source.rgb,u_fog_colour.rgb,clamp(amount,0.0,1.0));}" \
   "vec4 old_colour=texelFetch(u_colour,ivec2(gl_FragCoord.xy),0);" \
   "result_colour=u_flags.w!=0?vec4(source.rgb*source.a+old_colour.rgb*(1.0-source.a)," \
   "source.a*(u_policy.z!=0?source.a:1.0)+old_colour.a*(1.0-source.a)):source;" \

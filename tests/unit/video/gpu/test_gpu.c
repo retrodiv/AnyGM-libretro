@@ -46,6 +46,7 @@ static GmlGpuContext fake_context(GmlGpuApi api){
 static int scene_depth_triangle_transaction_case(void){
   for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++)
   for(unsigned textured=0;textured<3u;textured++)
+  for(unsigned shading=0;shading<4u;shading++)
   for(unsigned failure=0;failure<3u;failure++){
     anygm_test_graphics_reset();GmlGpuContext context=fake_context(api);
     GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
@@ -80,6 +81,11 @@ static int scene_depth_triangle_transaction_case(void){
       t->uv[0][0]=-.25;t->uv[1][0]=1.75;t->uv[2][1]=2.25;
       draw.source_count=1u;draw.sources=&sampled;
     }
+    t->shading_flags=shading==3u?15u:shading;
+    for(unsigned c=0;c<3u;c++){
+      t->shade[c]=.5f;t->fog_colour[c]=(c+1u)/4.0f;t->fog_distance[c]=c+1.0f;
+    }
+    t->fog_start=1;t->fog_scale=4;
     GmlRenderDrawBatch batch={&draw,1u,&state,1u};
     GlSceneImage *image=gml_gpu_opengl_scene_image(gpu->backend,seed.target.image);
     GLuint old_texture=image->texture,old_framebuffer=image->framebuffer;
@@ -88,6 +94,18 @@ static int scene_depth_triangle_transaction_case(void){
     REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_UNSUPPORTED &&
       !anygm_test_graphics_draw_calls(),"malformed empty clip refuses before a candidate draw");
     state.clip.x=0;
+    uint32_t original_shading=t->shading_flags;
+    t->shading_flags=16u;
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_UNSUPPORTED,
+      "unknown fragment shading policy refuses before mutation");
+    t->shading_flags=1u;t->shade[0]=NAN;
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_UNSUPPORTED,
+      "nonfinite lighting multiplier refuses before mutation");
+    t->shade[0]=.5f;t->shading_flags=2u;t->fog_distance[0]=-1;
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_UNSUPPORTED,
+      "negative fog distance refuses before mutation");
+    t->fog_distance[0]=1;t->shading_flags=original_shading;
+
     if(textured){
       draw.source_count=0;
       REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_UNSUPPORTED,

@@ -527,6 +527,9 @@ typedef struct GmlRenderDepthTriangle {
   uint32_t stamp_alpha,zero_alpha_writes,alpha_source_squared;
   double uv[3][2];
   uint32_t textured,interpolate;
+  /* Prepared fragment policy; flags: light=1, fog=2, orthographic=4, linear fog=8. */
+  float shade[3],fog_colour[3],fog_start,fog_scale,fog_distance[3];
+  uint32_t shading_flags;
 } GmlRenderDepthTriangle;
 
 typedef struct GmlRenderDrawOp {

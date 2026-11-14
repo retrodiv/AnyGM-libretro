@@ -1523,6 +1523,16 @@ int gml_gpu_opengl_depth_triangle_valid(GmlGpuBackend *backend,const GmlRenderDr
      triangle->hidden>1u || triangle->write_depth>1u || triangle->normalized>1u ||
      triangle->blend>1u || triangle->stamp_alpha>1u || triangle->zero_alpha_writes>1u ||
      triangle->alpha_source_squared>1u) return 0;
+  if(triangle->shading_flags>15u) return 0;
+  if(triangle->shading_flags&1u)for(unsigned c=0;c<3u;c++)
+    if(!isfinite(triangle->shade[c]) || triangle->shade[c]<0 || triangle->shade[c]>1e6f) return 0;
+  if(triangle->shading_flags&2u){
+    if(!isfinite(triangle->fog_start) || !isfinite(triangle->fog_scale) ||
+       fabsf(triangle->fog_start)>1e20f || fabsf(triangle->fog_scale)>1e20f) return 0;
+    for(unsigned c=0;c<3u;c++)
+      if(!isfinite(triangle->fog_colour[c]) || triangle->fog_colour[c]<0 || triangle->fog_colour[c]>1 ||
+         !isfinite(triangle->fog_distance[c]) || triangle->fog_distance[c]<0 || triangle->fog_distance[c]>1e20f) return 0;
+  }
   GmlRenderDepthPlaneRef plane={triangle->previous_colour,op->target.width,op->target.height,
                                 triangle->depth_epoch,triangle->depth_version};
   GlSceneImage *image=depth_transfer_image(backend,&plane,op->target.width*4u,
@@ -1606,7 +1616,7 @@ static int depth_triangle_candidate(GmlGpuBackend *backend,const GmlRenderDrawBa
   GlScene *scene=&backend->scene;
   GlSceneImage *image=gml_gpu_opengl_scene_image(backend,triangle->previous_colour);
   unsigned back=image->raw_depth_front^1u;
-  float vertices[30],extent[2]={(float)image->width,(float)image->height};
+  float vertices[33],extent[2]={(float)image->width,(float)image->height};
   GLint flags[4]={(GLint)triangle->hidden,(GLint)triangle->write_depth,
                   (GLint)triangle->normalized,(GLint)triangle->blend};
   GLint policy[4]={(GLint)triangle->stamp_alpha,(GLint)triangle->zero_alpha_writes,
@@ -1617,9 +1627,10 @@ static int depth_triangle_candidate(GmlGpuBackend *backend,const GmlRenderDrawBa
   float constant_uv[2]={(float)triangle->uv[0][0],(float)triangle->uv[0][1]};
   for(unsigned v=0;v<3u;v++){
     for(unsigned c=0;c<8u;c++)
-      vertices[v*10u+c]=(float)(triangle->vertex[v][c]*(c>=4u?triangle->vertex[v][2]:1.0));
+      vertices[v*11u+c]=(float)(triangle->vertex[v][c]*(c>=4u?triangle->vertex[v][2]:1.0));
     for(unsigned c=0;c<2u;c++)
-      vertices[v*10u+8u+c]=(float)(triangle->uv[v][c]*triangle->vertex[v][2]);
+      vertices[v*11u+8u+c]=(float)(triangle->uv[v][c]*triangle->vertex[v][2]);
+    vertices[v*11u+10u]=triangle->fog_distance[v];
   }
   if(!gml_gpu_opengl_depth_triangle_programs(backend,error,error_capacity)) return 0;
   backend->gl.ActiveTexture(GL_TEXTURE0);backend->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
@@ -1630,10 +1641,10 @@ static int depth_triangle_candidate(GmlGpuBackend *backend,const GmlRenderDrawBa
   backend->gl.BindVertexArray(scene->depth_triangle_array);
   backend->gl.BindBuffer(GL_ARRAY_BUFFER,scene->depth_triangle_buffer);
   backend->gl.BufferData(GL_ARRAY_BUFFER,sizeof vertices,vertices,GL_STREAM_DRAW);
-  for(unsigned attr=0;attr<3u;attr++){
+  for(unsigned attr=0;attr<4u;attr++){
     backend->gl.EnableVertexAttribArray(attr);
-    backend->gl.VertexAttribPointer(attr,attr==2u?2:4,GL_FLOAT,GL_FALSE,10*sizeof(float),
-                                     (const void*)(uintptr_t)(attr*4u*sizeof(float)));
+    backend->gl.VertexAttribPointer(attr,attr==3u?1:attr==2u?2:4,GL_FLOAT,GL_FALSE,11*sizeof(float),
+                                     (const void*)(uintptr_t)((attr==3u?10u:attr*4u)*sizeof(float)));
   }
   if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
   backend->gl.Disable(GL_BLEND);backend->gl.Disable(GL_DEPTH_TEST);backend->gl.Disable(GL_STENCIL_TEST);
@@ -1684,6 +1695,14 @@ static int depth_triangle_candidate(GmlGpuBackend *backend,const GmlRenderDrawBa
     backend->gl.Uniform1i(program->source,2);
     backend->gl.Uniform2fv(program->flat_uv,1,constant_uv);
     if(!pass){
+      float shade[4]={triangle->shade[0],triangle->shade[1],triangle->shade[2],
+        (triangle->shading_flags&1u)?1.0f:0.0f};
+      float fog[4]={triangle->fog_colour[0],triangle->fog_colour[1],triangle->fog_colour[2],
+        (triangle->shading_flags&2u)?((triangle->shading_flags&4u)?2.0f:1.0f)+
+          ((triangle->shading_flags&8u)?2.0f:0.0f):0.0f};
+      float range[2]={triangle->fog_start,triangle->fog_scale};
+      backend->gl.Uniform4fv(program->shade,1,shade);backend->gl.Uniform4fv(program->fog_colour,1,fog);
+      backend->gl.Uniform2fv(program->fog_range,1,range);
       backend->gl.Uniform1i(program->colour,1);
       backend->gl.ColorMask((state->write_mask&1u)!=0,(state->write_mask&2u)!=0,
                              (state->write_mask&4u)!=0,(state->write_mask&8u)!=0);

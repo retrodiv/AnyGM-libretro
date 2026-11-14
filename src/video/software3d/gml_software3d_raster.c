@@ -379,7 +379,7 @@ static int d3_texture_from_backend_view(const GmlRenderCpuBackendTextureView *vi
 static int d3_texture(GmlRender *R, int handle, GmlD3Texture *out){
   if(out) memset(out,0,sizeof(*out));
   GmlRenderCpuBackendTextureView view;
-  int native=GML_GRAPHICS && g_d3.active && !g_d3.lighting && !g_d3.fog &&
+  int native=GML_GRAPHICS && g_d3.active &&
     gml_render_cpu_backend_depth_texture_eligible(R,handle);
   if(!(native?gml_render_cpu_backend_texture_metadata(R,handle,0,&view):
               gml_render_cpu_backend_texture_view(R,handle,0,&view))) return 0;
@@ -408,7 +408,7 @@ static int vertex_texture(GmlRender *R,int handle,GmlD3Texture *out){
   if(out) memset(out,0,sizeof(*out));
   if(handle==-1) return 1;
   GmlRenderCpuBackendTextureView view;
-  int native=GML_GRAPHICS && g_d3.active && !g_d3.lighting && !g_d3.fog &&
+  int native=GML_GRAPHICS && g_d3.active &&
     gml_render_cpu_backend_depth_texture_eligible(R,handle);
   if(!(native?gml_render_cpu_backend_texture_metadata(R,handle,1,&view):
               gml_render_cpu_backend_texture_view(R,handle,1,&view))) return 0;
@@ -691,7 +691,7 @@ static void d3_raster_triangle_impl(GmlRender *R, const GmlD3Vertex in[3], const
 }
 static int d3_native_triangle(GmlRender *R,const GmlD3Vertex in[3],const GmlD3Texture *texture){
   if(!R || !GML_GRAPHICS || !g_d3.active || GML_GRAPHICS->view_projection_2d ||
-     g_d3.lighting || g_d3.fog || (texture && texture->kind && !texture->native) ||
+     (texture && texture->kind && !texture->native) ||
      !gml_render_cpu_backend_depth_triangle(R,NULL,NULL,
        texture && texture->kind?texture->handle:-1,texture?texture->full_atlas:0,NULL)) return 0;
   GmlRenderCpuBackendDrawView draw;GmlD3Projection projected;
@@ -704,6 +704,28 @@ static int d3_native_triangle(GmlRender *R,const GmlD3Vertex in[3],const GmlD3Te
   GmlRenderDepthTriangle triangle={.depth_epoch=target->epoch,.depth_version=target->version,
     .hidden=g_d3.hidden!=0,.write_depth=g_d3.zwrite!=0,.normalized=target->normalized!=0,
     .textured=texture && texture->kind,.interpolate=draw.interpolate!=0};
+  triangle.shading_flags=(g_d3.lighting?1u:0u)|(g_d3.fog?2u:0u)|(g_d3.ortho?4u:0u);
+  if(g_d3.lighting){
+    double shade[3]={g_d3.shade_r,g_d3.shade_g,g_d3.shade_b};
+    for(unsigned c=0;c<3u;c++){
+      if(!isfinite(shade[c]) || shade[c]<0 || shade[c]>1e6) return 0;
+      triangle.shade[c]=(float)shade[c];
+    }
+  }
+  if(g_d3.fog){
+    if(!isfinite(g_d3.fog_start) || !isfinite(g_d3.fog_end) ||
+       fabs(g_d3.fog_start)>1e20 || fabs(g_d3.fog_end)>1e20) return 0;
+    triangle.fog_start=(float)g_d3.fog_start;
+    double span=g_d3.fog_end-g_d3.fog_start;
+    if(span>1e-9){triangle.shading_flags|=8u;triangle.fog_scale=(float)(1.0/span);}
+    else triangle.fog_scale=(float)g_d3.fog_end;
+    for(unsigned c=0;c<3u;c++)triangle.fog_colour[c]=((g_d3.fog_color>>(8u*c))&255u)/255.0f;
+    for(unsigned i=0;i<3u;i++){
+      if(!isfinite(projected.view_distance[i]) || projected.view_distance[i]<0 ||
+         projected.view_distance[i]>1e20) return 0;
+      triangle.fog_distance[i]=(float)projected.view_distance[i];
+    }
+  }
   for(unsigned i=0;i<3u;i++){
     triangle.vertex[i][0]=projected.sx[i];triangle.vertex[i][1]=projected.sy[i];
     triangle.vertex[i][2]=projected.iz[i];triangle.vertex[i][3]=projected.depth_value[i];
