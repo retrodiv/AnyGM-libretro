@@ -55,6 +55,7 @@ int main(int argc,char **argv){
     {"rounded_geometry",rounded_geometry_fixture},
     {"rounded_colour",rounded_colour_fixture},
     {"selected_view_projection",selected_view_projection_fixture},
+    {"selected_view_default_3d",selected_view_default_3d_fixture},
     {"software3d_operations",software3d_operation_boundary_fixture},
     {"dispatch_accounting",software3d_dispatch_fixture},
     {"depth_clear",depth_clear_fixture},

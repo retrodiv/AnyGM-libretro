@@ -428,6 +428,66 @@ int selected_view_projection_fixture(void){
   return ok;
 }
 
+static void selected_default_3d_sample(GmlRender *render,double x,double y,
+                                       double width,double height){
+  gml_software3d_primitive_2d_begin(render->software3d,4,-1);
+  gml_software3d_primitive_2d_append(render->software3d,
+    x+width*.60,y+height*.58,0,0,0xFFFFFFu,1);
+  gml_software3d_primitive_2d_append(render->software3d,
+    x+width*.82,y+height*.58,0,0,0xFFFFFFu,1);
+  gml_software3d_primitive_2d_append(render->software3d,
+    x+width*.71,y+height*.83,0,0,0xFFFFFFu,1);
+  gml_software3d_primitive_2d_end(render);
+}
+
+int selected_view_default_3d_fixture(void){
+  GmlRender render={0};GmlVM vm={0};
+  uint32_t pixels[80*64],expected[80*64];int passed=0,failed=0;
+  render.color=0xFFFFFFu;render.alpha=1;render.alphablend=1;
+  render.color_write_mask=15;render.blend_equation=render.blend_equation_alpha=1;
+  render.next_surface_id=1;vm.render=&render;gml_vm_software3d_reset(&vm);
+  const double turns[4]={0,90,-90,27};
+  for(int extent=0;extent<2;extent++) for(int surface=0;surface<2;surface++)
+  for(int timing=0;timing<2;timing++) for(int turn=0;turn<4;turn++){
+    int width=extent?80:64,height=extent?48:64,matched=1;
+    double x=13,y=-7;
+    for(int subject=0;subject<2;subject++){
+      gml_vm_software3d_reset(&vm);memset(pixels,0,sizeof pixels);
+      gml_render_begin(&render,pixels,width,height,x,y);
+      int target=surface?gml_surface_create(&render,width,height):-1;
+      if(surface && (target<=0 || !gml_render_view_surface_begin(&render,target,x,y))){
+        matched=0;break;
+      }
+      if(!subject)
+        gml_software3d_begin(&render,x,y,width,height,turns[turn]);
+      else{
+        if(!timing) call_numbers(&vm,"d3d_start",NULL,0);
+        gml_render_world_set_view_rotation(&render,turns[turn],width,height);
+        if(timing) call_numbers(&vm,"d3d_start",NULL,0);
+      }
+      call_numbers(&vm,"d3d_set_hidden",software3d_disable,1);
+      selected_default_3d_sample(&render,x,y,width,height);
+      size_t bytes=(size_t)width*(size_t)height*sizeof *pixels;
+      if(!subject){
+        memcpy(expected,render.fb,bytes);int ink=0;
+        for(int pixel=0;pixel<width*height;pixel++) ink+=expected[pixel]!=0;
+        if(!ink) matched=0;
+      }else if(memcmp(expected,render.fb,bytes)) matched=0;
+      call_numbers(&vm,"d3d_end",NULL,0);
+      if(surface){gml_surface_reset_target(&render);gml_surface_free(&render,target);}
+    }
+    if(matched) passed++;
+    else{
+      failed++;
+      fprintf(stderr,"selected default D3 view extent=%d surface=%d timing=%d angle=%g\n",
+              extent,surface,timing,turns[turn]);
+    }
+  }
+  printf("selected default D3 views: passed=%d failed=%d\n",passed,failed);
+  gml_render_free(&render);vm.render=NULL;gml_vm_free(&vm);
+  return !failed && passed==32;
+}
+
 
 int software3d_case_particles(Software3dRasterFixture *fixture){
   memset(fixture->pixels,0,sizeof(fixture->pixels));
