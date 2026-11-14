@@ -782,14 +782,14 @@ the current buffer requirement and writes into a caller-owned buffer.
 
 The libretro adapter advertises the variable-size serialization quirk and records whether the
 frontend acknowledges it. Requesting the quirk is not sufficient: a declined or unsupported
-request has the baseline fixed-size contract. Its first answer covers the remembered frame-free
-peak and mutable render allocations already known at load. When the conservative completed-frame
-ceiling is modest it is covered too. When that ceiling would dominate every rewind slot, the first
-answer instead selects one compact capacity that remains fixed for the loaded session. Later
-queries return it without traversing the runtime state again. Every save at that declared capacity
-first attempts the complete encoded picture and falls back to the explicit frame-free form only
-when the picture does not fit. The representation cannot depend on whether the caller is a rewind
-push or a manual save because the libretro ABI does not identify those consumers.
+request has the baseline fixed-size contract. The first answer is one MiB by default. Content
+with a measured larger requirement declares `statereserve|bytes` in its own `.anygm` anchor;
+the enabled declaration raises that initial allocation. Raster ceilings, remembered peaks and
+constructor mentions do not independently reserve a larger fixed ring. Later fixed-size queries
+return that same answer without traversing the runtime state again. Every save first attempts
+the complete encoded picture and falls back to the explicit frame-free form only when the
+picture does not fit. The representation cannot depend on whether the caller is a rewind push
+or a manual save because the libretro ABI does not identify those consumers.
 
 The root writer may stop counting completed-picture runs when both the raw encoding and the
 already-proven row-RLE lower bound exceed the offered buffer's remaining capacity. It then uses
@@ -803,39 +803,21 @@ semantics. `tests/integration/test_graphics_state.c::completed_frame_capacity_ca
 row-RLE and adjacent-row repetition at exact, near-fit, compact and failed capacities against
 the ordinary complete and explicit resume bytes, with canaries and unchanged live-state checks.
 
-A frontend that explicitly acknowledges variable sizes uses the same compact pre-frame policy.
-A one-MiB ring is also sufficient when the complete-frame ceiling plus twice the known required
-state fits within it. This keeps the bounded raw-picture cost separate from the simulation growth
-allowance instead of doubling both and then applying the ordinary four-MiB floor. A missing frame
-ceiling, a larger remembered required peak, or a larger mutable render allocation does not qualify.
-Content that references surface creation/resizing, dynamic source execution or payload replacement
-retains the ordinary
-reserve even if no surface exists at load. Those references make the cold allocation count an
-incomplete estimate of later render storage. The complete-first writer retains the exact encoded
-picture whenever it fits; later geometry
-growth may use the frame-free form in the same slot. This is an advisory reserve, not a proof that
-arbitrary future language allocations are bounded by the cold state.
+A frontend that explicitly acknowledges variable sizes starts from the same content budget.
+Subsequent queries may grow monotonically through the established complete-state headroom
+calculation. Newly sized saves retain the completed picture while earlier compact slots remain
+loadable. The acknowledgement is required before any such advertised growth.
 
-Otherwise the compact path begins when omitting the conservative completed-frame ceiling saves at
-least the ordinary four-MiB session reserve. Moderate pictures remain in the ordinary capacity,
-retaining its larger allowance for required simulation state that grows after a cold load. A compact
-startup capacity is one MiB or larger and covers the predicted required state. Later ordinary size
-queries grow monotonically to the conservative complete-state capacity,
-so newly sized saves retain the exact completed picture while older compact ring slots remain
-loadable.
-
-An ordinary complete-capacity session reserves at least 4 MiB because a cold load can precede the
-runtime graph it will later save. A compact startup ring retains its one-MiB minimum. Current
-encoded state, remembered peaks and known mutable render allocations raise these allocations
-through the existing headroom calculation. A reference to a container constructor does not by
-itself select a larger reserve. Content with measured deferred growth may declare
-`statereserve|bytes` in its content-local `.anygm` anchor, discovered beside the payload. Enabled declarations
-contribute their maximum as a minimum allocation; they cannot reduce ordinary sizing or resize
-an existing fixed ring. The declaration follows content-override disabling but is excluded from
-simulation identity; changing only that minimum keeps existing states loadable. It adds no
-state-format fields and does not bound arbitrary future allocations. If a loaded session rejects
-a snapshot, the adapter logs it and sends one frontend notification for that session; it never
-reports a successful push or grows a fixed frontend's size answer to hide the rejection.
+Completed-frame eligibility remains separate from allocation. Small complete images stay exact
+inside the compact ring whenever their actual encoding fits. A larger live geometry can use the
+frame-free form within that same fixed slot. A measured required-state or complete-frame growth
+beyond the default belongs in the content-local declaration, not in `AnyGM.ini`. Declarations are
+discovered beside the payload and contribute their maximum before the frontend allocates its
+ring. They follow content-override disabling and are excluded from simulation identity; changing
+only that budget keeps existing states loadable. They add no state-format fields and cannot
+resize an existing fixed ring or bound arbitrary future allocations. Rejected snapshots are
+logged and cause one frontend notification per session; rejection is never reported as a
+successful push or hidden by growing a fixed frontend's answer.
 
 `make contract-check` exercises acknowledged growth, fixed declined and unsupported frontends,
 compact startup rings, exact-when-fitting and frame-free fallback representations, Reset under all

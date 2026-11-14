@@ -117,17 +117,13 @@ static void negotiate_serialization(void){
       (quirks&RETRO_SERIALIZATION_QUIRK_FRONT_VARIABLE_SIZE)!=0;
 }
 
-static size_t fixed_state_capacity(size_t actual,bool compact_startup,size_t reserve){
+static size_t fixed_state_capacity(size_t actual,bool allow_growth,size_t reserve){
   const size_t margin=512u*1024u;
-  /* Before the first frame, a cold ordinary raster can still understate the render and run-time
-   * tables that gameplay will populate. Fixed frontends cannot enlarge the ring they allocate
-   * from this answer, so keep the established 4 MiB session reserve even when the cold state is
-   * small. A deliberately compact large-frame ring starts at one MiB, then its frame-free hint
-   * and any known mutable render allocations raise it only as required. */
-  size_t floor=compact_startup?1u*1024u*1024u:4u*1024u*1024u;
-  /* A measured content requirement may raise this floor. Merely referencing a container
-   * constructor says nothing about the live graph's eventual size. */
+  /* Fixed frontends allocate once. Content with a measured larger requirement declares that
+   * budget before the first query; raster ceilings and constructor mentions do not reserve it. */
+  size_t floor=1u*1024u*1024u;
   if(reserve>floor) floor=reserve;
+  if(!allow_growth) return floor;
   if(actual>(SIZE_MAX-margin)/2u) return SIZE_MAX;
   size_t capacity=actual*2u+margin;
   return capacity<floor?floor:capacity;
@@ -860,16 +856,14 @@ size_t retro_serialize_size(void){
   size_t resume_hint=anygm_state_resume_capacity_hint(g_libretro.engine);
   if(resume_hint>actual) actual=resume_hint;
   bool compact_startup=false;
+  size_t complete_hint=0;
   uint32_t capacity_flags=anygm_state_capacity_flags(g_libretro.engine);
-  /* Preserve completed-frame rewind while its worst-case storage is modest. Once the optional
-   * picture adds at least the ordinary four-MiB session reserve, copying its pessimistic ceiling
-   * into every fixed rewind slot dominates the high-frequency transport. A smaller picture stays
-   * in that ordinary reserve so a fixed frontend preserves exact visible rewind and still covers
-   * language-level growth that a cold state cannot predict. */
+  /* Retain completed-frame representation eligibility separately from allocation. The content
+   * budget controls the fixed slot; a pessimistic picture ceiling may select compact transport. */
   if(!g_libretro.frame_completed){
     const size_t minimum_saving=4u*1024u*1024u;
     const size_t small_complete_capacity=1u*1024u*1024u;
-    size_t complete_hint=anygm_state_capacity_hint(g_libretro.engine);
+    complete_hint=anygm_state_capacity_hint(g_libretro.engine);
     compact_startup=complete_hint>actual && complete_hint-actual>=minimum_saving;
     /* The optional picture is already a raw-pixel ceiling, not a cold simulation estimate. If
      * that ceiling plus the known required state fits the small ring, reserving four MiB
@@ -896,7 +890,8 @@ size_t retro_serialize_size(void){
      (g_libretro.variable_state_supported && actual>g_libretro.fixed_state_capacity)){
     size_t previous=g_libretro.fixed_state_capacity;
     g_libretro.fixed_state_capacity=fixed_state_capacity(
-      actual,compact_startup,anygm_state_capacity_reserve(g_libretro.engine));
+      actual,g_libretro.variable_state_supported && previous!=0,
+      anygm_state_capacity_reserve(g_libretro.engine));
     /* Acknowledged growth is unusual enough to report once without flooding repeated queries. */
     if(previous && !g_libretro.state_capacity_growth_reported){
       g_libretro.state_capacity_growth_reported=true;
@@ -909,7 +904,9 @@ size_t retro_serialize_size(void){
   }
   if(!g_libretro.frame_completed){
     g_libretro.startup_resume_capacity=g_libretro.fixed_state_capacity;
-    g_libretro.startup_ring_compact=compact_startup;
+    g_libretro.startup_ring_compact=compact_startup ||
+      g_libretro.fixed_state_capacity==1u*1024u*1024u ||
+      (complete_hint && g_libretro.fixed_state_capacity<complete_hint);
   }
   state_profile_report(&timing,"size",0,g_libretro.fixed_state_capacity,
                        g_libretro.fixed_state_capacity!=0);

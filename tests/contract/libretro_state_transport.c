@@ -275,11 +275,11 @@ static int measured_growth_keeps_a_larger_fixed_reserve(int negotiation_result,i
   return ok;
 }
 
-static int container_mentions_keep_default_capacity(int negotiation_result,int compact){
+static int container_mentions_keep_declared_capacity(int negotiation_result,int compact){
   stub_state_bytes=64u*1024u;
   if(!begin_frontend(negotiation_result)) return 0;
   stub_capacity_flags=ANYGM_STATE_CAPACITY_DYNAMIC_CONTAINERS;
-  stub_capacity_reserve=1;
+  stub_capacity_reserve=(compact?1024u:4608u)*1024u;
   stub_hint_bytes=(compact?16u:2u)*1024u*1024u;
   size_t expected=(compact?1024u:4608u)*1024u;
   int ok=retro_serialize_size()==expected;
@@ -310,6 +310,7 @@ static int rejected_snapshot_is_reported_once(int negotiation_result){
 static int stable_transport(int negotiation_result){
   stub_state_bytes=113u;
   if(!begin_frontend(negotiation_result)) return 0;
+  stub_capacity_reserve=4u*1024u*1024u;
   const size_t expected_capacity=4u*1024u*1024u;
   if(retro_serialize_size()!=expected_capacity ||
      retro_serialize_size()!=expected_capacity) return 0;
@@ -330,12 +331,12 @@ static int stable_transport(int negotiation_result){
   return ok;
 }
 
-/* Content can populate render and language-level tables after a cold load has supplied the first
- * size answer. A fixed frontend cannot enlarge that allocation, so an ordinary startup reserves
- * enough room for the expected transition while still returning the exact same answer. */
+/* Content can populate render and language-level tables after the first size answer. Its declared
+ * budget must cover that measured transition without enlarging a fixed frontend's allocation. */
 static int fixed_ordinary_ring_covers_expected_runtime_growth(int negotiation_result){
   stub_state_bytes=113u;
   if(!begin_frontend(negotiation_result)) return 0;
+  stub_capacity_reserve=4u*1024u*1024u;
   const size_t capacity=retro_serialize_size();
   if(capacity!=4u*1024u*1024u) return 0;
   stub_state_bytes=3u*1024u*1024u;
@@ -376,12 +377,12 @@ static int growth_follows_frontend_acknowledgement(int negotiation_result){
   return ok;
 }
 
-/* A remembered compact peak from an earlier session raises the first answer of a fresh load, so a
- * frontend that sizes a rewind ring once covers every required section without also reserving the
- * optional monitor-sized frame. */
-static int remembered_peak_covers_first_answer(void){
+/* Content declares a budget covering its recorded required peak before the first fixed allocation,
+ * without also charging the optional monitor-sized picture to every slot. */
+static int declared_budget_covers_recorded_peak_from_first_answer(void){
   stub_state_bytes=113u;
   if(!begin_frontend(0)) return 0;
+  stub_capacity_reserve=8u*1024u*1024u;
   stub_resume_hint_bytes=6u*1024u*1024u;
   const size_t capacity=retro_serialize_size();
   int ok=capacity>=stub_resume_hint_bytes;
@@ -420,12 +421,12 @@ static int fixed_compact_ring_survives_frontend_size_checks(void){
   return ok;
 }
 
-/* Required render allocations can be known at load even while their current serialized form is
- * tiny. The engine exposes that future frame-free cost through its hint; a compact fixed ring must
- * reserve it rather than applying the one-MiB floor as a cap. */
+/* A content budget covers known required render growth even when the cold serialized form is
+ * tiny. The resulting compact ring still preserves every required section after that growth. */
 static int compact_ring_covers_known_required_growth(void){
   stub_state_bytes=32u*1024u;
   if(!begin_frontend(0)) return 0;
+  stub_capacity_reserve=2u*1024u*1024u;
   stub_resume_hint_bytes=1280u*1024u;
   stub_hint_bytes=8u*1024u*1024u;
   size_t ring_capacity=retro_serialize_size();
@@ -450,12 +451,13 @@ static int compact_ring_covers_known_required_growth(void){
   return ok;
 }
 
-/* A moderate lossless picture fits below the ordinary session reserve. Keep the complete form and
- * its four-MiB cold-to-gameplay headroom: a fixed frontend cannot distinguish manual saves from
+/* A moderate lossless picture fits below the declared four-MiB budget. Keep the complete form
+ * through cold-to-gameplay growth: a fixed frontend cannot distinguish manual saves from
  * rewind pushes, and presenting a frame-free restored slot would make visible rewind inexact. */
 static int moderate_frame_keeps_complete_growth_headroom(void){
   stub_state_bytes=75u*1024u;
   if(!begin_frontend(0)) return 0;
+  stub_capacity_reserve=4u*1024u*1024u;
   stub_resume_hint_bytes=75u*1024u;
   stub_hint_bytes=1600u*1024u;
   const size_t ring_capacity=retro_serialize_size();
@@ -598,11 +600,12 @@ static int small_complete_ring_counts_required_bytes_once(int negotiation_result
   return ok;
 }
 
-/* A small cold frame is not a small session when authored calls create surfaces later. Keep the
- * ordinary reserve before any surface exists; a fixed frontend cannot grow its ring afterwards. */
-static int deferred_surfaces_keep_the_ordinary_reserve(int negotiation_result){
+/* Content with measured later surface growth declares its budget before those surfaces exist;
+ * a fixed frontend cannot grow its ring afterwards. */
+static int deferred_surfaces_keep_the_declared_reserve(int negotiation_result){
   stub_state_bytes=64u*1024u;
   if(!begin_frontend(negotiation_result)) return 0;
+  stub_capacity_reserve=4u*1024u*1024u;
   stub_resume_state_bytes=stub_state_bytes;
   stub_resume_hint_bytes=0;
   stub_hint_bytes=320u*1024u;
@@ -623,12 +626,12 @@ static int deferred_surfaces_keep_the_ordinary_reserve(int negotiation_result){
   return ok;
 }
 
-/* A two-MiB authored picture remains below the ordinary four-MiB reserve. The former 768-KiB
- * cutoff made this compact and let later simulation growth exceed its one-MiB fixed slot; retain
- * the complete form so both the picture and the growing required state remain serializable. */
-static int authored_raster_below_session_reserve_keeps_complete_form(void){
+/* The declared budget covers this two-MiB picture and later required growth. Retain the complete
+ * form so both the picture and the growing simulation remain serializable. */
+static int authored_raster_with_declared_reserve_keeps_complete_form(void){
   stub_state_bytes=768u*1024u;
   if(!begin_frontend(0)) return 0;
+  stub_capacity_reserve=4608u*1024u;
   stub_resume_state_bytes=96u*1024u;
   stub_resume_hint_bytes=128u*1024u;
   stub_hint_bytes=2u*1024u*1024u;
@@ -730,6 +733,55 @@ static int frame_failure_acknowledges_only_consumed_text(void){
   retro_unload_game(); retro_deinit(); return ok;
 }
 
+/* Allocation belongs to the content declaration, not to a cold raster ceiling or the mere
+ * presence of constructors. Exercise the same default under all three frontend negotiations. */
+static int compact_default_requires_an_explicit_larger_budget(int negotiation_result){
+  stub_state_bytes=64u*1024u;
+  if(!begin_frontend(negotiation_result)) return 0;
+  stub_hint_bytes=2u*1024u*1024u;
+  stub_capacity_flags=ANYGM_STATE_CAPACITY_DYNAMIC_CONTAINERS |
+                      ANYGM_STATE_CAPACITY_DYNAMIC_SURFACES;
+  const size_t capacity=retro_serialize_size();
+  if(capacity!=1024u*1024u){
+    fprintf(stderr,"undeclared content reserve grew to %zu bytes\n",capacity);
+    return 0;
+  }
+  /* The completed frame resolves to the small representation; acknowledged variable sizing
+   * remains free to grow when a later real representation actually requires it. */
+  stub_hint_bytes=stub_state_bytes;
+  retro_run();
+  uint8_t *state=malloc(capacity);
+  if(!state) return 0;
+  int ok=retro_serialize_size()==capacity && retro_serialize(state,capacity) &&
+         complete_saves==1u && resume_saves==0u && retro_unserialize(state,capacity);
+  free(state);
+  retro_unload_game();retro_deinit();
+  return ok;
+}
+
+/* A measured larger requirement is declared before the first query. The frontend allocates that
+ * capacity before any frame and the exact same slot accepts the later complete representation. */
+static int explicit_budget_sizes_the_cold_fixed_ring(int negotiation_result){
+  stub_state_bytes=64u*1024u;
+  if(!begin_frontend(negotiation_result)) return 0;
+  stub_capacity_reserve=2u*1024u*1024u;
+  stub_hint_bytes=2u*1024u*1024u;
+  const size_t capacity=retro_serialize_size();
+  if(capacity!=2u*1024u*1024u){
+    fprintf(stderr,"declared content reserve returned %zu bytes\n",capacity);
+    return 0;
+  }
+  retro_run();
+  stub_state_bytes=1400u*1024u;
+  uint8_t *state=malloc(capacity);
+  if(!state) return 0;
+  int ok=retro_serialize_size()==capacity && retro_serialize(state,capacity) &&
+         complete_saves==1u && resume_saves==0u && retro_unserialize(state,capacity);
+  free(state);
+  retro_unload_game();retro_deinit();
+  return ok;
+}
+
 int main(void){
   uint8_t byte=0;
   memset(&g_libretro,0,sizeof g_libretro);
@@ -743,12 +795,12 @@ int main(void){
      !measured_growth_keeps_a_larger_fixed_reserve(1,1) ||
      !measured_growth_keeps_a_larger_fixed_reserve(0,1) ||
      !measured_growth_keeps_a_larger_fixed_reserve(-1,1) ||
-     !container_mentions_keep_default_capacity(1,0) ||
-     !container_mentions_keep_default_capacity(0,0) ||
-     !container_mentions_keep_default_capacity(-1,0) ||
-     !container_mentions_keep_default_capacity(1,1) ||
-     !container_mentions_keep_default_capacity(0,1) ||
-     !container_mentions_keep_default_capacity(-1,1) ||
+     !container_mentions_keep_declared_capacity(1,0) ||
+     !container_mentions_keep_declared_capacity(0,0) ||
+     !container_mentions_keep_declared_capacity(-1,0) ||
+     !container_mentions_keep_declared_capacity(1,1) ||
+     !container_mentions_keep_declared_capacity(0,1) ||
+     !container_mentions_keep_declared_capacity(-1,1) ||
      !rejected_snapshot_is_reported_once(0) ||
      !rejected_snapshot_is_reported_once(-1) ||
      !growth_follows_frontend_acknowledgement(1) ||
@@ -756,7 +808,7 @@ int main(void){
      !growth_follows_frontend_acknowledgement(-1) ||
      !fixed_frontend_reuses_the_measured_capacity(0) ||
      !fixed_frontend_reuses_the_measured_capacity(-1) ||
-     !remembered_peak_covers_first_answer() ||
+     !declared_budget_covers_recorded_peak_from_first_answer() ||
      !fixed_compact_ring_survives_frontend_size_checks() ||
      !compact_ring_covers_known_required_growth() ||
      !moderate_frame_keeps_complete_growth_headroom() ||
@@ -768,14 +820,20 @@ int main(void){
      !small_complete_ring_counts_required_bytes_once(1) ||
      !small_complete_ring_counts_required_bytes_once(0) ||
      !small_complete_ring_counts_required_bytes_once(-1) ||
-     !deferred_surfaces_keep_the_ordinary_reserve(0) ||
-     !deferred_surfaces_keep_the_ordinary_reserve(-1) ||
-     !authored_raster_below_session_reserve_keeps_complete_form() ||
+     !deferred_surfaces_keep_the_declared_reserve(0) ||
+     !deferred_surfaces_keep_the_declared_reserve(-1) ||
+     !authored_raster_with_declared_reserve_keeps_complete_form() ||
      !restart_rejects_only_an_immediate_old_ring_state(1) ||
      !restart_rejects_only_an_immediate_old_ring_state(0) ||
      !restart_rejects_only_an_immediate_old_ring_state(-1) ||
      !restart_rereads_settings() || !starting_declares_the_settings() ||
-     !frame_failure_acknowledges_only_consumed_text()){
+     !frame_failure_acknowledges_only_consumed_text() ||
+     !compact_default_requires_an_explicit_larger_budget(1) ||
+     !compact_default_requires_an_explicit_larger_budget(0) ||
+     !compact_default_requires_an_explicit_larger_budget(-1) ||
+     !explicit_budget_sizes_the_cold_fixed_ring(1) ||
+     !explicit_budget_sizes_the_cold_fixed_ring(0) ||
+     !explicit_budget_sizes_the_cold_fixed_ring(-1)){
     fprintf(stderr,"libretro state transport contract failed\n");
     return 1;
   }
