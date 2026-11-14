@@ -127,6 +127,9 @@ int gml_render_cpu_backend_prepare_draw_view(GmlRender *render,
 void gml_render_cpu_backend_sync_camera(GmlRender *render,double translation_x,
                                     double translation_y);
 void gml_render_cpu_backend_draw_map_point(const GmlRender *render,double *x,double *y);
+/* Selected-view metadata and coordinates only: no drawing or callbacks. */
+int gml_render_cpu_backend_view_rotation_active(const GmlRender *render);
+void gml_render_cpu_backend_view_rotate_point(const GmlRender *render,double *x,double *y);
 int gml_render_cpu_backend_surface_stretched(GmlRender *render,int surface,
                                          double x,double y,double width,double height,
                                          uint32_t blend,double alpha);

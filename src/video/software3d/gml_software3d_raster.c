@@ -34,10 +34,10 @@ static GmlSoftware3D *graphics_state_for_render(GmlRender *render){
 
 static void d3_project_selected_view(GmlRender *R,double *x,double *y,double phase){
   GmlSoftware3D *graphics=graphics_state_for_render(R);
-  if(!graphics || !graphics->view_projection_2d || !gml_render_view_rotation_active(R)) return;
+  if(!graphics || !graphics->view_projection_2d || !gml_render_cpu_backend_view_rotation_active(R)) return;
   /* Transform the geometry before the retained device pixel-anchor phase. */
   *x-=phase;*y-=phase;
-  gml_render_view_rotate_point(R,x,y);
+  gml_render_cpu_backend_view_rotate_point(R,x,y);
   *x+=phase;*y+=phase;
 }
 
@@ -1368,13 +1368,13 @@ static int vertex_batch_outside_scene(GmlRender *R,const GmlD3Vertex *vertex,
   /* Both classic triangle and point/line anchors lie in [0,.5]. Two pixels
    * also cover their floor/ceil/round envelope; bound arithmetic conservatively. */
   unsigned outside=15;
-  int view=gml_render_view_rotation_active(R);
+  int view=gml_render_cpu_backend_view_rotation_active(R);
   for(int i=0;i<count;i++){
     double x=vertex[i].x,y=vertex[i].y,z=vertex[i].z;
     if(!isfinite(x) || !isfinite(y) || !isfinite(z)) return 0;
     d3_transform_point(R,&x,&y,&z);
     x=(x-ox)*draw.width/ow; y=(y-oy)*draw.height/oh;
-    if(view) gml_render_view_rotate_point(R,&x,&y);
+    if(view) gml_render_cpu_backend_view_rotate_point(R,&x,&y);
     if(!isfinite(x) || !isfinite(y) || !isfinite(z) || fabs(x)>0x1p30 || fabs(y)>0x1p30)
       return 0;
     unsigned planes=(x<-2?1u:0u)|(x>draw.width+2?2u:0u)|
@@ -1776,7 +1776,7 @@ static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
     .classic_filter=textured && draw.interpolate && g_d3.classic,
     .capacity=textured?65536u:8192u};
   int result=0,opaque=1,rgb_gradient=0;double minimum_alpha=1.0,maximum_alpha=0.0;
-  int view=gml_render_view_rotation_active(R);
+  int view=gml_render_cpu_backend_view_rotation_active(R);
   if(!projected) goto vertex_scene_done;
   for(int i=0;i<count;i++){
     const GmlD3Vertex *v=&vertex[i];
@@ -1795,7 +1795,7 @@ static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
     d3_transform_point(R,&projected[i].x,&projected[i].y,&projected[i].z);
     projected[i].x=(projected[i].x-ox)*draw.width/ow;
     projected[i].y=(projected[i].y-oy)*draw.height/oh;
-    if(view) gml_render_view_rotate_point(R,&projected[i].x,&projected[i].y);
+    if(view) gml_render_cpu_backend_view_rotate_point(R,&projected[i].x,&projected[i].y);
     if(!isfinite(projected[i].x) || !isfinite(projected[i].y) || !isfinite(projected[i].z) ||
        fabs(projected[i].x)>32766 || fabs(projected[i].y)>32766) goto vertex_scene_done;
     if(v->alpha<1.0) opaque=0;

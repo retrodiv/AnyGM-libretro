@@ -222,3 +222,11 @@ void gml_render_cpu_backend_sync_camera(GmlRender *r,double translation_x,double
 void gml_render_cpu_backend_draw_map_point(const GmlRender *r,double *x,double *y){
   gml_render_draw_map_point(r,x,y);
 }
+
+int gml_render_cpu_backend_view_rotation_active(const GmlRender *r){
+  return gml_render_view_rotation_active(r);
+}
+
+void gml_render_cpu_backend_view_rotate_point(const GmlRender *r,double *x,double *y){
+  gml_render_view_rotate_point(r,x,y);
+}
