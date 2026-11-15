@@ -554,7 +554,7 @@ typedef enum GmlRenderSceneFamily {
   GML_RENDER_SCENE_FAMILY_COUNT=8
 } GmlRenderSceneFamily;
 
-/* A complete projected native triangle. Camera, clipping and culling are shared
+/* A complete projected native primitive. Camera, clipping and culling are shared
  * preparation; device rasterization owns coverage. Each vertex is x,y,
  * reciprocal distance, affine raw depth, and straight normalized RGBA. Optional
  * UVs are weighted by that same reciprocal distance for device interpolation. */
@@ -566,19 +566,24 @@ typedef enum GmlRenderDepthBlend {
   GML_RENDER_DEPTH_BLEND_OPAQUE_ALPHA_INPUT=4
 } GmlRenderDepthBlend;
 
-typedef struct GmlRenderDepthTriangle {
+typedef enum GmlRenderDepthTopology {
+  GML_RENDER_DEPTH_TOPOLOGY_TRIANGLE=0,
+  GML_RENDER_DEPTH_TOPOLOGY_POINT=1
+} GmlRenderDepthTopology;
+
+typedef struct GmlRenderDepthPrimitive {
   GmlRenderImageRef previous_colour;
   uint64_t depth_epoch,depth_version,next_depth_version;
   double vertex[3][8];
   /* One captured device policy; no source selector or serialized state is replaced. */
-  uint32_t hidden,write_depth,normalized,blend;
+  uint32_t hidden,write_depth,normalized,blend,topology;
   uint32_t stamp_alpha,zero_alpha_writes,alpha_source_squared;
   double uv[3][2];
   uint32_t textured,interpolate;
   /* Prepared fragment policy; flags: light=1, fog=2, orthographic=4, linear fog=8. */
   float shade[3],fog_colour[3],fog_start,fog_scale,fog_distance[3];
   uint32_t shading_flags;
-} GmlRenderDepthTriangle;
+} GmlRenderDepthPrimitive;
 
 typedef struct GmlRenderDrawOp {
   uint64_t sequence;
@@ -595,7 +600,7 @@ typedef struct GmlRenderDrawOp {
     GmlRenderCopyRegion copy;
     GmlRenderPrimitiveRect primitive;
     GmlRenderLayerEffect effect;
-    GmlRenderDepthTriangle depth_triangle;
+    GmlRenderDepthPrimitive depth_primitive;
     /* Lent through this submission. Shader output is non-reconstructible and must checkpoint. */
     const struct GmlPlanShader *shader;
   } payload;

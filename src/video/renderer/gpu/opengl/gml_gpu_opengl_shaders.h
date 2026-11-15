@@ -27,7 +27,7 @@
   "layout(location=0) in vec4 a_geometry;layout(location=1) in vec4 a_colour;" \
   "layout(location=2) in vec2 a_uv;layout(location=3) in float a_distance;\n" \
   "uniform vec2 u_extent;out float v_reciprocal;out float v_depth;out vec4 v_colour;out vec2 v_uv;out float v_distance;\n" \
-  "void main(){gl_Position=vec4(a_geometry.x*2.0/u_extent.x-1.0," \
+  "void main(){gl_PointSize=1.0;gl_Position=vec4(a_geometry.x*2.0/u_extent.x-1.0," \
   "1.0-a_geometry.y*2.0/u_extent.y,0.0,1.0);" \
   "v_reciprocal=a_geometry.z;v_depth=a_geometry.w;v_colour=a_colour;v_uv=a_uv;v_distance=a_distance;}\n"
 
@@ -39,6 +39,7 @@
   "#else\nlayout(location=0) out vec4 result_colour;" \
   "uniform vec4 u_shade,u_fog_colour;uniform vec2 u_fog_range;\n#endif\n" \
   "void main(){vec4 source=clamp(v_colour/v_reciprocal,0.0,1.0);float z=v_depth;" \
+  "if((u_policy.x&2)!=0&&source.a<=0.0)discard;" \
   "if(u_policy.w!=0)source*=texture(u_source,u_policy.w==2?u_flat_uv:v_uv/v_reciprocal);" \
   "if(u_flags.z!=0&&(isnan(z)||isinf(z)||z<0.0||z>1.0))discard;" \
   "float old=uintBitsToFloat(texelFetch(u_depth,ivec2(gl_FragCoord.xy),0).r);" \
@@ -54,7 +55,7 @@
   "vec4 old_colour=texelFetch(u_colour,ivec2(gl_FragCoord.xy),0);" \
   "result_colour=u_flags.w==1?vec4(source.rgb*source.a+old_colour.rgb*(1.0-source.a)," \
   "source.a*(u_policy.z!=0?source.a:1.0)+old_colour.a*(1.0-source.a)):source;" \
-  "if(u_policy.x!=0)result_colour.a=1.0;\n#endif\n}\n"
+  "if((u_policy.x&1)!=0)result_colour.a=1.0;\n#endif\n}\n"
 
 /* One device invocation consumes the existing exact predicates; the recovery fragment programs
  * and their geometry stay unchanged. The four words are the draw-arrays indirect ABI. */

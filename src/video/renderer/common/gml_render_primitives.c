@@ -636,7 +636,7 @@ int gml_render_cpu_backend_depth_texture_eligible(GmlRender *r,int texture){
  * factor-pair aliases used by other software writers. The CPU body remains the
  * reference for effective alpha, mask and zero-alpha behavior here. */
 static int resident_depth_pixel_snapshot(GmlRender *r,GmlRenderDrawStateSnapshot *state,
-                                         GmlRenderDepthTriangle *triangle){
+                                         GmlRenderDepthPrimitive *triangle){
   static const unsigned char basic_rgb[][2]={
     {5,6},{5,2},{1,4},{1,4},{5,4},{3,2},{1,4},{8,7},{10,1},{9,3},{9,9},{7,9},{3,5}};
   static const unsigned char basic_alpha[][2]={
@@ -664,12 +664,13 @@ static int resident_depth_pixel_snapshot(GmlRender *r,GmlRenderDrawStateSnapshot
   return 1;
 }
 
-int gml_render_cpu_backend_depth_triangle(GmlRender *r,GmlRenderDepthTriangle *triangle,
+int gml_render_cpu_backend_depth_triangle(GmlRender *r,GmlRenderDepthPrimitive *triangle,
   const float *depth_pixels,int texture,int full_atlas,GmlRenderDepthPlaneRef *published){
   const GmlRenderDeviceServices *device=gml_render_device(r);
   if(!resident_depth_triangle_eligible(r)) return 0;
   GmlRenderResourceSource sampled={0};
   if(!triangle) return texture==-1 || vertex_texture_source(r,texture,&sampled,1,1);
+  if(triangle->topology>GML_RENDER_DEPTH_TOPOLOGY_POINT) return 0;
   if((texture!=-1)!=(triangle->textured!=0) ||
      (triangle->textured && !native_vertex_texture_source(r,texture,full_atlas,&sampled))) return 0;
   if(!published || triangle->depth_version==UINT64_MAX) return 0;
@@ -710,7 +711,7 @@ int gml_render_cpu_backend_depth_triangle(GmlRender *r,GmlRenderDepthTriangle *t
   op.target=(GmlRenderTargetRef){source.image,1u,source.width,source.height,
     GML_RENDER_PIXEL_ARGB8888,{0,0,source.width,source.height}};
   if(op.target.image.content_version==UINT64_MAX) return 0;
-  op.target.image.content_version++;op.payload.depth_triangle=*triangle;
+  op.target.image.content_version++;op.payload.depth_primitive=*triangle;
   if(triangle->textured){op.source_count=1u;op.sources=&sampled.image;}
   GmlRenderDrawBatch batch={&op,1u,&state,1u};
   GmlRenderResourceExecution result=r->target_id>0?

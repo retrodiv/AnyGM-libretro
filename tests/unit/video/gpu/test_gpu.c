@@ -66,7 +66,7 @@ static int scene_depth_triangle_transaction_case(void){
     GmlRenderDrawOp draw={.opcode=GML_RENDER_OP_SOFTWARE3D_PASS,
       .scene_family=GML_RENDER_SCENE_PRIMITIVE,.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT};
     draw.target=seed.target;draw.target.image.content_version++;
-    GmlRenderDepthTriangle *t=&draw.payload.depth_triangle;
+    GmlRenderDepthPrimitive *t=&draw.payload.depth_primitive;
     t->previous_colour=seed.target.image;t->depth_epoch=t->depth_version=1u;t->next_depth_version=2u;
     t->hidden=t->write_depth=1u;
     if(independent){

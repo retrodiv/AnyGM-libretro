@@ -344,6 +344,7 @@ void gml_gpu_opengl_scene_reset(GmlGpuBackend *backend,const GmlGpuContext *cont
   memcpy(&backend->gl.field,&proc,sizeof proc); \
 } while(0)
   GL_SCENE_LOAD(GetIntegerv,"glGetIntegerv");
+  GL_SCENE_LOAD(IsEnabled,"glIsEnabled");
   GL_SCENE_LOAD(BindSampler,"glBindSampler");
   GL_SCENE_LOAD(CopyTexSubImage2D,"glCopyTexSubImage2D");
   GL_SCENE_LOAD(InvalidateFramebuffer,"glInvalidateFramebuffer");
@@ -1506,8 +1507,12 @@ int gml_gpu_opengl_depth_triangle_valid(GmlGpuBackend *backend,const GmlRenderDr
      !backend->gl.BindSampler || !batch || !batch->operations || batch->operation_count!=1u ||
      !batch->states || !batch->state_count) return 0;
   const GmlRenderDrawOp *op=batch->operations;
-  const GmlRenderDepthTriangle *triangle=&op->payload.depth_triangle;
-  if(op->opcode!=GML_RENDER_OP_SOFTWARE3D_PASS || triangle->textured>1u ||
+  const GmlRenderDepthPrimitive *triangle=&op->payload.depth_primitive;
+  int point=triangle->topology==GML_RENDER_DEPTH_TOPOLOGY_POINT;
+  unsigned vertex_count=point?1u:3u;
+  if(triangle->topology>GML_RENDER_DEPTH_TOPOLOGY_POINT ||
+     (point && backend->api==GML_GPU_API_OPENGL_CORE && !backend->gl.IsEnabled) ||
+     op->opcode!=GML_RENDER_OP_SOFTWARE3D_PASS || triangle->textured>1u ||
      triangle->interpolate>1u || op->source_count!=triangle->textured ||
      (op->source_count && !op->sources) || (!op->source_count && op->sources) ||
      op->state_index>=batch->state_count || op->scene_family!=GML_RENDER_SCENE_PRIMITIVE ||
@@ -1544,7 +1549,7 @@ int gml_gpu_opengl_depth_triangle_valid(GmlGpuBackend *backend,const GmlRenderDr
   if(triangle->textured){
     GlSceneImage *source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
     if(!source || source==image || !source->texture || source->retired || source->source_partial) return 0;
-    for(unsigned v=0;v<3u;v++)for(unsigned c=0;c<2u;c++)
+    for(unsigned v=0;v<vertex_count;v++)for(unsigned c=0;c<2u;c++)
       if(!isfinite(triangle->uv[v][c]) || fabs(triangle->uv[v][c])>65536) return 0;
   }
   const GmlRenderDrawStateSnapshot *state=&batch->states[op->state_index];
@@ -1568,7 +1573,7 @@ int gml_gpu_opengl_depth_triangle_valid(GmlGpuBackend *backend,const GmlRenderDr
        GML_RENDER_BLEND_SOURCE_ALPHA:GML_RENDER_BLEND_ONE) ||
      state->alpha_destination_factor!=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA ||
      state->rgb_equation!=GML_RENDER_BLEND_ADD || state->alpha_equation!=GML_RENDER_BLEND_ADD)) return 0;
-  for(unsigned v=0;v<3u;v++){
+  for(unsigned v=0;v<vertex_count;v++){
     for(unsigned component=0;component<8u;component++)
       if(!isfinite(triangle->vertex[v][component])) return 0;
     if(fabs(triangle->vertex[v][0])>65536.0 || fabs(triangle->vertex[v][1])>65536.0 ||
@@ -1577,6 +1582,9 @@ int gml_gpu_opengl_depth_triangle_valid(GmlGpuBackend *backend,const GmlRenderDr
     for(unsigned component=4u;component<8u;component++)
       if(triangle->vertex[v][component]<0 || triangle->vertex[v][component]>1) return 0;
   }
+  if(point && triangle->vertex[0][7]>0.0 && triangle->vertex[0][7]<0x1p-16) return 0;
+  if(point)return triangle->vertex[0][0]==floor(triangle->vertex[0][0])+0.5 &&
+    triangle->vertex[0][1]==floor(triangle->vertex[0][1])+0.5;
   double area=(triangle->vertex[1][0]-triangle->vertex[0][0])*
     (triangle->vertex[2][1]-triangle->vertex[0][1])-
     (triangle->vertex[1][1]-triangle->vertex[0][1])*(triangle->vertex[2][0]-triangle->vertex[0][0]);
@@ -1618,23 +1626,27 @@ static int depth_triangle_candidate(GmlGpuBackend *backend,const GmlRenderDrawBa
                                       GLuint *sample_texture,char *error,size_t error_capacity){
   if(!gml_gpu_opengl_depth_triangle_valid(backend,batch)) return 0;
   const GmlRenderDrawOp *op=batch->operations;
-  const GmlRenderDepthTriangle *triangle=&op->payload.depth_triangle;
+  const GmlRenderDepthPrimitive *triangle=&op->payload.depth_primitive;
   const GmlRenderDrawStateSnapshot *state=&batch->states[op->state_index];
   GlScene *scene=&backend->scene;
   GlSceneImage *image=gml_gpu_opengl_scene_image(backend,triangle->previous_colour);
   unsigned back=image->raw_depth_front^1u;
-  float vertices[33],extent[2]={(float)image->width,(float)image->height};
+  int point=triangle->topology==GML_RENDER_DEPTH_TOPOLOGY_POINT;
+  unsigned vertex_count=point?1u:3u;
+  GLenum topology=point?GL_POINTS:GL_TRIANGLES;
+  float vertices[33]={0},extent[2]={(float)image->width,(float)image->height};
   GLint flags[4]={(GLint)triangle->hidden,(GLint)triangle->write_depth,
                   (GLint)triangle->normalized,(GLint)triangle->blend};
   int native=triangle->blend>=GML_RENDER_DEPTH_BLEND_INDEPENDENT;
   int alpha_input=triangle->blend==GML_RENDER_DEPTH_BLEND_OPAQUE_ALPHA_INPUT;
   GLint policy[4]={native?0:(GLint)triangle->stamp_alpha,(GLint)triangle->zero_alpha_writes,
                    (GLint)triangle->alpha_source_squared,(GLint)triangle->textured};
-  if(triangle->textured && triangle->uv[0][0]==triangle->uv[1][0] &&
+  if(point)policy[0]|=2;
+  if(triangle->textured && (point || (triangle->uv[0][0]==triangle->uv[1][0] &&
      triangle->uv[0][0]==triangle->uv[2][0] && triangle->uv[0][1]==triangle->uv[1][1] &&
-     triangle->uv[0][1]==triangle->uv[2][1])policy[3]=2;
+     triangle->uv[0][1]==triangle->uv[2][1])))policy[3]=2;
   float constant_uv[2]={(float)triangle->uv[0][0],(float)triangle->uv[0][1]};
-  for(unsigned v=0;v<3u;v++){
+  for(unsigned v=0;v<vertex_count;v++){
     for(unsigned c=0;c<8u;c++)
       vertices[v*11u+c]=(float)(triangle->vertex[v][c]*(c>=4u?triangle->vertex[v][2]:1.0));
     for(unsigned c=0;c<2u;c++)
@@ -1728,22 +1740,22 @@ static int depth_triangle_candidate(GmlGpuBackend *backend,const GmlRenderDrawBa
     }else{
       backend->gl.Disable(GL_BLEND);backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
     }
-    backend->gl.DrawArrays(GL_TRIANGLES,0,3);
+    backend->gl.DrawArrays(topology,0,(GLsizei)vertex_count);
     if(backend->gl.GetError()!=GL_NO_ERROR)return 0;
     if(!pass && native && (triangle->stamp_alpha || alpha_input) && (state->write_mask&8u)){
       /* Stamp the same whole primitive before another command can consume its
        * destination alpha. All candidate storage remains unpublished. */
-      GLint stamp_policy[4]={1,policy[1],policy[2],policy[3]};
+      GLint stamp_policy[4]={point?3:1,policy[1],policy[2],policy[3]};
       backend->gl.Disable(GL_BLEND);backend->gl.ColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_TRUE);
       backend->gl.Uniform4iv(program->policy,1,stamp_policy);
-      backend->gl.DrawArrays(GL_TRIANGLES,0,3);
+      backend->gl.DrawArrays(topology,0,(GLsizei)vertex_count);
       if(backend->gl.GetError()!=GL_NO_ERROR)return 0;
       if(alpha_input){
         /* The ordinary equation writer uses a constant opaque destination
          * operand for alpha. Seed only this unpublished channel, then let the
          * device execute the captured alpha equation over the same triangle. */
         backend->gl.Uniform4iv(program->policy,1,policy);backend->gl.Enable(GL_BLEND);
-        backend->gl.DrawArrays(GL_TRIANGLES,0,3);
+        backend->gl.DrawArrays(topology,0,(GLsizei)vertex_count);
         if(backend->gl.GetError()!=GL_NO_ERROR)return 0;
       }
     }
@@ -1754,8 +1766,18 @@ static int depth_triangle_candidate(GmlGpuBackend *backend,const GmlRenderDrawBa
 int gml_render_gpu_opengl_depth_triangle(GmlGpuBackend *backend,const GmlRenderDrawBatch *batch,
                                    uintptr_t frontend_framebuffer,char *error,size_t error_capacity){
   if(!gml_gpu_opengl_depth_triangle_valid(backend,batch)) return 0;
+  int point=batch->operations[0].payload.depth_primitive.topology==GML_RENDER_DEPTH_TOPOLOGY_POINT &&
+    backend->api==GML_GPU_API_OPENGL_CORE;
+  GLboolean previous_point_size=GL_FALSE;
+  if(point){
+    previous_point_size=backend->gl.IsEnabled(GL_PROGRAM_POINT_SIZE);
+    if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
+    backend->gl.Enable(GL_PROGRAM_POINT_SIZE);
+  }
   GLuint sample_texture=0;
-  int success=depth_triangle_candidate(backend,batch,&sample_texture,error,error_capacity);
+  int success=(!point || backend->gl.GetError()==GL_NO_ERROR) &&
+    depth_triangle_candidate(backend,batch,&sample_texture,error,error_capacity);
+  if(point && !previous_point_size) backend->gl.Disable(GL_PROGRAM_POINT_SIZE);
   if(sample_texture){
     backend->gl.ActiveTexture(GL_TEXTURE2);backend->gl.BindTexture(GL_TEXTURE_2D,sample_texture);
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
@@ -1773,7 +1795,7 @@ int gml_render_gpu_opengl_depth_triangle(GmlGpuBackend *backend,const GmlRenderD
   if(backend->gl.GetError()!=GL_NO_ERROR) success=0;
   if(!success) return 0;
   const GmlRenderDrawOp *op=batch->operations;
-  const GmlRenderDepthTriangle *triangle=&op->payload.depth_triangle;
+  const GmlRenderDepthPrimitive *triangle=&op->payload.depth_primitive;
   GlSceneImage *image=gml_gpu_opengl_scene_image(backend,triangle->previous_colour);
   /* No published storage was written above. Swap the pair only after success,
    * including cleanup, so a refused call retains both previous versions. */

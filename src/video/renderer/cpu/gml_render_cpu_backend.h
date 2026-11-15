@@ -122,7 +122,7 @@ int gml_render_cpu_backend_native_triangles(GmlRender *render,
 /* Active fixed-function triangles. A NULL triangle probes metadata admission.
  * Host depth bytes are supplied only when their version needs uploading.
  * Texture -1 selects no source; full_atlas preserves vertex-buffer page UVs. */
-int gml_render_cpu_backend_depth_triangle(GmlRender *render,GmlRenderDepthTriangle *triangle,
+int gml_render_cpu_backend_depth_triangle(GmlRender *render,GmlRenderDepthPrimitive *triangle,
   const float *depth_pixels,int texture,int full_atlas,GmlRenderDepthPlaneRef *published);
 int gml_render_cpu_backend_depth_read(GmlRender *render,const GmlRenderDepthPlaneRef *plane,
                                       float *pixels,size_t capacity);

@@ -690,6 +690,32 @@ static void d3_raster_triangle_impl(GmlRender *R, const GmlD3Vertex in[3], const
   }
   }
 }
+static int d3_native_fragment_policy(GmlRender *R,GmlRenderDepthPrimitive *primitive,
+                                       const double *distances,unsigned count){
+  primitive->shading_flags=(g_d3.lighting?1u:0u)|(g_d3.fog?2u:0u)|(g_d3.ortho?4u:0u);
+  if(g_d3.lighting){
+    double shade[3]={g_d3.shade_r,g_d3.shade_g,g_d3.shade_b};
+    for(unsigned c=0;c<3u;c++){
+      if(!isfinite(shade[c]) || shade[c]<0 || shade[c]>1e6) return 0;
+      primitive->shade[c]=(float)shade[c];
+    }
+  }
+  if(g_d3.fog){
+    if(!isfinite(g_d3.fog_start) || !isfinite(g_d3.fog_end) ||
+       fabs(g_d3.fog_start)>1e20 || fabs(g_d3.fog_end)>1e20) return 0;
+    primitive->fog_start=(float)g_d3.fog_start;
+    double span=g_d3.fog_end-g_d3.fog_start;
+    if(span>1e-9){primitive->shading_flags|=8u;primitive->fog_scale=(float)(1.0/span);}
+    else primitive->fog_scale=(float)g_d3.fog_end;
+    for(unsigned c=0;c<3u;c++)primitive->fog_colour[c]=((g_d3.fog_color>>(8u*c))&255u)/255.0f;
+    for(unsigned i=0;i<count;i++){
+      if(!isfinite(distances[i]) || distances[i]<0 ||
+         distances[i]>1e20) return 0;
+      primitive->fog_distance[i]=(float)distances[i];
+    }
+  }
+  return 1;
+}
 static int d3_native_triangle(GmlRender *R,const GmlD3Vertex in[3],const GmlD3Texture *texture){
   if(!R || !GML_GRAPHICS || !g_d3.active || GML_GRAPHICS->view_projection_2d ||
      (texture && texture->kind && !texture->native) ||
@@ -702,31 +728,10 @@ static int d3_native_triangle(GmlRender *R,const GmlD3Vertex in[3],const GmlD3Te
   double area=d3_edge(projected.sx[0],projected.sy[0],projected.sx[1],projected.sy[1],
                        projected.sx[2],projected.sy[2]);
   if(!isfinite(area) || fabs(area)<1e-9 || (g_d3.culling && area>=0)) return 1;
-  GmlRenderDepthTriangle triangle={.depth_epoch=target->epoch,.depth_version=target->version,
+  GmlRenderDepthPrimitive triangle={.depth_epoch=target->epoch,.depth_version=target->version,
     .hidden=g_d3.hidden!=0,.write_depth=g_d3.zwrite!=0,.normalized=target->normalized!=0,
     .textured=texture && texture->kind,.interpolate=draw.interpolate!=0};
-  triangle.shading_flags=(g_d3.lighting?1u:0u)|(g_d3.fog?2u:0u)|(g_d3.ortho?4u:0u);
-  if(g_d3.lighting){
-    double shade[3]={g_d3.shade_r,g_d3.shade_g,g_d3.shade_b};
-    for(unsigned c=0;c<3u;c++){
-      if(!isfinite(shade[c]) || shade[c]<0 || shade[c]>1e6) return 0;
-      triangle.shade[c]=(float)shade[c];
-    }
-  }
-  if(g_d3.fog){
-    if(!isfinite(g_d3.fog_start) || !isfinite(g_d3.fog_end) ||
-       fabs(g_d3.fog_start)>1e20 || fabs(g_d3.fog_end)>1e20) return 0;
-    triangle.fog_start=(float)g_d3.fog_start;
-    double span=g_d3.fog_end-g_d3.fog_start;
-    if(span>1e-9){triangle.shading_flags|=8u;triangle.fog_scale=(float)(1.0/span);}
-    else triangle.fog_scale=(float)g_d3.fog_end;
-    for(unsigned c=0;c<3u;c++)triangle.fog_colour[c]=((g_d3.fog_color>>(8u*c))&255u)/255.0f;
-    for(unsigned i=0;i<3u;i++){
-      if(!isfinite(projected.view_distance[i]) || projected.view_distance[i]<0 ||
-         projected.view_distance[i]>1e20) return 0;
-      triangle.fog_distance[i]=(float)projected.view_distance[i];
-    }
-  }
+  if(!d3_native_fragment_policy(R,&triangle,projected.view_distance,3u)) return 0;
   for(unsigned i=0;i<3u;i++){
     triangle.vertex[i][0]=projected.sx[i];triangle.vertex[i][1]=projected.sy[i];
     triangle.vertex[i][2]=projected.iz[i];triangle.vertex[i][3]=projected.depth_value[i];
@@ -1327,6 +1332,46 @@ static int d3_project_vertex(GmlRender *R,const GmlRenderCpuBackendDrawView *dra
   *distance=vertex->z;
   return 1;
 }
+static int d3_native_point(GmlRender *R,GmlD3Vertex world,const GmlD3Texture *texture){
+  if(!R || !GML_GRAPHICS || !g_d3.active || GML_GRAPHICS->view_projection_2d ||
+     (texture && texture->kind && !texture->native) ||
+     !gml_render_cpu_backend_depth_triangle(R,NULL,NULL,
+       texture && texture->kind?texture->handle:-1,texture?texture->full_atlas:0,NULL)) return 0;
+  if(world.alpha<=0.0) return 1;
+  /* Preserve positive point-depth writes instead of allowing device underflow. */
+  if(!isfinite(world.alpha) || world.alpha<0x1p-16 || world.alpha>1.0) return 0;
+  GmlRenderCpuBackendDrawView draw;
+  if(!gml_render_cpu_backend_draw_view(R,&draw)) return 0;
+  GmlD3DepthTarget *target=d3_depth_metadata(R,&draw);
+  if(!target || !target->epoch) return 0;
+  if(g_d3.lighting){
+    double factor[3];
+    if(d3_vertex_light_factor(R,&world,factor)) d3_apply_light_factor(&world,factor);
+  }
+  GmlD3Vertex camera=d3_vertex_camera(R,world);
+  double x,y,reciprocal,depth,distance;
+  if(!d3_project_vertex(R,&draw,&camera,&x,&y,&reciprocal,&depth,&distance)) return 1;
+  if(!isfinite(x) || !isfinite(y) || fabs(x)>65536.0 || fabs(y)>65536.0) return 0;
+  int px=(int)lround(x),py=(int)lround(y);
+  if(px<0 || py<0 || px>=draw.width || py>=draw.height ||
+     (target->normalized && (!isfinite(depth) || depth<0.0 || depth>1.0))) return 1;
+  GmlRenderDepthPrimitive primitive={.depth_epoch=target->epoch,.depth_version=target->version,
+    .hidden=g_d3.hidden!=0,.write_depth=g_d3.zwrite!=0,.normalized=target->normalized!=0,
+    .topology=GML_RENDER_DEPTH_TOPOLOGY_POINT,
+    .textured=texture && texture->kind,.interpolate=draw.interpolate!=0};
+  if(!d3_native_fragment_policy(R,&primitive,&distance,1u)) return 0;
+  primitive.vertex[0][0]=px+0.5;primitive.vertex[0][1]=py+0.5;
+  primitive.vertex[0][2]=reciprocal;primitive.vertex[0][3]=depth;
+  primitive.vertex[0][4]=camera.r/255.0;primitive.vertex[0][5]=camera.g/255.0;
+  primitive.vertex[0][6]=camera.b/255.0;primitive.vertex[0][7]=camera.alpha;
+  if(primitive.textured){primitive.uv[0][0]=camera.u;primitive.uv[0][1]=camera.v;}
+  GmlRenderDepthPlaneRef published;
+  if(!gml_render_cpu_backend_depth_triangle(R,&primitive,target->gpu_current?NULL:target->pixels,
+     primitive.textured?texture->handle:-1,texture?texture->full_atlas:0,&published)) return 0;
+  target->device_plane=published;target->version=published.version;
+  target->gpu_current=1;target->cpu_current=0;
+  return 1;
+}
 static void d3_raster_sample(GmlRender *R,const GmlRenderCpuBackendDrawView *draw,
                              int x,int y,double depth,double distance,
                              double u,double v,double red,double green,double blue,double alpha,
@@ -1390,6 +1435,7 @@ static void d3_emit_point_impl(GmlRender *R,GmlD3Vertex world,const GmlD3Texture
                    camera.r,camera.g,camera.b,camera.alpha,texture);
 }
 static void d3_emit_point(GmlRender *R,GmlD3Vertex world,const GmlD3Texture *texture){
+  if(d3_native_point(R,world,texture)) return;
   GmlRenderCpuBackendDispatchScope scope;
   GmlSoftware3D *graphics=graphics_state_for_render(R);
   gml_render_cpu_backend_dispatch_begin(R,&scope,GML_RENDER_SCENE_PRIMITIVE,

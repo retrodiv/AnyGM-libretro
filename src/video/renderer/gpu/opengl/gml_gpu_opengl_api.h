@@ -38,7 +38,9 @@ typedef void GLvoid;
 #define GL_FALSE 0
 #define GL_TRUE 1
 #define GL_NO_ERROR 0
+#define GL_POINTS 0x0000
 #define GL_TRIANGLES 0x0004
+#define GL_PROGRAM_POINT_SIZE 0x8642
 #define GL_ZERO 0
 #define GL_ONE 1
 #define GL_BLEND 0x0BE2
@@ -190,6 +192,7 @@ typedef void GLvoid;
  * initialization rather than crashing at the first call. */
 typedef struct GmlGlApi {
   GLenum   (*GetError)(void);
+  GLboolean (*IsEnabled)(GLenum cap);
   const GLubyte *(*GetString)(GLenum name);
   void     (*GetIntegerv)(GLenum name,GLint *value);
   void     (*Enable)(GLenum cap);
