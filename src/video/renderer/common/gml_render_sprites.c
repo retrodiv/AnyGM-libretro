@@ -851,14 +851,17 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     ((physical_sprite_page==15 && !r->fog_flat && r->blendmode>=3 && r->blendmode<=GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA &&
       r->blendmode!=6 && r->blendmode!=7 && r->blendmode!=8) ||
      (physical_sprite_page==22 && r->fog_flat && r->blendmode==3));
+  int native_text=r && family==GML_RENDER_SCENE_TEXT &&
+    (physical_sprite_page==13 || physical_sprite_page==14) && r->alphablend &&
+    !r->fog_flat && !r->alpha_test_enable && gml_render_blend_is_extended(r->blendmode);
   int source_colour_text=r && family==GML_RENDER_SCENE_TEXT &&
     (physical_sprite_page==13 || physical_sprite_page==14) &&
-    r->blendmode==GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA;
+    (r->blendmode==GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA || native_text);
   int native_runtime=r && runtime_function && r->alphablend &&
     gml_render_blend_is_extended(r->blendmode) && !r->alpha_test_enable;
   int source_colour_runtime=r && runtime_function &&
     (r->blendmode==GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA || native_runtime);
-  int native_atlas=native_runtime || native_packaged;
+  int native_atlas=native_runtime || native_packaged || native_text;
   int preset_atlas=selected_unwrapped || whole_background || full_axis_preset || quarter_tile || source_colour_text || source_colour_runtime || native_packaged;
   int background_replace=(selected_unwrapped || whole_background) && r && r->blendmode==6;
   int background_masked=preset_atlas && r && r->alphablend &&
@@ -1480,7 +1483,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
    * normal/add/inverse ports do not apply the sprite API's channel wrapper. */
   state.write_mask=scaled_sprite && family!=GML_RENDER_SCENE_TEXT &&
     (!sprite_part_function || (destination_factor_sprite && r->alphablend))?r->color_write_mask:15u;
-  if(background_masked) state.write_mask=r->color_write_mask;
+  if(background_masked || native_text) state.write_mask=r->color_write_mask;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
   state.source_alpha_key=source_alpha_key;

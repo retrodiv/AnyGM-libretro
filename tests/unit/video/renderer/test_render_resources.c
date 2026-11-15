@@ -9554,6 +9554,74 @@ static int resident_extended_packaged_sprite_dispatch_scope(void){
   return controls==36u;
 }
 
+static int resident_extended_text_dispatch_scope(void){
+  static const unsigned masks[]={15u,5u,8u};
+  unsigned controls=0;
+  for(unsigned font_kind=0;font_kind<3u;font_kind++)
+  for(unsigned numbered=0;numbered<2u;numbered++)for(unsigned equations=0;equations<2u;equations++)
+  for(unsigned mask=0;mask<3u;mask++)for(unsigned blocked=0;blocked<3u;blocked++){
+    GmlWin content={.bytecode=17};GmlRender *r=calloc(1,sizeof *r);
+    FakeDevice fake={.on_demand=1,.readback_colour=0xff204060u};
+    GmlRenderDeviceServices device=service(&fake);device.observe_on_demand=fake_observe_on_demand;
+    CHECK(r && !gml_render_init(r,&content));
+    CHECK(gml_render_application_surface_ensure_owned(r,4,4));
+    int target=numbered?gml_surface_create(r,4,4):0;
+    uint8_t *rgba=malloc(16u);CHECK(rgba);
+    for(unsigned p=0;p<4u;p++)memcpy(rgba+4u*p,(uint8_t[]){186u,74u,42u,96u},4u);
+    free(r->atlas[0].px);r->atlas[0].px=rgba;r->atlas[0].w=r->atlas[0].h=2;
+    r->tpag=calloc(1,sizeof *r->tpag);r->spr=calloc(1,sizeof *r->spr);
+    CHECK(r->tpag && r->spr);r->n_tpag=r->n_spr=1;
+    r->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=2,.bh=2};
+    r->spr[0]=(GmlSprite){.w=2,.h=2,.n_frames=1};
+    r->spr[0].frame=calloc(1,sizeof(int));CHECK(r->spr[0].frame);
+    int font=gml_font_add_sprite(r,0,'A',0,-1);CHECK(font>=0);r->font=font;
+    if(font_kind){
+      GmlFont *f=&r->fonts[font];f->real=1;f->sprite=-1;f->atlas=0;
+      f->line_height=f->align_height=2;f->glyphs=calloc(1,sizeof *f->glyphs);CHECK(f->glyphs);
+      f->n_glyphs=1;f->glyphs[0]=(GmlGlyph){.w=2,.h=2,.shift=1,.ch='A'};
+      for(unsigned c=0;c<256u;c++)f->glyph_by_char[c]=-1;
+      f->glyph_by_char['A']=0;
+    }
+    if(font_kind==2u)r->atlas[0].runtime_font_page=1;
+    CHECK(!numbered || target>0);
+    gml_render_bind_device(r,&device);
+    CHECK(gml_render_begin_resident_owned_application(r,0,0,0));
+    if(numbered)CHECK(gml_surface_set_target(r,target));
+    gml_render_set_pending_fill(r,0xff204060u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));
+    unsigned seed_submits=(unsigned)fake.submits;uint32_t shadow[16];memcpy(shadow,r->fb,sizeof shadow);
+    int factors[]={3,4,5,6};r->blendmode=gml_render_blend_pack_factors(factors);
+    r->blend_equation=equations?4:1;r->blend_equation_alpha=equations?5:1;
+    r->alphablend=1;r->color_write_mask=(uint8_t)masks[mask];
+    r->alpha_test_enable=blocked==1u;r->alpha_test_ref=1u;
+    gml_render_dispatch_diagnostics_enable(r,1);
+    gml_draw_text_transformed(r,0,0,"AA",1,1,blocked==2u?15:0,0x654d2du,.5);
+    if(!blocked)CHECK((unsigned)fake.submits==seed_submits && !memcmp(shadow,r->fb,sizeof shadow));
+    CHECK(gml_render_scene_submit_pending(r));
+    GmlRenderDispatchMetrics dispatch={0};uint64_t cpu=0;
+    CHECK(gml_render_dispatch_metrics(r,&dispatch));
+    for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+      if(reason!=GML_RENDER_DISPATCH_REPLAY)cpu+=dispatch.cpu[GML_RENDER_SCENE_TEXT][reason];
+    CHECK(!dispatch.failed && !dispatch.unclassified && r->blendmode==gml_render_blend_pack_factors(factors) &&
+      r->blend_equation==(equations?4:1) && r->blend_equation_alpha==(equations?5:1) &&
+      r->color_write_mask==masks[mask]);
+    if(!blocked){
+      CHECK(!cpu && dispatch.gpu[GML_RENDER_SCENE_TEXT]==2u &&
+        (unsigned)fake.submits==seed_submits+1u && !fake.readbacks && !memcmp(shadow,r->fb,sizeof shadow));
+      CHECK(gml_render_blend_snapshot_native(&fake.last_quad_state) &&
+        gml_render_blend_snapshot_mode(&fake.last_quad_state)==r->blendmode &&
+        fake.last_quad_state.rgb_equation==GML_RENDER_BLEND_NATIVE_ADD+(unsigned)r->blend_equation-1u &&
+        fake.last_quad_state.alpha_equation==GML_RENDER_BLEND_NATIVE_ADD+(unsigned)r->blend_equation_alpha-1u &&
+        fake.last_quad_state.write_mask==masks[mask] && fake.last_quad_state.sampler_count==1u &&
+        fake.last_quad_state.coverage_policy==(numbered?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA));
+    }else CHECK(cpu==2u && !dispatch.gpu[GML_RENDER_SCENE_TEXT] &&
+      (unsigned)fake.submits==seed_submits && fake.readbacks==1);
+    gml_render_free(r);free(r);controls++;
+  }
+  printf("extended text dispatch: %u native-state/ordered-draw and counted alpha-test/rotation boundary controls\n",controls);
+  return controls==108u;
+}
+
 static int resident_source_colour_alpha_dispatch_scope(void){
   for(int path=0;path<6;path++){
     GmlRender *render=calloc(1,sizeof *render);
@@ -21276,6 +21344,7 @@ int main(void){
     if(!strcmp(selected,"target-pixel-pending-scene")) passed=target_pixel_observes_pending_scene();
     else if(!strcmp(selected,"preserved-device-failure")) passed=preserved_device_failure_keeps_authority();
     else if(!strcmp(selected,"extended-rectangle-replay")) passed=extended_rectangle_replay_state();
+    else if(!strcmp(selected,"extended-text-dispatch")) passed=resident_extended_text_dispatch_scope();
     else if(!strcmp(selected,"extended-packaged-sprite-dispatch")) passed=resident_extended_packaged_sprite_dispatch_scope();
     else if(!strcmp(selected,"extended-runtime-sprite-dispatch")) passed=resident_extended_runtime_sprite_dispatch_scope();
     else if(!strcmp(selected,"extended-surface-dispatch")) passed=resident_extended_surface_dispatch_scope();
@@ -21476,6 +21545,7 @@ int main(void){
   passed+=resident_extended_surface_dispatch_scope();
   passed+=resident_extended_runtime_sprite_dispatch_scope();
   passed+=resident_extended_packaged_sprite_dispatch_scope();
+  passed+=resident_extended_text_dispatch_scope();
   passed+=resident_source_colour_alpha_dispatch_scope();
   passed+=resident_empty_sprite_preserves_queued_draws();
   passed+=resident_black_additive_sprite_noop();
@@ -21685,7 +21755,7 @@ int main(void){
   passed+=resident_lazy_native_atlas();
   passed+=resident_unit_texel_magnification();
   passed+=opaque_rectangle_clear_complement();
-  enum { total=341 };
+  enum { total=342 };
   printf("render resource cases: passed=%d failed=%d\n",passed,total-passed);
   return passed==total?EXIT_SUCCESS:EXIT_FAILURE;
 }
