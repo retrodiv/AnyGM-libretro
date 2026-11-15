@@ -78,6 +78,12 @@ static GmlVal call(GmlVM *vm,const char *name,GmlVal *args,int count){
   return gml_builtin_call(vm,name,args,count);
 }
 
+/* Synthetic code records are borrowed from each fixture's stack; their lazy content index is not. */
+static void release_fixture_code_metadata(GmlWin *win){
+  win->code=NULL;win->n_code=0;
+  gml_win_free(win);
+}
+
 static int expect_real(GmlVal value,double expected,const char *label){
   if(value.t==V_REAL && value.d==expected) return 1;
   fprintf(stderr,"%s mismatch: type=%d value=%g expected=%g\n",
@@ -936,7 +942,7 @@ static int colliding_map_slots_roundtrip(void){
     free(before);free(after);
   }
   if(!ok)fputs("colliding variable maps changed keys, typed values, independent bindings or canonical bytes\n",stderr);
-  gml_vm_free(&source);gml_vm_free(&restored);return ok;
+  gml_vm_free(&source);gml_vm_free(&restored);release_fixture_code_metadata(&win);return ok;
 }
 
 /* Identical valid slots can share a wire record. A rejected definition must never become a
@@ -984,7 +990,7 @@ static int identical_slot_map_writer_boundaries(void){
     gml_vm_state_save(&restored,after,size,&repeated) && repeated==size &&
     !memcmp(before,after,size);
   if(!ok)fputs("identical slot records bypassed value rejection or changed canonical bytes\n",stderr);
-  free(before);free(after);gml_vm_free(&source);gml_vm_free(&restored);return ok;
+  free(before);free(after);gml_vm_free(&source);gml_vm_free(&restored);release_fixture_code_metadata(&win);return ok;
 }
 
 static int array_zero_bits_roundtrip(void){
@@ -1108,7 +1114,7 @@ done:
 static int exception_wait_state_roundtrip(void){
   GmlCode entry={.name="neutral_parked_exception",.length=128};
   GmlWin win={.bytecode=17,.code=&entry,.n_code=1};GmlVM vm={0};
-  if(gml_vm_init(&vm,&win,NULL)) return 0;
+  if(gml_vm_init(&vm,&win,NULL)){release_fixture_code_metadata(&win);return 0;}
   vm.wait.active=1;vm.wait.n_frames=1;
   GmlWaitFrame *frame=&vm.wait.frames[0];
   frame->ci=0;
@@ -1168,7 +1174,7 @@ static int exception_wait_state_roundtrip(void){
       gml_vm_free(&rejected);
     }
   }
-  free(before);free(after);gml_vm_free(&vm);
+  free(before);free(after);gml_vm_free(&vm);release_fixture_code_metadata(&win);
   if(!ok) fprintf(stderr,"parked exception ownership/state restoration failed\n");
   else puts("parked exception state: owned handlers/text, exact resave, old-schema and four malformed-control refusals passed");
   return ok;
@@ -1177,7 +1183,7 @@ static int exception_wait_state_roundtrip(void){
 static int broadcast_wait_state_roundtrip(int async_payload){
   GmlCode entry={.name="neutral_parked_payload",.length=128};
   GmlWin win={.bytecode=17,.code=&entry,.n_code=1};GmlVM vm={0};
-  if(gml_vm_init(&vm,&win,NULL)) return 0;
+  if(gml_vm_init(&vm,&win,NULL)){release_fixture_code_metadata(&win);return 0;}
   GmlVal map=gml_builtin_call(&vm,"ds_map_create",NULL,0);
   GmlVal put[]={map,vstr("message"),vstr("retained")};
   gml_builtin_call(&vm,"ds_map_add",put,3);
@@ -1234,7 +1240,7 @@ static int broadcast_wait_state_roundtrip(int async_payload){
     gml_vm_free(&rejected);
     *owner=0;gml_broadcast_map_release(&vm,retained);
   }
-  free(before);free(after);gml_vm_free(&vm);
+  free(before);free(after);gml_vm_free(&vm);release_fixture_code_metadata(&win);
   if(!ok) fprintf(stderr,"parked %s payload state failed\n",async_payload?"async":"broadcast");
   else printf("parked %s state: owned map, exact resave, cancellation and four malformed controls passed\n",
               async_payload?"async":"broadcast");
