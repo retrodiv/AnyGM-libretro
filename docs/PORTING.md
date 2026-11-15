@@ -106,16 +106,16 @@ A host that owns an OpenGL or OpenGL ES 3 context may lend it to the engine with
 the current framebuffer. `content_shader_device_expected` permits unrecognized content GLSL to use
 that context; `hybrid_gpu_presentation` permits eligible final scaling and composition.
 The libretro Renderer option couples both intents: CPU is the default and
-OpenGL (Experimental) selects scene rendering and GPU presentation together.
-The old independent Hybrid GPU menu is removed. The stored scene key and
-CPU/OpenGL values remain stable; a retired hybrid-only selection is ignored.
+OpenGL selects scene rendering and GPU presentation together, with unsupported
+draws omitted. The menu and stored values are exactly CPU and OpenGL.
+The old independent Hybrid GPU menu is removed; a retired hybrid-only selection is ignored.
 OpenGL remains a work in progress and does not cover every CPU drawing
-operation. It is recommended only for individual games where measurements
-show an improvement; mid-frame unsupported draws can require GPU readback,
-CPU drawing and re-upload, making it slower than CPU. See the README's
+operation. CPU is preferred; OpenGL is recommended only for games with complex
+shaders or high resolution and can still be slower than CPU. See the README's
 Renderer section for player-facing scope.
-`scene_renderer` requests eligible ordinary 2D scene operations on that context, with a checked CPU
-fallback per unsupported operation. All three policies are independent and none is implied merely
+The API retains `ANYGM_SCENE_RENDERER_OPENGL` with checked CPU fallback per unsupported
+operation. The public OpenGL selection uses `ANYGM_SCENE_RENDERER_OPENGL_NO_FALLBACK`.
+All three intents are independent and none is implied merely
 by adopting a context. The scene request is frozen at content preparation; a changed menu value
 requires closing and reopening content. When a frame is placed in the current framebuffer, the
 engine sets `ANYGM_FRAME_HARDWARE_TARGET`; a frame without that flag still carries complete CPU

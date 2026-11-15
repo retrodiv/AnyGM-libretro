@@ -372,12 +372,14 @@ An enabled load-time declaration overrides the host's Renderer option:
 payload=data.win
 
 [overrides]
-renderer|opengl_nofallback
+renderer|opengl
 ```
 
-`cpu` selects software, `opengl` selects OpenGL with CPU fallback, and
-`opengl_nofallback` selects OpenGL (Experimental), including its ordinary omission of unsupported
-draws. `auto` withdraws a lower-priority renderer declaration and uses the host option. Normal
+Only `cpu` and `opengl` are accepted. `cpu` selects the complete software renderer;
+`opengl` selects GPU rendering with unsupported draws omitted. CPU is the preferred mode;
+OpenGL is recommended only for games with complex shaders or high resolution.
+Omit the declaration to use the host option. The former `opengl_nofallback` and `auto`
+values are rejected. Normal
 INI/anchor precedence applies. The Content override directives switch must be enabled at
 load. The effective policy is frozen until unload: changing that switch or the frontend Renderer
 option during play does not renegotiate the context. Close/reopen content to select again.

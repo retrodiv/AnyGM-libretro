@@ -576,11 +576,12 @@ static void candidate_inputs(void){
 
 static void renderer_declarations(void){
   CheatSlot slots[GML_MAX_CHEATS];int count=0;char error[256],effective[4096];
-  assert(engine_boot_overrides_parse("renderer|cpu\nrenderer|opengl\nrenderer|auto\n",
+  assert(engine_boot_overrides_parse("renderer|cpu\nrenderer|opengl\n",
                                      slots,&count,error,sizeof error));
   assert(count==1 && engine_boot_overrides_text(slots,count,effective,sizeof effective));
-  assert(!strcmp(effective,"renderer|auto\n"));
+  assert(!strcmp(effective,"renderer|opengl\n"));
   const char *invalid[]={"renderer|","renderer|GPU","renderer|opengl|cpu",
+                         "renderer|auto","renderer|opengl_nofallback",
                          "?crt renderer|opengl","?crt setcall|setting|nan|anchor_call",
                          "setcall|setting|1junk|anchor_call","setcall||1|anchor_call",
                          "setcall|setting|1|","setcall|setting|1|anchor_call|extra",
@@ -606,10 +607,10 @@ static void renderer_declarations(void){
   AnygmContentSource source={0};source.struct_size=sizeof source;
   source.kind=ANYGM_CONTENT_PATH;source.path=anchor;
   source.system_directory=fixture.directory;source.cache_directory=fixture.directory;
-  const char *values[]={"cpu","opengl","opengl_nofallback","auto"};
+  const char *values[]={"cpu","opengl"};
   for(unsigned host_scene=0;host_scene<=2;host_scene++){
     for(unsigned enabled=0;enabled<=1;enabled++){
-      for(unsigned declared=0;declared<4;declared++){
+      for(unsigned declared=0;declared<2;declared++){
         snprintf(text,sizeof text,"[anygm]\npayload=%s\n[overrides]\nrenderer|%s\n",
                  name,values[declared]);write_text(anchor,text);
         AnygmConfigDelta delta={0};delta.struct_size=sizeof delta;
@@ -619,7 +620,8 @@ static void renderer_declarations(void){
         assert(anygm_set_config(engine,&delta)==ANYGM_OK);
         AnygmContentInfo info={0};info.struct_size=sizeof info;
         assert(anygm_load_prepare(engine,&source,NULL,&info)==ANYGM_OK);
-        unsigned want=enabled && declared<3?declared:host_scene;
+        unsigned want=enabled?(declared?ANYGM_SCENE_RENDERER_OPENGL_NO_FALLBACK:
+                              ANYGM_SCENE_RENDERER_CPU):host_scene;
         assert(!!(info.flags&ANYGM_CONTENT_SCENE_OPENGL)==(want!=0));
         assert(!!(info.flags&ANYGM_CONTENT_SCENE_NO_FALLBACK)==(want==2));
         assert(engine->scene_renderer_session==(want?ANYGM_SCENE_RENDERER_OPENGL:0));

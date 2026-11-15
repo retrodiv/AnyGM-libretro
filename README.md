@@ -298,19 +298,15 @@ runtime. See [Architecture](docs/ARCHITECTURE.md) for ownership rules and
 
 ## Renderer
 
-The **Renderer** core option has three choices:
+The **Renderer** core option has two choices:
 
-- **CPU** (default): the complete software renderer.
-- **OpenGL (Experimental)**: renders supported scene draws and presentation on
+- **CPU** (default and preferred): the complete software renderer.
+- **OpenGL**: renders supported scene draws and presentation on
   the GPU and skips unsupported draws. Images may be incomplete: sprites,
   text, backgrounds or a surface composition can disappear.
-- **OpenGL with CPU fallback (Experimental)**: renders supported draws on the
-  GPU and retains the CPU executor for unsupported ones. A mid-frame fallback
-  can read the image from GPU, draw on CPU and upload it again.
-
-Both OpenGL modes are works in progress and do not yet support the full set of
-CPU drawing operations on the GPU. Either can be slower than CPU in some games;
-use them only for individual games where measurements show an improvement.
+OpenGL is a work in progress and does not yet support the full set of
+CPU drawing operations on the GPU. It can be slower than CPU;
+it is recommended only for games with complex shaders or high resolution.
 Skipping unsupported draws does not guarantee higher speed or eliminate all
 GPU-to-CPU transfers. Pixel queries, resource creation, savestates, rewind and
 controlled context destruction retain their normal observation paths. Queries
@@ -320,12 +316,12 @@ not disabled. There is no separate presentation-only Hybrid GPU mode.
 
 OpenGL requires an OpenGL or OpenGL ES frontend driver. A selection takes effect
 after closing and reopening content. The key remains `anygm_scene_renderer`:
-`CPU` selects software, `OpenGL (Experimental)` selects draw omission, and the
-original stored value `OpenGL` selects **OpenGL with CPU fallback (Experimental)**.
-Existing OpenGL configurations therefore preserve their behaviour. The retired
-`anygm_hybrid_gpu` setting is ignored. Original flat menus cannot label values
-separately and show the fallback choice as `OpenGL`; version-1 and version-2
-menus show all three labels above.
+`CPU` selects software and `OpenGL` selects draw omission. All supported menu
+versions show these same two names. Existing stored `OpenGL` selections now
+use draw omission. The former `OpenGL (Experimental)` value is no longer
+recognized; select `OpenGL` instead. The retired `anygm_hybrid_gpu` setting is ignored.
+The internal CPU-fallback policy and implementation remain available to API
+hosts and neutral tests, but are not offered by the menu or content declarations.
 
 Enabled content configuration may override this load-time selection through
 [`renderer|...`](docs/CONTENT_CONFIGURATION.md#content-renderer-selection).

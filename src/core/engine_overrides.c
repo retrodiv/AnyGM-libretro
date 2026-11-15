@@ -977,10 +977,9 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
           }
         } else if(!strncmp(slot->code,"renderer|",9)){
           const char *value=slot->code+9;
-          if(strcmp(value,"cpu") && strcmp(value,"opengl") &&
-             strcmp(value,"opengl_nofallback") && strcmp(value,"auto")){
+          if(strcmp(value,"cpu") && strcmp(value,"opengl")){
             snprintf(error,error_capacity,
-                     "directive %d: renderer| takes cpu, opengl, opengl_nofallback or auto",
+                     "directive %d: renderer| takes cpu or opengl",
                      line_number);
             return 0;
           }
@@ -1796,13 +1795,10 @@ uint32_t engine_overrides_declared_renderer(AnygmEngine *engine){
     if(!slot->enabled || strncmp(slot->code,"renderer|",9)) continue;
     const char *value=slot->code+9;
     if(!strcmp(value,"cpu")) return ANYGM_SCENE_RENDERER_CPU;
-    if(!strcmp(value,"opengl")) return ANYGM_SCENE_RENDERER_OPENGL;
-    if(!strcmp(value,"opengl_nofallback")) return ANYGM_SCENE_RENDERER_OPENGL_NO_FALLBACK;
+    if(!strcmp(value,"opengl")) return ANYGM_SCENE_RENDERER_OPENGL_NO_FALLBACK;
   }
   return engine->config.scene_renderer;
 }
-/* The declaration is already layered and fingerprinted with other content directives.
- * Auto withdraws a lower-priority declaration and leaves the frontend option in charge. */
 int engine_overrides_keyboard_emulation(AnygmEngine *engine){
   int active=engine_boot_cheats_active(engine);
   for(int i=0;i<active;i++)

@@ -757,7 +757,7 @@ static int content_glsl_requests_only_for_candidates(void){
 
 static int scene_renderer_requests_context_independently(void){
   begin("None",0,0,1,1);
-  scene_option_value="OpenGL (Experimental)";
+  scene_option_value="OpenGL";
   REQUIRE(load(),"draw-omission scene content prepares");
   REQUIRE(declared_count==1 && start_calls==0 &&
           latest_config.values.scene_renderer==ANYGM_SCENE_RENDERER_OPENGL_NO_FALLBACK &&
@@ -780,7 +780,7 @@ static int scene_renderer_requests_context_independently(void){
   REQUIRE(load(),"scene-only content prepares");
   REQUIRE(declared_count==1 && start_calls==0,
           "renderer option requests a context independently of GLSL");
-  REQUIRE(latest_config.values.scene_renderer==ANYGM_SCENE_RENDERER_OPENGL &&
+  REQUIRE(latest_config.values.scene_renderer==ANYGM_SCENE_RENDERER_OPENGL_NO_FALLBACK &&
           latest_config.values.hybrid_gpu_presentation==1u &&
           latest_config.values.content_shader_device_expected==0u,
           "scene intent remains independent of other graphics options");
@@ -793,7 +793,7 @@ static int scene_renderer_requests_context_independently(void){
   REQUIRE(load(),"scene content starts when the frontend refuses hardware rendering");
   REQUIRE(declared_count>=1 && start_calls==1,
           "a refused scene context starts the software path");
-  REQUIRE(latest_config.values.scene_renderer==ANYGM_SCENE_RENDERER_OPENGL &&
+  REQUIRE(latest_config.values.scene_renderer==ANYGM_SCENE_RENDERER_OPENGL_NO_FALLBACK &&
           latest_config.values.hybrid_gpu_presentation==0u,
           "the requested scene policy survives refusal for fallback diagnostics");
   finish();
@@ -1088,7 +1088,7 @@ static int prepared_renderer_controls_negotiation(void){
           g_libretro.config.scene_renderer==ANYGM_SCENE_RENDERER_OPENGL_NO_FALLBACK,
           "the adapter retains the exact prepared draw-omission policy");
   finish();
-  begin("OpenGL (Experimental)",0,0,1,1);
+  begin("OpenGL",0,0,1,1);
   prepared_scene_renderer=ANYGM_SCENE_RENDERER_CPU;
   REQUIRE(load(),"a prepared CPU declaration overrides the frontend GPU request");
   REQUIRE(declared_count==0 && !g_libretro.scene_gpu_selected && start_calls==1,

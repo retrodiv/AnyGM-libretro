@@ -127,16 +127,14 @@ static struct retro_core_option_v2_definition g_definitions[]={
    "Off (but report available)"},
 #if ANYGM_HARDWARE_RENDER
   {"anygm_scene_renderer","Renderer",NULL,
-   "CPU is the complete software renderer and the default. OpenGL (Experimental) skips unsupported "
-   "draws instead of using CPU fallback,so pictures may be incomplete. OpenGL with CPU fallback "
-   "(Experimental) preserves unsupported draws through a mid-frame image read,CPU draw and upload. "
-   "Both OpenGL modes are a work in progress and can be slower than CPU. Use them only for "
-   "individual games where measurements show an improvement. Pixel queries,resource creation, "
-   "savestates and rewind still work and may read the GPU;queries see the image actually drawn. "
+   "CPU is the complete software renderer, the default and the preferred mode. OpenGL renders "
+   "supported draws on the GPU and skips unsupported draws, so pictures may be incomplete. "
+   "OpenGL is a work in progress and can be slower than CPU. It is recommended only for games "
+   "with complex shaders or high resolution. Pixel queries, resource creation, "
+   "savestates and rewind still work and may read the GPU; queries see the image actually drawn. "
    "Requires OpenGL or OpenGL ES. Changes take effect after closing and reopening the content.",
    NULL,"video",
-   {{"CPU",NULL},{"OpenGL (Experimental)","OpenGL (Experimental)"},
-    {"OpenGL","OpenGL with CPU fallback (Experimental)"},{NULL,NULL}},"CPU"},
+   {{"CPU",NULL},{"OpenGL",NULL},{NULL,NULL}},"CPU"},
 #endif
   /* These are the exact locale strings exposed by the runtime: lowercase language and uppercase
    * region. Auto follows the frontend language and its paired region. Locale environment variables
@@ -368,10 +366,8 @@ const char *libretro_options_value(const char *key){ return option_value(key); }
 #if ANYGM_HARDWARE_RENDER
 static uint32_t scene_renderer_selected(void){
   const char *value=option_value("anygm_scene_renderer");
-  if(value && !strcmp(value,"OpenGL (Experimental)"))
-    return ANYGM_SCENE_RENDERER_OPENGL_NO_FALLBACK;
-  /* Keep the original stored OpenGL value on the original fallback policy. */
-  return value && !strcmp(value,"OpenGL")?ANYGM_SCENE_RENDERER_OPENGL:ANYGM_SCENE_RENDERER_CPU;
+  return value && !strcmp(value,"OpenGL")?
+    ANYGM_SCENE_RENDERER_OPENGL_NO_FALLBACK:ANYGM_SCENE_RENDERER_CPU;
 }
 #endif
 

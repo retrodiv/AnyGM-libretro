@@ -17,6 +17,13 @@ It is a finite regression domain,not full function or filtered qualification.
 
 # Renderer backend correspondence
 
+The public Renderer option and content declarations select CPU or OpenGL.
+CPU is the preferred default; OpenGL is recommended only for complex shaders
+or high resolution and omits unsupported draws. References below to counted
+CPU fallback describe the retained internal API policy and its neutral controls,
+not a third menu choice. Required pixel/resource/state observations remain
+active under the public OpenGL policy; omission does not qualify missing work.
+
 The CPU executor is the default renderer and the exact reference for runtime
 state. The optional GPU executor uses the device's own filtering, blending and
 program execution and is not required to reproduce CPU pixels. The fidelity
