@@ -9973,7 +9973,7 @@ static int resident_source_colour_alpha_dispatch_scope(void){
       CHECK(render->resident_application_pass && fake.submits==2 && !fake.readbacks &&
             !metrics.cpu_replays && render->app_surface_owned[5]==0u);
     }else
-      CHECK(!render->resident_application_pass && fake.submits==1 && fake.readbacks==(unsigned)(path>=4) &&
+      CHECK(!render->resident_application_pass && fake.submits==1 && fake.readbacks==(path>=4) &&
             metrics.cpu_replays==(path>=4?0u:1u) &&
             render->app_surface_owned[5]==(path==4?0xFFFFFFFFu:0x01FFFFFFu));
     CHECK(gml_render_dispatch_metrics(render,&dispatch));
