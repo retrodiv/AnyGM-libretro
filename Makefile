@@ -778,11 +778,14 @@ check: warnings-check architecture-check api-check contract-check integration-ch
 	$(TEST_DIR)/test_keyboard_text
 	$(TEST_DIR)/test_builtin_account_picker
 	$(TEST_DIR)/test_unicode_strings
+	$(TEST_DIR)/test_vm_conv_bool
+	$(TEST_DIR)/test_vm_unset_reads
 	$(TEST_DIR)/test_bytecode
 	$(TEST_DIR)/test_array_copy_policy
 	$(TEST_DIR)/test_package
 	$(TEST_DIR)/test_classic
 	$(TEST_DIR)/test_sprite_masks
+	$(TEST_DIR)/test_content_transform
 	$(TEST_DIR)/test_content_config
 	$(TEST_DIR)/test_content_delta
 	$(TEST_DIR)/test_content_patch
@@ -803,10 +806,12 @@ check: warnings-check architecture-check api-check contract-check integration-ch
 	$(TEST_DIR)/test_render_resources
 	$(if $(filter-out 0,$(HARDWARE_RENDER)),$(TEST_DIR)/test_gpu,true)
 	$(TEST_DIR)/test_rng
+	$(TEST_DIR)/test_code_coverage
 	$(TEST_DIR)/test_persistent_room
 	$(TEST_DIR)/test_d3_state
 	$(TEST_DIR)/test_ds_grid
 	$(TEST_DIR)/test_builtin_dispatch
+	$(TEST_DIR)/test_builtin_physics
 	$(TEST_DIR)/test_builtin_state
 	$(TEST_DIR)/test_builtin_ds_capacity
 	$(TEST_DIR)/test_builtin_buffer_capacity
@@ -822,6 +827,7 @@ check: warnings-check architecture-check api-check contract-check integration-ch
 	$(TEST_DIR)/test_builtin_tilemap_tileset
 	$(TEST_DIR)/test_builtin_tilemap_position
 	$(TEST_DIR)/test_builtin_value_math
+	$(TEST_DIR)/test_builtin_extrema
 	$(TEST_DIR)/test_builtin_filename_parts
 	$(TEST_DIR)/test_builtin_map_arrays
 	$(TEST_DIR)/test_builtin_sequence_copy
@@ -837,9 +843,9 @@ check: warnings-check architecture-check api-check contract-check integration-ch
 	$(TEST_DIR)/test_builtin_tile_draw
 	$(TEST_DIR)/test_builtin_paths
 	$(TEST_DIR)/test_builtin_collision_lists
-	$(TEST_DIR)/test_builtin_struct_exists \
-	$(TEST_DIR)/test_value_compare \
-	$(TEST_DIR)/test_instance_copy \
+	$(TEST_DIR)/test_builtin_struct_exists
+	$(TEST_DIR)/test_value_compare
+	$(TEST_DIR)/test_instance_copy
 	$(TEST_DIR)/test_stacktop_scope
 else ifeq ($(strip $(TEST)),video)
 check: CFLAGS += -Werror
@@ -912,11 +918,14 @@ $(TEST_DIR)/public_header_cpp.o: tests/contract/public_header_cpp.cpp src/api/an
 
 integration-check: $(INTEGRATION_TESTS)
 	$(TEST_DIR)/test_engine_instances
+	$(TEST_DIR)/test_engine_blocking_wait
 	$(TEST_DIR)/test_gpu_scene_route
 	$(TEST_DIR)/test_gpu_scene_route --dense
 	$(TEST_DIR)/test_mouse_input
 	$(TEST_DIR)/test_font_state
 	$(TEST_DIR)/test_engine_content_config
+	$(TEST_DIR)/test_engine_scoped_overrides
+	$(TEST_DIR)/test_engine_composed_raster
 	$(TEST_DIR)/test_engine_content_patch
 	$(TEST_DIR)/test_engine_payload_names
 	$(TEST_DIR)/test_host_setting_budget
