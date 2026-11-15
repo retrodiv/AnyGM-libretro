@@ -65,6 +65,7 @@ typedef struct FakeDevice {
   uint32_t submitted_counts[8];
   GmlRenderRect last_target_region;
   GmlRenderDrawOp last_primitive;
+  GmlRenderDrawStateSnapshot last_primitive_state;
   uint32_t last_batch_operations,last_batch_states;
   uint32_t last_batch_source_ids[3],last_batch_state_indices[3];
   uint32_t last_shader_uniform_count,last_shader_sampler_count;
@@ -129,8 +130,11 @@ static GmlRenderExecutionResult fake_submit(void *context,const GmlRenderDrawBat
     fake->last_target_image=last->target.image;
     fake->last_target_region=last->target.region;
     fake->last_source_count=last->source_count;
-    if(last->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE)
+    if(last->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
       fake->last_primitive=*last;
+      if(batch->states && last->state_index<batch->state_count)
+        fake->last_primitive_state=batch->states[last->state_index];
+    }
     if((last->opcode==GML_RENDER_OP_TEXTURED_QUAD ||
         last->opcode==GML_RENDER_OP_RECOVER_EMPTY_SCREEN) && batch->states &&
        last->state_index<batch->state_count){
@@ -9345,18 +9349,28 @@ static int extended_rectangle_replay_state(void){
   reference->alphablend=1;reference->active_shader=-1;
   GmlRenderDrawStateSnapshot state={.colour=0xffffffffu,.alpha=255u};
   unsigned controls=0;
+  for(unsigned shape=0;shape<3u;shape++)
   for(unsigned tuple=0;tuple<9u;tuple++)for(int rgb=1;rgb<=5;rgb++)for(int alpha=1;alpha<=5;alpha++)
   for(unsigned mask=0;mask<3u;mask++)for(unsigned preserve=0;preserve<2u;preserve++)for(unsigned zero=0;zero<2u;zero++){
     for(unsigned i=0;i<9u;i++)seed[i]=expected[i]=actual[i]=0x40204060u;
+    p->region=p->authored_region=shape?(GmlRenderRect){0,0,3u,3u}:(GmlRenderRect){1,1,1u,1u};
     p->rectangle_flags=(GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA<<GML_RENDER_RECTANGLE_BLEND_SHIFT)|
-      (preserve?GML_RENDER_RECTANGLE_TARGET_ALPHA:0u);
+      (preserve?GML_RENDER_RECTANGLE_TARGET_ALPHA:0u)|
+      (shape==1u?GML_RENDER_RECTANGLE_OUTLINE:shape==2u?GML_RENDER_RECTANGLE_GRADIENT:0u);
+    const uint32_t corners[]={0xff906030u,0xff1234deu,0xffcd2751u,0xff80ff42u};
+    uint32_t colours[4];
+    for(unsigned c=0;c<4u;c++){
+      p->corner_colour[c]=shape==2u?corners[c]:corners[0];
+      uint32_t rgb=p->corner_colour[c];colours[c]=((rgb&255u)<<16)|(rgb&0xff00u)|((rgb>>16)&255u);
+    }
     p->alpha=zero?0.0:64.0/255.0;state.write_mask=masks[mask];
     int mode=gml_render_blend_pack_factors(tuples[tuple]);
     CHECK(gml_render_blend_snapshot_extended(&state,mode,rgb,alpha,!preserve));
     reference->target_sp=(int)preserve;reference->blendmode=mode;
     reference->blend_equation=rgb;reference->blend_equation_alpha=alpha;
     reference->color_write_mask=(uint8_t)masks[mask];reference->alpha=p->alpha;
-    gml_render_cpu_rectangle_color(reference,1,1,1,1,0x306090u,0x306090u,0x306090u,0x306090u,0);
+    gml_render_cpu_rectangle_color(reference,shape?0:1,shape?0:1,shape?2:1,shape?2:1,
+      colours[0],colours[1],colours[2],colours[3],shape==1u);
     CHECK(gml_render_cpu_replay_one(actual,3,3,&op,&state,NULL));
     if(memcmp(actual,expected,sizeof actual))fprintf(stderr,
       "extended rectangle replay: tuple=%u eq=%d,%d mask=%u preserve=%u zero=%u actual=%08x expected=%08x\n",
@@ -9383,7 +9397,7 @@ static int extended_rectangle_replay_state(void){
     if(invalid==2)state.alpha_equation=GML_RENDER_BLEND_NATIVE_MIN+1u;
     if(invalid==3)state.coverage_policy^=1u;
     if(invalid==4)state.sampler_count=1u;
-    if(invalid==5)p->rectangle_flags|=GML_RENDER_RECTANGLE_OUTLINE;
+    if(invalid==5)p->rectangle_flags|=GML_RENDER_RECTANGLE_VERTEX_SPAN;
     if(invalid==6)state.clip.width=1u;
     memcpy(actual,seed,sizeof actual);
     CHECK(!gml_render_cpu_replay_one(actual,3,3,&op,&state,NULL));
@@ -9391,7 +9405,57 @@ static int extended_rectangle_replay_state(void){
   }
   free(reference);
   printf("extended rectangle replay: exact replay/checkpoint-refusal pairs=%u; seven malformed states refuse transactionally\n",controls);
-  return controls==2700u;
+  return controls==8100u;
+}
+
+static int resident_extended_rectangle_variant_dispatch(void){
+  static const unsigned masks[]={15u,5u,8u};unsigned controls=0;
+  for(unsigned shape=0;shape<3u;shape++)for(unsigned numbered=0;numbered<2u;numbered++)
+  for(unsigned equations=0;equations<2u;equations++)for(unsigned mask=0;mask<3u;mask++)
+  for(unsigned geometry=0;geometry<3u;geometry++){
+    GmlWin content={.bytecode=17};GmlRender *r=calloc(1,sizeof *r);
+    FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+    device.observe_on_demand=fake_observe_on_demand;
+    CHECK(r && !gml_render_init(r,&content));
+    CHECK(gml_render_application_surface_ensure_owned(r,5,5));
+    int target=numbered?gml_surface_create(r,5,5):0;CHECK(!numbered || target>0);
+    gml_render_bind_device(r,&device);CHECK(gml_render_begin_resident_owned_application(r,0,0,0));
+    if(numbered)CHECK(gml_surface_set_target(r,target));
+    gml_render_set_pending_fill(r,0x40204060u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));
+    unsigned before=(unsigned)fake.submits;uint32_t shadow[25];memcpy(shadow,r->fb,sizeof shadow);
+    int factors[]={3,4,5,6};r->blendmode=gml_render_blend_pack_factors(factors);
+    r->blend_equation=equations?4:1;r->blend_equation_alpha=equations?5:1;
+    r->color_write_mask=(uint8_t)masks[mask];r->alphablend=1;r->alpha=.5;
+    gml_render_dispatch_diagnostics_enable(r,1);
+    int first=geometry==0u?1:-1,last=geometry==2u?5:3;
+    if(shape==2u && geometry==2u){first=-3;last=-1;}
+    if(!shape)gml_render_primitive_rectangle(r,first,first,last,last,0x306090u,1);
+    else gml_render_primitive_rectangle_color(r,first,first,last,last,
+      0x306090u,0x123456u,0xabcdefu,0x765432u,shape==1u);
+    CHECK(gml_render_scene_submit_pending(r));
+    GmlRenderDispatchMetrics dispatch={0};CHECK(gml_render_dispatch_metrics(r,&dispatch));
+    uint64_t cpu=0;
+    for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
+      cpu+=dispatch.cpu[GML_RENDER_SCENE_PRIMITIVE][reason];
+    CHECK(!cpu && !dispatch.failed && !dispatch.unclassified && !fake.readbacks &&
+      !memcmp(shadow,r->fb,sizeof shadow) && r->blendmode==gml_render_blend_pack_factors(factors) &&
+      r->blend_equation==(equations?4:1) && r->blend_equation_alpha==(equations?5:1) &&
+      r->color_write_mask==masks[mask]);
+    CHECK(dispatch.gpu[GML_RENDER_SCENE_PRIMITIVE]==(geometry==2u?0u:1u) &&
+      (unsigned)fake.submits==before+(geometry==2u?0u:1u));
+    if(geometry!=2u){
+      CHECK(gml_render_blend_snapshot_native(&fake.last_primitive_state) &&
+        gml_render_blend_snapshot_mode(&fake.last_primitive_state)==r->blendmode &&
+        fake.last_primitive_state.write_mask==masks[mask] &&
+        fake.last_primitive_state.coverage_policy==(numbered?0u:1u) &&
+        !!(fake.last_primitive.payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_OUTLINE)==(shape!=2u) &&
+        !!(fake.last_primitive.payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_GRADIENT)==(shape==2u));
+    }
+    gml_render_free(r);free(r);controls++;
+  }
+  printf("extended rectangle variants: %u native snapshot/geometry/empty controls\n",controls);
+  return controls==108u;
 }
 
 static int resident_extended_surface_dispatch_scope(void){
@@ -21343,6 +21407,7 @@ int main(void){
     int passed;
     if(!strcmp(selected,"target-pixel-pending-scene")) passed=target_pixel_observes_pending_scene();
     else if(!strcmp(selected,"preserved-device-failure")) passed=preserved_device_failure_keeps_authority();
+    else if(!strcmp(selected,"extended-rectangle-variants")) passed=resident_extended_rectangle_variant_dispatch();
     else if(!strcmp(selected,"extended-rectangle-replay")) passed=extended_rectangle_replay_state();
     else if(!strcmp(selected,"extended-text-dispatch")) passed=resident_extended_text_dispatch_scope();
     else if(!strcmp(selected,"extended-packaged-sprite-dispatch")) passed=resident_extended_packaged_sprite_dispatch_scope();
@@ -21542,6 +21607,7 @@ int main(void){
   passed+=resident_atlas_uv_refusal_preserves_queued_prefix();
   passed+=resident_application_sprite_cpu_fallback();
   passed+=extended_rectangle_replay_state();
+  passed+=resident_extended_rectangle_variant_dispatch();
   passed+=resident_extended_surface_dispatch_scope();
   passed+=resident_extended_runtime_sprite_dispatch_scope();
   passed+=resident_extended_packaged_sprite_dispatch_scope();
@@ -21755,7 +21821,7 @@ int main(void){
   passed+=resident_lazy_native_atlas();
   passed+=resident_unit_texel_magnification();
   passed+=opaque_rectangle_clear_complement();
-  enum { total=342 };
+  enum { total=343 };
   printf("render resource cases: passed=%d failed=%d\n",passed,total-passed);
   return passed==total?EXIT_SUCCESS:EXIT_FAILURE;
 }

@@ -986,7 +986,6 @@ static int resident_rectangle_function(GmlRender *r,int x1,int y1,int x2,int y2,
   if(x1 < -32768 || y1 < -32768 || x2>32767 || y2>32767) return 0;
   int gradient=!outline && (c1!=c2 || c1!=c3 || c1!=c4);
   int extended=r->alphablend && gml_render_blend_is_extended(r->blendmode);
-  if(extended && (gradient || outline))return 0;
   /* Filled gradients use the scalar row writer: ordinary presets are ignored,
    * while destination-colour pairs keep their distinct CPU executor. */
   unsigned blend=extended?GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA:

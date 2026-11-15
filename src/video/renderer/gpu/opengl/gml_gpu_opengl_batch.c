@@ -1650,7 +1650,8 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
          (state->rgb_equation>=GML_RENDER_BLEND_NATIVE_ADD || state->alpha_equation>=GML_RENDER_BLEND_NATIVE_ADD)){
         const GmlRenderPrimitiveRect *p=&op->payload.primitive;
         if(!gml_render_blend_snapshot_native(state) || !gml_render_rectangle_valid(op) ||
-           (p->rectangle_flags&~(GML_RENDER_RECTANGLE_CLASSIC|GML_RENDER_RECTANGLE_TARGET_ALPHA|GML_RENDER_RECTANGLE_BLEND_MASK)) ||
+           (p->rectangle_flags&~(GML_RENDER_RECTANGLE_CLASSIC|GML_RENDER_RECTANGLE_TARGET_ALPHA|
+            GML_RENDER_RECTANGLE_OUTLINE|GML_RENDER_RECTANGLE_GRADIENT|GML_RENDER_RECTANGLE_BLEND_MASK)) ||
            ((p->rectangle_flags&GML_RENDER_RECTANGLE_BLEND_MASK)>>GML_RENDER_RECTANGLE_BLEND_SHIFT)!=GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA ||
            state->coverage_policy!=((p->rectangle_flags&GML_RENDER_RECTANGLE_TARGET_ALPHA)?0u:1u) ||
            state->write_mask>15u || state->alpha_test_enabled || state->source_alpha_key ||
