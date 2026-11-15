@@ -1417,9 +1417,22 @@ GmlVal gml_builtin_try_values_language(GmlVM *vm, const char *nm, GmlVal *a, int
   if(!strcmp(nm,"@@Global@@")) return vreal(-5);      /* global scope sentinel */
   if(!strcmp(nm,"@@NullObject@@")) return vreal(-4);  /* noone */
   if(!strcmp(nm,"@@NewGMLArray@@")){ GmlArr *A=calloc(1,sizeof(*A)); if(!A) return vreal(0);
-    /* Copy stored strings and mark nested arrays escaped, as for other array stores. */
-    if(n>0){ A->data=calloc(n,sizeof(GmlVal)); if(A->data){ A->len=A->cap=n; for(int i=0;i<n;i++) A->data[i]=gml_arr_store_clone(a[i]); } }
-    GmlVal v=vreal(0); v.t=V_ARR; v.arr=A; return v; }
+    if(n>0){ A->data=calloc(n,sizeof(GmlVal)); if(A->data) A->len=A->cap=n; }
+    GmlVal v=vreal(0); v.t=V_ARR; v.arr=A;
+    /* Establish ownership while the new storage is empty, before cloning any owned text. */
+    if(!gml_array_heap_adopt(&vm->array_heap,v)){
+      free(A->data); free(A); return vreal(0);
+    }
+    for(int i=0;i<A->len;i++){
+      GmlVal stored=gml_arr_store_clone(a[i]);
+      if(!gml_array_heap_adopt(&vm->array_heap,stored)){
+        if(stored.t==V_STR && stored.d!=0) free((void*)stored.s);
+        return vreal(0);
+      }
+      if(stored.t==V_STR) stored.d=0;
+      A->data[i]=stored;
+    }
+    return v; }
   /* GMS2.3 method(scope, func): a BOUND method — a struct carrying the function and the self it runs
    * with. OP_CALLV dispatches it with self=__self. (Returning the bare func lost the scope, so any
    * bound input-check/handler that reads its own struct fields ran on the wrong self and read 0.) */

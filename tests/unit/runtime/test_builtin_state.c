@@ -424,6 +424,30 @@ done:
   free(bytes);free(again);gml_vm_free(&restored);gml_vm_free(&vm);
   return ok;
 }
+static int literal_values_lifetime(void){
+  GmlWin win={0};GmlVM vm={0};GmlVal array=vundef();int ok=0,adopted=0;
+  DS_OWNER_REQUIRE(!gml_vm_init(&vm,&win,NULL),"initialize literal value owner");
+  size_t initial=gml_array_heap_count(vm.array_heap);
+  GmlVal values[]={vstr("literal-text"),vreal(42)};
+  array=call(&vm,"@@NewGMLArray@@",values,2);
+  DS_OWNER_REQUIRE(array.t==V_ARR && array.arr,"construct literal array without a DS container");
+  adopted=((GmlArr*)array.arr)->heap!=NULL;
+  DS_OWNER_REQUIRE(gml_array_heap_count(vm.array_heap)>initial,
+          "literal arrays need a reclaimable VM owner before any container store");
+  GmlVal *root=gml_varmap_put(&vm.globals,"literal_root");
+  DS_OWNER_REQUIRE(root!=NULL,"publish literal root");*root=array;
+  gml_struct_gc(&vm);
+  GmlVal text=gml_arr_get(*root,0),number=gml_arr_get(*root,1);
+  DS_OWNER_REQUIRE(text.t==V_STR && text.s && !strcmp(text.s,"literal-text") &&
+          number.t==V_REAL && number.d==42,"rooted literal content survives collection");
+  *root=vreal(0);gml_struct_gc(&vm);
+  DS_OWNER_REQUIRE(gml_array_heap_count(vm.array_heap)==initial,
+          "unrooted literal arrays and their text are reclaimed");
+  ok=1;
+done:
+  if(!adopted) gml_values_release_owned(&array,1);
+  gml_vm_free(&vm);return ok;
+}
 #undef DS_OWNER_REQUIRE
 
 /* Warming the derived length/hash memo must not change canonical bytes, and replacing the owned
@@ -1218,7 +1242,7 @@ static int broadcast_wait_state_roundtrip(int async_payload){
 }
 
 int main(void){
-  if(!retained_ds_values_lifetime()) return 1;
+  if(!literal_values_lifetime() || !retained_ds_values_lifetime()) return 1;
   if(!broadcast_wait_state_roundtrip(0) || !broadcast_wait_state_roundtrip(1)) return 1;
 #ifdef ANYGM_TEST_STATE_ALLOC_FAILURE
   if(!writer_allocation_failure_is_bounded()) return 1;
