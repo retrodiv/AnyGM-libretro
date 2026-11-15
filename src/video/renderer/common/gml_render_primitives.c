@@ -615,7 +615,7 @@ static int native_vertex_texture_source(GmlRender *r,int texture,int full_atlas,
 static int resident_depth_triangle_eligible(GmlRender *r){
   const GmlRenderDeviceServices *device=gml_render_device(r);
   GmlRenderDeviceCaps caps={0};
-  if(!resident_primitive_state_eligible_target(r,0,1) || r->color_write_mask!=15u ||
+  if(!resident_primitive_state_eligible_target(r,0,1) ||
      r->active_shader>=0 || r->blendmode || r->alpha_test_enable ||
      r->classic_phase_scene_target || r->app_interp_phase[0] || r->app_interp_phase[1] ||
      r->app_interp_phase[2] || !device->upload_depth || !device->readback_depth ||
@@ -651,6 +651,8 @@ int gml_render_cpu_backend_depth_triangle(GmlRender *r,GmlRenderDepthTriangle *t
     GmlRenderDepthUpload upload={plane,depth_pixels,(size_t)source.width*source.height*4u,source.width*4u};
     if(!device->upload_depth(device->context,&upload)) return 0;
   }
+  /* Normal/replacement CPU pixel writes ignore the input colour mask. Keep
+   * that policy in the command without changing the public mask state. */
   GmlRenderDrawStateSnapshot state={.write_mask=15u,.colour=0xffffffffu,.alpha=255u,
     .rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA,
     .rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,

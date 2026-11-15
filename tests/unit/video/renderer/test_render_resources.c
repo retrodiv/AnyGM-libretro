@@ -66,6 +66,9 @@ typedef struct FakeDevice {
   GmlRenderRect last_target_region;
   GmlRenderDrawOp last_primitive;
   GmlRenderDrawStateSnapshot last_primitive_state;
+  GmlRenderDrawOp last_depth;
+  GmlRenderDrawStateSnapshot last_depth_state;
+  unsigned depth_uploads,depth_reads;
   uint32_t last_batch_operations,last_batch_states;
   uint32_t last_batch_source_ids[3],last_batch_state_indices[3];
   uint32_t last_shader_uniform_count,last_shader_sampler_count;
@@ -130,6 +133,11 @@ static GmlRenderExecutionResult fake_submit(void *context,const GmlRenderDrawBat
     fake->last_target_image=last->target.image;
     fake->last_target_region=last->target.region;
     fake->last_source_count=last->source_count;
+    if(last->opcode==GML_RENDER_OP_SOFTWARE3D_PASS){
+      fake->last_depth=*last;
+      if(batch->states && last->state_index<batch->state_count)
+        fake->last_depth_state=batch->states[last->state_index];
+    }
     if(last->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
       fake->last_primitive=*last;
       if(batch->states && last->state_index<batch->state_count)
@@ -9406,6 +9414,65 @@ static int extended_rectangle_replay_state(void){
   free(reference);
   printf("extended rectangle replay: exact replay/checkpoint-refusal pairs=%u; seven malformed states refuse transactionally\n",controls);
   return controls==8100u;
+}
+
+static int fake_depth_upload(void *context,const GmlRenderDepthUpload *transfer){
+  FakeDevice *fake=context;fake->depth_uploads++;
+  return transfer && transfer->bytes && transfer->plane.width==5u && transfer->plane.height==5u;
+}
+
+static int fake_depth_read(void *context,const GmlRenderDepthReadback *transfer){
+  FakeDevice *fake=context;(void)transfer;fake->depth_reads++;return 0;
+}
+
+static int resident_depth_mask_admission(void){
+  const int generations[]={800,15,17};unsigned controls=0;
+  for(unsigned generation=0;generation<3u;generation++)for(unsigned numbered=0;numbered<2u;numbered++){
+    GmlWin content={.bytecode=generations[generation]>100?0:generations[generation],
+      .classic_version=generations[generation]>100?generations[generation]:0};
+    GmlRender *r=calloc(1,sizeof *r);
+    FakeDevice fake={.on_demand=1,.supported_operations=UINT64_C(1)<<GML_RENDER_OP_SOFTWARE3D_PASS};
+    GmlRenderDeviceServices device=service(&fake);
+    device.observe_on_demand=fake_observe_on_demand;
+    device.upload_depth=fake_depth_upload;device.readback_depth=fake_depth_read;
+    CHECK(r && !gml_render_init(r,&content));
+    CHECK(gml_render_application_surface_ensure_owned(r,5,5));
+    int target=numbered?gml_surface_create(r,5,5):0;CHECK(!numbered || target>0);
+    gml_render_bind_device(r,&device);CHECK(gml_render_begin_resident_owned_application(r,0,0,0));
+    if(numbered)CHECK(gml_surface_set_target(r,target));
+    gml_render_set_pending_fill(r,0x40204060u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));
+    uint32_t shadow[25];memcpy(shadow,r->fb,sizeof shadow);
+    float depth[25]={0};
+    for(unsigned replacement=0;replacement<2u;replacement++)for(unsigned mask=0;mask<16u;mask++){
+      r->alphablend=!replacement;r->color_write_mask=(uint8_t)mask;
+      CHECK(gml_render_cpu_backend_depth_texture_eligible(r,-1));
+      GmlRenderDepthTriangle triangle={.depth_epoch=1u,.depth_version=controls+1u,
+        .hidden=1u,.write_depth=1u,.normalized=1u,
+        .vertex={{1,1,1,.5,1,0,0,.5},{4,1,1,.5,0,1,0,.5},{1,4,1,.5,0,0,1,.5}}};
+      GmlRenderDepthPlaneRef published={0};unsigned submits=(unsigned)fake.submits;
+      CHECK(gml_render_cpu_backend_depth_triangle(r,&triangle,depth,-1,0,&published));
+      CHECK((unsigned)fake.submits==submits+1u && fake.last_depth_state.write_mask==15u &&
+        fake.last_depth.payload.depth_triangle.blend==!replacement &&
+        fake.last_depth.payload.depth_triangle.stamp_alpha==!gml_render_target_preserves_alpha(r) &&
+        published.version==controls+2u && r->color_write_mask==mask &&
+        r->alphablend==!replacement && !fake.readbacks && !fake.depth_reads &&
+        !memcmp(shadow,r->fb,sizeof shadow));
+      controls++;
+    }
+    r->color_write_mask=16u;CHECK(!gml_render_cpu_backend_depth_texture_eligible(r,-1));
+    r->color_write_mask=1u;r->blendmode=1;CHECK(!gml_render_cpu_backend_depth_texture_eligible(r,-1));
+    r->blendmode=0;r->alpha_test_enable=1;CHECK(!gml_render_cpu_backend_depth_texture_eligible(r,-1));
+    r->alpha_test_enable=0;r->active_shader=0;CHECK(!gml_render_cpu_backend_depth_texture_eligible(r,-1));
+    r->active_shader=-1;fake.supported_operations=0;CHECK(!gml_render_cpu_backend_depth_texture_eligible(r,-1));
+    fake.supported_operations=UINT64_C(1)<<GML_RENDER_OP_SOFTWARE3D_PASS;
+    r->device.upload_depth=NULL;CHECK(!gml_render_cpu_backend_depth_texture_eligible(r,-1));
+    r->device.upload_depth=fake_depth_upload;r->device.readback_depth=NULL;
+    CHECK(!gml_render_cpu_backend_depth_texture_eligible(r,-1));r->device.readback_depth=fake_depth_read;
+    CHECK(fake.depth_uploads==32u && !fake.depth_reads && !memcmp(shadow,r->fb,sizeof shadow));
+    gml_render_bind_device(r,NULL);gml_render_free(r);free(r);
+  }
+  CHECK(controls==192u);return 1;
 }
 
 static int resident_extended_rectangle_variant_dispatch(void){
@@ -21407,6 +21474,7 @@ int main(void){
     int passed;
     if(!strcmp(selected,"target-pixel-pending-scene")) passed=target_pixel_observes_pending_scene();
     else if(!strcmp(selected,"preserved-device-failure")) passed=preserved_device_failure_keeps_authority();
+    else if(!strcmp(selected,"depth-mask-admission")) passed=resident_depth_mask_admission();
     else if(!strcmp(selected,"extended-rectangle-variants")) passed=resident_extended_rectangle_variant_dispatch();
     else if(!strcmp(selected,"extended-rectangle-replay")) passed=extended_rectangle_replay_state();
     else if(!strcmp(selected,"extended-text-dispatch")) passed=resident_extended_text_dispatch_scope();
@@ -21607,6 +21675,7 @@ int main(void){
   passed+=resident_atlas_uv_refusal_preserves_queued_prefix();
   passed+=resident_application_sprite_cpu_fallback();
   passed+=extended_rectangle_replay_state();
+  passed+=resident_depth_mask_admission();
   passed+=resident_extended_rectangle_variant_dispatch();
   passed+=resident_extended_surface_dispatch_scope();
   passed+=resident_extended_runtime_sprite_dispatch_scope();
@@ -21821,7 +21890,7 @@ int main(void){
   passed+=resident_lazy_native_atlas();
   passed+=resident_unit_texel_magnification();
   passed+=opaque_rectangle_clear_complement();
-  enum { total=343 };
+  enum { total=344 };
   printf("render resource cases: passed=%d failed=%d\n",passed,total-passed);
   return passed==total?EXIT_SUCCESS:EXIT_FAILURE;
 }
