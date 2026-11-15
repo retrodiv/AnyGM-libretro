@@ -65,6 +65,21 @@ class ProviderPreparation(unittest.TestCase):
             self.assertIn("-I/native-sdk/include", result.stdout)
             self.assertIn("-DANYGM_VIDEO_PROVIDER_DYNAMIC=1", result.stdout)
 
+    def test_prepared_native_provider_works_without_system_pkg_config(self):
+        with tempfile.TemporaryDirectory() as folder:
+            prefix = Path(folder)
+            with patch.object(ci.subprocess, "check_output", return_value="-I/prepared/include"):
+                values = ci.provider_environment(prefix, {})
+            result = subprocess.run(["make", "-s", "-f", "Makefile", "-f", "-",
+                "CROSS_COMPILE=", "platform=unix", "PKG_CONFIG=false", "provider-flags"],
+                cwd=ROOT, env=dict(os.environ, **values),
+                input="provider-flags:\n\t@printf '%s\\n' '$(CPPFLAGS)' '$(VIDEO_PROVIDER_LDLIBS)'\n",
+                capture_output=True, text=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("-DANYGM_VIDEO_PROVIDER_DYNAMIC=1", result.stdout)
+            self.assertIn("-I/prepared/include", result.stdout)
+            self.assertIn("-ldl", result.stdout)
+
     def test_partial_shared_library_is_rejected_before_install(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

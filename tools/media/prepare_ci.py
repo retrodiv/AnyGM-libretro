@@ -92,7 +92,8 @@ def provider_environment(prefix: Path, env: dict[str, str]) -> dict[str, str]:
     packages = ["libavformat", "libavcodec", "libavutil", "libswscale", "libswresample"]
     pkg_env = dict(env, PKG_CONFIG_PATH="", PKG_CONFIG_SYSROOT_DIR="",
                    PKG_CONFIG_LIBDIR=str(prefix / "lib/pkgconfig"))
-    values = {}
+    # The prepared SDK is private; native pkg-config discovery cannot find it.
+    values = {"VIDEO_PROVIDER": "dynamic"}
     for name, flag in (("FFMPEG_CFLAGS", "--cflags"), ("FFMPEG_LIBS", "--libs")):
         values[name] = subprocess.check_output(
             [env.get("PKG_CONFIG", "pkg-config"), flag, *packages], env=pkg_env, text=True).strip()
