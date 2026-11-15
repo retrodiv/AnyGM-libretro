@@ -742,7 +742,7 @@ static int cold_known_storage_sizes_the_default_budget(int negotiation_result){
   stub_capacity_flags=ANYGM_STATE_CAPACITY_DYNAMIC_CONTAINERS |
                       ANYGM_STATE_CAPACITY_DYNAMIC_SURFACES;
   const size_t capacity=retro_serialize_size();
-  if(capacity!=4608u*1024u){
+  if(capacity!=2u*1024u*1024u){
     fprintf(stderr,"known cold storage returned %zu bytes\n",capacity);
     return 0;
   }
@@ -767,7 +767,7 @@ static int explicit_budget_sizes_the_cold_fixed_ring(int negotiation_result){
   stub_capacity_reserve=2u*1024u*1024u;
   stub_hint_bytes=2u*1024u*1024u;
   const size_t capacity=retro_serialize_size();
-  if(capacity!=4608u*1024u){
+  if(capacity!=2u*1024u*1024u){
     fprintf(stderr,"declared content reserve returned %zu bytes\n",capacity);
     return 0;
   }
@@ -828,9 +828,35 @@ static int cold_required_state_fits_without_a_declaration(int negotiation_result
   return ok;
 }
 
+/* Advisory capacities already describe their whole storage. Cold sizing must fit the known
+ * sections and their later growth without doubling an existing near-full capacity estimate. */
+static int cold_capacity_hint_avoids_duplicate_growth(int negotiation_result,int declared){
+  stub_state_bytes=6u*1024u*1024u;
+  if(!begin_frontend(negotiation_result)) return 0;
+  stub_resume_hint_bytes=stub_state_bytes;
+  stub_hint_bytes=15u*1024u*1024u/2u;
+  stub_capacity_reserve=declared?8u*1024u*1024u:0;
+  size_t capacity=retro_serialize_size();
+  if(capacity<stub_hint_bytes || capacity>8u*1024u*1024u){
+    fprintf(stderr,"cold capacity duplicated its hint: capacity=%zu hint=%zu\n",capacity,stub_hint_bytes);
+    return 0;
+  }
+  retro_run();
+  stub_state_bytes=7u*1024u*1024u;
+  uint8_t *state=malloc(capacity);
+  if(!state) return 0;
+  int ok=retro_serialize_size()==capacity && retro_serialize(state,capacity) &&
+         retro_unserialize(state,capacity) && !snapshot_failure_messages;
+  free(state);retro_unload_game();retro_deinit();
+  return ok;
+}
+
 int main(void){
   uint8_t byte=0;
   memset(&g_libretro,0,sizeof g_libretro);
+  for(int negotiation=-1;negotiation<=1;negotiation++)
+    for(int declared=0;declared<2;declared++)
+      if(!cold_capacity_hint_avoids_duplicate_growth(negotiation,declared)) return 1;
   if(!cold_required_state_fits_without_a_declaration(0) ||
      !cold_required_state_fits_without_a_declaration(-1) ||
      !cold_required_state_fits_without_a_declaration(1)) return 1;

@@ -119,14 +119,30 @@ static void negotiate_serialization(void){
 
 static size_t fixed_state_capacity(size_t actual,size_t reserve){
   const size_t margin=512u*1024u;
-  /* Size the first fixed allocation from the known required representation, with headroom.
-   * A content reserve is an optional minimum, never a replacement for measured requirements.
-   * Later fixed queries reuse this capacity; only acknowledged frontends may grow it. */
+  /* A first completed-state query or acknowledged growth keeps complete-state headroom.
+   * A content reserve remains an optional minimum. Later fixed queries reuse their capacity;
+   * the separate cold policy avoids duplicating advisory raster ceilings before frame one. */
   size_t floor=1u*1024u*1024u;
   if(reserve>floor) floor=reserve;
   if(actual>(SIZE_MAX-margin)/2u) return SIZE_MAX;
   size_t capacity=actual*2u+margin;
   return capacity<floor?floor:capacity;
+}
+
+static size_t cold_state_capacity(size_t required,size_t hint,size_t reserve){
+  const size_t margin=512u*1024u;
+  if(required>SIZE_MAX-margin) return SIZE_MAX;
+  size_t wanted=required+margin;
+  if(hint>wanted) wanted=hint;
+  /* Hints already cover whole allocations. Round the cold requirement and its headroom to
+   * a reusable bucket instead of multiplying a raw raster ceiling a second time. A declared
+   * minimum can still raise that automatic allocation without being rounded or charged again. */
+  size_t capacity=1u*1024u*1024u;
+  while(capacity<wanted){
+    if(capacity>SIZE_MAX/2u) return SIZE_MAX;
+    capacity*=2u;
+  }
+  return reserve>capacity?reserve:capacity;
 }
 
 void retro_set_environment(retro_environment_t callback){
@@ -880,8 +896,8 @@ size_t retro_serialize_size(void){
     if(!compact_startup && complete_hint>actual) actual=complete_hint;
   }
   if(g_libretro.frame_completed){
-    size_t hint=anygm_state_capacity_hint(g_libretro.engine);
-    if(hint>actual) actual=hint;
+    complete_hint=anygm_state_capacity_hint(g_libretro.engine);
+    if(complete_hint>actual) actual=complete_hint;
   }
   /* Grow only after an explicit frontend acknowledgement. RetroArch re-queries this answer before
    * every rewind snapshot but keeps the ring allocated from the first one; returning the complete
@@ -900,8 +916,8 @@ size_t retro_serialize_size(void){
         (unsigned long long)required,(unsigned long long)resume_hint,
         (unsigned long long)complete_hint,(unsigned long long)actual,
         (unsigned long long)reserve,compact_startup?1u:0u);
-    g_libretro.fixed_state_capacity=fixed_state_capacity(
-      actual,reserve);
+    g_libretro.fixed_state_capacity=!previous && !g_libretro.frame_completed?
+      cold_state_capacity(required,actual,reserve):fixed_state_capacity(actual,reserve);
     /* Acknowledged growth is unusual enough to report once without flooding repeated queries. */
     if(previous && !g_libretro.state_capacity_growth_reported){
       g_libretro.state_capacity_growth_reported=true;

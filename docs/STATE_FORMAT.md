@@ -783,7 +783,9 @@ the current buffer requirement and writes into a caller-owned buffer.
 The libretro adapter advertises the variable-size serialization quirk and records whether the
 frontend acknowledges it. Requesting the quirk is not sufficient: a declined or unsupported
 request has the baseline fixed-size contract. The first answer includes the measured required
-representation and known capacity hints, with a growth allowance and a one-MiB minimum. An optional
+representation and known capacity hints. A cold query adds a fixed growth allowance to the required
+sections, includes the whole advisory ceilings, and rounds that automatic budget to a power of two
+with a one-MiB minimum. It does not double already-complete capacity hints. An optional
 `statereserve|bytes` declaration in a content anchor can raise that minimum for measured deferred
 growth. It never replaces the capacity calculated from already-known requirements. Constructor
 mentions alone do not specify a byte budget. Later fixed-size queries
