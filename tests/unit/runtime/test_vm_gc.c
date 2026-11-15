@@ -149,8 +149,73 @@ static int an_empty_pool_skips_roots_and_reused_slots_resume_collection(void){
   return ok;
 }
 
+/* A small transient batch must not repeatedly walk a large surviving graph.
+ * The small-heap node guard and independent byte guard remain active. */
+static int collection_work_is_amortized_over_live_values(void){
+  GmlWin content={0};GmlVM vm;
+  if(gml_vm_init(&vm,&content,NULL))return 0;
+  int ok=1;
+#define GC_BUDGET_EXPECT(condition) do { if(!(condition)){ \
+  fprintf(stderr,"live heap budget: %s\n",#condition);ok=0;goto budget_done; \
+} }while(0)
+  GmlVal roots=gml_arr_new(4096,vreal(0));
+  GC_BUDGET_EXPECT(roots.t==V_ARR && roots.arr);
+  for(int i=0;i<4096;i++){
+    GmlVal child=gml_arr_new(1,vreal(i));
+    GC_BUDGET_EXPECT(child.t==V_ARR && child.arr);
+    gml_arr_set(roots,i,child);
+  }
+  GC_BUDGET_EXPECT(gml_array_heap_adopt(&vm.array_heap,roots));
+  *gml_varmap_put(&vm.globals,"roots")=roots;
+  gml_struct_gc(&vm);
+  GC_BUDGET_EXPECT(gml_array_heap_count(vm.array_heap)==4097);
+  for(int i=0;i<256;i++){
+    GmlVal temporary=gml_arr_new(0,vreal(0));
+    GC_BUDGET_EXPECT(temporary.t==V_ARR && temporary.arr);
+    GC_BUDGET_EXPECT(gml_array_heap_adopt(&vm.array_heap,temporary));
+  }
+  GC_BUDGET_EXPECT(!gml_array_heap_collection_due(vm.array_heap));
+  for(int i=256;i<1024;i++){
+    GmlVal temporary=gml_arr_new(0,vreal(0));
+    GC_BUDGET_EXPECT(temporary.t==V_ARR && temporary.arr);
+    GC_BUDGET_EXPECT(gml_array_heap_adopt(&vm.array_heap,temporary));
+  }
+  GC_BUDGET_EXPECT(gml_array_heap_collection_due(vm.array_heap));
+  gml_struct_gc(&vm);
+  GC_BUDGET_EXPECT(gml_array_heap_count(vm.array_heap)==4097);
+  for(int i=0;i<4096;i++)
+    GC_BUDGET_EXPECT(gml_arr_get(gml_arr_get(roots,i),0).d==i);
+  GC_BUDGET_EXPECT(!gml_array_heap_collection_due(vm.array_heap));
+  {GmlVal large=gml_arr_new((9u*1024u*1024u)/sizeof(GmlVal)+1u,vreal(0));
+    GC_BUDGET_EXPECT(large.t==V_ARR && large.arr);
+    GC_BUDGET_EXPECT(gml_array_heap_adopt(&vm.array_heap,large));}
+  GC_BUDGET_EXPECT(gml_array_heap_collection_due(vm.array_heap));
+  gml_struct_gc(&vm);
+  GC_BUDGET_EXPECT(gml_array_heap_count(vm.array_heap)==4097);
+  *gml_varmap_get(&vm.globals,"roots")=vreal(0);
+  gml_struct_gc(&vm);
+  GC_BUDGET_EXPECT(gml_array_heap_count(vm.array_heap)==0);
+  for(int i=0;i<255;i++){
+    GmlVal temporary=gml_arr_new(0,vreal(0));
+    GC_BUDGET_EXPECT(temporary.t==V_ARR && temporary.arr);
+    GC_BUDGET_EXPECT(gml_array_heap_adopt(&vm.array_heap,temporary));
+  }
+  GC_BUDGET_EXPECT(!gml_array_heap_collection_due(vm.array_heap));
+  {GmlVal temporary=gml_arr_new(0,vreal(0));
+    GC_BUDGET_EXPECT(temporary.t==V_ARR && temporary.arr);
+    GC_BUDGET_EXPECT(gml_array_heap_adopt(&vm.array_heap,temporary));}
+  GC_BUDGET_EXPECT(gml_array_heap_collection_due(vm.array_heap));
+  gml_struct_gc(&vm);
+  GC_BUDGET_EXPECT(gml_array_heap_count(vm.array_heap)==0);
+ budget_done:
+  gml_vm_free(&vm);
+#undef GC_BUDGET_EXPECT
+  return ok;
+}
+
 int main(void){
   int ok=1;
+  ok &= collection_work_is_amortized_over_live_values();
   ok &= a_shared_graph_is_walked_once_per_array();
   ok &= a_cycle_terminates();
   ok &= an_empty_pool_skips_roots_and_reused_slots_resume_collection();

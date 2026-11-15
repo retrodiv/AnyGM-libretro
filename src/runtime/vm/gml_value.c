@@ -57,6 +57,7 @@ typedef struct GmlOwnedText {
 struct GmlArrayHeap {
   GmlArr *first, *last;
   size_t count, new_nodes, new_bytes;
+  size_t surviving_nodes;
   GmlOwnedText **texts;
   size_t text_capacity,text_count;
 };
@@ -155,7 +156,13 @@ static void array_heap_free_node(GmlArr *array){
 }
 size_t gml_array_heap_count(const GmlArrayHeap *heap){ return heap?heap->count+heap->text_count:0; }
 int gml_array_heap_collection_due(const GmlArrayHeap *heap){
-  return heap && (heap->new_nodes>=256 || heap->new_bytes>=8u*1024u*1024u);
+  if(!heap) return 0;
+  /* Amortize another complete graph walk against the preceding live set.
+   * Small heaps retain the original node budget; the independent byte budget
+   * still bounds a burst even when many values survive each collection. */
+  size_t nodes=heap->surviving_nodes/4u;
+  if(nodes<256u) nodes=256u;
+  return heap->new_nodes>=nodes || heap->new_bytes>=8u*1024u*1024u;
 }
 void gml_array_heap_sweep(GmlArrayHeap *heap,unsigned epoch){
   if(!heap) return;
@@ -173,6 +180,7 @@ void gml_array_heap_sweep(GmlArrayHeap *heap,unsigned epoch){
       else {*link=node->next;free(node->text);free(node);heap->text_count--;}
     }
   }
+  heap->surviving_nodes=gml_array_heap_count(heap);
   heap->new_nodes=heap->new_bytes=0;
 }
 void gml_array_heap_destroy(GmlArrayHeap **owner){
