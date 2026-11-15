@@ -3081,6 +3081,14 @@ CPU opaque-white direct store remains limited to replacement or normal ADD/ADD,
 so nondefault equations retain the same mask/equation policy as the general
 pixel writer; its existing sampling and direct-store body remain intact.
 
+Qualified fixed-function depth triangles retain the CPU raster's effective
+alpha-test policy: public enable/reference inputs remain observable and survive
+drawing, while these triangle writers do not discard fragments from that state.
+Native commands capture the same disabled effective test. Ordinary 2D/program
+alpha-test gates remain separate. Paired CPU colour/raw-depth controls cover
+zero/partial/positive alpha, textures, lighting/fog and depth-write states;
+this admission policy has no original-runner semantic evidence.
+
 <!-- D8-DISPATCH:START -->
 
 | Dispatch point | Possible admission port | Status | Source revision | Remaining scope / debt reason |
@@ -3321,7 +3329,7 @@ pixel writer; its existing sampling and direct-store body remain intact.
 | `src/video/renderer/common/gml_render_primitives.c::resident_primitive_state_eligible_target` | `CPU` | HELPER | `fab019084c713586d22c27ab214f366277be610ec1b5f03851d1cf741513d164` | Shared metadata predicate; optional scene continuation accepts a retained resident scene after a CPU barrier. Only the native depth port opts in; ordinary primitive predicates preserve their residency requirement. It neither reads pixels nor submits drawing work. Metadata eligibility now recognizes validated extended factors/equations; ordinary primitive wrappers still reject them and only the qualified rectangle port opts in. |
 | `src/video/renderer/common/gml_render_primitives.c::gml_render_cpu_backend_depth_triangle` | `gml_render_cpu_backend_depth_triangle` | PARTIAL | `f779aeede335cc3735db37c8bf286e7abdec315d9d838136f224c3c104af4c64` | Qualified active fixed-function triangles share projection and clipping, native raw depth and optional versioned atlas/runtime/surface sampling. Local legacy crops reuse immutable repeating views; vertex buffers retain full-page UVs. Device filtering/repeat, source orientation and prepared fixed-function lighting/fog are explicit. CPU fallback imports actual depth and resolves deferred source pixels; aliases, unsupported local views, programs, extreme numeric policy and other state remain counted debt. |
 | `src/video/software3d/gml_software3d_raster.c::gml_software3d_primitive_3d_end` | `gml_render_cpu_backend_depth_triangle` | PARTIAL | `fe0516032bd493747b6ab820e8d4884f0c1e2f4f96fee2d81d901d0acb7000cc` | R03-3D-NATIVE admits source-free active fixed-function triangles through the shared projection/clip owners and typed native depth port: captured effective pixel preset/equation policies and independent RGB/alpha factors/masks, with legacy normal/replacement retained, prepared fixed-function lighting/fog, no active program. Raw depth is imported before CPU fallback and CPU-written depth is uploaded before native continuation. Qualified atlas/runtime/surface bindings share native repeat/filter sampling. Aliases, unsupported local views, points/lines and other state remain counted CPU debt. |
-| `src/video/renderer/common/gml_render_primitives.c::resident_depth_triangle_eligible` | `CPU` | HELPER | `2ee2d11c65706836100d054cc8fc4c499b659e16e8f0a3e687232e3cc5bc88c0` | Pure metadata gate for current-target native depth commands; texture eligibility queries use this predicate without submitting drawing work. |
+| `src/video/renderer/common/gml_render_primitives.c::resident_depth_triangle_eligible` | `CPU` | HELPER | `546f66da82e8f9fad51b18452bab9ab915d445f9bc06bba8d46e585fb67ddb22` | Pure metadata gate for current-target native depth commands; texture eligibility queries use this predicate without submitting drawing work. |
 | `src/video/renderer/common/gml_render_primitives.c::resident_depth_pixel_snapshot` | `CPU` | HELPER | `0c87b6e664161a2e31db735cb2c1dd5e790ecd782b705600c1036e5cfa182e1a` | Metadata-only translation of the established pixel preset/equation policy into a native depth snapshot; it performs no pixel read, coverage walk or drawing. |
 <!-- D8-DISPATCH:END -->
 

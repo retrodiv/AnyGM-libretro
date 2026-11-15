@@ -615,9 +615,10 @@ static int native_vertex_texture_source(GmlRender *r,int texture,int full_atlas,
 static int resident_depth_triangle_eligible(GmlRender *r){
   const GmlRenderDeviceServices *device=gml_render_device(r);
   GmlRenderDeviceCaps caps={0};
+  /* This fixed-function CPU raster does not apply the public alpha test.
+   * Capture that effective policy; ordinary 2D/program gates stay separate. */
   if(!resident_primitive_state_eligible_target(r,0,1,1) ||
      r->active_shader>=0 ||
-     r->alpha_test_enable ||
      r->classic_phase_scene_target || r->app_interp_phase[0] || r->app_interp_phase[1] ||
      r->app_interp_phase[2] || !device->upload_depth || !device->readback_depth ||
      !device->capabilities(device->context,&caps) ||
