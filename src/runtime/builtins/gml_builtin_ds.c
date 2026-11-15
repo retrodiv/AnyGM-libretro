@@ -80,10 +80,16 @@ static char *ds_key_temp_steal(DsKeyTemp *t){
   t->heap=NULL;
   return heap;
 }
-static GmlVal ds_key_val_clone(GmlVal v){
+static GmlVal ds_key_val_clone(GmlVM *vm,GmlVal v){
   /* Own a copy, like ds_val_clone below: a bare reference dangles once str_gc frees the
    * caller's temporary value. */
-  if(v.t==V_STR){ char *c=v.s?strdup(v.s):NULL; return c?vstr_owned(c):vstr(""); }
+  if(v.t==V_STR){
+    char *copy=v.s?strdup(v.s):NULL;
+    if(!copy) return vstr("");
+    GmlVal owned=vstr_owned(copy);
+    if(gml_array_heap_adopt(&vm->array_heap,owned)) return owned;
+    free(copy); return vstr("");
+  }
   if(v.t==V_UNDEF) return vundef();
   if(v.t==V_OBJECT || v.t==V_REAL) return v;
   return vreal(0);
@@ -98,10 +104,10 @@ static void ds_entry_state_memo_clear(GmlDSMapEntry *e,int slot){
   e->state_string_hash[slot]=0;
   e->state_string_hash_valid[slot]=0;
 }
-/* free one map entry: ONLY the lookup key. The owned key_val/val strings are deliberately
- * LEAKED: ds_ret hands them out as d=0 references that user code may retain in globals or
- * instance vars long after the entry (or the whole map) is destroyed — freeing them here
- * turns those retained references into use-after-free at the next state save. */
+/* Only the lookup key belongs to this entry. Stored text and arrays belong to the VM's
+ * value owner: ds_ret can expose borrowed references retained in globals or instance fields.
+ * Collection follows those roots after the container is gone, and VM teardown reclaims the
+ * remaining allocations without invalidating escaped references during map destruction. */
 static void ds_entry_free(GmlDSMapEntry *e){
   for(int slot=0;slot<3;slot++) ds_entry_state_memo_clear(e,slot);
   free(e->key);
@@ -123,11 +129,20 @@ static void ds_grid_state_cache_clear(GmlDSGrid *grid){
 /* Return a value stored in a ds structure. Strings are handed back as NON-owned references (d=0) so
  * the VM's OP_CALL result tracker does not adopt and free the structure's copy at scope exit. */
 static GmlVal ds_ret(GmlVal v){ if(v.t==V_STR) v.d=0; return v; }
-static GmlVal ds_val_clone(GmlVal v){
+static GmlVal ds_val_clone(GmlVM *vm,GmlVal v){
   /* Own an independent copy of stored strings. The source is often a per-run temporary value that
    * str_gc frees at scope exit, so storing the bare pointer makes later reads unsafe. */
-  if(v.t==V_STR){ char *c=v.s?strdup(v.s):NULL; return c?vstr_owned(c):vstr(""); }
-  if(v.t==V_ARR){ gml_arr_mark_escaped(v); return v; }   /* ds structures outlive the scope */
+  if(v.t==V_STR){
+    char *copy=v.s?strdup(v.s):NULL;
+    if(!copy) return vstr("");
+    GmlVal owned=vstr_owned(copy);
+    if(gml_array_heap_adopt(&vm->array_heap,owned)) return owned;
+    free(copy); return vstr("");
+  }
+  if(v.t==V_ARR){
+    if(!gml_array_heap_adopt(&vm->array_heap,v)) return vundef();
+    gml_arr_mark_escaped(v); return v;
+  }
   if(v.t==V_UNDEF) return vundef();
   if(v.t==V_OBJECT || v.t==V_REAL) return v;
   return vreal(0);
@@ -182,14 +197,14 @@ void ds_list_push_kind(GmlDSList *l, GmlVal v, int kind){
 void ds_list_push(GmlDSList *l, GmlVal v){ ds_list_push_kind(l,v,0); }
 
 
-static GmlVal ds_priority_entry(GmlVal val, double pri){
+static GmlVal ds_priority_entry(GmlVM *vm,GmlVal val, double pri){
   GmlVal e=arr_newv(2);
-  if(e.t!=V_ARR || !e.arr) return ds_val_clone(val);
+  if(e.t!=V_ARR || !e.arr) return ds_val_clone(vm,val);
   GmlArr *A=(GmlArr*)e.arr;
-  A->data[0]=ds_val_clone(val);
+  A->data[0]=ds_val_clone(vm,val);
   A->data[1]=vreal(pri);
   gml_arr_mark_escaped(e);
-  return e;
+  return ds_val_clone(vm,e);
 }
 static GmlVal ds_priority_value(GmlVal e){
   if(e.t==V_ARR && e.arr){
@@ -226,10 +241,10 @@ static int ds_priority_value_index(GmlDSList *l, GmlVal value){
     if(ds_val_equal(ds_priority_value(l->item[i]),value)) return i;
   return -1;
 }
-static void ds_grid_store(GmlDSGrid *g, int x, int y, GmlVal v){
+static void ds_grid_store(GmlVM *vm,GmlDSGrid *g, int x, int y, GmlVal v){
   if(g && g->cell && x>=0 && y>=0 && x<g->w && y<g->h){
     ds_grid_state_cache_clear(g);
-    g->cell[(size_t)y*g->w+x]=ds_val_clone(v);
+    g->cell[(size_t)y*g->w+x]=ds_val_clone(vm,v);
   }
 }
 /* ---- ds_grid: two-dimensional GmlVal storage. ---- */
@@ -366,7 +381,7 @@ static int ds_map_store(GmlVM *vm, int id, GmlVal keyv, GmlVal val,
   if(i>=0){
     if(overwrite){
       ds_map_state_cache_clear(m);
-      m->entry[i].val=static_string?val:ds_val_clone(val); /* old refs may have escaped */
+      m->entry[i].val=static_string?val:ds_val_clone(vm,val); /* old refs may have escaped */
       ds_entry_state_memo_clear(&m->entry[i],2);
       m->entry[i].child_kind=0;
     }
@@ -380,8 +395,8 @@ static int ds_map_store(GmlVM *vm, int id, GmlVal keyv, GmlVal val,
   if(!ds_map_reserve(m,m->len+1)){ free(key); return 0; }
   ds_map_state_cache_clear(m);
   m->entry[m->len].key=key;
-  m->entry[m->len].key_val=static_key?keyv:ds_key_val_clone(keyv);
-  m->entry[m->len].val=static_string?val:ds_val_clone(val);
+  m->entry[m->len].key_val=static_key?keyv:ds_key_val_clone(vm,keyv);
+  m->entry[m->len].val=static_string?val:ds_val_clone(vm,val);
   m->entry[m->len].child_kind=0;
   memset(m->entry[m->len].state_string_encoding,0,
          sizeof m->entry[m->len].state_string_encoding);
@@ -819,7 +834,7 @@ static void ds_list_transfer_items(GmlVM *vm,GmlDSList *destination,GmlDSList *s
   ds_list_clear_owned(vm,destination);
   for(int i=0;i<source->len;i++){
     int kind=source->child_kind?source->child_kind[i]:0;
-    ds_list_push_kind(destination,ds_val_clone(source->item[i]),kind);
+    ds_list_push_kind(destination,ds_val_clone(vm,source->item[i]),kind);
     /* Ownership of nested DS resources moves to the destination. The temporary JSON tree
      * may still destroy its list shells, but must not recursively destroy a transferred child. */
     if(source->child_kind) source->child_kind[i]=0;
@@ -850,7 +865,7 @@ static int ds_list_read_text(GmlVM *vm,int dst_id,const char *text){
                        !ds_list_slot(vm,(int)row->item[1].d))) kind=0;
         if(kind==2 && (actual!=2 || row->item[1].t!=V_REAL ||
                        !ds_map_slot(vm,(int)row->item[1].d))) kind=0;
-        ds_list_push_kind(destination,ds_val_clone(row->item[1]),kind);
+        ds_list_push_kind(destination,ds_val_clone(vm,row->item[1]),kind);
         if(kind && row->child_kind) row->child_kind[1]=0;
       }
       ds_map_destroy_id(vm,root_id);
@@ -1018,7 +1033,7 @@ static int ds_grid_read_native(GmlVM *vm,int id,const char *text){
           off=12;
           for(uint32_t x=0;x<w;x++)
             for(uint32_t y=0;y<h;y++)
-              ds_grid_store(g,(int)x,(int)y,ds_native_take_value(bytes,&off));
+              ds_grid_store(vm,g,(int)x,(int)y,ds_native_take_value(bytes,&off));
         }
       }
     }
@@ -1145,7 +1160,7 @@ static int ds_priority_read_native(GmlVM *vm,int id,const char *text){
             off=values_off;
             for(uint32_t i=0;i<count;i++){
               GmlVal value=ds_native_take_value(bytes,&off);
-              ds_list_push(list,ds_priority_entry(value,priorities[i]));
+              ds_list_push(list,ds_priority_entry(vm,value,priorities[i]));
               if(value.t==V_STR && value.d!=0) free((void*)value.s);
             }
           }
@@ -1384,7 +1399,7 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"ds_list_destroy")){ ds_list_destroy_id(vm,(int)N(a,n,0)); return vreal(0); }
   if(!strcmp(nm,"ds_list_clear")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); ds_list_clear_owned(vm,l); return vreal(0); }
   if(!strcmp(nm,"ds_list_add")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
-    for(int i=1;i<n;i++) ds_list_push(l,ds_val_clone(a[i]));
+    for(int i=1;i<n;i++) ds_list_push(l,ds_val_clone(vm,a[i]));
     return vreal(0); }
   if(!strcmp(nm,"ds_list_write")) return ds_list_write_text(vm,(int)N(a,n,0));
   if(!strcmp(nm,"ds_list_read")){
@@ -1417,9 +1432,9 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
       if(x.t==a[1].t && (x.t==V_STR? (x.s&&a[1].s&&!strcmp(x.s,a[1].s)) : x.d==a[1].d)) return vreal(i); }
     return vreal(-1); }
   if(!strcmp(nm,"ds_list_set")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); int p=(int)N(a,n,1);
-    if(l && p>=0 && n>=3){ while(l->len<=p) ds_list_push(l,vreal(0)); l->item[p]=ds_val_clone(a[2]); if(l->child_kind) l->child_kind[p]=0; } return vreal(0); }
+    if(l && p>=0 && n>=3){ while(l->len<=p) ds_list_push(l,vreal(0)); l->item[p]=ds_val_clone(vm,a[2]); if(l->child_kind) l->child_kind[p]=0; } return vreal(0); }
   if(!strcmp(nm,"ds_list_replace")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); int p=(int)N(a,n,1);
-    if(l && p>=0 && p<l->len && n>=3){ l->item[p]=ds_val_clone(a[2]); if(l->child_kind) l->child_kind[p]=0; } return vreal(0); }
+    if(l && p>=0 && p<l->len && n>=3){ l->item[p]=ds_val_clone(vm,a[2]); if(l->child_kind) l->child_kind[p]=0; } return vreal(0); }
   if(!strcmp(nm,"ds_list_sort")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
     if(l && l->len>1){
       int ascending=n<2||N(a,n,1)!=0;
@@ -1450,7 +1465,7 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(l && p>=0 && p<=l->len && n>=3){ ds_list_push(l,vreal(0));
       memmove(&l->item[p+1],&l->item[p],(size_t)(l->len-1-p)*sizeof(GmlVal));
       if(l->child_kind) memmove(&l->child_kind[p+1],&l->child_kind[p],(size_t)(l->len-1-p));
-      l->item[p]=ds_val_clone(a[2]); if(l->child_kind) l->child_kind[p]=0; } return vreal(0); }
+      l->item[p]=ds_val_clone(vm,a[2]); if(l->child_kind) l->child_kind[p]=0; } return vreal(0); }
   /* Implement FIFO queues and LIFO stacks through GmlDSList storage and shared IDs. */
   if(!strcmp(nm,"ds_queue_create")||!strcmp(nm,"ds_stack_create")) return vreal((double)ds_list_create_id(vm));
   if(!strcmp(nm,"ds_queue_read") || !strcmp(nm,"ds_stack_read") ||
@@ -1476,14 +1491,11 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
      * destination. A failed allocation must not consume either sequence. */
     GmlDSList staged={0};
     for(int i=0;i<src->len;i++){
-      GmlVal value=ds_val_clone(src->item[i]);
+      GmlVal value=ds_val_clone(vm,src->item[i]);
       if(src->item[i].t==V_STR && src->item[i].s && src->item[i].s[0] &&
          (!value.s || !value.s[0])) break;
       ds_list_push(&staged,value);
-      if(staged.len!=i+1){
-        if(value.t==V_STR && value.d!=0) free((void *)value.s);
-        break;
-      }
+      if(staged.len!=i+1) break;
     }
     if(staged.len==src->len){
       ds_list_clear_owned(vm,dst);
@@ -1494,9 +1506,7 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
       dst->len=staged.len;
       dst->cap=staged.cap;
     } else {
-      for(int i=0;i<staged.len;i++)
-        if(staged.item[i].t==V_STR && staged.item[i].d!=0)
-          free((void *)staged.item[i].s);
+      /* Staged values already belong to the VM collector, including on allocation failure. */
       free(staged.item);
       free(staged.child_kind);
     }
@@ -1507,7 +1517,7 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"ds_queue_size")||!strcmp(nm,"ds_stack_size")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); return vreal(l?l->len:0); }
   if(!strcmp(nm,"ds_queue_empty")||!strcmp(nm,"ds_stack_empty")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); return vreal(!l||l->len==0); }
   if(!strcmp(nm,"ds_queue_enqueue")||!strcmp(nm,"ds_stack_push")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
-    for(int i=1;i<n;i++) ds_list_push(l,ds_val_clone(a[i]));
+    for(int i=1;i<n;i++) ds_list_push(l,ds_val_clone(vm,a[i]));
     return vreal(0); }
   if(!strcmp(nm,"ds_queue_head")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); return (l&&l->len>0)?ds_ret(l->item[0]):vreal(0); }
   if(!strcmp(nm,"ds_queue_tail")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); return (l&&l->len>0)?ds_ret(l->item[l->len-1]):vreal(0); }
@@ -1529,7 +1539,7 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"ds_priority_size")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); return vreal(l?l->len:0); }
   if(!strcmp(nm,"ds_priority_empty")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); return vreal(!l||l->len==0); }
   if(!strcmp(nm,"ds_priority_add")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
-    if(l && n>=3) ds_list_push(l,ds_priority_entry(a[1],N(a,n,2)));
+    if(l && n>=3) ds_list_push(l,ds_priority_entry(vm,a[1],N(a,n,2)));
     return vreal(0); }
   if(!strcmp(nm,"ds_priority_write")) return ds_priority_write_native(vm,(int)N(a,n,0));
   if(!strcmp(nm,"ds_priority_read")){
@@ -1541,7 +1551,7 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(dst && src && dst!=src){
       dst->len=0;
       for(int i=0;i<src->len;i++)
-        ds_list_push(dst,ds_priority_entry(ds_priority_value(src->item[i]),
+        ds_list_push(dst,ds_priority_entry(vm,ds_priority_value(src->item[i]),
                                            ds_priority_priority(src->item[i])));
     }
     return vreal(0);
@@ -1593,7 +1603,7 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"ds_grid_get")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); int x=(int)N(a,n,1),y=(int)N(a,n,2);
     return (g && g->cell && x>=0 && y>=0 && x<g->w && y<g->h)? ds_ret(g->cell[(size_t)y*g->w+x]) : vreal(0); }
   if(!strcmp(nm,"ds_grid_set")||!strcmp(nm,"ds_grid_set_post")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); int x=(int)N(a,n,1),y=(int)N(a,n,2);
-    if(n>=4) ds_grid_store(g,x,y,a[3]);
+    if(n>=4) ds_grid_store(vm,g,x,y,a[3]);
     return n>=4?a[3]:vreal(0); }
   if(!strcmp(nm,"ds_grid_write")) return ds_grid_write_native(vm,(int)N(a,n,0));
   if(!strcmp(nm,"ds_grid_read")){
@@ -1604,14 +1614,14 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!ds_grid_resize_cells(d,s->w,s->h)) return vreal(0);
     for(int y=0;y<s->h;y++)
       for(int x=0;x<s->w;x++)
-        ds_grid_store(d,x,y,s->cell[(size_t)y*s->w+x]);
+        ds_grid_store(vm,d,x,y,s->cell[(size_t)y*s->w+x]);
     return vreal(1); }
   if(!strcmp(nm,"ds_grid_add")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); int x=(int)N(a,n,1),y=(int)N(a,n,2);
     if(g && g->cell && x>=0 && y>=0 && x<g->w && y<g->h && n>=4){
       ds_grid_state_cache_clear(g);
       GmlVal old=g->cell[(size_t)y*g->w+x];
       /* A boxed object is assigned as an identity rather than added to the cell's number. */
-      g->cell[(size_t)y*g->w+x]=ds_val_clone(a[3].t==V_OBJECT?a[3]:
+      g->cell[(size_t)y*g->w+x]=ds_val_clone(vm,a[3].t==V_OBJECT?a[3]:
                                              vreal(N(&old,1,0)+N(a,n,3)));
     }
     return vreal(0); }
@@ -1717,9 +1727,9 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
       GmlVal *cell=&g->cell[(size_t)y*(size_t)g->w+(size_t)x];
       if(add||mul){
         double had=N(cell,1,0), got=N(&incoming,1,0);
-        *cell=ds_val_clone(vreal(add?had+got:had*got));
+        *cell=ds_val_clone(vm,vreal(add?had+got:had*got));
       }else{
-        *cell=ds_val_clone(incoming);
+        *cell=ds_val_clone(vm,incoming);
       }
     }
     return vreal(0);
@@ -1869,8 +1879,8 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
       GmlVal *values=count?malloc((size_t)count*sizeof(*values)):NULL;
       if(!count || (keys && values)){
         for(int i=0;i<count;i++){
-          keys[i]=ds_key_val_clone(src->entry[i].key_val);
-          values[i]=ds_val_clone(src->entry[i].val);
+          keys[i]=ds_key_val_clone(vm,src->entry[i].key_val);
+          values[i]=ds_val_clone(vm,src->entry[i].val);
         }
         ds_map_clear_owned(vm,dst);
         for(int i=0;i<count;i++) ds_map_put(vm,dst_id,keys[i],values[i],1);
@@ -1883,7 +1893,7 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
     GmlDSList *dst=ds_list_slot_repair(vm,(int)N(a,n,0)), *src=ds_list_slot_repair(vm,(int)N(a,n,1));
     if(dst && src){
       dst->len=0;
-      for(int i=0;i<src->len;i++) ds_list_push_kind(dst, ds_val_clone(src->item[i]),
+      for(int i=0;i<src->len;i++) ds_list_push_kind(dst, ds_val_clone(vm,src->item[i]),
                                                      src->child_kind?src->child_kind[i]:0);
     }
     return vreal(0);

@@ -274,8 +274,8 @@ static int run_ds_case(int response){
   uint8_t *cold=NULL,*saved=NULL;
   int ok=1;
   GmlVal map=vreal(-1),list=vreal(-1),buffer=vreal(-1);
-  /* DS strings may escape their containers and intentionally outlive destroy/reset.
-   * These synthetic keys escape nowhere else; retain their copies until engine teardown. */
+  /* Keep independent fixture copies: borrowed DS strings now have a VM owner and may be
+   * reclaimed by collection or teardown after their containers and roots disappear. */
   char *fixture_keys[2300]={0};
   negotiation=response;
   monitor_changed=option_update=0;
@@ -302,8 +302,9 @@ static int run_ds_case(int response){
     GmlVal fixture_key=gml_builtin_call(vm,"ds_map_find_first",&map,1);
     REQUIRE(fixture_key.t==V_STR && fixture_key.s &&
             !strcmp(fixture_key.s,"number"),
-            "retain the fixture-owned cloned map key");
-    fixture_keys[i]=(char*)fixture_key.s;
+            "read the cloned map key before retaining a fixture copy");
+    fixture_keys[i]=strdup(fixture_key.s);
+    REQUIRE(fixture_keys[i]!=NULL,"retain an independent fixture key copy");
     if(i<64){
       GmlVal size=vreal(8192);
       buffer=gml_builtin_call(vm,"buffer_create",&size,1);

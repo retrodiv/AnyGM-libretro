@@ -365,6 +365,67 @@ done:
   return ok;
 }
 
+#define DS_OWNER_REQUIRE(test,message) do{if(!(test)){fprintf(stderr,"%s\n",message);goto done;}}while(0)
+static int retained_ds_values_lifetime(void){
+  GmlWin win={0};GmlVM vm={0},restored={0};
+  unsigned char *bytes=NULL,*again=NULL;
+  size_t written=0,used=0;int ok=0;
+  DS_OWNER_REQUIRE(!gml_vm_init(&vm,&win,NULL),"initialize value owner");
+  DS_OWNER_REQUIRE(!gml_vm_init(&restored,&win,NULL),"initialize restore owner");
+  size_t initial=gml_array_heap_count(vm.array_heap);
+  GmlVal map=call(&vm,"ds_map_create",NULL,0);
+  GmlVal add_text[]={map,vstr("retained-key"),vstr("retained-text")};
+  call(&vm,"ds_map_add",add_text,3);
+  GmlVal values[]={vstr("nested-text"),vreal(17)};
+  GmlVal array=call(&vm,"@@NewGMLArray@@",values,2);
+  DS_OWNER_REQUIRE(array.t==V_ARR && array.arr,"construct an ordinary literal array");
+  GmlVal add_array[]={map,vstr("array"),array};
+  call(&vm,"ds_map_add",add_array,3);
+  GmlVal find_text[]={map,vstr("retained-key")};
+  GmlVal find_array[]={map,vstr("array")};
+  *gml_varmap_put(&vm.globals,"escaped_key")=call(&vm,"ds_map_find_first",&map,1);
+  *gml_varmap_put(&vm.globals,"escaped_text")=call(&vm,"ds_map_find_value",find_text,2);
+  *gml_varmap_put(&vm.globals,"escaped_array")=call(&vm,"ds_map_find_value",find_array,2);
+  DS_OWNER_REQUIRE(gml_array_heap_count(vm.array_heap)>initial,
+          "stored DS strings and arrays must have a reclaimable VM owner");
+  call(&vm,"ds_map_destroy",&map,1);
+  gml_struct_gc(&vm);
+  GmlVal *key=gml_varmap_get(&vm.globals,"escaped_key");
+  GmlVal *text=gml_varmap_get(&vm.globals,"escaped_text");
+  GmlVal *escaped=gml_varmap_get(&vm.globals,"escaped_array");
+  DS_OWNER_REQUIRE(key && key->t==V_STR && key->s && !strcmp(key->s,"retained-key"),
+          "borrowed map keys survive container destruction and collection");
+  DS_OWNER_REQUIRE(text && text->t==V_STR && text->s && !strcmp(text->s,"retained-text"),
+          "borrowed map values survive container destruction and collection");
+  DS_OWNER_REQUIRE(escaped && escaped->t==V_ARR && escaped->arr,
+          "escaped literal array survives collection");
+  GmlVal nested_text=gml_arr_get(*escaped,0),nested_number=gml_arr_get(*escaped,1);
+  DS_OWNER_REQUIRE(nested_text.t==V_STR && nested_text.s &&
+          !strcmp(nested_text.s,"nested-text") &&
+          nested_number.t==V_REAL && nested_number.d==17,
+          "escaped array contents survive collection");
+  size_t size=gml_vm_state_size(&vm);bytes=malloc(size);again=malloc(size);
+  DS_OWNER_REQUIRE(size && bytes && again &&
+          gml_vm_state_save(&vm,bytes,size,&written) && written==size,
+          "save values after their source container is gone");
+  DS_OWNER_REQUIRE(gml_vm_state_load(&restored,bytes,size,&used) && used==size,
+          "restore escaped values in a separate VM");
+  DS_OWNER_REQUIRE(gml_vm_state_save(&restored,again,size,&written) &&
+          written==size && !memcmp(bytes,again,size),
+          "escaped values retain exact canonical state bytes");
+  *gml_varmap_get(&vm.globals,"escaped_key")=vreal(0);
+  *gml_varmap_get(&vm.globals,"escaped_text")=vreal(0);
+  *gml_varmap_get(&vm.globals,"escaped_array")=vreal(0);
+  gml_struct_gc(&vm);
+  DS_OWNER_REQUIRE(gml_array_heap_count(vm.array_heap)==initial,
+          "unreferenced DS values are collected without a permanent leak");
+  ok=1;
+done:
+  free(bytes);free(again);gml_vm_free(&restored);gml_vm_free(&vm);
+  return ok;
+}
+#undef DS_OWNER_REQUIRE
+
 /* Warming the derived length/hash memo must not change canonical bytes, and replacing the owned
  * value must invalidate every derived answer before the next snapshot. Large values exercise the
  * path whose per-frame hashing and temporary copy would otherwise dominate rewind. */
@@ -1157,6 +1218,7 @@ static int broadcast_wait_state_roundtrip(int async_payload){
 }
 
 int main(void){
+  if(!retained_ds_values_lifetime()) return 1;
   if(!broadcast_wait_state_roundtrip(0) || !broadcast_wait_state_roundtrip(1)) return 1;
 #ifdef ANYGM_TEST_STATE_ALLOC_FAILURE
   if(!writer_allocation_failure_is_bounded()) return 1;

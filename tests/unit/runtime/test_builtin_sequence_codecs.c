@@ -88,7 +88,8 @@ static int scalar_case(void){
     ok &= expect(hex_is(empty,empty_hex[stack]),"empty sequences have a valid typed envelope");
     gml_values_release_owned(consumed,5);
     gml_values_release_owned(&encoded,1); gml_values_release_owned(&empty,1);
-    drain_owned(&vm,source);
+    /* Values inserted through DS builtins are reclaimed by their VM value owner. */
+    gml_builtin_call(&vm,"ds_list_clear",&source,1);
     gml_vm_free(&vm);
   }
   return ok;
@@ -244,15 +245,20 @@ static int graph_limits_case(void){
                "cyclic writes fail without mutating the source graph");
   gml_values_release_owned(&encoded,1); drain_owned(&vm,id); gml_vm_free(&vm);
   GmlVM bounded={0}; id=gml_builtin_call(&bounded,"ds_stack_create",NULL,0);
-  GmlArr large={0};
-  input[0]=id; input[1]=(GmlVal){.t=V_ARR,.arr=&large};
+  GmlVal large_value=gml_arr_new(0,vundef());
+  if(!expect(large_value.t==V_ARR && large_value.arr,"allocate the size-boundary descriptor")){
+    gml_vm_free(&bounded); return 0;
+  }
+  GmlArr *large=large_value.arr;
+  input[0]=id; input[1]=large_value;
   gml_builtin_call(&bounded,"ds_stack_push",input,2);
   /* Install a valid empty descriptor through normal escape tracking first.
    * Only the codec sees the synthetic bound; enqueue must not traverse it. */
-  large.len=large.cap=1000001;
+  large->len=large->cap=1000001;
   encoded=call(&bounded,"ds_stack_write",&id,1,0,&ok);
   ok &= expect(encoded.t==V_UNDEF,"oversized arrays reject before any element access");
-  /* Remove the synthetic borrowed descriptor before ordinary owner teardown. */
+  /* Restore the actual allocation extent before ordinary owner teardown. */
+  large->len=large->cap=0;
   gml_builtin_call(&bounded,"ds_stack_pop",&id,1);
   gml_values_release_owned(&encoded,1); gml_vm_free(&bounded); return ok;
 }

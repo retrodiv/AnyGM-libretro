@@ -77,9 +77,7 @@ static int strings_case(void){
     ok &= expect(string_is(previous,"before") && string_is(owned[1],"after"),
                  "published map strings remain readable after map destruction");
     gml_vm_free(&vm);
-    /* This fixture retains the only remaining references after the final check. */
-    for(int i=0;i<2;i++) if(owned[i].t==V_STR) owned[i].d=1;
-    gml_values_release_owned(owned,2);
+    /* The VM value owner has reclaimed the borrowed strings after the final assertion. */
   }
   return ok;
 }
@@ -99,7 +97,7 @@ static int arrays_case(void){
     gml_arr_set(retained[0],0,vreal(33));
     ok &= expect(real_is(gml_arr_get(retained[0],0),33) && real_is(gml_arr_get(current,0),22),
                  "old and new array mutations remain independent");
-    gml_vm_free(&vm); gml_values_release_owned(retained,2);
+    gml_vm_free(&vm);
   }
   return ok;
 }
@@ -132,18 +130,17 @@ static int static_keys_case(void){
   host.struct_size=sizeof host; host.abi_version=ANYGM_HOST_SERVICES_VERSION;
   int initialized=gml_vm_init(&vm,&win,&host)==0 && gml_vm_init(&other,&win,&host)==0;
   int ok=expect(initialized,"static-key fixture initializes both VMs");
-  GmlVal retained[16]={0}; unsigned char *state=NULL,*control=NULL;
+  unsigned char *state=NULL,*control=NULL;
   if(!initialized) goto cleanup;
   int map=ds_map_create_id(&vm),copy=ds_map_create_id(&other);
   for(int i=0;i<16;i++){
     ok &= expect(ds_map_put_static_key(&vm,map,keys[i],vreal(i),1),"insert permanent metadata key");
     ok &= expect(ds_map_put(&other,copy,vstr(keys[i]),vreal(i),1),"insert ordinary cloned control key");
   }
-  GmlDSMap *stored=ds_map_slot(&vm,map),*cloned=ds_map_slot(&other,copy);
+  GmlDSMap *stored=ds_map_slot(&vm,map);
   for(int i=0;i<16;i++){
     ok &= expect(stored && stored->len==16 && stored->entry[i].key_val.s==keys[i] &&
       stored->entry[i].key_val.d==0,"permanent key uses its stable non-owned reference");
-    if(cloned && cloned->len==16) retained[i]=cloned->entry[i].key_val;
     int found=0;
     ok &= expect(real_is(ds_map_lookup_s(&vm,map,keys[i],&found),i) && found,
                  "static-key lookup survives index growth");
@@ -167,7 +164,6 @@ static int static_keys_case(void){
     !ds_map_put_static_key(&other,copy,NULL,vreal(1),1),"dead map and null permanent key are rejected");
 cleanup:
   free(state); free(control); gml_vm_free(&vm); gml_vm_free(&other);
-  gml_values_release_owned(retained,16);
   return ok;
 }
 int main(int argc,char **argv){
