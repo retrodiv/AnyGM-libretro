@@ -670,7 +670,7 @@ int gml_render_cpu_backend_depth_triangle(GmlRender *r,GmlRenderDepthPrimitive *
   if(!resident_depth_triangle_eligible(r)) return 0;
   GmlRenderResourceSource sampled={0};
   if(!triangle) return texture==-1 || vertex_texture_source(r,texture,&sampled,1,1);
-  if(triangle->topology>GML_RENDER_DEPTH_TOPOLOGY_POINT) return 0;
+  if(triangle->topology>GML_RENDER_DEPTH_TOPOLOGY_LINE) return 0;
   if((texture!=-1)!=(triangle->textured!=0) ||
      (triangle->textured && !native_vertex_texture_source(r,texture,full_atlas,&sampled))) return 0;
   if(!published || triangle->depth_version==UINT64_MAX) return 0;

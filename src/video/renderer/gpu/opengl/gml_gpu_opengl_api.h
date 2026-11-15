@@ -39,6 +39,9 @@ typedef void GLvoid;
 #define GL_TRUE 1
 #define GL_NO_ERROR 0
 #define GL_POINTS 0x0000
+#define GL_LINES 0x0001
+#define GL_LINE_WIDTH 0x0B21
+#define GL_LINE_SMOOTH 0x0B20
 #define GL_TRIANGLES 0x0004
 #define GL_PROGRAM_POINT_SIZE 0x8642
 #define GL_ZERO 0
@@ -195,6 +198,8 @@ typedef struct GmlGlApi {
   GLboolean (*IsEnabled)(GLenum cap);
   const GLubyte *(*GetString)(GLenum name);
   void     (*GetIntegerv)(GLenum name,GLint *value);
+  void     (*GetFloatv)(GLenum name,GLfloat *value);
+  void     (*LineWidth)(GLfloat width);
   void     (*Enable)(GLenum cap);
   void     (*Disable)(GLenum cap);
   void     (*PolygonMode)(GLenum face,GLenum mode);

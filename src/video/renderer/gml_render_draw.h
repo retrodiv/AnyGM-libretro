@@ -568,7 +568,8 @@ typedef enum GmlRenderDepthBlend {
 
 typedef enum GmlRenderDepthTopology {
   GML_RENDER_DEPTH_TOPOLOGY_TRIANGLE=0,
-  GML_RENDER_DEPTH_TOPOLOGY_POINT=1
+  GML_RENDER_DEPTH_TOPOLOGY_POINT=1,
+  GML_RENDER_DEPTH_TOPOLOGY_LINE=2
 } GmlRenderDepthTopology;
 
 typedef struct GmlRenderDepthPrimitive {

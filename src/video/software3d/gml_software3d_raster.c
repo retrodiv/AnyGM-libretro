@@ -1443,6 +1443,58 @@ static void d3_emit_point(GmlRender *R,GmlD3Vertex world,const GmlD3Texture *tex
   d3_emit_point_impl(R,world,texture);
   gml_render_cpu_backend_dispatch_end(R,&scope);
 }
+static int d3_native_line(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,const GmlD3Texture *texture){
+  if(!R || !GML_GRAPHICS || !g_d3.active || GML_GRAPHICS->view_projection_2d ||
+     (texture && texture->kind && !texture->native) ||
+     !gml_render_cpu_backend_depth_triangle(R,NULL,NULL,
+       texture && texture->kind?texture->handle:-1,texture?texture->full_atlas:0,NULL)) return 0;
+  if(a.alpha<=0.0 && b.alpha<=0.0) return 1;
+  if(!isfinite(a.alpha) || !isfinite(b.alpha) || a.alpha<0.0 || b.alpha<0.0 ||
+     a.alpha>1.0 || b.alpha>1.0 ||
+     (a.alpha>0.0 && a.alpha<0x1p-16) || (b.alpha>0.0 && b.alpha<0x1p-16)) return 0;
+  GmlRenderCpuBackendDrawView draw;
+  if(!gml_render_cpu_backend_draw_view(R,&draw)) return 0;
+  GmlD3DepthTarget *target=d3_depth_metadata(R,&draw);
+  if(!target || !target->epoch) return 0;
+  if(g_d3.lighting){
+    double factor[3];int have=d3_vertex_light_factor(R,&a,factor);
+    if(have) d3_apply_light_factor(&a,factor);
+    if(g_d3.smooth){if(d3_vertex_light_factor(R,&b,factor))d3_apply_light_factor(&b,factor);}
+    else if(have)d3_apply_light_factor(&b,factor);
+  }
+  a=d3_vertex_camera(R,a);b=d3_vertex_camera(R,b);
+  if(!g_d3.ortho){
+    double nearz=g_d3.near_clip>1e-6?g_d3.near_clip:.05;
+    double farz=g_d3.far_clip>nearz?g_d3.far_clip:32000;
+    if(!d3_clip_segment_plane(&a,&b,nearz,1) || !d3_clip_segment_plane(&a,&b,farz,0)) return 1;
+  }
+  GmlD3Vertex vertices[2]={a,b};double distances[2];
+  GmlRenderDepthPrimitive primitive={.depth_epoch=target->epoch,.depth_version=target->version,
+    .hidden=g_d3.hidden!=0,.write_depth=g_d3.zwrite!=0,.normalized=target->normalized!=0,
+    .topology=GML_RENDER_DEPTH_TOPOLOGY_LINE,
+    .textured=texture && texture->kind,.interpolate=draw.interpolate!=0};
+  for(unsigned v=0;v<2u;v++){
+    double x,y,reciprocal,depth;
+    if(!d3_project_vertex(R,&draw,&vertices[v],&x,&y,&reciprocal,&depth,&distances[v]))return 1;
+    if(!isfinite(x) || !isfinite(y) || fabs(x)>65535.0 || fabs(y)>65535.0 ||
+       (target->normalized && (!isfinite(depth) || depth<0.0 || depth>1.0)))return 0;
+    primitive.vertex[v][0]=x+0.5;primitive.vertex[v][1]=y+0.5;
+    primitive.vertex[v][2]=reciprocal;primitive.vertex[v][3]=depth;
+    primitive.vertex[v][4]=vertices[v].r/255.0;primitive.vertex[v][5]=vertices[v].g/255.0;
+    primitive.vertex[v][6]=vertices[v].b/255.0;primitive.vertex[v][7]=vertices[v].alpha;
+    if(primitive.textured){primitive.uv[v][0]=vertices[v].u;primitive.uv[v][1]=vertices[v].v;}
+  }
+  /* A collapsed device segment cannot preserve the CPU's endpoint samples. */
+  if((float)primitive.vertex[0][0]==(float)primitive.vertex[1][0] &&
+     (float)primitive.vertex[0][1]==(float)primitive.vertex[1][1])return 0;
+  if(!d3_native_fragment_policy(R,&primitive,distances,2u))return 0;
+  GmlRenderDepthPlaneRef published;
+  if(!gml_render_cpu_backend_depth_triangle(R,&primitive,target->gpu_current?NULL:target->pixels,
+     primitive.textured?texture->handle:-1,texture?texture->full_atlas:0,&published))return 0;
+  target->device_plane=published;target->version=published.version;
+  target->gpu_current=1;target->cpu_current=0;
+  return 1;
+}
 static void d3_emit_line_impl(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,const GmlD3Texture *texture){
   GmlD3Texture resolved;
   if(!d3_texture_cpu(R,&texture,&resolved)) return;
@@ -1498,6 +1550,7 @@ static void d3_emit_line_impl(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,const Gml
   }
 }
 static void d3_emit_line(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,const GmlD3Texture *texture){
+  if(d3_native_line(R,a,b,texture)) return;
   GmlRenderCpuBackendDispatchScope scope;
   GmlSoftware3D *graphics=graphics_state_for_render(R);
   gml_render_cpu_backend_dispatch_begin(R,&scope,GML_RENDER_SCENE_PRIMITIVE,

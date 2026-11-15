@@ -9504,9 +9504,49 @@ static int resident_depth_point_topology(void){
         fake.last_depth_state.write_mask==15u && r->color_write_mask==mask &&
         r->alphablend==!replacement && !fake.readbacks && !fake.depth_reads &&
         !memcmp(shadow,r->fb,sizeof shadow));
-      point.topology=GML_RENDER_DEPTH_TOPOLOGY_POINT+1u;
+      point.topology=GML_RENDER_DEPTH_TOPOLOGY_LINE+1u;
       unsigned uploads=fake.depth_uploads;submits=(unsigned)fake.submits;
       CHECK(!gml_render_cpu_backend_depth_triangle(r,&point,depth,-1,0,&published));
+      CHECK(fake.depth_uploads==uploads && (unsigned)fake.submits==submits && !memcmp(shadow,r->fb,sizeof shadow));
+      controls++;
+    }
+    gml_render_bind_device(r,NULL);gml_render_free(r);free(r);
+  }
+  CHECK(controls==192u);return 1;
+}
+
+static int resident_depth_line_topology(void){
+  const int generations[]={800,15,17};unsigned controls=0;
+  for(unsigned generation=0;generation<3u;generation++)for(unsigned numbered=0;numbered<2u;numbered++){
+    GmlWin content={.bytecode=generations[generation]>100?0:generations[generation],
+      .classic_version=generations[generation]>100?generations[generation]:0};
+    GmlRender *r=calloc(1,sizeof *r);FakeDevice fake={.on_demand=1,
+      .supported_operations=UINT64_C(1)<<GML_RENDER_OP_SOFTWARE3D_PASS};
+    GmlRenderDeviceServices device=service(&fake);device.observe_on_demand=fake_observe_on_demand;
+    device.upload_depth=fake_depth_upload;device.readback_depth=fake_depth_read;
+    CHECK(r && !gml_render_init(r,&content) && gml_render_application_surface_ensure_owned(r,5,5));
+    int target=numbered?gml_surface_create(r,5,5):0;CHECK(!numbered || target>0);
+    gml_render_bind_device(r,&device);CHECK(gml_render_begin_resident_owned_application(r,0,0,0));
+    if(numbered)CHECK(gml_surface_set_target(r,target));
+    gml_render_set_pending_fill(r,0x40204060u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));uint32_t shadow[25];memcpy(shadow,r->fb,sizeof shadow);
+    float depth[25]={0};
+    for(unsigned replacement=0;replacement<2u;replacement++)for(unsigned mask=0;mask<16u;mask++){
+      r->alphablend=!replacement;r->color_write_mask=(uint8_t)mask;
+      GmlRenderDepthPrimitive line={.depth_epoch=1u,.depth_version=controls+1u,
+        .topology=GML_RENDER_DEPTH_TOPOLOGY_LINE,.hidden=1u,.write_depth=1u,.normalized=1u,
+        .vertex={{1.625,2.75,1,.5,.25,.5,.75,.5},{3.875,.625,1,.5,.75,.25,.5,1}}};
+      GmlRenderDepthPlaneRef published={0};unsigned submits=(unsigned)fake.submits;
+      CHECK(gml_render_cpu_backend_depth_triangle(r,&line,depth,-1,0,&published));
+      CHECK((unsigned)fake.submits==submits+1u && published.version==controls+2u &&
+        fake.last_depth.payload.depth_primitive.topology==GML_RENDER_DEPTH_TOPOLOGY_LINE &&
+        !memcmp(fake.last_depth.payload.depth_primitive.vertex,line.vertex,sizeof line.vertex) &&
+        fake.last_depth_state.write_mask==15u && r->color_write_mask==mask &&
+        r->alphablend==!replacement && !fake.readbacks && !fake.depth_reads &&
+        !memcmp(shadow,r->fb,sizeof shadow));
+      line.topology=GML_RENDER_DEPTH_TOPOLOGY_LINE+1u;
+      unsigned uploads=fake.depth_uploads;submits=(unsigned)fake.submits;
+      CHECK(!gml_render_cpu_backend_depth_triangle(r,&line,depth,-1,0,&published));
       CHECK(fake.depth_uploads==uploads && (unsigned)fake.submits==submits && !memcmp(shadow,r->fb,sizeof shadow));
       controls++;
     }
@@ -21688,6 +21728,7 @@ int main(void){
     else if(!strcmp(selected,"depth-pixel-policy")) passed=resident_depth_pixel_policy();
     else if(!strcmp(selected,"depth-alpha-policy")) passed=resident_depth_alpha_policy();
     else if(!strcmp(selected,"depth-point-topology")) passed=resident_depth_point_topology();
+    else if(!strcmp(selected,"depth-line-topology")) passed=resident_depth_line_topology();
     else if(!strcmp(selected,"depth-extended-admission")) passed=resident_depth_extended_admission();
     else if(!strcmp(selected,"depth-mask-admission")) passed=resident_depth_mask_admission();
     else if(!strcmp(selected,"extended-rectangle-variants")) passed=resident_extended_rectangle_variant_dispatch();
@@ -21893,6 +21934,7 @@ int main(void){
   passed+=resident_depth_pixel_policy();
   passed+=resident_depth_alpha_policy();
   passed+=resident_depth_point_topology();
+  passed+=resident_depth_line_topology();
   passed+=resident_depth_extended_admission();
   passed+=resident_depth_mask_admission();
   passed+=resident_extended_rectangle_variant_dispatch();
@@ -22109,7 +22151,7 @@ int main(void){
   passed+=resident_lazy_native_atlas();
   passed+=resident_unit_texel_magnification();
   passed+=opaque_rectangle_clear_complement();
-  enum { total=348 };
+  enum { total=349 };
   printf("render resource cases: passed=%d failed=%d\n",passed,total-passed);
   return passed==total?EXIT_SUCCESS:EXIT_FAILURE;
 }

@@ -345,6 +345,8 @@ void gml_gpu_opengl_scene_reset(GmlGpuBackend *backend,const GmlGpuContext *cont
 } while(0)
   GL_SCENE_LOAD(GetIntegerv,"glGetIntegerv");
   GL_SCENE_LOAD(IsEnabled,"glIsEnabled");
+  GL_SCENE_LOAD(GetFloatv,"glGetFloatv");
+  GL_SCENE_LOAD(LineWidth,"glLineWidth");
   GL_SCENE_LOAD(BindSampler,"glBindSampler");
   GL_SCENE_LOAD(CopyTexSubImage2D,"glCopyTexSubImage2D");
   GL_SCENE_LOAD(InvalidateFramebuffer,"glInvalidateFramebuffer");
@@ -1509,8 +1511,11 @@ int gml_gpu_opengl_depth_triangle_valid(GmlGpuBackend *backend,const GmlRenderDr
   const GmlRenderDrawOp *op=batch->operations;
   const GmlRenderDepthPrimitive *triangle=&op->payload.depth_primitive;
   int point=triangle->topology==GML_RENDER_DEPTH_TOPOLOGY_POINT;
-  unsigned vertex_count=point?1u:3u;
-  if(triangle->topology>GML_RENDER_DEPTH_TOPOLOGY_POINT ||
+  int line=triangle->topology==GML_RENDER_DEPTH_TOPOLOGY_LINE;
+  unsigned vertex_count=point?1u:line?2u:3u;
+  if(triangle->topology>GML_RENDER_DEPTH_TOPOLOGY_LINE ||
+     (line && (!backend->gl.GetFloatv || !backend->gl.LineWidth ||
+       (backend->api==GML_GPU_API_OPENGL_CORE && !backend->gl.IsEnabled))) ||
      (point && backend->api==GML_GPU_API_OPENGL_CORE && !backend->gl.IsEnabled) ||
      op->opcode!=GML_RENDER_OP_SOFTWARE3D_PASS || triangle->textured>1u ||
      triangle->interpolate>1u || op->source_count!=triangle->textured ||
@@ -1583,6 +1588,11 @@ int gml_gpu_opengl_depth_triangle_valid(GmlGpuBackend *backend,const GmlRenderDr
       if(triangle->vertex[v][component]<0 || triangle->vertex[v][component]>1) return 0;
   }
   if(point && triangle->vertex[0][7]>0.0 && triangle->vertex[0][7]<0x1p-16) return 0;
+  if(line){
+    for(unsigned v=0;v<2u;v++)if(triangle->vertex[v][7]>0.0 && triangle->vertex[v][7]<0x1p-16)return 0;
+    return (float)triangle->vertex[0][0]!=(float)triangle->vertex[1][0] ||
+      (float)triangle->vertex[0][1]!=(float)triangle->vertex[1][1];
+  }
   if(point)return triangle->vertex[0][0]==floor(triangle->vertex[0][0])+0.5 &&
     triangle->vertex[0][1]==floor(triangle->vertex[0][1])+0.5;
   double area=(triangle->vertex[1][0]-triangle->vertex[0][0])*
@@ -1632,8 +1642,9 @@ static int depth_triangle_candidate(GmlGpuBackend *backend,const GmlRenderDrawBa
   GlSceneImage *image=gml_gpu_opengl_scene_image(backend,triangle->previous_colour);
   unsigned back=image->raw_depth_front^1u;
   int point=triangle->topology==GML_RENDER_DEPTH_TOPOLOGY_POINT;
-  unsigned vertex_count=point?1u:3u;
-  GLenum topology=point?GL_POINTS:GL_TRIANGLES;
+  int line=triangle->topology==GML_RENDER_DEPTH_TOPOLOGY_LINE;
+  unsigned vertex_count=point?1u:line?2u:3u;
+  GLenum topology=point?GL_POINTS:line?GL_LINES:GL_TRIANGLES;
   float vertices[33]={0},extent[2]={(float)image->width,(float)image->height};
   GLint flags[4]={(GLint)triangle->hidden,(GLint)triangle->write_depth,
                   (GLint)triangle->normalized,(GLint)triangle->blend};
@@ -1641,10 +1652,13 @@ static int depth_triangle_candidate(GmlGpuBackend *backend,const GmlRenderDrawBa
   int alpha_input=triangle->blend==GML_RENDER_DEPTH_BLEND_OPAQUE_ALPHA_INPUT;
   GLint policy[4]={native?0:(GLint)triangle->stamp_alpha,(GLint)triangle->zero_alpha_writes,
                    (GLint)triangle->alpha_source_squared,(GLint)triangle->textured};
-  if(point)policy[0]|=2;
-  if(triangle->textured && (point || (triangle->uv[0][0]==triangle->uv[1][0] &&
-     triangle->uv[0][0]==triangle->uv[2][0] && triangle->uv[0][1]==triangle->uv[1][1] &&
-     triangle->uv[0][1]==triangle->uv[2][1])))policy[3]=2;
+  if(point || line)policy[0]|=2;
+  if(triangle->textured){
+    int constant=1;
+    for(unsigned v=1;v<vertex_count;v++)for(unsigned c=0;c<2u;c++)
+      if(triangle->uv[v][c]!=triangle->uv[0][c])constant=0;
+    if(constant)policy[3]=2;
+  }
   float constant_uv[2]={(float)triangle->uv[0][0],(float)triangle->uv[0][1]};
   for(unsigned v=0;v<vertex_count;v++){
     for(unsigned c=0;c<8u;c++)
@@ -1745,7 +1759,7 @@ static int depth_triangle_candidate(GmlGpuBackend *backend,const GmlRenderDrawBa
     if(!pass && native && (triangle->stamp_alpha || alpha_input) && (state->write_mask&8u)){
       /* Stamp the same whole primitive before another command can consume its
        * destination alpha. All candidate storage remains unpublished. */
-      GLint stamp_policy[4]={point?3:1,policy[1],policy[2],policy[3]};
+      GLint stamp_policy[4]={(point || line)?3:1,policy[1],policy[2],policy[3]};
       backend->gl.Disable(GL_BLEND);backend->gl.ColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_TRUE);
       backend->gl.Uniform4iv(program->policy,1,stamp_policy);
       backend->gl.DrawArrays(topology,0,(GLsizei)vertex_count);
@@ -1768,6 +1782,15 @@ int gml_render_gpu_opengl_depth_triangle(GmlGpuBackend *backend,const GmlRenderD
   if(!gml_gpu_opengl_depth_triangle_valid(backend,batch)) return 0;
   int point=batch->operations[0].payload.depth_primitive.topology==GML_RENDER_DEPTH_TOPOLOGY_POINT &&
     backend->api==GML_GPU_API_OPENGL_CORE;
+  int line=batch->operations[0].payload.depth_primitive.topology==GML_RENDER_DEPTH_TOPOLOGY_LINE;
+  GLfloat previous_line_width=1.0f;GLboolean previous_line_smooth=GL_FALSE;
+  if(line){
+    backend->gl.GetFloatv(GL_LINE_WIDTH,&previous_line_width);
+    if(backend->api==GML_GPU_API_OPENGL_CORE)previous_line_smooth=backend->gl.IsEnabled(GL_LINE_SMOOTH);
+    if(backend->gl.GetError()!=GL_NO_ERROR || !isfinite(previous_line_width) || previous_line_width<=0)return 0;
+    backend->gl.LineWidth(1.0f);
+    if(backend->api==GML_GPU_API_OPENGL_CORE)backend->gl.Disable(GL_LINE_SMOOTH);
+  }
   GLboolean previous_point_size=GL_FALSE;
   if(point){
     previous_point_size=backend->gl.IsEnabled(GL_PROGRAM_POINT_SIZE);
@@ -1775,9 +1798,13 @@ int gml_render_gpu_opengl_depth_triangle(GmlGpuBackend *backend,const GmlRenderD
     backend->gl.Enable(GL_PROGRAM_POINT_SIZE);
   }
   GLuint sample_texture=0;
-  int success=(!point || backend->gl.GetError()==GL_NO_ERROR) &&
+  int success=(!(point || line) || backend->gl.GetError()==GL_NO_ERROR) &&
     depth_triangle_candidate(backend,batch,&sample_texture,error,error_capacity);
   if(point && !previous_point_size) backend->gl.Disable(GL_PROGRAM_POINT_SIZE);
+  if(line){
+    backend->gl.LineWidth(previous_line_width);
+    if(previous_line_smooth)backend->gl.Enable(GL_LINE_SMOOTH);
+  }
   if(sample_texture){
     backend->gl.ActiveTexture(GL_TEXTURE2);backend->gl.BindTexture(GL_TEXTURE_2D,sample_texture);
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
