@@ -1228,6 +1228,28 @@ static int async_saveload_request(GmlVM *vm, int ok){
 }
 
 
+static int ini_append_text(char **text,size_t *used,size_t *capacity,const char *format,...){
+  va_list ap,copy;
+  va_start(ap,format);
+  va_copy(copy,ap);
+  int count=vsnprintf(NULL,0,format,copy);
+  va_end(copy);
+  if(count<0 || (size_t)count>SIZE_MAX-*used-1){ va_end(ap); return 0; }
+  size_t required=*used+(size_t)count+1;
+  if(required>*capacity){
+    size_t next=*capacity?*capacity:256;
+    while(next<required && next<=SIZE_MAX/2) next*=2;
+    if(next<required) next=required;
+    char *grown=realloc(*text,next);
+    if(!grown){ va_end(ap); return 0; }
+    *text=grown; *capacity=next;
+  }
+  vsnprintf(*text+*used,*capacity-*used,format,ap);
+  va_end(ap);
+  *used+=(size_t)count;
+  return 1;
+}
+
 GmlVal gml_builtin_try_io_ini(GmlVM *vm, const char *nm, GmlVal *a, int n){
   GmlRender *R=(GmlRender*)vm->render;
   (void)R;
@@ -1241,25 +1263,34 @@ GmlVal gml_builtin_try_io_ini(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   if(!strcmp(nm,"ini_close")||!strcmp(nm,"FS_ini_close")){
     if(!vm->builtins->ini_open) return vreal(0);
+    char *text=NULL;
+    size_t used=0,capacity=0;
+    const char *last_sec=NULL;
+    int ok=ini_append_text(&text,&used,&capacity,"%s","");
+    /* Preserve the ordered document for both file persistence and the caller. */
+    for(int i=0;ok && i<vm->builtins->ini_n;i++){
+      if(!last_sec||strcmp(vm->builtins->ini_kv[i].section,last_sec)){
+        ok=ini_append_text(&text,&used,&capacity,"[%s]\n",vm->builtins->ini_kv[i].section);
+        last_sec=vm->builtins->ini_kv[i].section;
+      }
+      if(!ok) break;
+      if(vm->builtins->ini_kv[i].is_str)
+        ok=ini_append_text(&text,&used,&capacity,"%s=%s\n",vm->builtins->ini_kv[i].key,vm->builtins->ini_kv[i].sval?vm->builtins->ini_kv[i].sval:"");
+      else
+        ok=ini_append_text(&text,&used,&capacity,"%s=%g\n",vm->builtins->ini_kv[i].key,vm->builtins->ini_kv[i].val);
+    }
+    if(!ok){ free(text); return vstr(""); }
     vm->builtins->ini_open=0;
-    /* write the current key-value table back to the .ini file */
     if(vm->builtins->ini_path[0]){
       int id=vm_file_open(vm,vm->builtins->ini_path,"w");
       if(id>=0){
         int slot=id-1;
-        const char *last_sec=NULL;
-        for(int i=0;i<vm->builtins->ini_n;i++){
-          if(!last_sec||strcmp(vm->builtins->ini_kv[i].section,last_sec)){
-            vm_file_writef(vm,slot,"[%s]\n",vm->builtins->ini_kv[i].section); last_sec=vm->builtins->ini_kv[i].section;
-          }
-          if(vm->builtins->ini_kv[i].is_str) vm_file_writef(vm,slot,"%s=%s\n",vm->builtins->ini_kv[i].key,vm->builtins->ini_kv[i].sval?vm->builtins->ini_kv[i].sval:"");
-          else vm_file_writef(vm,slot,"%s=%g\n",vm->builtins->ini_kv[i].key,vm->builtins->ini_kv[i].val);
-        }
+        (void)vm_file_write(vm,slot,text,used);
         vm_file_close(vm,slot);
       }
     }
     ini_reset(vm);
-    return vreal(0);
+    return vstr_owned(text);
   }
   if(!strcmp(nm,"ini_write_real")||!strcmp(nm,"FS_ini_write_real")){
     if(!vm->builtins->ini_open||vm->builtins->ini_n>=GML_INI_MAX) return vreal(0);

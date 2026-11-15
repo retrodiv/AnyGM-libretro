@@ -32,6 +32,52 @@ static void ini_write_number(GmlVM *vm,const char *section,const char *key,doubl
   (void)gml_builtin_call(vm,"ini_write_real",args,3);
 }
 
+int expect_ini_close_text_case(void){
+  GmlWin win={0}; GmlVM vm={0}; vm.win=&win;
+  vm.particles=gml_particle_state_create(&vm);
+  gml_vm_software3d_reset(&vm);
+  GmlVal source=vstr("");
+  (void)gml_builtin_call(&vm,"ini_open_from_string",&source,1);
+  ini_write_number(&vm,"progress","level",7);
+  GmlVal args[]={vstr("progress"),vstr("name"),vstr("authored text")};
+  (void)gml_builtin_call(&vm,"ini_write_string",args,3);
+  GmlVal text=gml_builtin_call(&vm,"ini_close",NULL,0);
+  int ok=text.t==V_STR && text.s && strstr(text.s,"[progress]") &&
+    strstr(text.s,"level=7") && strstr(text.s,"name=authored text");
+  if(ok){
+    (void)gml_builtin_call(&vm,"ini_open_from_string",&text,1);
+    ok=ini_number_matches(&vm,"progress","level",7);
+    GmlVal copied=gml_builtin_call(&vm,"ini_read_string",args,3);
+    ok=ok && copied.t==V_STR && copied.s && !strcmp(copied.s,"authored text");
+    if(copied.t==V_STR && copied.d!=0) free((void*)copied.s);
+  }
+  if(text.t==V_STR && text.d!=0) free((void*)text.s);
+  GmlVal closed=gml_builtin_call(&vm,"ini_close",NULL,0);
+  gml_values_release_owned(&closed,1);
+  source=vstr("");
+  (void)gml_builtin_call(&vm,"ini_open_from_string",&source,1);
+  text=gml_builtin_call(&vm,"ini_close",NULL,0);
+  ok=ok && text.t==V_STR && text.s && !text.s[0];
+  gml_values_release_owned(&text,1);
+  (void)gml_builtin_call(&vm,"ini_open_from_string",&source,1);
+  char long_text[2049];
+  memset(long_text,'q',sizeof long_text-1); long_text[sizeof long_text-1]=0;
+  args[2]=vstr(long_text);
+  (void)gml_builtin_call(&vm,"ini_write_string",args,3);
+  text=gml_builtin_call(&vm,"ini_close",NULL,0);
+  ok=ok && text.t==V_STR && text.s && strstr(text.s,long_text);
+  if(text.t==V_STR){
+    (void)gml_builtin_call(&vm,"ini_open_from_string",&text,1);
+    GmlVal copied=gml_builtin_call(&vm,"ini_read_string",args,3);
+    ok=ok && copied.t==V_STR && copied.s && !strcmp(copied.s,long_text);
+    gml_values_release_owned(&copied,1);
+  }
+  gml_values_release_owned(&text,1);
+  gml_vm_free(&vm);
+  if(!ok) fprintf(stderr,"INI close lost the authored in-memory document\n");
+  return ok;
+}
+
 int expect_ini_key_lookup_case(void){
   static const char first_collision[]="section-619323c6";
   static const char second_collision[]="section-110c83b1";
@@ -253,13 +299,15 @@ int expect_file_sandbox(GmlVM *vm,const char *save_dir){
   GmlVal string_default=gml_builtin_call(vm,"ini_read_real",missing_args,3);
   GmlVal ini_write_args[3]={vstr("fixture"),vstr("value"),vreal(11)};
   (void)gml_builtin_call(vm,"ini_write_real",ini_write_args,3);
-  (void)gml_builtin_call(vm,"ini_close",NULL,0);
+  GmlVal serialized=gml_builtin_call(vm,"ini_close",NULL,0);
   char installed[128]={0},saved[128]={0};
   ok=ok && initial.t==V_REAL && initial.d==7 &&
      localized.t==V_REAL && localized.d==0.65 &&
      string_default.t==V_REAL && string_default.d==2.5 &&
      fixture_read_text(content_ini,installed,sizeof installed) && strstr(installed,"value=7") &&
-     fixture_read_text(save_ini,saved,sizeof saved) && strstr(saved,"value=11");
+     fixture_read_text(save_ini,saved,sizeof saved) && strstr(saved,"value=11") &&
+     serialized.t==V_STR && serialized.s && !strcmp(saved,serialized.s);
+  gml_values_release_owned(&serialized,1);
 
   /* Localization INIs routinely exceed the old 256-entry settings limit and quote
    * string values.  A late value must be unquoted and survive the save overlay. */
@@ -270,12 +318,14 @@ int expect_file_sandbox(GmlVM *vm,const char *save_dir){
   ok=ok && late.t==V_STR && late.s && !strcmp(late.s,"value_599") &&
      gml_builtin_ini_entry_count(vm)==600;
   if(late.t==V_STR && late.d!=0) free((void*)late.s);
-  (void)gml_builtin_call(vm,"ini_close",NULL,0);
+  serialized=gml_builtin_call(vm,"ini_close",NULL,0);
+  gml_values_release_owned(&serialized,1);
   (void)gml_builtin_call(vm,"ini_open",&name,1);
   late=gml_builtin_call(vm,"ini_read_string",late_args,3);
   ok=ok && late.t==V_STR && late.s && !strcmp(late.s,"value_599");
   if(late.t==V_STR && late.d!=0) free((void*)late.s);
-  (void)gml_builtin_call(vm,"ini_close",NULL,0);
+  serialized=gml_builtin_call(vm,"ini_close",NULL,0);
+  gml_values_release_owned(&serialized,1);
 
   unlink(content_overlay); unlink(save_overlay); unlink(content_written); unlink(save_written);
   unlink(content_ini); unlink(save_ini); unlink(content_large_ini); unlink(save_large_ini);

@@ -106,6 +106,7 @@ int expect_state_load_ignores_unmatched_dynamic_records(void);
 int expect_file_sandbox(GmlVM *vm,const char *save_dir);
 int expect_file_sandbox_case(void);
 int expect_ini_key_lookup_case(void);
+int expect_ini_close_text_case(void);
 int expect_file_lookup_probes_case(void);
 int expect_missing_path_components_case(void);
 #if defined(__linux__)
