@@ -852,7 +852,8 @@ size_t retro_serialize_size(void){
    * required sections. A fixed frontend keeps that capacity for the complete loaded session;
    * acknowledged variable-size frontends may grow later. In either contract, an earlier compact
    * ring is recognized by the capacity it passes to retro_serialize. */
-  size_t actual=anygm_state_resume_size(g_libretro.engine);
+  size_t required=anygm_state_resume_size(g_libretro.engine);
+  size_t actual=required;
   size_t resume_hint=anygm_state_resume_capacity_hint(g_libretro.engine);
   if(resume_hint>actual) actual=resume_hint;
   bool compact_startup=false;
@@ -891,8 +892,16 @@ size_t retro_serialize_size(void){
   if(!g_libretro.fixed_state_capacity ||
      (g_libretro.variable_state_supported && actual>g_libretro.fixed_state_capacity)){
     size_t previous=g_libretro.fixed_state_capacity;
+    size_t reserve=anygm_state_capacity_reserve(g_libretro.engine);
+    if(timing.active)
+      libretro_log(RETRO_LOG_INFO,
+        "[libretro-state-capacity] required=%llu resume_hint=%llu complete_hint=%llu "
+        "selected=%llu reserve=%llu compact=%u\n",
+        (unsigned long long)required,(unsigned long long)resume_hint,
+        (unsigned long long)complete_hint,(unsigned long long)actual,
+        (unsigned long long)reserve,compact_startup?1u:0u);
     g_libretro.fixed_state_capacity=fixed_state_capacity(
-      actual,anygm_state_capacity_reserve(g_libretro.engine));
+      actual,reserve);
     /* Acknowledged growth is unusual enough to report once without flooding repeated queries. */
     if(previous && !g_libretro.state_capacity_growth_reported){
       g_libretro.state_capacity_growth_reported=true;
