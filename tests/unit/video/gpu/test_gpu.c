@@ -2690,7 +2690,7 @@ static int scene_hot_constant_programs_case(void){
   const unsigned filters[]={32u,33u,153u,21u,22u,25u,26u,53u,55u,147u,149u,30u,23u,24u,34u,35u,36u,39u,41u,40u,37u,42u,84u,31u,
     GL_SCENE_NATIVE_TEXTURE_NEAREST_FILTER,GL_SCENE_NATIVE_TEXTURE_LINEAR_FILTER,
     GL_SCENE_NATIVE_TEXTURE_STAMP_NEAREST_FILTER,GL_SCENE_NATIVE_TEXTURE_STAMP_LINEAR_FILTER,
-    GL_SCENE_NATIVE_TEXTURE_SURFACE_NEAREST_FILTER,GL_SCENE_NATIVE_TEXTURE_SURFACE_LINEAR_FILTER,49u,56u};
+    GL_SCENE_NATIVE_TEXTURE_SURFACE_NEAREST_FILTER,GL_SCENE_NATIVE_TEXTURE_SURFACE_LINEAR_FILTER,49u,56u,8u};
   for(unsigned api=0;api<2u;api++)for(unsigned selected=0;selected<sizeof filters/sizeof filters[0];selected++)
   for(unsigned failure=0;failure<2u;failure++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
