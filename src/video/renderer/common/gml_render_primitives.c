@@ -616,7 +616,8 @@ static int resident_depth_triangle_eligible(GmlRender *r){
   const GmlRenderDeviceServices *device=gml_render_device(r);
   GmlRenderDeviceCaps caps={0};
   if(!resident_primitive_state_eligible_target(r,0,1) ||
-     r->active_shader>=0 || r->blendmode || r->alpha_test_enable ||
+     r->active_shader>=0 || (r->blendmode && !gml_render_blend_is_extended(r->blendmode)) ||
+     r->alpha_test_enable ||
      r->classic_phase_scene_target || r->app_interp_phase[0] || r->app_interp_phase[1] ||
      r->app_interp_phase[2] || !device->upload_depth || !device->readback_depth ||
      !device->capabilities(device->context,&caps) ||
@@ -662,6 +663,12 @@ int gml_render_cpu_backend_depth_triangle(GmlRender *r,GmlRenderDepthTriangle *t
   triangle->previous_colour=source.image;triangle->next_depth_version=triangle->depth_version+1u;
   triangle->blend=r->alphablend!=0;triangle->stamp_alpha=!gml_render_target_preserves_alpha(r);
   triangle->alpha_source_squared=1u;triangle->zero_alpha_writes=0u;
+  if(r->alphablend && gml_render_blend_is_extended(r->blendmode)){
+    state.write_mask=r->color_write_mask;
+    if(!gml_render_blend_snapshot_extended(&state,r->blendmode,r->blend_equation,
+        r->blend_equation_alpha,triangle->stamp_alpha))return 0;
+    triangle->blend=2u;triangle->alpha_source_squared=0u;triangle->zero_alpha_writes=1u;
+  }
   GmlRenderDrawOp op={.opcode=GML_RENDER_OP_SOFTWARE3D_PASS,
     .reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT,.scene_family=GML_RENDER_SCENE_PRIMITIVE};
   op.target=(GmlRenderTargetRef){source.image,1u,source.width,source.height,

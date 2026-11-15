@@ -9475,6 +9475,60 @@ static int resident_depth_mask_admission(void){
   CHECK(controls==192u);return 1;
 }
 
+static int resident_depth_extended_admission(void){
+  const int generations[]={800,15,17};unsigned controls=0;
+  const int factors[][4]={{3,4,5,6},{7,8,9,10},{11,6,2,6}};
+  for(unsigned generation=0;generation<3u;generation++)for(unsigned numbered=0;numbered<2u;numbered++){
+    GmlWin content={.bytecode=generations[generation]>100?0:generations[generation],
+      .classic_version=generations[generation]>100?generations[generation]:0};
+    GmlRender *r=calloc(1,sizeof *r);
+    FakeDevice fake={.on_demand=1,.supported_operations=UINT64_C(1)<<GML_RENDER_OP_SOFTWARE3D_PASS};
+    GmlRenderDeviceServices device=service(&fake);
+    device.observe_on_demand=fake_observe_on_demand;
+    device.upload_depth=fake_depth_upload;device.readback_depth=fake_depth_read;
+    CHECK(r && !gml_render_init(r,&content));
+    CHECK(gml_render_application_surface_ensure_owned(r,5,5));
+    int target=numbered?gml_surface_create(r,5,5):0;CHECK(!numbered || target>0);
+    gml_render_bind_device(r,&device);CHECK(gml_render_begin_resident_owned_application(r,0,0,0));
+    if(numbered)CHECK(gml_surface_set_target(r,target));
+    gml_render_set_pending_fill(r,0x40204060u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));
+    uint32_t shadow[25];memcpy(shadow,r->fb,sizeof shadow);
+    float depth[25]={0};
+    for(unsigned tuple=0;tuple<3u;tuple++)for(unsigned equations=0;equations<2u;equations++)
+    for(unsigned replacement=0;replacement<2u;replacement++)for(unsigned mask=0;mask<16u;mask++){
+      r->blendmode=gml_render_blend_pack_factors(factors[tuple]);
+      r->blend_equation=equations?4:1;r->blend_equation_alpha=equations?5:1;
+      r->alphablend=!replacement;r->color_write_mask=(uint8_t)mask;
+      CHECK(gml_render_cpu_backend_depth_texture_eligible(r,-1));
+      GmlRenderDepthTriangle triangle={.depth_epoch=1u,.depth_version=controls+1u,
+        .hidden=1u,.write_depth=1u,.normalized=1u,
+        .vertex={{1,1,1,.5,1,0,0,.5},{4,1,1,.5,0,1,0,.5},{1,4,1,.5,0,0,1,.5}}};
+      GmlRenderDepthPlaneRef published={0};unsigned submits=(unsigned)fake.submits;
+      CHECK(gml_render_cpu_backend_depth_triangle(r,&triangle,depth,-1,0,&published));
+      CHECK((unsigned)fake.submits==submits+1u && fake.last_depth_state.write_mask==(replacement?15u:mask) &&
+        fake.last_depth.payload.depth_triangle.blend==(replacement?0u:2u) &&
+        fake.last_depth.payload.depth_triangle.stamp_alpha==!gml_render_target_preserves_alpha(r) &&
+        published.version==controls+2u && r->color_write_mask==mask &&
+        r->alphablend==!replacement && !fake.readbacks && !fake.depth_reads &&
+        !memcmp(shadow,r->fb,sizeof shadow));
+      CHECK(r->blendmode==gml_render_blend_pack_factors(factors[tuple]) &&
+        r->blend_equation==(equations?4:1) && r->blend_equation_alpha==(equations?5:1));
+      CHECK(fake.last_depth.payload.depth_triangle.zero_alpha_writes==!replacement &&
+        fake.last_depth.payload.depth_triangle.alpha_source_squared==replacement);
+      if(!replacement)CHECK(gml_render_blend_snapshot_mode(&fake.last_depth_state)==r->blendmode &&
+        fake.last_depth_state.rgb_equation==GML_RENDER_BLEND_NATIVE_ADD+(unsigned)r->blend_equation-1u &&
+        fake.last_depth_state.alpha_equation==GML_RENDER_BLEND_NATIVE_ADD+(unsigned)r->blend_equation_alpha-1u &&
+        fake.last_depth_state.coverage_policy==!gml_render_target_preserves_alpha(r));
+      controls++;
+    }
+    CHECK(fake.depth_uploads==192u && !fake.depth_reads && !fake.readbacks &&
+      !memcmp(shadow,r->fb,sizeof shadow));
+    gml_render_bind_device(r,NULL);gml_render_free(r);free(r);
+  }
+  CHECK(controls==1152u);return 1;
+}
+
 static int resident_extended_rectangle_variant_dispatch(void){
   static const unsigned masks[]={15u,5u,8u};unsigned controls=0;
   for(unsigned shape=0;shape<3u;shape++)for(unsigned numbered=0;numbered<2u;numbered++)
@@ -21474,6 +21528,7 @@ int main(void){
     int passed;
     if(!strcmp(selected,"target-pixel-pending-scene")) passed=target_pixel_observes_pending_scene();
     else if(!strcmp(selected,"preserved-device-failure")) passed=preserved_device_failure_keeps_authority();
+    else if(!strcmp(selected,"depth-extended-admission")) passed=resident_depth_extended_admission();
     else if(!strcmp(selected,"depth-mask-admission")) passed=resident_depth_mask_admission();
     else if(!strcmp(selected,"extended-rectangle-variants")) passed=resident_extended_rectangle_variant_dispatch();
     else if(!strcmp(selected,"extended-rectangle-replay")) passed=extended_rectangle_replay_state();
@@ -21675,6 +21730,7 @@ int main(void){
   passed+=resident_atlas_uv_refusal_preserves_queued_prefix();
   passed+=resident_application_sprite_cpu_fallback();
   passed+=extended_rectangle_replay_state();
+  passed+=resident_depth_extended_admission();
   passed+=resident_depth_mask_admission();
   passed+=resident_extended_rectangle_variant_dispatch();
   passed+=resident_extended_surface_dispatch_scope();
@@ -21890,7 +21946,7 @@ int main(void){
   passed+=resident_lazy_native_atlas();
   passed+=resident_unit_texel_magnification();
   passed+=opaque_rectangle_clear_complement();
-  enum { total=344 };
+  enum { total=345 };
   printf("render resource cases: passed=%d failed=%d\n",passed,total-passed);
   return passed==total?EXIT_SUCCESS:EXIT_FAILURE;
 }

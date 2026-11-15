@@ -45,9 +45,10 @@ static GmlGpuContext fake_context(GmlGpuApi api){
 /* Transport failure and lifetime only; real-context controls own raw bits. */
 static int scene_depth_triangle_transaction_case(void){
   for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++)
+  for(unsigned independent=0;independent<3u;independent++)
   for(unsigned textured=0;textured<3u;textured++)
   for(unsigned shading=0;shading<4u;shading++)
-  for(unsigned failure=0;failure<3u;failure++){
+  for(unsigned failure=0;failure<(independent==2u?4u:3u);failure++){
     anygm_test_graphics_reset();GmlGpuContext context=fake_context(api);
     GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
     REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"native triangle context adopted");
@@ -68,6 +69,12 @@ static int scene_depth_triangle_transaction_case(void){
     GmlRenderDepthTriangle *t=&draw.payload.depth_triangle;
     t->previous_colour=seed.target.image;t->depth_epoch=t->depth_version=1u;t->next_depth_version=2u;
     t->hidden=t->write_depth=1u;
+    if(independent){
+      t->blend=2u;t->zero_alpha_writes=1u;t->stamp_alpha=independent==2u;
+      REQUIRE(gml_render_blend_snapshot_extended(&state,
+        gml_render_blend_pack_factors((int[]){3,4,5,6}),4,5,t->stamp_alpha),
+        "independent depth blend snapshot constructed");
+    }
     const double vertices[3][8]={{1,1,1,.25,1,0,0,1},{7,1,1,.25,1,0,0,1},{1,7,1,.25,1,0,0,1}};
     memcpy(t->vertex,vertices,sizeof vertices);
     GmlRenderImageRef sampled={GML_RENDER_RESOURCE_ATLAS,907u,1u,1u};
@@ -94,6 +101,20 @@ static int scene_depth_triangle_transaction_case(void){
     REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_UNSUPPORTED &&
       !anygm_test_graphics_draw_calls(),"malformed empty clip refuses before a candidate draw");
     state.clip.x=0;
+    if(independent){
+      unsigned saved=state.rgb_source_factor;state.rgb_source_factor=12u;
+      REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_UNSUPPORTED,
+        "invalid native depth factor refuses before mutation");state.rgb_source_factor=saved;
+      saved=state.alpha_equation;state.alpha_equation=0u;
+      REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_UNSUPPORTED,
+        "invalid native depth equation refuses before mutation");state.alpha_equation=saved;
+      t->stamp_alpha^=1u;
+      REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_UNSUPPORTED,
+        "inconsistent opaque depth coverage refuses before mutation");t->stamp_alpha^=1u;
+      t->zero_alpha_writes=0u;
+      REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_UNSUPPORTED,
+        "native depth zero-alpha policy refuses before mutation");t->zero_alpha_writes=1u;
+    }
     uint32_t original_shading=t->shading_flags;
     t->shading_flags=16u;
     REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_UNSUPPORTED,
@@ -127,7 +148,7 @@ static int scene_depth_triangle_transaction_case(void){
         !result.uncertain_target_count && !result.all_destinations_uncertain &&
         image->texture==old_texture && image->framebuffer==old_framebuffer &&
         image->raw_depth_front==front && image->raw_depth_version==1u &&
-        image->ref.content_version==1u,"either pass failure preserves the published pair");
+        image->ref.content_version==1u,"any candidate draw failure preserves the published pair");
       anygm_test_graphics_fail_terminal_draw_at(0);
       result=device.submit(device.context,&batch);
     }

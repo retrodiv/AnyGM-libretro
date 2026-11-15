@@ -562,6 +562,7 @@ typedef struct GmlRenderDepthTriangle {
   GmlRenderImageRef previous_colour;
   uint64_t depth_epoch,depth_version,next_depth_version;
   double vertex[3][8];
+  /* Blend: replacement=0, legacy source-over=1, captured native factors=2. */
   uint32_t hidden,write_depth,normalized,blend;
   uint32_t stamp_alpha,zero_alpha_writes,alpha_source_squared;
   double uv[3][2];

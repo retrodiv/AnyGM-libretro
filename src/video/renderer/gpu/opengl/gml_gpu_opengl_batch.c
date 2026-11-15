@@ -2941,13 +2941,12 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
         preserve?(mode==0u?GL_SRC_ALPHA:GL_DST_ALPHA):GL_ZERO);
       rgb_equation=equations[rgb];alpha_equation=preserve?equations[alpha]:GL_FUNC_ADD;
     }else if(blend&GL_SCENE_BLEND_NATIVE_FACTORS){
-      static const GLenum factors[]={0,GL_ZERO,GL_ONE,GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA,
-        GL_SRC_COLOR,GL_DST_COLOR,GL_DST_ALPHA,GL_ONE_MINUS_SRC_COLOR,
-        GL_ONE_MINUS_DST_ALPHA,GL_ONE_MINUS_DST_COLOR,0x0308u};
-      static const GLenum equations[]={GL_FUNC_ADD,GL_MAX,GL_FUNC_REVERSE_SUBTRACT,GL_FUNC_SUBTRACT,GL_MIN};
-      backend->gl.BlendFuncSeparate(factors[blend&15],factors[(blend>>4)&15],
-        factors[(blend>>8)&15],factors[(blend>>12)&15]);
-      rgb_equation=equations[(blend>>16)&7];alpha_equation=equations[(blend>>19)&7];
+      backend->gl.BlendFuncSeparate(gml_gpu_opengl_native_factor((unsigned)blend&15u),
+        gml_gpu_opengl_native_factor(((unsigned)blend>>4u)&15u),
+        gml_gpu_opengl_native_factor(((unsigned)blend>>8u)&15u),
+        gml_gpu_opengl_native_factor(((unsigned)blend>>12u)&15u));
+      rgb_equation=gml_gpu_opengl_native_equation(((unsigned)blend>>16u)&7u);
+      alpha_equation=gml_gpu_opengl_native_equation(((unsigned)blend>>19u)&7u);
     }else if(blend>=22 && blend<=25){
       int multiply=blend<=23,preserve=(blend&1)==0;
       backend->gl.BlendFuncSeparate(multiply?GL_DST_COLOR:GL_SRC_ALPHA,

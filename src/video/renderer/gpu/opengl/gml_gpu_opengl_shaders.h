@@ -52,7 +52,7 @@
   "float amount=u_fog_colour.w>=3.0?(distance-u_fog_range.x)*u_fog_range.y:step(u_fog_range.y,distance);" \
   "source.rgb=mix(source.rgb,u_fog_colour.rgb,clamp(amount,0.0,1.0));}" \
   "vec4 old_colour=texelFetch(u_colour,ivec2(gl_FragCoord.xy),0);" \
-  "result_colour=u_flags.w!=0?vec4(source.rgb*source.a+old_colour.rgb*(1.0-source.a)," \
+  "result_colour=u_flags.w==1?vec4(source.rgb*source.a+old_colour.rgb*(1.0-source.a)," \
   "source.a*(u_policy.z!=0?source.a:1.0)+old_colour.a*(1.0-source.a)):source;" \
   "if(u_policy.x!=0)result_colour.a=1.0;\n#endif\n}\n"
 

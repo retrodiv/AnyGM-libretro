@@ -324,6 +324,19 @@ int gml_gpu_opengl_build_program(GmlGpuBackend *backend,char *error,size_t error
 GlSceneProgram *gml_gpu_opengl_scene_draw_program(GmlGpuBackend *backend,uint32_t filter,int native_flags,
   char *error,size_t error_capacity);
 int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error_capacity);
+/* Shared device mappings for captured independent blend state. Callers
+ * validate factors/equations before preparing any destination writes. */
+static inline GLenum gml_gpu_opengl_native_factor(unsigned factor){
+  static const GLenum values[]={0,GL_ZERO,GL_ONE,GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA,
+    GL_SRC_COLOR,GL_DST_COLOR,GL_DST_ALPHA,GL_ONE_MINUS_SRC_COLOR,
+    GL_ONE_MINUS_DST_ALPHA,GL_ONE_MINUS_DST_COLOR,0x0308u};
+  return factor>=1u && factor<=11u?values[factor]:0xffffffffu;
+}
+static inline GLenum gml_gpu_opengl_native_equation(unsigned equation){
+  static const GLenum values[]={GL_FUNC_ADD,GL_MAX,GL_FUNC_REVERSE_SUBTRACT,GL_FUNC_SUBTRACT,GL_MIN};
+  return equation<5u?values[equation]:0xffffffffu;
+}
+
 int gml_gpu_opengl_depth_triangle_programs(GmlGpuBackend *backend,char *error,size_t error_capacity);
 int gml_gpu_opengl_depth_triangle_valid(GmlGpuBackend *backend,const GmlRenderDrawBatch *batch);
 int gml_render_gpu_opengl_depth_triangle(GmlGpuBackend *backend,const GmlRenderDrawBatch *batch,
