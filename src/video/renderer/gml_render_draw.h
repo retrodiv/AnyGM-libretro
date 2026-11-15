@@ -572,6 +572,13 @@ typedef enum GmlRenderDepthTopology {
   GML_RENDER_DEPTH_TOPOLOGY_LINE=2
 } GmlRenderDepthTopology;
 
+/* State alpha is separate from the device's picture sampler. */
+typedef enum GmlRenderDepthAlphaSample {
+  GML_RENDER_DEPTH_ALPHA_DEVICE=0,
+  GML_RENDER_DEPTH_ALPHA_CLASSIC=1,
+  GML_RENDER_DEPTH_ALPHA_MODERN=2
+} GmlRenderDepthAlphaSample;
+
 typedef struct GmlRenderDepthPrimitive {
   GmlRenderImageRef previous_colour;
   uint64_t depth_epoch,depth_version,next_depth_version;
@@ -580,7 +587,7 @@ typedef struct GmlRenderDepthPrimitive {
   uint32_t hidden,write_depth,normalized,blend,topology;
   uint32_t stamp_alpha,zero_alpha_writes,alpha_source_squared;
   double uv[3][2];
-  uint32_t textured,interpolate;
+  uint32_t textured,interpolate,alpha_sample_policy;
   /* Prepared fragment policy; flags: light=1, fog=2, orthographic=4, linear fog=8. */
   float shade[3],fog_colour[3],fog_start,fog_scale,fog_distance[3];
   uint32_t shading_flags;

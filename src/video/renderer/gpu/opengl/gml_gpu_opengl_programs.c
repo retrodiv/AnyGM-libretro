@@ -134,11 +134,16 @@ int gml_gpu_opengl_depth_triangle_programs(GmlGpuBackend *backend,char *error,si
     p->policy=backend->gl.GetUniformLocation(program,"u_policy");
     p->source=backend->gl.GetUniformLocation(program,"u_source");
     p->flat_uv=backend->gl.GetUniformLocation(program,"u_flat_uv");
+    p->input_alpha=backend->gl.GetUniformLocation(program,"u_input_alpha");
+    p->alpha_coordinates=backend->gl.GetUniformLocation(program,"u_alpha_coordinates");
+    p->alpha_fraction=backend->gl.GetUniformLocation(program,"u_alpha_fraction");
+    p->alpha_weights=backend->gl.GetUniformLocation(program,"u_alpha_weights[0]");
     p->shade=backend->gl.GetUniformLocation(program,"u_shade");
     p->fog_colour=backend->gl.GetUniformLocation(program,"u_fog_colour");
     p->fog_range=backend->gl.GetUniformLocation(program,"u_fog_range");
     if(p->extent<0 || p->depth<0 || p->flags<0 || p->policy<0 || p->source<0 ||
-       p->flat_uv<0 || (!pass && (p->colour<0 || p->shade<0 || p->fog_colour<0 || p->fog_range<0))){
+       p->flat_uv<0 || p->input_alpha<0 || p->alpha_coordinates<0 ||
+       p->alpha_fraction<0 || p->alpha_weights<0 || (!pass && (p->colour<0 || p->shade<0 || p->fog_colour<0 || p->fog_range<0))){
       backend->gl.DeleteProgram(program);return 0;
     }
     p->program=program;

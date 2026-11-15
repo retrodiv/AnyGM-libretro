@@ -9491,15 +9491,18 @@ static int resident_depth_point_topology(void){
     gml_render_set_pending_fill(r,0x40204060u);gml_render_flush_pending_fill(r);
     CHECK(gml_render_scene_submit_pending(r));uint32_t shadow[25];memcpy(shadow,r->fb,sizeof shadow);
     float depth[25]={0};
-    for(unsigned replacement=0;replacement<2u;replacement++)for(unsigned mask=0;mask<16u;mask++){
+    for(unsigned replacement=0;replacement<2u;replacement++)
+    for(unsigned sampling=0;sampling<=GML_RENDER_DEPTH_ALPHA_MODERN;sampling++)
+    for(unsigned mask=0;mask<16u;mask++){
       r->alphablend=!replacement;r->color_write_mask=(uint8_t)mask;
       GmlRenderDepthPrimitive point={.depth_epoch=1u,.depth_version=controls+1u,
-        .topology=GML_RENDER_DEPTH_TOPOLOGY_POINT,.hidden=1u,.write_depth=1u,.normalized=1u,
+        .topology=GML_RENDER_DEPTH_TOPOLOGY_POINT,.alpha_sample_policy=sampling,.hidden=1u,.write_depth=1u,.normalized=1u,
         .vertex={{1.5,2.5,1,.5,.25,.5,.75,.5}}};
       GmlRenderDepthPlaneRef published={0};unsigned submits=(unsigned)fake.submits;
       CHECK(gml_render_cpu_backend_depth_triangle(r,&point,depth,-1,0,&published));
       CHECK((unsigned)fake.submits==submits+1u && published.version==controls+2u &&
         fake.last_depth.payload.depth_primitive.topology==GML_RENDER_DEPTH_TOPOLOGY_POINT &&
+        fake.last_depth.payload.depth_primitive.alpha_sample_policy==sampling &&
         !memcmp(fake.last_depth.payload.depth_primitive.vertex,point.vertex,sizeof point.vertex) &&
         fake.last_depth_state.write_mask==15u && r->color_write_mask==mask &&
         r->alphablend==!replacement && !fake.readbacks && !fake.depth_reads &&
@@ -9508,11 +9511,15 @@ static int resident_depth_point_topology(void){
       unsigned uploads=fake.depth_uploads;submits=(unsigned)fake.submits;
       CHECK(!gml_render_cpu_backend_depth_triangle(r,&point,depth,-1,0,&published));
       CHECK(fake.depth_uploads==uploads && (unsigned)fake.submits==submits && !memcmp(shadow,r->fb,sizeof shadow));
+      point.topology=GML_RENDER_DEPTH_TOPOLOGY_POINT;
+      point.alpha_sample_policy=GML_RENDER_DEPTH_ALPHA_MODERN+1u;
+      CHECK(!gml_render_cpu_backend_depth_triangle(r,&point,depth,-1,0,&published));
+      CHECK(fake.depth_uploads==uploads && (unsigned)fake.submits==submits && !memcmp(shadow,r->fb,sizeof shadow));
       controls++;
     }
     gml_render_bind_device(r,NULL);gml_render_free(r);free(r);
   }
-  CHECK(controls==192u);return 1;
+  CHECK(controls==576u);return 1;
 }
 
 static int resident_depth_line_topology(void){
@@ -9531,15 +9538,18 @@ static int resident_depth_line_topology(void){
     gml_render_set_pending_fill(r,0x40204060u);gml_render_flush_pending_fill(r);
     CHECK(gml_render_scene_submit_pending(r));uint32_t shadow[25];memcpy(shadow,r->fb,sizeof shadow);
     float depth[25]={0};
-    for(unsigned replacement=0;replacement<2u;replacement++)for(unsigned mask=0;mask<16u;mask++){
+    for(unsigned replacement=0;replacement<2u;replacement++)
+    for(unsigned sampling=0;sampling<=GML_RENDER_DEPTH_ALPHA_MODERN;sampling++)
+    for(unsigned mask=0;mask<16u;mask++){
       r->alphablend=!replacement;r->color_write_mask=(uint8_t)mask;
       GmlRenderDepthPrimitive line={.depth_epoch=1u,.depth_version=controls+1u,
-        .topology=GML_RENDER_DEPTH_TOPOLOGY_LINE,.hidden=1u,.write_depth=1u,.normalized=1u,
+        .topology=GML_RENDER_DEPTH_TOPOLOGY_LINE,.alpha_sample_policy=sampling,.hidden=1u,.write_depth=1u,.normalized=1u,
         .vertex={{1.625,2.75,1,.5,.25,.5,.75,.5},{3.875,.625,1,.5,.75,.25,.5,1}}};
       GmlRenderDepthPlaneRef published={0};unsigned submits=(unsigned)fake.submits;
       CHECK(gml_render_cpu_backend_depth_triangle(r,&line,depth,-1,0,&published));
       CHECK((unsigned)fake.submits==submits+1u && published.version==controls+2u &&
         fake.last_depth.payload.depth_primitive.topology==GML_RENDER_DEPTH_TOPOLOGY_LINE &&
+        fake.last_depth.payload.depth_primitive.alpha_sample_policy==sampling &&
         !memcmp(fake.last_depth.payload.depth_primitive.vertex,line.vertex,sizeof line.vertex) &&
         fake.last_depth_state.write_mask==15u && r->color_write_mask==mask &&
         r->alphablend==!replacement && !fake.readbacks && !fake.depth_reads &&
@@ -9548,11 +9558,15 @@ static int resident_depth_line_topology(void){
       unsigned uploads=fake.depth_uploads;submits=(unsigned)fake.submits;
       CHECK(!gml_render_cpu_backend_depth_triangle(r,&line,depth,-1,0,&published));
       CHECK(fake.depth_uploads==uploads && (unsigned)fake.submits==submits && !memcmp(shadow,r->fb,sizeof shadow));
+      line.topology=GML_RENDER_DEPTH_TOPOLOGY_LINE;
+      line.alpha_sample_policy=GML_RENDER_DEPTH_ALPHA_MODERN+1u;
+      CHECK(!gml_render_cpu_backend_depth_triangle(r,&line,depth,-1,0,&published));
+      CHECK(fake.depth_uploads==uploads && (unsigned)fake.submits==submits && !memcmp(shadow,r->fb,sizeof shadow));
       controls++;
     }
     gml_render_bind_device(r,NULL);gml_render_free(r);free(r);
   }
-  CHECK(controls==192u);return 1;
+  CHECK(controls==576u);return 1;
 }
 
 static int resident_depth_alpha_policy(void){

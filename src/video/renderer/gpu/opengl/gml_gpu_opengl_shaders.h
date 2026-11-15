@@ -21,6 +21,138 @@
   "precision highp usampler2D;\n" \
   "precision highp sampler2D;\n"
 
+/* Shared unchanged normal binary64 arithmetic for exact state and filtering. */
+#define GML_GPU_OPENGL_BINARY64_BODY \
+  "bool d64_zero(uvec2 a){ return (a.x|(a.y&0x7fffffffu))==0u; }\n" \
+  "bool limb_less(uvec2 a,uvec2 b){ return a.y<b.y || (a.y==b.y && a.x<b.x); }\n" \
+  "uvec2 limb_add(uvec2 a,uvec2 b){\n" \
+  "  uint lo=a.x+b.x; return uvec2(lo,a.y+b.y+uint(lo<a.x));\n" \
+  "}\n" \
+  "uvec2 limb_sub(uvec2 a,uvec2 b){ return uvec2(a.x-b.x,a.y-b.y-uint(a.x<b.x)); }\n" \
+  "uvec2 limb_left(uvec2 a,int n){\n" \
+  "  // Callers use nonnegative counts; every evaluated native shift stays below 32.\n" \
+  "  uint k=uint(n)&31u;\n" \
+  "  uint lo=a.x<<k,hi=(a.y<<k)|((a.x>>((32u-k)&31u))*uint(k!=0u));\n" \
+  "  uvec2 q=n<32?uvec2(lo,hi):uvec2(0u,lo);\n" \
+  "  return n<64?q:uvec2(0u);\n" \
+  "}\n" \
+  "uvec2 limb_right(uvec2 a,int n){\n" \
+  "  uint k=uint(n)&31u;\n" \
+  "  uint hi=a.y>>k,lo=(a.x>>k)|((a.y<<((32u-k)&31u))*uint(k!=0u));\n" \
+  "  uvec2 q=n<32?uvec2(lo,hi):uvec2(hi,0u);\n" \
+  "  return n<64?q:uvec2(0u);\n" \
+  "}\n" \
+  "uvec2 limb_jam(uvec2 a,int n){\n" \
+  "  uvec2 q=limb_right(a,n);\n" \
+  "  q.x|=uint(any(notEqual(limb_left(q,n),a)));\n" \
+  "  return q;\n" \
+  "}\n" \
+  "uvec2 d64_mantissa(uvec2 a){ return uvec2(a.x,(a.y&0xfffffu)|0x100000u); }\n" \
+  "int d64_exponent(uvec2 a){ return int((a.y>>20u)&2047u)-1023; }\n" \
+  "int d64_high_bit(uint value){\n" \
+  "  int result=0; uint n=value>=65536u?16u:0u; value>>=n; result+=int(n);\n" \
+  "  n=value>=256u?8u:0u; value>>=n; result+=int(n);\n" \
+  "  n=value>=16u?4u:0u; value>>=n; result+=int(n);\n" \
+  "  n=value>=4u?2u:0u; value>>=n; result+=int(n);\n" \
+  "  return result+int(value>=2u);\n" \
+  "}\n" \
+  "uvec2 d64_pack(uvec2 extended,int exponent,uint sign){\n" \
+  "  if((extended.x|extended.y)==0u) return uvec2(0u);\n" \
+  "  if(extended.y>=0x1000000u){ extended=limb_jam(extended,1); exponent++; }\n" \
+  "  // Inputs contain at most 57 bits. The one-bit carry leaves high<=55.\n" \
+  "  // Find the same normalisation as repeated left shifts without a shader loop.\n" \
+  "  int high=extended.y!=0u?32+d64_high_bit(extended.y):d64_high_bit(extended.x);\n" \
+  "  int shift=55-high; extended=limb_left(extended,shift); exponent-=shift;\n" \
+  "  uint residue=extended.x&7u;\n" \
+  "  uvec2 mantissa=limb_right(extended,3);\n" \
+  "  if(residue>4u || (residue==4u && (mantissa.x&1u)!=0u))\n" \
+  "    mantissa=limb_add(mantissa,uvec2(1u,0u));\n" \
+  "  if(mantissa.y>=0x200000u){ mantissa=limb_right(mantissa,1); exponent++; }\n" \
+  "  return uvec2(mantissa.x,sign|(uint(exponent+1023)<<20u)|(mantissa.y&0xfffffu));\n" \
+  "}\n" \
+  "uvec2 d64_uint(uint value){\n" \
+  "  if(value==0u) return uvec2(0u);\n" \
+  "  int exponent=d64_high_bit(value);\n" \
+  "  uvec2 m=limb_left(uvec2(value,0u),52-exponent);\n" \
+  "  return uvec2(m.x,(uint(exponent+1023)<<20u)|(m.y&0xfffffu));\n" \
+  "}\n" \
+  "uvec2 d64_int(int value){\n" \
+  "  uvec2 result=d64_uint(uint(value<0?-value:value));\n" \
+  "  if(value<0) result.y|=0x80000000u;\n" \
+  "  return result;\n" \
+  "}\n" \
+  "uvec2 d64_add(uvec2 a,uvec2 b){\n" \
+  "  if(d64_zero(a)) return b;\n" \
+  "  if(d64_zero(b)) return a;\n" \
+  "  int ea=d64_exponent(a),eb=d64_exponent(b);\n" \
+  "  uvec2 ma=limb_left(d64_mantissa(a),3),mb=limb_left(d64_mantissa(b),3);\n" \
+  "  uint sa=a.y&0x80000000u,sb=b.y&0x80000000u;\n" \
+  "  if(ea<eb){ uvec2 swap=ma;ma=mb;mb=swap;int e=ea;ea=eb;eb=e;uint s=sa;sa=sb;sb=s; }\n" \
+  "  mb=limb_jam(mb,ea-eb);\n" \
+  "  uvec2 extended;\n" \
+  "  if(sa==sb) extended=limb_add(ma,mb);\n" \
+  "  else if(limb_less(ma,mb)){ extended=limb_sub(mb,ma);sa=sb; }\n" \
+  "  else extended=limb_sub(ma,mb);\n" \
+  "  return d64_pack(extended,ea,sa);\n" \
+  "}\n" \
+  "uvec2 d64_sub(uvec2 a,uvec2 b){ b.y^=0x80000000u; return d64_add(a,b); }\n" \
+  "uvec2 d64_mul(uvec2 a,uvec2 b){\n" \
+  "  if(d64_zero(a) || d64_zero(b)) return uvec2(0u);\n" \
+  "  uvec2 ma=d64_mantissa(a),mb=d64_mantissa(b);\n" \
+  "  uint aa[4],bb[4],p[8];\n" \
+  "  aa[0]=ma.x&65535u;aa[1]=ma.x>>16u;aa[2]=ma.y&65535u;aa[3]=ma.y>>16u;\n" \
+  "  bb[0]=mb.x&65535u;bb[1]=mb.x>>16u;bb[2]=mb.y&65535u;bb[3]=mb.y>>16u;\n" \
+  "  for(int i=0;i<8;i++) p[i]=0u;\n" \
+  "  for(int i=0;i<4;i++){\n" \
+  "    uint carry=0u;\n" \
+  "    for(int j=0;j<4;j++){\n" \
+  "      uint term=aa[i]*bb[j]+p[i+j]+carry;\n" \
+  "      p[i+j]=term&65535u;carry=term>>16u;\n" \
+  "    }\n" \
+  "    p[i+4]=carry;\n" \
+  "  }\n" \
+  "  uvec4 w=uvec4(p[0]|(p[1]<<16u),p[2]|(p[3]<<16u),\n" \
+  "                p[4]|(p[5]<<16u),p[6]|(p[7]<<16u));\n" \
+  "  int high=(p[6]&512u)!=0u?1:0;\n" \
+  "  int shift=49+high;\n" \
+  "  uvec2 extended=uvec2((w.y>>uint(shift-32))|(w.z<<uint(64-shift)),\n" \
+  "                       (w.z>>uint(shift-32))|(w.w<<uint(64-shift)));\n" \
+  "  if(w.x!=0u || (w.y&((1u<<uint(shift-32))-1u))!=0u) extended.x|=1u;\n" \
+  "  return d64_pack(extended,d64_exponent(a)+d64_exponent(b)+high,\n" \
+  "                   (a.y^b.y)&0x80000000u);\n" \
+  "}\n" \
+  "uvec2 d64_div(uvec2 a,uvec2 b){\n" \
+  "  if(d64_zero(a)) return uvec2(0u);\n" \
+  "  uvec2 numerator=d64_mantissa(a),denominator=d64_mantissa(b);\n" \
+  "  int exponent=d64_exponent(a)-d64_exponent(b);\n" \
+  "  if(limb_less(numerator,denominator)){ numerator=limb_left(numerator,1);exponent--; }\n" \
+  "  uvec2 remainder=limb_sub(numerator,denominator),quotient=uvec2(1u,0u);\n" \
+  "  for(int bit=0;bit<55;bit++){\n" \
+  "    remainder=limb_left(remainder,1);quotient=limb_left(quotient,1);\n" \
+  "    if(!limb_less(remainder,denominator)){\n" \
+  "      remainder=limb_sub(remainder,denominator);quotient.x|=1u;\n" \
+  "    }\n" \
+  "  }\n" \
+  "  if((remainder.x|remainder.y)!=0u) quotient.x|=1u;\n" \
+  "  return d64_pack(quotient,exponent,(a.y^b.y)&0x80000000u);\n" \
+  "}\n" \
+  "int d64_floor(uvec2 a){\n" \
+  "  if(d64_zero(a)) return 0;\n" \
+  "  bool negative=(a.y&0x80000000u)!=0u;\n" \
+  "  int exponent=d64_exponent(a);\n" \
+  "  if(exponent<0) return negative?-1:0;\n" \
+  "  uint integral=limb_right(d64_mantissa(a),52-exponent).x;\n" \
+  "  if(!negative) return int(integral);\n" \
+  "  uvec2 absolute=uvec2(a.x,a.y&0x7fffffffu);\n" \
+  "  return -int(integral)-int(any(notEqual(absolute,d64_uint(integral))));\n" \
+  "}\n" \
+  "int d64_round(uvec2 a){ return d64_floor(d64_add(a,uvec2(0u,0x3fe00000u))); }\n" \
+  "int d64_lround(uvec2 a){\n" \
+  "  int integral=d64_floor(a);\n" \
+  "  uvec2 boundary=d64_add(d64_uint(uint(integral)),uvec2(0u,0x3fe00000u));\n" \
+  "  return integral+int(!limb_less(a,boundary));\n" \
+  "}\n"
+
 /* Both passes use the same native coverage and fragment acceptance. The old
  * colour and integer depth are immutable inputs until joint publication. */
 #define GML_GPU_OPENGL_DEPTH_TRIANGLE_VERTEX \
@@ -38,16 +170,64 @@
   "#ifdef DEPTH_WRITE\nlayout(location=0) out uint result_depth;\n" \
   "#else\nlayout(location=0) out vec4 result_colour;" \
   "uniform vec4 u_shade,u_fog_colour;uniform vec2 u_fog_range;\n#endif\n" \
+  GML_GPU_OPENGL_BINARY64_BODY \
+  "uniform ivec4 u_input_alpha,u_alpha_coordinates,u_alpha_fraction;\n" \
+  "uniform ivec4 u_alpha_weights[2];\n" \
+  "// Exact positive binary64 product versus half the least binary64 subnormal.\n" \
+  "// Equality rounds to zero (ties to even); neither operand uses float arithmetic.\n" \
+  "bool positive_alpha_product(uvec2 a,uvec2 b){\n" \
+  " if((a.x|a.y)==0u || (b.x|b.y)==0u)return false;\n" \
+  " uint ea=(a.y>>20u)&2047u,eb=(b.y>>20u)&2047u;\n" \
+  " int shift=-1075-(ea==0u?-1074:int(ea)-1075)-(eb==0u?-1074:int(eb)-1075);\n" \
+  " if(shift<0)return true;if(shift>=106)return false;\n" \
+  " if(ea!=0u && eb!=0u && shift<104)return true;\n" \
+  " uint ah=(a.y&1048575u)|(ea!=0u?1048576u:0u);\n" \
+  " uint bh=(b.y&1048575u)|(eb!=0u?1048576u:0u);\n" \
+  " uint aa[4],bb[4],p[8];aa[0]=a.x&65535u;aa[1]=a.x>>16u;\n" \
+  " aa[2]=ah&65535u;aa[3]=ah>>16u;bb[0]=b.x&65535u;bb[1]=b.x>>16u;\n" \
+  " bb[2]=bh&65535u;bb[3]=bh>>16u;\n" \
+  " for(int i=0;i<8;i++)p[i]=0u;\n" \
+  " for(int i=0;i<4;i++){uint carry=0u;for(int j=0;j<4;j++){\n" \
+  " uint term=aa[i]*bb[j]+p[i+j]+carry;p[i+j]=term&65535u;carry=term>>16u;}p[i+4]=carry;}\n" \
+  " for(int i=7;i>=0;i--){uint bound=i==shift/16?1u<<uint(shift%16):0u;\n" \
+  " if(p[i]!=bound)return p[i]>bound;}return false;\n" \
+  "}\n" \
+  "uvec2 alpha_float64(float value){\n" \
+  " uint word=floatBitsToUint(value),exponent=(word>>23u)&255u,mantissa=word&8388607u;\n" \
+  " if(exponent==0u)return d64_mul(d64_uint(mantissa),uvec2(0u,0x36a00000u));\n" \
+  " return uvec2(mantissa<<29u,((exponent+896u)<<20u)|(mantissa>>3u));\n" \
+  "}\n" \
+  "uint alpha_state_byte(ivec2 p){return uint(floor(texelFetch(u_source,p,0).a*255.0+0.5));}\n" \
+  "uvec2 alpha_state_sample(){\n" \
+  " ivec2 a=u_alpha_coordinates.xy,b=u_alpha_coordinates.zw;\n" \
+  " uint p0=alpha_state_byte(a);\n" \
+  " if(u_input_alpha.w==3)return d64_div(d64_uint(p0),d64_uint(255u));\n" \
+  " uint p1=alpha_state_byte(ivec2(b.x,a.y)),p2=alpha_state_byte(ivec2(a.x,b.y)),p3=alpha_state_byte(b);\n" \
+  " if(u_input_alpha.w==1){\n" \
+  "  uint ix=uint(u_alpha_fraction.x),iy=uint(u_alpha_fraction.y);\n" \
+  "  uint top=(p0*(256u-ix)+p1*ix+128u)>>8u;\n" \
+  "  uint bottom=(p2*(256u-ix)+p3*ix+128u)>>8u;\n" \
+  "  return d64_div(d64_uint((top*(256u-iy)+bottom*iy+128u)>>8u),d64_uint(255u));\n" \
+  " }\n" \
+  " uvec2 sum=d64_add(d64_mul(d64_uint(p0),uvec2(u_alpha_weights[0].xy)),d64_mul(d64_uint(p1),uvec2(u_alpha_weights[0].zw)));\n" \
+  " sum=d64_add(sum,d64_mul(d64_uint(p2),uvec2(u_alpha_weights[1].xy)));\n" \
+  " sum=d64_add(sum,d64_mul(d64_uint(p3),uvec2(u_alpha_weights[1].zw)));\n" \
+  " return d64_div(sum,d64_uint(255u));\n" \
+  "}\n" \
   "void main(){vec4 source=clamp(v_colour/v_reciprocal,0.0,1.0);float z=v_depth;" \
-  "if((u_policy.x&2)!=0&&source.a<=0.0)discard;" \
-  "if(u_policy.w!=0)source*=texture(u_source,u_policy.w==2?u_flat_uv:v_uv/v_reciprocal);" \
+  "bool encoded=u_input_alpha.z!=0;uvec2 input_alpha=uvec2(u_input_alpha.xy);" \
+  "if((u_policy.x&2)!=0&&(encoded?(input_alpha.x|input_alpha.y)==0u:source.a<=0.0))discard;" \
+  "float sampled_alpha=1.0;if(u_policy.w!=0){vec4 sampled=texture(u_source,u_policy.w==2?u_flat_uv:v_uv/v_reciprocal);" \
+  "source*=sampled;sampled_alpha=sampled.a;}" \
+  "uvec2 state_sample=uvec2(0u);if(encoded)state_sample=u_input_alpha.w!=0?alpha_state_sample():alpha_float64(sampled_alpha);" \
+  "bool alpha_positive=encoded?positive_alpha_product(input_alpha,state_sample):source.a>0.0;" \
   "if(u_flags.z!=0&&(isnan(z)||isinf(z)||z<0.0||z>1.0))discard;" \
   "float old=uintBitsToFloat(texelFetch(u_depth,ivec2(gl_FragCoord.xy),0).r);" \
   "if(u_flags.x!=0&&(u_flags.z!=0?z>old:z<old))discard;\n" \
   "#ifdef DEPTH_WRITE\n" \
-  "if(u_flags.x==0||u_flags.y==0||source.a<=0.0)discard;result_depth=floatBitsToUint(z);\n" \
+  "if(u_flags.x==0||u_flags.y==0||!alpha_positive)discard;result_depth=floatBitsToUint(z);\n" \
   "#else\n" \
-  "if(source.a<=0.0&&u_policy.y==0)discard;" \
+  "if(!alpha_positive&&u_policy.y==0)discard;" \
   "if(u_shade.w!=0.0)source.rgb=clamp(source.rgb*u_shade.rgb,0.0,1.0);" \
   "if(u_fog_colour.w!=0.0){float distance=(u_fog_colour.w==2.0||u_fog_colour.w==4.0)?v_distance:1.0/v_reciprocal;" \
   "float amount=u_fog_colour.w>=3.0?(distance-u_fog_range.x)*u_fog_range.y:step(u_fog_range.y,distance);" \
@@ -1281,135 +1461,7 @@
   "uniform int u_font_mode;\n" \
   "#endif\n" \
   "uniform int u_font_preserve_alpha;\n" \
-  "bool d64_zero(uvec2 a){ return (a.x|(a.y&0x7fffffffu))==0u; }\n" \
-  "bool limb_less(uvec2 a,uvec2 b){ return a.y<b.y || (a.y==b.y && a.x<b.x); }\n" \
-  "uvec2 limb_add(uvec2 a,uvec2 b){\n" \
-  "  uint lo=a.x+b.x; return uvec2(lo,a.y+b.y+uint(lo<a.x));\n" \
-  "}\n" \
-  "uvec2 limb_sub(uvec2 a,uvec2 b){ return uvec2(a.x-b.x,a.y-b.y-uint(a.x<b.x)); }\n" \
-  "uvec2 limb_left(uvec2 a,int n){\n" \
-  "  // Callers use nonnegative counts; every evaluated native shift stays below 32.\n" \
-  "  uint k=uint(n)&31u;\n" \
-  "  uint lo=a.x<<k,hi=(a.y<<k)|((a.x>>((32u-k)&31u))*uint(k!=0u));\n" \
-  "  uvec2 q=n<32?uvec2(lo,hi):uvec2(0u,lo);\n" \
-  "  return n<64?q:uvec2(0u);\n" \
-  "}\n" \
-  "uvec2 limb_right(uvec2 a,int n){\n" \
-  "  uint k=uint(n)&31u;\n" \
-  "  uint hi=a.y>>k,lo=(a.x>>k)|((a.y<<((32u-k)&31u))*uint(k!=0u));\n" \
-  "  uvec2 q=n<32?uvec2(lo,hi):uvec2(hi,0u);\n" \
-  "  return n<64?q:uvec2(0u);\n" \
-  "}\n" \
-  "uvec2 limb_jam(uvec2 a,int n){\n" \
-  "  uvec2 q=limb_right(a,n);\n" \
-  "  q.x|=uint(any(notEqual(limb_left(q,n),a)));\n" \
-  "  return q;\n" \
-  "}\n" \
-  "uvec2 d64_mantissa(uvec2 a){ return uvec2(a.x,(a.y&0xfffffu)|0x100000u); }\n" \
-  "int d64_exponent(uvec2 a){ return int((a.y>>20u)&2047u)-1023; }\n" \
-  "int d64_high_bit(uint value){\n" \
-  "  int result=0; uint n=value>=65536u?16u:0u; value>>=n; result+=int(n);\n" \
-  "  n=value>=256u?8u:0u; value>>=n; result+=int(n);\n" \
-  "  n=value>=16u?4u:0u; value>>=n; result+=int(n);\n" \
-  "  n=value>=4u?2u:0u; value>>=n; result+=int(n);\n" \
-  "  return result+int(value>=2u);\n" \
-  "}\n" \
-  "uvec2 d64_pack(uvec2 extended,int exponent,uint sign){\n" \
-  "  if((extended.x|extended.y)==0u) return uvec2(0u);\n" \
-  "  if(extended.y>=0x1000000u){ extended=limb_jam(extended,1); exponent++; }\n" \
-  "  // Inputs contain at most 57 bits. The one-bit carry leaves high<=55.\n" \
-  "  // Find the same normalisation as repeated left shifts without a shader loop.\n" \
-  "  int high=extended.y!=0u?32+d64_high_bit(extended.y):d64_high_bit(extended.x);\n" \
-  "  int shift=55-high; extended=limb_left(extended,shift); exponent-=shift;\n" \
-  "  uint residue=extended.x&7u;\n" \
-  "  uvec2 mantissa=limb_right(extended,3);\n" \
-  "  if(residue>4u || (residue==4u && (mantissa.x&1u)!=0u))\n" \
-  "    mantissa=limb_add(mantissa,uvec2(1u,0u));\n" \
-  "  if(mantissa.y>=0x200000u){ mantissa=limb_right(mantissa,1); exponent++; }\n" \
-  "  return uvec2(mantissa.x,sign|(uint(exponent+1023)<<20u)|(mantissa.y&0xfffffu));\n" \
-  "}\n" \
-  "uvec2 d64_uint(uint value){\n" \
-  "  if(value==0u) return uvec2(0u);\n" \
-  "  int exponent=d64_high_bit(value);\n" \
-  "  uvec2 m=limb_left(uvec2(value,0u),52-exponent);\n" \
-  "  return uvec2(m.x,(uint(exponent+1023)<<20u)|(m.y&0xfffffu));\n" \
-  "}\n" \
-  "uvec2 d64_int(int value){\n" \
-  "  uvec2 result=d64_uint(uint(value<0?-value:value));\n" \
-  "  if(value<0) result.y|=0x80000000u;\n" \
-  "  return result;\n" \
-  "}\n" \
-  "uvec2 d64_add(uvec2 a,uvec2 b){\n" \
-  "  if(d64_zero(a)) return b;\n" \
-  "  if(d64_zero(b)) return a;\n" \
-  "  int ea=d64_exponent(a),eb=d64_exponent(b);\n" \
-  "  uvec2 ma=limb_left(d64_mantissa(a),3),mb=limb_left(d64_mantissa(b),3);\n" \
-  "  uint sa=a.y&0x80000000u,sb=b.y&0x80000000u;\n" \
-  "  if(ea<eb){ uvec2 swap=ma;ma=mb;mb=swap;int e=ea;ea=eb;eb=e;uint s=sa;sa=sb;sb=s; }\n" \
-  "  mb=limb_jam(mb,ea-eb);\n" \
-  "  uvec2 extended;\n" \
-  "  if(sa==sb) extended=limb_add(ma,mb);\n" \
-  "  else if(limb_less(ma,mb)){ extended=limb_sub(mb,ma);sa=sb; }\n" \
-  "  else extended=limb_sub(ma,mb);\n" \
-  "  return d64_pack(extended,ea,sa);\n" \
-  "}\n" \
-  "uvec2 d64_sub(uvec2 a,uvec2 b){ b.y^=0x80000000u; return d64_add(a,b); }\n" \
-  "uvec2 d64_mul(uvec2 a,uvec2 b){\n" \
-  "  if(d64_zero(a) || d64_zero(b)) return uvec2(0u);\n" \
-  "  uvec2 ma=d64_mantissa(a),mb=d64_mantissa(b);\n" \
-  "  uint aa[4],bb[4],p[8];\n" \
-  "  aa[0]=ma.x&65535u;aa[1]=ma.x>>16u;aa[2]=ma.y&65535u;aa[3]=ma.y>>16u;\n" \
-  "  bb[0]=mb.x&65535u;bb[1]=mb.x>>16u;bb[2]=mb.y&65535u;bb[3]=mb.y>>16u;\n" \
-  "  for(int i=0;i<8;i++) p[i]=0u;\n" \
-  "  for(int i=0;i<4;i++){\n" \
-  "    uint carry=0u;\n" \
-  "    for(int j=0;j<4;j++){\n" \
-  "      uint term=aa[i]*bb[j]+p[i+j]+carry;\n" \
-  "      p[i+j]=term&65535u;carry=term>>16u;\n" \
-  "    }\n" \
-  "    p[i+4]=carry;\n" \
-  "  }\n" \
-  "  uvec4 w=uvec4(p[0]|(p[1]<<16u),p[2]|(p[3]<<16u),\n" \
-  "                p[4]|(p[5]<<16u),p[6]|(p[7]<<16u));\n" \
-  "  int high=(p[6]&512u)!=0u?1:0;\n" \
-  "  int shift=49+high;\n" \
-  "  uvec2 extended=uvec2((w.y>>uint(shift-32))|(w.z<<uint(64-shift)),\n" \
-  "                       (w.z>>uint(shift-32))|(w.w<<uint(64-shift)));\n" \
-  "  if(w.x!=0u || (w.y&((1u<<uint(shift-32))-1u))!=0u) extended.x|=1u;\n" \
-  "  return d64_pack(extended,d64_exponent(a)+d64_exponent(b)+high,\n" \
-  "                   (a.y^b.y)&0x80000000u);\n" \
-  "}\n" \
-  "uvec2 d64_div(uvec2 a,uvec2 b){\n" \
-  "  if(d64_zero(a)) return uvec2(0u);\n" \
-  "  uvec2 numerator=d64_mantissa(a),denominator=d64_mantissa(b);\n" \
-  "  int exponent=d64_exponent(a)-d64_exponent(b);\n" \
-  "  if(limb_less(numerator,denominator)){ numerator=limb_left(numerator,1);exponent--; }\n" \
-  "  uvec2 remainder=limb_sub(numerator,denominator),quotient=uvec2(1u,0u);\n" \
-  "  for(int bit=0;bit<55;bit++){\n" \
-  "    remainder=limb_left(remainder,1);quotient=limb_left(quotient,1);\n" \
-  "    if(!limb_less(remainder,denominator)){\n" \
-  "      remainder=limb_sub(remainder,denominator);quotient.x|=1u;\n" \
-  "    }\n" \
-  "  }\n" \
-  "  if((remainder.x|remainder.y)!=0u) quotient.x|=1u;\n" \
-  "  return d64_pack(quotient,exponent,(a.y^b.y)&0x80000000u);\n" \
-  "}\n" \
-  "int d64_floor(uvec2 a){\n" \
-  "  if(d64_zero(a)) return 0;\n" \
-  "  bool negative=(a.y&0x80000000u)!=0u;\n" \
-  "  int exponent=d64_exponent(a);\n" \
-  "  if(exponent<0) return negative?-1:0;\n" \
-  "  uint integral=limb_right(d64_mantissa(a),52-exponent).x;\n" \
-  "  if(!negative) return int(integral);\n" \
-  "  uvec2 absolute=uvec2(a.x,a.y&0x7fffffffu);\n" \
-  "  return -int(integral)-int(any(notEqual(absolute,d64_uint(integral))));\n" \
-  "}\n" \
-  "int d64_round(uvec2 a){ return d64_floor(d64_add(a,uvec2(0u,0x3fe00000u))); }\n" \
-  "int d64_lround(uvec2 a){\n" \
-  "  int integral=d64_floor(a);\n" \
-  "  uvec2 boundary=d64_add(d64_uint(uint(integral)),uvec2(0u,0x3fe00000u));\n" \
-  "  return integral+int(!limb_less(a,boundary));\n" \
-  "}\n" \
+  GML_GPU_OPENGL_BINARY64_BODY \
   "uvec2 font_channel(ivec4 a,ivec4 b,ivec4 c,ivec4 d,int channel,\n" \
   "                   uvec2 wa,uvec2 wb,uvec2 wc,uvec2 wd){\n" \
   "  uvec2 sum=d64_add(d64_mul(d64_uint(uint(a[channel])),wa),\n" \

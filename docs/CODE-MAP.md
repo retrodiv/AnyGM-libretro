@@ -3,6 +3,11 @@
 
 # Code map
 
+`src/video/renderer/common/gml_render_sample_setup.h` shares the original repeated
+texture-coordinate/fraction/weight preparation between software sampling and scalar
+device state alpha. It reads no pixels. Shared normal binary64 shader arithmetic
+retains the unchanged filtered-font body and device colour sampling remains separate.
+
 `src/video/software3d/gml_software3d_raster.c::vertex_scene_flat_inverse_alpha`
 qualifies source-free inverse endpoint meshes whose alpha is constant per
 primitive and retains its selected byte after device conversion. It shares the

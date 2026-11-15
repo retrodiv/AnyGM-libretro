@@ -3,6 +3,7 @@
  */
 /* Existing OpenGL source mirrors and exact integer axis maps. */
 #include "gml_gpu_opengl_internal.h"
+#include "gml_render_sample_setup.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -1504,6 +1505,46 @@ int gml_gpu_opengl_depth_readback(GmlGpuBackend *backend,const GmlRenderDepthRea
   return 1;
 }
 
+/* Point alpha is unweighted. A constant-depth line retains the CPU's scalar
+ * multiply/divide before the fragment's actual device texture observation. */
+static int depth_primitive_scalar_alpha(const GmlRenderDepthPrimitive *primitive,double *alpha){
+  if(primitive->topology==GML_RENDER_DEPTH_TOPOLOGY_POINT){*alpha=primitive->vertex[0][7];return 1;}
+  if(primitive->topology!=GML_RENDER_DEPTH_TOPOLOGY_LINE ||
+     primitive->vertex[0][7]!=primitive->vertex[1][7] ||
+     primitive->vertex[0][2]!=primitive->vertex[1][2])return 0;
+  *alpha=(primitive->vertex[0][7]*primitive->vertex[0][2])/primitive->vertex[0][2];
+  return 1;
+}
+
+/* Scalar state sampling prepares indices/weights only. Actual alpha bytes stay
+ * on the device; the picture continues to use its ordinary hardware sampler. */
+static int depth_triangle_alpha_setup(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
+  GLint coordinates[4],GLint fractions[4],GLint weights[8],GLint *mode){
+  const GmlRenderDepthPrimitive *p=&op->payload.depth_primitive;
+  double alpha;*mode=0;
+  if(!p->alpha_sample_policy || !p->textured ||
+     !depth_primitive_scalar_alpha(p,&alpha) || alpha>=0x1p-16)return 1;
+  unsigned count=p->topology==GML_RENDER_DEPTH_TOPOLOGY_POINT?1u:2u;
+  for(unsigned v=1;v<count;v++)for(unsigned c=0;c<2u;c++)
+    if(p->uv[v][c]!=p->uv[0][c])return 0;
+  GlSceneImage *source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
+  GmlRenderSampleSetup setup;
+  if(!source || !gml_render_cpu_backend_sample_setup_repeat(p->uv[0][0],p->uv[0][1],
+       (int)source->width,(int)source->height,(int)p->interpolate,&setup))return 0;
+  coordinates[0]=setup.x0;coordinates[1]=setup.y0;
+  coordinates[2]=setup.x1;coordinates[3]=setup.y1;
+  fractions[0]=setup.ix;fractions[1]=setup.iy;
+  for(unsigned i=0;i<4u;i++){
+    double value=setup.weight[i];
+    /* Existing shared d64 arithmetic accepts zero and bounded normal inputs. */
+    if(!isfinite(value) || value<0 || value>1 || (value>0 && value<0x1p-900))return 0;
+    uint64_t bits;memcpy(&bits,&value,sizeof bits);
+    weights[i*2u]=(GLint)(uint32_t)bits;weights[i*2u+1u]=(GLint)(uint32_t)(bits>>32u);
+  }
+  *mode=p->interpolate?(GLint)p->alpha_sample_policy:3;
+  return 1;
+}
+
 int gml_gpu_opengl_depth_triangle_valid(GmlGpuBackend *backend,const GmlRenderDrawBatch *batch){
   if(!backend || !backend->loaded || !backend->scene.available || !backend->gl.BlitFramebuffer ||
      !backend->gl.BindSampler || !batch || !batch->operations || batch->operation_count!=1u ||
@@ -1518,6 +1559,7 @@ int gml_gpu_opengl_depth_triangle_valid(GmlGpuBackend *backend,const GmlRenderDr
        (backend->api==GML_GPU_API_OPENGL_CORE && !backend->gl.IsEnabled))) ||
      (point && backend->api==GML_GPU_API_OPENGL_CORE && !backend->gl.IsEnabled) ||
      op->opcode!=GML_RENDER_OP_SOFTWARE3D_PASS || triangle->textured>1u ||
+     triangle->alpha_sample_policy>GML_RENDER_DEPTH_ALPHA_MODERN ||
      triangle->interpolate>1u || op->source_count!=triangle->textured ||
      (op->source_count && !op->sources) || (!op->source_count && op->sources) ||
      op->state_index>=batch->state_count || op->scene_family!=GML_RENDER_SCENE_PRIMITIVE ||
@@ -1587,9 +1629,13 @@ int gml_gpu_opengl_depth_triangle_valid(GmlGpuBackend *backend,const GmlRenderDr
     for(unsigned component=4u;component<8u;component++)
       if(triangle->vertex[v][component]<0 || triangle->vertex[v][component]>1) return 0;
   }
-  if(point && triangle->vertex[0][7]>0.0 && triangle->vertex[0][7]<0x1p-16) return 0;
+  GLint coordinates[4]={0},fractions[4]={0},weights[8]={0},sample_mode;
+  if(!depth_triangle_alpha_setup(backend,op,coordinates,fractions,weights,&sample_mode))return 0;
   if(line){
-    for(unsigned v=0;v<2u;v++)if(triangle->vertex[v][7]>0.0 && triangle->vertex[v][7]<0x1p-16)return 0;
+    double alpha;
+    if(((triangle->vertex[0][7]>0.0 && triangle->vertex[0][7]<0x1p-16) ||
+        (triangle->vertex[1][7]>0.0 && triangle->vertex[1][7]<0x1p-16)) &&
+       !depth_primitive_scalar_alpha(triangle,&alpha))return 0;
     return (float)triangle->vertex[0][0]!=(float)triangle->vertex[1][0] ||
       (float)triangle->vertex[0][1]!=(float)triangle->vertex[1][1];
   }
@@ -1660,6 +1706,14 @@ static int depth_triangle_candidate(GmlGpuBackend *backend,const GmlRenderDrawBa
     if(constant)policy[3]=2;
   }
   float constant_uv[2]={(float)triangle->uv[0][0],(float)triangle->uv[0][1]};
+  GLint alpha_coordinates[4]={0},alpha_fraction[4]={0},alpha_weights[8]={0},alpha_mode;
+  if(!depth_triangle_alpha_setup(backend,op,alpha_coordinates,alpha_fraction,alpha_weights,&alpha_mode))return 0;
+  GLint input_alpha[4]={0};double scalar_alpha;
+  if(depth_primitive_scalar_alpha(triangle,&scalar_alpha) && scalar_alpha<0x1p-16){
+    uint64_t bits=0;if(scalar_alpha>0.0)memcpy(&bits,&scalar_alpha,sizeof bits);
+    input_alpha[0]=(GLint)(uint32_t)bits;input_alpha[1]=(GLint)(uint32_t)(bits>>32u);
+    input_alpha[2]=1;input_alpha[3]=alpha_mode;
+  }
   for(unsigned v=0;v<vertex_count;v++){
     for(unsigned c=0;c<8u;c++)
       vertices[v*11u+c]=(float)(triangle->vertex[v][c]*(c>=4u?triangle->vertex[v][2]:1.0));
@@ -1729,6 +1783,10 @@ static int depth_triangle_candidate(GmlGpuBackend *backend,const GmlRenderDrawBa
     backend->gl.Uniform4iv(program->policy,1,policy);
     backend->gl.Uniform1i(program->source,2);
     backend->gl.Uniform2fv(program->flat_uv,1,constant_uv);
+    backend->gl.Uniform4iv(program->input_alpha,1,input_alpha);
+    backend->gl.Uniform4iv(program->alpha_coordinates,1,alpha_coordinates);
+    backend->gl.Uniform4iv(program->alpha_fraction,1,alpha_fraction);
+    backend->gl.Uniform4iv(program->alpha_weights,2,alpha_weights);
     if(!pass){
       float shade[4]={triangle->shade[0],triangle->shade[1],triangle->shade[2],
         (triangle->shading_flags&1u)?1.0f:0.0f};

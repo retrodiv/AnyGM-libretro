@@ -208,7 +208,8 @@ typedef struct GlSceneProgram {
 
 typedef struct GlDepthTriangleProgram {
   GLuint program;
-  GLint extent,depth,colour,flags,policy,source,flat_uv,shade,fog_colour,fog_range;
+  GLint extent,depth,colour,flags,policy,source,flat_uv,input_alpha,shade,fog_colour,fog_range;
+  GLint alpha_coordinates,alpha_fraction,alpha_weights;
 } GlDepthTriangleProgram;
 
 typedef struct GlScene {

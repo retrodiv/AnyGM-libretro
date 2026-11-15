@@ -590,6 +590,7 @@ static int batch_valid(const GmlRenderResource *resource,const GmlRenderDrawBatc
       }
     } else if(operation->opcode==GML_RENDER_OP_SOFTWARE3D_PASS){
       if(operation->payload.depth_primitive.topology>GML_RENDER_DEPTH_TOPOLOGY_LINE ||
+         operation->payload.depth_primitive.alpha_sample_policy>GML_RENDER_DEPTH_ALPHA_MODERN ||
          operation->payload.depth_primitive.textured>1u ||
          operation->source_count!=operation->payload.depth_primitive.textured ||
          (operation->source_count && (!operation->sources ||

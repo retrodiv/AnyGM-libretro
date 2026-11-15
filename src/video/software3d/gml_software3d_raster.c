@@ -4,6 +4,7 @@
 /* Fixed-function matrix, clipping, sampling, and raster pipeline. */
 #include "gml_software3d_internal.h"
 #include "anygm_host.h"
+#include "gml_render_sample_setup.h"
 
 #include <float.h>
 #include <limits.h>
@@ -440,26 +441,18 @@ static void d3_texture_texel(const GmlD3Texture *texture,int x,int y,int channel
 }
 static void d3_sample(GmlRender *R,const GmlRenderCpuBackendDrawView *draw,
                       const GmlD3Texture *texture,double u,double v,double channel[4]){
-  if(!isfinite(u) || !isfinite(v)){
+  GmlRenderSampleSetup setup;
+  if(!gml_render_cpu_backend_sample_setup_repeat(u,v,texture->w,texture->h,draw->interpolate,&setup)){
     for(int c=0;c<4;c++) channel[c]=0;
     return;
   }
-  u-=floor(u); v-=floor(v);
-  double fx=u*texture->w-0.5, fy=v*texture->h-0.5;
-  int x0=(int)floor(fx), y0=(int)floor(fy);
-  double ax=fx-floor(fx), ay=fy-floor(fy);
-  x0%=texture->w; y0%=texture->h;
-  if(x0<0) x0+=texture->w;
-  if(y0<0) y0+=texture->h;
+  int x0=setup.x0,y0=setup.y0,x1=setup.x1,y1=setup.y1;
   if(!draw->interpolate){
-    x0=(x0+(ax>=0.5))%texture->w;
-    y0=(y0+(ay>=0.5))%texture->h;
     int nearest[4];
     d3_texture_texel(texture,x0,y0,nearest);
     for(int c=0;c<4;c++) channel[c]=nearest[c];
     return;
   }
-  int x1=(x0+1)%texture->w, y1=(y0+1)%texture->h;
   int p[4][4];
   d3_texture_texel(texture,x0,y0,p[0]); d3_texture_texel(texture,x1,y0,p[1]);
   d3_texture_texel(texture,x0,y1,p[2]); d3_texture_texel(texture,x1,y1,p[3]);
@@ -468,9 +461,7 @@ static void d3_sample(GmlRender *R,const GmlRenderCpuBackendDrawView *draw,
      * rounds after both the horizontal and vertical lerps. Keeping the two stages separate is
      * observable: collapsing them to one floating-point expression moves many channels by one. */
     enum { BITS=8, LEVELS=1<<BITS, BIAS=LEVELS/2 };
-    int ix=(int)floor(ax*LEVELS+.5),iy=(int)floor(ay*LEVELS+.5);
-    if(ix<0) ix=0; else if(ix>LEVELS) ix=LEVELS;
-    if(iy<0) iy=0; else if(iy>LEVELS) iy=LEVELS;
+    int ix=setup.ix,iy=setup.iy;
     for(int c=0;c<4;c++){
       int top=(p[0][c]*(LEVELS-ix)+p[1][c]*ix+BIAS)>>BITS;
       int bottom=(p[2][c]*(LEVELS-ix)+p[3][c]*ix+BIAS)>>BITS;
@@ -478,7 +469,7 @@ static void d3_sample(GmlRender *R,const GmlRenderCpuBackendDrawView *draw,
     }
     return;
   }
-  double w[4]={(1-ax)*(1-ay),ax*(1-ay),(1-ax)*ay,ax*ay};
+  const double *w=setup.weight;
   for(int c=0;c<4;c++) channel[c]=p[0][c]*w[0]+p[1][c]*w[1]+p[2][c]*w[2]+p[3][c]*w[3];
 }
 static double d3_edge(double ax,double ay,double bx,double by,double px,double py){
@@ -1338,8 +1329,7 @@ static int d3_native_point(GmlRender *R,GmlD3Vertex world,const GmlD3Texture *te
      !gml_render_cpu_backend_depth_triangle(R,NULL,NULL,
        texture && texture->kind?texture->handle:-1,texture?texture->full_atlas:0,NULL)) return 0;
   if(world.alpha<=0.0) return 1;
-  /* Preserve positive point-depth writes instead of allowing device underflow. */
-  if(!isfinite(world.alpha) || world.alpha<0x1p-16 || world.alpha>1.0) return 0;
+  if(!isfinite(world.alpha) || world.alpha>1.0) return 0;
   GmlRenderCpuBackendDrawView draw;
   if(!gml_render_cpu_backend_draw_view(R,&draw)) return 0;
   GmlD3DepthTarget *target=d3_depth_metadata(R,&draw);
@@ -1358,6 +1348,8 @@ static int d3_native_point(GmlRender *R,GmlD3Vertex world,const GmlD3Texture *te
   GmlRenderDepthPrimitive primitive={.depth_epoch=target->epoch,.depth_version=target->version,
     .hidden=g_d3.hidden!=0,.write_depth=g_d3.zwrite!=0,.normalized=target->normalized!=0,
     .topology=GML_RENDER_DEPTH_TOPOLOGY_POINT,
+    .alpha_sample_policy=texture && texture->kind?
+      (g_d3.classic?GML_RENDER_DEPTH_ALPHA_CLASSIC:GML_RENDER_DEPTH_ALPHA_MODERN):0u,
     .textured=texture && texture->kind,.interpolate=draw.interpolate!=0};
   if(!d3_native_fragment_policy(R,&primitive,&distance,1u)) return 0;
   primitive.vertex[0][0]=px+0.5;primitive.vertex[0][1]=py+0.5;
@@ -1450,8 +1442,7 @@ static int d3_native_line(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,const GmlD3Te
        texture && texture->kind?texture->handle:-1,texture?texture->full_atlas:0,NULL)) return 0;
   if(a.alpha<=0.0 && b.alpha<=0.0) return 1;
   if(!isfinite(a.alpha) || !isfinite(b.alpha) || a.alpha<0.0 || b.alpha<0.0 ||
-     a.alpha>1.0 || b.alpha>1.0 ||
-     (a.alpha>0.0 && a.alpha<0x1p-16) || (b.alpha>0.0 && b.alpha<0x1p-16)) return 0;
+     a.alpha>1.0 || b.alpha>1.0) return 0;
   GmlRenderCpuBackendDrawView draw;
   if(!gml_render_cpu_backend_draw_view(R,&draw)) return 0;
   GmlD3DepthTarget *target=d3_depth_metadata(R,&draw);
@@ -1472,6 +1463,8 @@ static int d3_native_line(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,const GmlD3Te
   GmlRenderDepthPrimitive primitive={.depth_epoch=target->epoch,.depth_version=target->version,
     .hidden=g_d3.hidden!=0,.write_depth=g_d3.zwrite!=0,.normalized=target->normalized!=0,
     .topology=GML_RENDER_DEPTH_TOPOLOGY_LINE,
+    .alpha_sample_policy=texture && texture->kind?
+      (g_d3.classic?GML_RENDER_DEPTH_ALPHA_CLASSIC:GML_RENDER_DEPTH_ALPHA_MODERN):0u,
     .textured=texture && texture->kind,.interpolate=draw.interpolate!=0};
   for(unsigned v=0;v<2u;v++){
     double x,y,reciprocal,depth;
@@ -1483,6 +1476,11 @@ static int d3_native_line(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,const GmlD3Te
     primitive.vertex[v][4]=vertices[v].r/255.0;primitive.vertex[v][5]=vertices[v].g/255.0;
     primitive.vertex[v][6]=vertices[v].b/255.0;primitive.vertex[v][7]=vertices[v].alpha;
     if(primitive.textured){primitive.uv[v][0]=vertices[v].u;primitive.uv[v][1]=vertices[v].v;}
+  }
+  if((a.alpha>0.0 && a.alpha<0x1p-16) || (b.alpha>0.0 && b.alpha<0x1p-16)){
+    if(a.alpha!=b.alpha || primitive.vertex[0][2]!=primitive.vertex[1][2])return 0;
+    double alpha=(a.alpha*primitive.vertex[0][2])/primitive.vertex[0][2];
+    if(alpha<=0.0)return 1;
   }
   /* A collapsed device segment cannot preserve the CPU's endpoint samples. */
   if((float)primitive.vertex[0][0]==(float)primitive.vertex[1][0] &&
