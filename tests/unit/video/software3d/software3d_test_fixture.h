@@ -62,6 +62,7 @@ int software3d_operation_boundary_fixture(void);
 int software3d_dispatch_fixture(void);
 int depth_clear_fixture(void);
 int constant_uv_depth_fixture(void);
+int white_equation_fixture(void);
 int classic_information_dispatch_fixture(void);
 int matrix_inverse_fixture(void);
 int surface_tiled_fixture(void);

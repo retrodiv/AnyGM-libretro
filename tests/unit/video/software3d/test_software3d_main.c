@@ -60,6 +60,7 @@ int main(int argc,char **argv){
     {"dispatch_accounting",software3d_dispatch_fixture},
     {"depth_clear",depth_clear_fixture},
     {"constant_uv_depth",constant_uv_depth_fixture},
+    {"white_equation",white_equation_fixture},
     {"information_dispatch",classic_information_dispatch_fixture},
     {"renderer_state",renderer_state_boundary_fixture},
     {"asset_lookup",asset_lookup_fixture},

@@ -3,6 +3,7 @@
  */
 #include "software3d_test_fixture.h"
 #include "gml_render_texture.h"
+#include "gml_render_cpu_backend.h"
 
 int constant_uv_depth_fixture(void){
   static const int generations[]={800,15,17};
@@ -1687,4 +1688,57 @@ int software3d_case_primitive_model(Software3dRasterFixture *fixture){
     return 0;
   }
   return 1;
+}
+
+int white_equation_fixture(void){
+  enum { W=16,H=16,PIXEL=4*W+4 };
+  const int generations[]={800,15,17};const unsigned masks[]={0u,5u,8u,15u};
+  GmlRender *reference=calloc(1,sizeof *reference);unsigned controls=0;
+  if(!reference)return 0;
+  for(unsigned generation=0;generation<3u;generation++){
+    uint32_t pixels[W*H];GmlWin content={
+      .bytecode=generations[generation]>100?0:generations[generation],
+      .classic_version=generations[generation]>100?generations[generation]:0};
+    GmlRender render={0};GmlVM vm={0};int ok=0;
+    if(gml_render_init(&render,NULL)){free(reference);return 0;}
+    render.win=&content;render.classic=content.classic_version!=0;
+    vm.render=&render;vm.win=&content;gml_vm_software3d_reset(&vm);
+    gml_render_begin(&render,pixels,W,H,0,0);
+    call_numbers(&vm,"d3d_start",NULL,0);
+    call_numbers(&vm,"d3d_set_projection_ortho",(double[]){0,0,W,H,0},5);
+    call_numbers(&vm,"d3d_set_hidden",software3d_disable,1);
+    for(int rgb=1;rgb<=5;rgb++)for(int alpha=1;alpha<=5;alpha++)
+    for(unsigned m=0;m<4u;m++)for(int enabled=0;enabled<2;enabled++){
+      uint32_t expected=0x40204060u;
+      reference->fb=&expected;reference->fbw=reference->fbh=1;
+      reference->win=&content;reference->active_shader=-1;reference->app_surface=NULL;
+      reference->alphablend=enabled;reference->blendmode=0;
+      reference->blend_equation=rgb;reference->blend_equation_alpha=alpha;
+      reference->color_write_mask=(uint8_t)masks[m];
+      gml_render_cpu_backend_draw_pixel_alpha(reference,0,0,0xffffffu,1);
+      render.alphablend=enabled;render.blendmode=0;
+      render.blend_equation=rgb;render.blend_equation_alpha=alpha;
+      render.color_write_mask=(uint8_t)masks[m];
+      for(unsigned shape=0;shape<2u;shape++){
+        for(unsigned p=0;p<W*H;p++)pixels[p]=0x40204060u;
+        call_numbers(&vm,"d3d_primitive_begin",(double[]){shape?4:1},1);
+        static const double xy[3][2]={{2,2},{14,2},{2,14}};
+        double point=render.classic?3.5:4;
+        for(unsigned i=0;i<(shape?3u:1u);i++)call_numbers(&vm,"d3d_vertex_colour",
+          (double[]){shape?xy[i][0]:point,shape?xy[i][1]:point,0,0xffffff,1},5);
+        call_numbers(&vm,"d3d_primitive_end",NULL,0);
+        if(pixels[PIXEL]!=expected || pixels[0]!=0x40204060u){
+          fprintf(stderr,"white equation: generation=%d rgb=%d alpha=%d mask=%u enabled=%d shape=%u actual=%08x expected=%08x outside=%08x\n",
+            generations[generation],rgb,alpha,masks[m],enabled,shape,pixels[PIXEL],expected,pixels[0]);
+          goto white_done;
+        }
+      }
+      controls++;
+    }
+    ok=1;
+white_done:
+    gml_render_bind_software3d(&render,NULL);vm.render=NULL;vm.win=NULL;gml_vm_free(&vm);
+    gml_render_free(&render);if(!ok){free(reference);return 0;}
+  }
+  free(reference);return controls==600u;
 }
