@@ -201,6 +201,7 @@ int gml_render_cpu_backend_draw_view(GmlRender *r,GmlRenderCpuBackendDrawView *v
     (r->app_surface_owned && r->fb==r->app_surface_owned?0:-1);
   view->interpolate=r->interp;
   view->alpha_blend=r->alphablend; view->blend_mode=r->blendmode;
+  view->blend_equation=r->blend_equation; view->blend_equation_alpha=r->blend_equation_alpha;
   view->circle_precision=r->circle_precision;
   view->zero_alpha_writes=destination_colour_blend_active(r);
   if(r->dispatch_cpu_depth) view->dispatch_written=&r->dispatch_cpu_written;

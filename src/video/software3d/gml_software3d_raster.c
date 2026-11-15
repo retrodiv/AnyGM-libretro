@@ -562,7 +562,8 @@ static void d3_raster_triangle_impl(GmlRender *R, const GmlD3Vertex in[3], const
   int flat_color=projected.flat_color;
   int opaque_white=flat_color&&in[0].r==255.0&&in[0].g==255.0&&in[0].b==255.0&&
                    in[0].alpha>=1.0&&!d3->lighting&&!d3->fog&&
-                   (!draw.alpha_blend||draw.blend_mode==0);
+                   (!draw.alpha_blend||(draw.blend_mode==0 &&
+                     draw.blend_equation==1 && draw.blend_equation_alpha==1));
   double area=d3_edge(sx[0],sy[0],sx[1],sy[1],sx[2],sy[2]);
   if(!isfinite(area) || fabs(area)<1e-9) return;
   if(d3->culling && area>=0) return;

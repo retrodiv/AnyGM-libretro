@@ -3076,7 +3076,10 @@ For an ordinary equation whose alpha operand uses a constant opaque destination,
 only candidate alpha is seeded with the same whole triangle, then blended by the
 device before raw-depth publication. Up to four candidate draws publish as one
 colour/depth transaction. No CPU pixel algorithm or coverage walker is replaced.
-The new policy remains a CPU-reference claim without original-runner evidence.
+The new policy remains a CPU-reference claim without original-runner evidence. The
+CPU opaque-white direct store remains limited to replacement or normal ADD/ADD,
+so nondefault equations retain the same mask/equation policy as the general
+pixel writer; its existing sampling and direct-store body remain intact.
 
 <!-- D8-DISPATCH:START -->
 

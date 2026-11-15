@@ -59,6 +59,7 @@ typedef struct {
   int width, height;
   int target_id; /* numbered surface, owned application 0, or screen -1 */
   int interpolate, alpha_blend, blend_mode, circle_precision;
+  int blend_equation,blend_equation_alpha;
   int zero_alpha_writes;
   atomic_int *dispatch_written;
 } GmlRenderCpuBackendDrawView;
