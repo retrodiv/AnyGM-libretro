@@ -117,13 +117,13 @@ static void negotiate_serialization(void){
       (quirks&RETRO_SERIALIZATION_QUIRK_FRONT_VARIABLE_SIZE)!=0;
 }
 
-static size_t fixed_state_capacity(size_t actual,bool allow_growth,size_t reserve){
+static size_t fixed_state_capacity(size_t actual,size_t reserve){
   const size_t margin=512u*1024u;
-  /* Fixed frontends allocate once. Content with a measured larger requirement declares that
-   * budget before the first query; raster ceilings and constructor mentions do not reserve it. */
+  /* Size the first fixed allocation from the known required representation, with headroom.
+   * A content reserve is an optional minimum, never a replacement for measured requirements.
+   * Later fixed queries reuse this capacity; only acknowledged frontends may grow it. */
   size_t floor=1u*1024u*1024u;
   if(reserve>floor) floor=reserve;
-  if(!allow_growth) return floor;
   if(actual>(SIZE_MAX-margin)/2u) return SIZE_MAX;
   size_t capacity=actual*2u+margin;
   return capacity<floor?floor:capacity;
@@ -892,8 +892,7 @@ size_t retro_serialize_size(void){
      (g_libretro.variable_state_supported && actual>g_libretro.fixed_state_capacity)){
     size_t previous=g_libretro.fixed_state_capacity;
     g_libretro.fixed_state_capacity=fixed_state_capacity(
-      actual,g_libretro.variable_state_supported && (previous!=0 || g_libretro.frame_completed),
-      anygm_state_capacity_reserve(g_libretro.engine));
+      actual,anygm_state_capacity_reserve(g_libretro.engine));
     /* Acknowledged growth is unusual enough to report once without flooding repeated queries. */
     if(previous && !g_libretro.state_capacity_growth_reported){
       g_libretro.state_capacity_growth_reported=true;

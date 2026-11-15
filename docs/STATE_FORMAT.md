@@ -782,10 +782,11 @@ the current buffer requirement and writes into a caller-owned buffer.
 
 The libretro adapter advertises the variable-size serialization quirk and records whether the
 frontend acknowledges it. Requesting the quirk is not sufficient: a declined or unsupported
-request has the baseline fixed-size contract. The first answer is one MiB by default. Content
-with a measured larger requirement declares `statereserve|bytes` in its own `.anygm` anchor;
-the enabled declaration raises that initial allocation. Raster ceilings, remembered peaks and
-constructor mentions do not independently reserve a larger fixed ring. Later fixed-size queries
+request has the baseline fixed-size contract. The first answer includes the measured required
+representation and known capacity hints, with a growth allowance and a one-MiB minimum. An optional
+`statereserve|bytes` declaration in a content anchor can raise that minimum for measured deferred
+growth. It never replaces the capacity calculated from already-known requirements. Constructor
+mentions alone do not specify a byte budget. Later fixed-size queries
 return that same answer without traversing the runtime state again. Every save first attempts
 the complete encoded picture and falls back to the explicit frame-free form only when the
 picture does not fit. The representation cannot depend on whether the caller is a rewind push
@@ -803,7 +804,7 @@ semantics. `tests/integration/test_graphics_state.c::completed_frame_capacity_ca
 row-RLE and adjacent-row repetition at exact, near-fit, compact and failed capacities against
 the ordinary complete and explicit resume bytes, with canaries and unchanged live-state checks.
 
-A frontend that explicitly acknowledges variable sizes starts from the same content budget when
+A frontend that explicitly acknowledges variable sizes starts from the same measured capacity when
 it queries before the first frame. If its first query occurs after gameplay has completed a frame,
 that answer includes the established complete-state headroom, as a subsequent variable query
 would. Later answers may grow monotonically. Newly sized saves retain the completed picture while
