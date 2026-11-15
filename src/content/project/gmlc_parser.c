@@ -1147,7 +1147,8 @@ static int parse_member_call(Compiler *c,const LValue *member){
   LValue target=*member;
   if(target.receiver_on_stack){
     char temporary[64];
-    snprintf(temporary,sizeof temporary,"@@member_receiver@@%zu",c->code.len);
+    snprintf(temporary,sizeof temporary,"@@member_receiver@@%llu",
+             (unsigned long long)c->code.len);
     if(!add_local(c,temporary) || !emit_conv(c,DT_VAR,DT_VAR) ||
        !emit_pop_var(c,IT_LOCAL,temporary,0xA0,DT_VAR)) return 0;
     snprintf(target.receiver,sizeof target.receiver,"%s",temporary);
