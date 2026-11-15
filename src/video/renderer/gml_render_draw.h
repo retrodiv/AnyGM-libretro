@@ -558,11 +558,19 @@ typedef enum GmlRenderSceneFamily {
  * preparation; device rasterization owns coverage. Each vertex is x,y,
  * reciprocal distance, affine raw depth, and straight normalized RGBA. Optional
  * UVs are weighted by that same reciprocal distance for device interpolation. */
+typedef enum GmlRenderDepthBlend {
+  GML_RENDER_DEPTH_BLEND_REPLACE=0,
+  GML_RENDER_DEPTH_BLEND_SOURCE_OVER=1,
+  GML_RENDER_DEPTH_BLEND_INDEPENDENT=2,
+  GML_RENDER_DEPTH_BLEND_PIXEL=3,
+  GML_RENDER_DEPTH_BLEND_OPAQUE_ALPHA_INPUT=4
+} GmlRenderDepthBlend;
+
 typedef struct GmlRenderDepthTriangle {
   GmlRenderImageRef previous_colour;
   uint64_t depth_epoch,depth_version,next_depth_version;
   double vertex[3][8];
-  /* Blend: replacement=0, legacy source-over=1, captured native factors=2. */
+  /* One captured device policy; no source selector or serialized state is replaced. */
   uint32_t hidden,write_depth,normalized,blend;
   uint32_t stamp_alpha,zero_alpha_writes,alpha_source_squared;
   double uv[3][2];

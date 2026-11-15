@@ -9461,7 +9461,7 @@ static int resident_depth_mask_admission(void){
       controls++;
     }
     r->color_write_mask=16u;CHECK(!gml_render_cpu_backend_depth_texture_eligible(r,-1));
-    r->color_write_mask=1u;r->blendmode=1;CHECK(!gml_render_cpu_backend_depth_texture_eligible(r,-1));
+    r->color_write_mask=1u;r->blendmode=13;CHECK(!gml_render_cpu_backend_depth_texture_eligible(r,-1));
     r->blendmode=0;r->alpha_test_enable=1;CHECK(!gml_render_cpu_backend_depth_texture_eligible(r,-1));
     r->alpha_test_enable=0;r->active_shader=0;CHECK(!gml_render_cpu_backend_depth_texture_eligible(r,-1));
     r->active_shader=-1;fake.supported_operations=0;CHECK(!gml_render_cpu_backend_depth_texture_eligible(r,-1));
@@ -9473,6 +9473,78 @@ static int resident_depth_mask_admission(void){
     gml_render_bind_device(r,NULL);gml_render_free(r);free(r);
   }
   CHECK(controls==192u);return 1;
+}
+
+static int resident_depth_pixel_policy(void){
+  const int generations[]={800,15,17};const unsigned masks[]={0u,5u,8u,15u};
+  const double alphas[]={0,1.0/255.0,.5,1};unsigned controls=0;
+  GmlRender *expected=calloc(1,sizeof *expected),*simulated=calloc(1,sizeof *simulated);
+  CHECK(expected && simulated);
+  for(unsigned generation=0;generation<3u;generation++)for(unsigned numbered=0;numbered<2u;numbered++){
+    GmlWin content={.bytecode=generations[generation]>100?0:generations[generation],
+      .classic_version=generations[generation]>100?generations[generation]:0};
+    GmlRender *r=calloc(1,sizeof *r);FakeDevice fake={.on_demand=1,
+      .supported_operations=UINT64_C(1)<<GML_RENDER_OP_SOFTWARE3D_PASS};
+    GmlRenderDeviceServices device=service(&fake);device.observe_on_demand=fake_observe_on_demand;
+    device.upload_depth=fake_depth_upload;device.readback_depth=fake_depth_read;
+    CHECK(r && !gml_render_init(r,&content) && gml_render_application_surface_ensure_owned(r,5,5));
+    int target=numbered?gml_surface_create(r,5,5):0;CHECK(!numbered || target>0);
+    gml_render_bind_device(r,&device);CHECK(gml_render_begin_resident_owned_application(r,0,0,0));
+    if(numbered)CHECK(gml_surface_set_target(r,target));
+    gml_render_set_pending_fill(r,0x40204060u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));uint32_t shadow[25];memcpy(shadow,r->fb,sizeof shadow);
+    float depth[25]={0};unsigned uploads=0;
+    for(int mode=0;mode<=12;mode++)for(int rgb=1;rgb<=5;rgb++)for(int alpha=1;alpha<=5;alpha++)
+    for(unsigned m=0;m<4u;m++)for(unsigned a=0;a<4u;a++)for(int enabled=0;enabled<2;enabled++){
+      r->blendmode=mode;r->blend_equation=rgb;r->blend_equation_alpha=alpha;
+      r->color_write_mask=(uint8_t)masks[m];r->alphablend=enabled;
+      CHECK(gml_render_cpu_backend_depth_texture_eligible(r,-1));
+      GmlRenderDepthTriangle triangle={.depth_epoch=1u,.depth_version=controls+1u,
+        .hidden=1u,.write_depth=1u,.normalized=1u,
+        .vertex={{1,1,1,.5,1,0,0,.5},{4,1,1,.5,0,1,0,.5},{1,4,1,.5,0,0,1,.5}}};
+      GmlRenderDepthPlaneRef published={0};
+      CHECK(gml_render_cpu_backend_depth_triangle(r,&triangle,depth,-1,0,&published));uploads++;
+      CHECK(r->blendmode==mode && r->blend_equation==rgb && r->blend_equation_alpha==alpha &&
+        r->color_write_mask==masks[m] && r->alphablend==enabled && !fake.readbacks &&
+        !fake.depth_reads && published.version==controls+2u && !memcmp(shadow,r->fb,sizeof shadow));
+      uint32_t actual=0x40204060u,virtual_pixel=actual;
+      expected->fb=&actual;expected->fbw=expected->fbh=1;expected->win=&content;
+      expected->app_surface=gml_render_target_preserves_alpha(r) && !r->target_sp?&actual:NULL;
+      expected->target_sp=r->target_sp;expected->active_shader=-1;
+      expected->blendmode=mode;expected->blend_equation=rgb;expected->blend_equation_alpha=alpha;
+      expected->alphablend=enabled;expected->color_write_mask=(uint8_t)masks[m];
+      gml_render_cpu_backend_draw_pixel_alpha(expected,0,0,0x2850c8u,alphas[a]);
+      GmlRenderDepthTriangle *captured=&fake.last_depth.payload.depth_triangle;
+      GmlRenderDrawStateSnapshot *state=&fake.last_depth_state;
+      simulated->fb=&virtual_pixel;simulated->fbw=simulated->fbh=1;simulated->active_shader=-1;
+      simulated->target_sp=captured->stamp_alpha?0:1;simulated->app_surface=NULL;
+      simulated->alphablend=captured->blend!=GML_RENDER_DEPTH_BLEND_REPLACE;
+      simulated->color_write_mask=(uint8_t)state->write_mask;
+      simulated->blendmode=captured->blend>=GML_RENDER_DEPTH_BLEND_INDEPENDENT?
+        gml_render_blend_snapshot_mode(state):0;
+      simulated->blend_equation=captured->blend>=GML_RENDER_DEPTH_BLEND_INDEPENDENT?
+        (int)(state->rgb_equation-GML_RENDER_BLEND_NATIVE_ADD+1u):1;
+      simulated->blend_equation_alpha=captured->blend>=GML_RENDER_DEPTH_BLEND_INDEPENDENT?
+        (int)(state->alpha_equation-GML_RENDER_BLEND_NATIVE_ADD+1u):1;
+      CHECK(simulated->blendmode>=0);
+      if(alphas[a]>0 || captured->zero_alpha_writes){
+        if(captured->blend==GML_RENDER_DEPTH_BLEND_OPAQUE_ALPHA_INPUT)virtual_pixel|=0xff000000u;
+        gml_render_cpu_backend_draw_pixel_alpha(simulated,0,0,0x2850c8u,alphas[a]);
+        if(captured->blend==GML_RENDER_DEPTH_BLEND_OPAQUE_ALPHA_INPUT && !(state->write_mask&8u))
+          virtual_pixel=(virtual_pixel&0xffffffu)|0x40000000u;
+      }
+      for(unsigned shift=0;shift<32u;shift+=8u){
+        int delta=(int)((actual>>shift)&255u)-(int)((virtual_pixel>>shift)&255u);
+        if(delta < -1 || delta > 1){
+          fprintf(stderr,"depth pixel policy mode=%d eq=%d,%d enabled=%d mask=%u alpha=%g target=%u gen=%u actual=%08x captured=%08x\n",
+            mode,rgb,alpha,enabled,masks[m],alphas[a],numbered,generation,actual,virtual_pixel);return 0;
+        }
+      }
+      controls++;
+    }
+    CHECK(fake.depth_uploads==uploads);gml_render_bind_device(r,NULL);gml_render_free(r);free(r);
+  }
+  free(expected);free(simulated);CHECK(controls==62400u);return 1;
 }
 
 static int resident_depth_extended_admission(void){
@@ -21528,6 +21600,7 @@ int main(void){
     int passed;
     if(!strcmp(selected,"target-pixel-pending-scene")) passed=target_pixel_observes_pending_scene();
     else if(!strcmp(selected,"preserved-device-failure")) passed=preserved_device_failure_keeps_authority();
+    else if(!strcmp(selected,"depth-pixel-policy")) passed=resident_depth_pixel_policy();
     else if(!strcmp(selected,"depth-extended-admission")) passed=resident_depth_extended_admission();
     else if(!strcmp(selected,"depth-mask-admission")) passed=resident_depth_mask_admission();
     else if(!strcmp(selected,"extended-rectangle-variants")) passed=resident_extended_rectangle_variant_dispatch();
@@ -21730,6 +21803,7 @@ int main(void){
   passed+=resident_atlas_uv_refusal_preserves_queued_prefix();
   passed+=resident_application_sprite_cpu_fallback();
   passed+=extended_rectangle_replay_state();
+  passed+=resident_depth_pixel_policy();
   passed+=resident_depth_extended_admission();
   passed+=resident_depth_mask_admission();
   passed+=resident_extended_rectangle_variant_dispatch();
@@ -21946,7 +22020,7 @@ int main(void){
   passed+=resident_lazy_native_atlas();
   passed+=resident_unit_texel_magnification();
   passed+=opaque_rectangle_clear_complement();
-  enum { total=345 };
+  enum { total=346 };
   printf("render resource cases: passed=%d failed=%d\n",passed,total-passed);
   return passed==total?EXIT_SUCCESS:EXIT_FAILURE;
 }

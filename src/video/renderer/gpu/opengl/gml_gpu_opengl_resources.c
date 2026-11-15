@@ -1521,7 +1521,7 @@ int gml_gpu_opengl_depth_triangle_valid(GmlGpuBackend *backend,const GmlRenderDr
      !triangle->depth_epoch || !triangle->depth_version || triangle->depth_version==UINT64_MAX ||
      triangle->next_depth_version!=triangle->depth_version+1u ||
      triangle->hidden>1u || triangle->write_depth>1u || triangle->normalized>1u ||
-     triangle->blend>2u || triangle->stamp_alpha>1u || triangle->zero_alpha_writes>1u ||
+     triangle->blend>GML_RENDER_DEPTH_BLEND_OPAQUE_ALPHA_INPUT || triangle->stamp_alpha>1u || triangle->zero_alpha_writes>1u ||
      triangle->alpha_source_squared>1u) return 0;
   if(triangle->shading_flags>15u) return 0;
   if(triangle->shading_flags&1u)for(unsigned c=0;c<3u;c++)
@@ -1550,15 +1550,18 @@ int gml_gpu_opengl_depth_triangle_valid(GmlGpuBackend *backend,const GmlRenderDr
   const GmlRenderDrawStateSnapshot *state=&batch->states[op->state_index];
   if(state->write_mask>15u || state->alpha_test_enabled || state->source_alpha_key ||
      state->source_palette.enabled || state->sampler_count || state->material_identity ||
-     state->material_version || (state->coverage_policy && triangle->blend!=2u) || state->alpha!=255u ||
+     state->material_version || (state->coverage_policy && triangle->blend<GML_RENDER_DEPTH_BLEND_INDEPENDENT) || state->alpha!=255u ||
      state->colour!=0xffffffffu ||
      (!state->clip.width && !state->clip.height && (state->clip.x || state->clip.y)) ||
      ((state->clip.width || state->clip.height) &&
       !scene_region_valid(state->clip,op->target.width,op->target.height))) return 0;
-  if(triangle->blend==2u && (!gml_render_blend_snapshot_native(state) ||
-     !backend->gl.BlendFuncSeparate || !backend->gl.BlendEquationSeparate ||
-     triangle->stamp_alpha!=state->coverage_policy || !triangle->zero_alpha_writes ||
-     triangle->alpha_source_squared))return 0;
+  if(triangle->blend>=GML_RENDER_DEPTH_BLEND_INDEPENDENT &&
+     (!gml_render_blend_snapshot_native(state) || !backend->gl.BlendFuncSeparate ||
+      !backend->gl.BlendEquationSeparate || triangle->alpha_source_squared ||
+      triangle->stamp_alpha!=state->coverage_policy))return 0;
+  if(triangle->blend==GML_RENDER_DEPTH_BLEND_INDEPENDENT && !triangle->zero_alpha_writes)return 0;
+  if(triangle->blend==GML_RENDER_DEPTH_BLEND_OPAQUE_ALPHA_INPUT &&
+     (triangle->stamp_alpha || state->coverage_policy))return 0;
   if(triangle->blend==1u && (state->rgb_source_factor!=GML_RENDER_BLEND_SOURCE_ALPHA ||
      state->rgb_destination_factor!=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA ||
      state->alpha_source_factor!=(triangle->alpha_source_squared?
@@ -1623,7 +1626,8 @@ static int depth_triangle_candidate(GmlGpuBackend *backend,const GmlRenderDrawBa
   float vertices[33],extent[2]={(float)image->width,(float)image->height};
   GLint flags[4]={(GLint)triangle->hidden,(GLint)triangle->write_depth,
                   (GLint)triangle->normalized,(GLint)triangle->blend};
-  int native=triangle->blend==2u;
+  int native=triangle->blend>=GML_RENDER_DEPTH_BLEND_INDEPENDENT;
+  int alpha_input=triangle->blend==GML_RENDER_DEPTH_BLEND_OPAQUE_ALPHA_INPUT;
   GLint policy[4]={native?0:(GLint)triangle->stamp_alpha,(GLint)triangle->zero_alpha_writes,
                    (GLint)triangle->alpha_source_squared,(GLint)triangle->textured};
   if(triangle->textured && triangle->uv[0][0]==triangle->uv[1][0] &&
@@ -1720,13 +1724,13 @@ static int depth_triangle_candidate(GmlGpuBackend *backend,const GmlRenderDrawBa
         backend->gl.Enable(GL_BLEND);
       }
       backend->gl.ColorMask((state->write_mask&1u)!=0,(state->write_mask&2u)!=0,
-        (state->write_mask&4u)!=0,(state->write_mask&8u)!=0 && !(native && triangle->stamp_alpha));
+        (state->write_mask&4u)!=0,(state->write_mask&8u)!=0 && !(native && (triangle->stamp_alpha || alpha_input)));
     }else{
       backend->gl.Disable(GL_BLEND);backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
     }
     backend->gl.DrawArrays(GL_TRIANGLES,0,3);
     if(backend->gl.GetError()!=GL_NO_ERROR)return 0;
-    if(!pass && native && triangle->stamp_alpha && (state->write_mask&8u)){
+    if(!pass && native && (triangle->stamp_alpha || alpha_input) && (state->write_mask&8u)){
       /* Stamp the same whole primitive before another command can consume its
        * destination alpha. All candidate storage remains unpublished. */
       GLint stamp_policy[4]={1,policy[1],policy[2],policy[3]};
@@ -1734,6 +1738,14 @@ static int depth_triangle_candidate(GmlGpuBackend *backend,const GmlRenderDrawBa
       backend->gl.Uniform4iv(program->policy,1,stamp_policy);
       backend->gl.DrawArrays(GL_TRIANGLES,0,3);
       if(backend->gl.GetError()!=GL_NO_ERROR)return 0;
+      if(alpha_input){
+        /* The ordinary equation writer uses a constant opaque destination
+         * operand for alpha. Seed only this unpublished channel, then let the
+         * device execute the captured alpha equation over the same triangle. */
+        backend->gl.Uniform4iv(program->policy,1,policy);backend->gl.Enable(GL_BLEND);
+        backend->gl.DrawArrays(GL_TRIANGLES,0,3);
+        if(backend->gl.GetError()!=GL_NO_ERROR)return 0;
+      }
     }
   }
   return 1;

@@ -45,10 +45,10 @@ static GmlGpuContext fake_context(GmlGpuApi api){
 /* Transport failure and lifetime only; real-context controls own raw bits. */
 static int scene_depth_triangle_transaction_case(void){
   for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++)
-  for(unsigned independent=0;independent<3u;independent++)
+  for(unsigned independent=0;independent<6u;independent++)
   for(unsigned textured=0;textured<3u;textured++)
   for(unsigned shading=0;shading<4u;shading++)
-  for(unsigned failure=0;failure<(independent==2u?4u:3u);failure++){
+  for(unsigned failure=0;failure<(independent==5u?5u:(independent==2u || independent==4u)?4u:3u);failure++){
     anygm_test_graphics_reset();GmlGpuContext context=fake_context(api);
     GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
     REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"native triangle context adopted");
@@ -70,7 +70,9 @@ static int scene_depth_triangle_transaction_case(void){
     t->previous_colour=seed.target.image;t->depth_epoch=t->depth_version=1u;t->next_depth_version=2u;
     t->hidden=t->write_depth=1u;
     if(independent){
-      t->blend=2u;t->zero_alpha_writes=1u;t->stamp_alpha=independent==2u;
+      t->blend=independent<3u?GML_RENDER_DEPTH_BLEND_INDEPENDENT:
+        independent==5u?GML_RENDER_DEPTH_BLEND_OPAQUE_ALPHA_INPUT:GML_RENDER_DEPTH_BLEND_PIXEL;
+      t->zero_alpha_writes=independent<3u;t->stamp_alpha=independent==2u || independent==4u;
       REQUIRE(gml_render_blend_snapshot_extended(&state,
         gml_render_blend_pack_factors((int[]){3,4,5,6}),4,5,t->stamp_alpha),
         "independent depth blend snapshot constructed");
@@ -111,9 +113,10 @@ static int scene_depth_triangle_transaction_case(void){
       t->stamp_alpha^=1u;
       REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_UNSUPPORTED,
         "inconsistent opaque depth coverage refuses before mutation");t->stamp_alpha^=1u;
-      t->zero_alpha_writes=0u;
+      unsigned saved_zero=t->zero_alpha_writes;
+      t->zero_alpha_writes=independent<3u?0u:2u;
       REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_UNSUPPORTED,
-        "native depth zero-alpha policy refuses before mutation");t->zero_alpha_writes=1u;
+        "native depth zero-alpha policy refuses before mutation");t->zero_alpha_writes=saved_zero;
     }
     uint32_t original_shading=t->shading_flags;
     t->shading_flags=16u;

@@ -293,6 +293,7 @@ DISPATCH_HELPERS = {
     "resident_primitive_state_eligible_rule",
     "resident_primitive_state_eligible_target",
     "resident_depth_triangle_eligible",
+    "resident_depth_pixel_snapshot",
     "resident_primitive_alpha_noop",
     "resident_classify_page", "resident_classify_clamped_page", "resident_identity_screen_gui",
     "resident_tile_source_metadata",

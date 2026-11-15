@@ -476,14 +476,14 @@ static int resident_studio_alpha_rect(GmlRender *render,int x1,int y1,int x2,int
  * without a predecessor snapshot or CPU pixel transfer. Raw cutout does not
  * participate in these unchanged CPU rectangle writers. */
 static int resident_primitive_state_eligible_target(GmlRender *r,int cpu_passthrough,
-                                                     int resume_scene){
+                                                     int resume_scene,int ordinary_equations){
   const GmlRenderDeviceServices *device=gml_render_device(r);
   if(!r || (!r->resident_application_pass && !(resume_scene && r->resident_scene_pass)) ||
      !device || !device->observe_on_demand ||
      !device->observe_on_demand(device->context) || !gml_render_scene_target_matches(r) ||
      (r->active_shader>=0 && (!cpu_passthrough || !gml_render_shader_cpu_passthrough(r))) || r->blendmode<0 ||
      !gml_render_blend_mode_valid(r->blendmode) ||
-     (gml_render_blend_is_extended(r->blendmode)?
+     ((gml_render_blend_is_extended(r->blendmode) || ordinary_equations)?
        (r->blend_equation<1 || r->blend_equation>5 || r->blend_equation_alpha<1 || r->blend_equation_alpha>5):
        (r->blend_equation!=1 || r->blend_equation_alpha!=1)) || r->color_write_mask>15u ||
      r->pending_presentation || r->rotated_batch_count || r->rotated_batch_building ||
@@ -495,7 +495,7 @@ static int resident_primitive_state_eligible_target(GmlRender *r,int cpu_passthr
 }
 
 static int resident_primitive_state_eligible_rule(GmlRender *r,int cpu_passthrough){
-  return resident_primitive_state_eligible_target(r,cpu_passthrough,0) &&
+  return resident_primitive_state_eligible_target(r,cpu_passthrough,0,0) &&
     !gml_render_blend_is_extended(r->blendmode);
 }
 
@@ -507,7 +507,7 @@ static int resident_rectangle_state_eligible(GmlRender *r,int cpu_passthrough){
   /* Rectangle CPU writers ignore a selected program only when the existing
    * classifier proves that neither a software effect nor an external executor
    * applies. Lines keep their separate, unqualified program boundary. */
-  return resident_primitive_state_eligible_target(r,cpu_passthrough,0) &&
+  return resident_primitive_state_eligible_target(r,cpu_passthrough,0,0) &&
     (!gml_render_blend_is_extended(r->blendmode) || r->alphablend) &&
     (r->color_write_mask==15u || (!r->alphablend && r->color_write_mask==8u) ||
      (r->alphablend && gml_render_blend_is_extended(r->blendmode)));
@@ -615,8 +615,8 @@ static int native_vertex_texture_source(GmlRender *r,int texture,int full_atlas,
 static int resident_depth_triangle_eligible(GmlRender *r){
   const GmlRenderDeviceServices *device=gml_render_device(r);
   GmlRenderDeviceCaps caps={0};
-  if(!resident_primitive_state_eligible_target(r,0,1) ||
-     r->active_shader>=0 || (r->blendmode && !gml_render_blend_is_extended(r->blendmode)) ||
+  if(!resident_primitive_state_eligible_target(r,0,1,1) ||
+     r->active_shader>=0 ||
      r->alpha_test_enable ||
      r->classic_phase_scene_target || r->app_interp_phase[0] || r->app_interp_phase[1] ||
      r->app_interp_phase[2] || !device->upload_depth || !device->readback_depth ||
@@ -629,6 +629,38 @@ int gml_render_cpu_backend_depth_texture_eligible(GmlRender *r,int texture){
   GmlRenderResourceSource source={0};
   return resident_depth_triangle_eligible(r) &&
     (texture==-1 || vertex_texture_source(r,texture,&source,1,1));
+}
+
+/* Translate this shared port's established pixel policy, rather than the
+ * factor-pair aliases used by other software writers. The CPU body remains the
+ * reference for effective alpha, mask and zero-alpha behavior here. */
+static int resident_depth_pixel_snapshot(GmlRender *r,GmlRenderDrawStateSnapshot *state,
+                                         GmlRenderDepthTriangle *triangle){
+  static const unsigned char basic_rgb[][2]={
+    {5,6},{5,2},{1,4},{1,4},{5,4},{3,2},{1,4},{8,7},{10,1},{9,3},{9,9},{7,9},{3,5}};
+  static const unsigned char basic_alpha[][2]={
+    {5,6},{2,2},{1,6},{1,6},{5,6},{5,2},{1,6},{8,7},{8,1},{9,3},{9,9},{7,9},{3,5}};
+  unsigned mode=(unsigned)r->blendmode;
+  if(mode>=sizeof basic_rgb/sizeof basic_rgb[0])return 0;
+  int changed=r->blend_equation!=1 || r->blend_equation_alpha!=1;
+  int opaque=!gml_render_target_preserves_alpha(r);
+  int factors[4]={basic_rgb[mode][0],basic_rgb[mode][1],basic_alpha[mode][0],basic_alpha[mode][1]};
+  if(changed && mode<9u){
+    factors[0]=factors[2]=5;factors[1]=factors[3]=(mode==1u || mode==2u || mode==5u)?2:6;
+    if(mode==4u)factors[1]=4;
+    if(mode==5u)factors[0]=3;
+    if(mode==8u){factors[0]=10;factors[1]=factors[3]=1;factors[2]=8;}
+  }
+  int alpha_input=changed && mode<9u && opaque;
+  if(!changed && mode==4u)opaque=r->target_sp==0;
+  state->write_mask=changed || mode==4u || mode==7u || mode==8u || mode>=9u?
+    r->color_write_mask:15u;
+  if(!gml_render_blend_snapshot_extended(state,gml_render_blend_pack_factors(factors),
+      r->blend_equation,r->blend_equation_alpha,alpha_input?0:opaque))return 0;
+  triangle->blend=alpha_input?GML_RENDER_DEPTH_BLEND_OPAQUE_ALPHA_INPUT:GML_RENDER_DEPTH_BLEND_PIXEL;
+  triangle->stamp_alpha=state->coverage_policy;
+  triangle->alpha_source_squared=0u;triangle->zero_alpha_writes=mode>=9u;
+  return 1;
 }
 
 int gml_render_cpu_backend_depth_triangle(GmlRender *r,GmlRenderDepthTriangle *triangle,
@@ -667,7 +699,10 @@ int gml_render_cpu_backend_depth_triangle(GmlRender *r,GmlRenderDepthTriangle *t
     state.write_mask=r->color_write_mask;
     if(!gml_render_blend_snapshot_extended(&state,r->blendmode,r->blend_equation,
         r->blend_equation_alpha,triangle->stamp_alpha))return 0;
-    triangle->blend=2u;triangle->alpha_source_squared=0u;triangle->zero_alpha_writes=1u;
+    triangle->blend=GML_RENDER_DEPTH_BLEND_INDEPENDENT;triangle->alpha_source_squared=0u;triangle->zero_alpha_writes=1u;
+  }
+  else if(r->alphablend && (r->blendmode || r->blend_equation!=1 || r->blend_equation_alpha!=1)){
+    if(!resident_depth_pixel_snapshot(r,&state,triangle))return 0;
   }
   GmlRenderDrawOp op={.opcode=GML_RENDER_OP_SOFTWARE3D_PASS,
     .reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT,.scene_family=GML_RENDER_SCENE_PRIMITIVE};
