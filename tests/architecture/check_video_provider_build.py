@@ -59,6 +59,9 @@ class ProviderPreparation(unittest.TestCase):
             result = subprocess.run(["make", "-s", "-f", "Makefile", "-f", "-",
                 "VIDEO_PROVIDER=auto", "CROSS_COMPILE=", "platform=unix",
                 f"PKG_CONFIG={script}", "provider-flags"], cwd=ROOT,
+                # Exercise discovery, without inheriting a prepared CI SDK's overrides.
+                env={key: value for key, value in os.environ.items()
+                     if key not in ("FFMPEG_CFLAGS", "FFMPEG_LIBS")},
                 input="provider-flags:\n\t@printf '%s\\n' '$(CPPFLAGS)'\n",
                 capture_output=True, text=True, timeout=60)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
