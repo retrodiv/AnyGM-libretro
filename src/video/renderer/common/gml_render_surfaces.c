@@ -656,7 +656,8 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
   const GmlRenderDrawOp *operation,uint32_t count,
   const GmlRenderDrawStateSnapshot *state,const GmlRenderResourceSource *source){
   if(r && r->alphablend && gml_render_blend_is_extended(r->blendmode) &&
-     !gml_render_blend_factor_pair(r->blendmode,7,8)) return 0;
+     !gml_render_blend_factor_pair(r->blendmode,7,8) &&
+     !(state && gml_render_blend_snapshot_native(state))) return 0;
   GmlRenderPendingSceneBatch *pending;
   GmlRenderImageRef next;
   uint32_t state_index=0,source_index=0;

@@ -844,6 +844,9 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   int whole_background=(physical_sprite_page==8 || physical_sprite_page==10) &&
     family==GML_RENDER_SCENE_BACKGROUND;
   int selected_unwrapped=selected_background || sprite_part_function || (tile_function && !quarter_tile);
+  int native_packaged=r && physical_sprite_page==15 &&
+    family==GML_RENDER_SCENE_SPRITE && r->alphablend && !r->fog_flat &&
+    !r->alpha_test_enable && gml_render_blend_is_extended(r->blendmode);
   int full_axis_preset=family==GML_RENDER_SCENE_SPRITE && r &&
     ((physical_sprite_page==15 && !r->fog_flat && r->blendmode>=3 && r->blendmode<=GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA &&
       r->blendmode!=6 && r->blendmode!=7 && r->blendmode!=8) ||
@@ -855,7 +858,8 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     gml_render_blend_is_extended(r->blendmode) && !r->alpha_test_enable;
   int source_colour_runtime=r && runtime_function &&
     (r->blendmode==GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA || native_runtime);
-  int preset_atlas=selected_unwrapped || whole_background || full_axis_preset || quarter_tile || source_colour_text || source_colour_runtime;
+  int native_atlas=native_runtime || native_packaged;
+  int preset_atlas=selected_unwrapped || whole_background || full_axis_preset || quarter_tile || source_colour_text || source_colour_runtime || native_packaged;
   int background_replace=(selected_unwrapped || whole_background) && r && r->blendmode==6;
   int background_masked=preset_atlas && r && r->alphablend &&
     (r->blendmode==4 || r->blendmode==7 || r->blendmode==8 ||
@@ -1020,8 +1024,8 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
      (r->alpha_test_enable && !integer_atlas) ||
      (!r->alphablend && !integer_atlas) ||
      (r->blendmode && !replace && !fog_rotated_normal && !(integer_atlas && r->blendmode==2) &&
-      !(scaled_sprite && r->blendmode==1) && !destination_factor_sprite && !native_runtime &&
-      !(preset_atlas && r->blendmode>=0 && r->blendmode<=GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA)) || (!native_runtime && (r->blend_equation!=1 ||
+      !(scaled_sprite && r->blendmode==1) && !destination_factor_sprite && !native_atlas &&
+      !(preset_atlas && r->blendmode>=0 && r->blendmode<=GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA)) || (!native_atlas && (r->blend_equation!=1 ||
      r->blend_equation_alpha!=1)) || (r->color_write_mask!=0x0Fu && !scaled_sprite &&
       !(source_colour_text && r->color_write_mask<=15u) &&
       !((selected_background || whole_background || tile_function) && r->color_write_mask<=15u)) ||
@@ -1031,7 +1035,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
      !isfinite(xs) || !isfinite(ys) || xs==0.0 || ys==0.0 ||
      !isfinite(draw_alpha) || draw_alpha<0.0 ||
      (!replacement_sprite && !background_replace &&
-      !(preset_atlas && gml_render_blend_uses_destination_colour(r->blendmode)) && !native_runtime && draw_alpha==0.0) || draw_alpha>1.0 ||
+      !(preset_atlas && gml_render_blend_uses_destination_colour(r->blendmode)) && !native_atlas && draw_alpha==0.0) || draw_alpha>1.0 ||
      (family!=GML_RENDER_SCENE_TEXT && family!=GML_RENDER_SCENE_SPRITE && !integer_background && !tile_function &&
       draw_alpha!=1.0) ||
      (family==GML_RENDER_SCENE_TEXT && !text_function && draw_alpha<1.0 &&
@@ -1656,7 +1660,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
     state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
   }
-  if(native_runtime && !gml_render_blend_snapshot_extended(&state,r->blendmode,
+  if(native_atlas && !gml_render_blend_snapshot_extended(&state,r->blendmode,
        r->blend_equation,r->blend_equation_alpha,!gml_render_target_preserves_alpha(r)))return 0;
   state.samplers[0]=operation.payload.quad.sampling;
   if(runtime_geometry && source_colour_runtime){
@@ -1695,7 +1699,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     if(r->fb==r->app_surface) r->app_surface_opaque=1;
   }
   if(((family==GML_RENDER_SCENE_TEXT && draw_alpha<1.0) || checkpoint_alpha_sprite ||
-     (integer_atlas && r->alphablend && (inverse_sprite || destination_factor_sprite || full_axis_preset || native_runtime || draw_alpha<1.0 || !page->scene_binary_alpha || adjacent_alpha))) &&
+     (integer_atlas && r->alphablend && (inverse_sprite || destination_factor_sprite || full_axis_preset || native_atlas || draw_alpha<1.0 || !page->scene_binary_alpha || adjacent_alpha))) &&
      (state.write_mask&8u) &&
      gml_render_target_preserves_alpha(r)){
     r->fb_opaque_known=0;
@@ -1704,7 +1708,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   }
   /* Enqueue conservatively invalidates application opacity. A complete nearest
    * replacement from an opaque page proves every target alpha without reading it. */
-  if(!source_alpha_key && (state.write_mask&8u) && !tile_regions && !runtime_geometry && !inverse_sprite && !full_axis_preset && !native_runtime &&
+  if(!source_alpha_key && (state.write_mask&8u) && !tile_regions && !runtime_geometry && !inverse_sprite && !full_axis_preset && !native_atlas &&
      !(destination_factor_sprite && r->alphablend && gml_render_target_preserves_alpha(r)) &&
      (!r->alpha_test_enable || r->alpha_test_ref<255u) &&
      ((replace && !replacement_sprite) || (page->scene_fully_opaque && !adjacent_alpha)) && draw_alpha==1.0 && left==0.0 && top==0.0 &&
@@ -4311,27 +4315,32 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     r->target_id<0 && !r->target_sp && !gml_render_target_preserves_alpha(r) &&
     anygm_policy_has_modern_layer_semantics(r->win);
   int fog_rotated_alias=fog_sourceover_alias && !fog_axis;
+  int native_factors=r && family==GML_RENDER_SCENE_SPRITE && !r->fog_flat &&
+    r->alphablend && !r->alpha_test_enable && gml_render_blend_is_extended(r->blendmode) &&
+    r->blend_equation>=1 && r->blend_equation<=5 &&
+    r->blend_equation_alpha>=1 && r->blend_equation_alpha<=5 && isfinite(rotation) &&
+    (fabs(fmod(rotation,360.0))<0.001 || fabs(fabs(fmod(rotation,360.0))-360.0)<0.001);
   int axis_preset=r && family==GML_RENDER_SCENE_SPRITE && !r->fog_flat &&
     r->blendmode>=3 && r->blendmode<=GML_RENDER_BLEND_SOURCE_COLOUR_SOURCE_ALPHA && r->blendmode!=6 &&
     r->blendmode!=7 && r->blendmode!=8 && isfinite(rotation) &&
     (fabs(fmod(rotation,360.0))<0.001 || fabs(fabs(fmod(rotation,360.0))-360.0)<0.001);
-  int zero_factor_alpha=axis_preset && r->alphablend &&
-    gml_render_blend_uses_destination_colour(r->blendmode);
+  int zero_factor_alpha=native_factors || (axis_preset && r->alphablend &&
+    gml_render_blend_uses_destination_colour(r->blendmode));
   if(!r || !sprite || !page || !r->resident_application_pass ||
      (r->interp && !r->classic && !studio_rotated_point && !fog_axis) ||
      (family==GML_RENDER_SCENE_SPRITE?resident_sprite_program_blocks(r):r->active_shader>=0) ||
      (r->fog_flat && family!=GML_RENDER_SCENE_SPRITE) || gml_d3_is_active(r) ||
      r->color_write_mask>15u || r->blendmode<0 ||
-     (r->blendmode>2 && !fog_rotated_normal && !fog_sourceover_alias && !axis_preset &&
+     (r->blendmode>2 && !fog_rotated_normal && !fog_sourceover_alias && !axis_preset && !native_factors &&
       !(family==GML_RENDER_SCENE_SPRITE && !r->fog_flat && (r->blendmode==7 || r->blendmode==8))) ||
-     r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
+     (!native_factors && (r->blend_equation!=1 || r->blend_equation_alpha!=1)) ||
      gml_render_classic_vertical_phase_blocks_scene(r) || r->rotated_batch_count || r->rotated_batch_building ||
      (r->pending_underlay && family!=GML_RENDER_SCENE_SPRITE) ||
      r->pending_presentation || !gml_render_scene_target_matches(r) ||
      sprite->runtime_rgba || sprite->spine || sprite->ns_enabled ||
      !isfinite(rotation) || !isfinite(alpha) || alpha<0.0 ||
      (alpha==0.0 && !zero_factor_alpha) || alpha>1.0 ||
-     (r->alphablend && alpha>0.0 && alpha<0x1p-64) ||
+     (r->alphablend && alpha>0.0 && alpha<0x1p-64 && !native_factors) ||
      !isfinite(xs) || !isfinite(ys) || fabs(xs)<minimum_scale || fabs(xs)>maximum_scale ||
      fabs(ys)<minimum_scale || fabs(ys)>maximum_scale) return 0;
   if(gml_render_interpolated_phase_blocks_scene(r)) return 0;

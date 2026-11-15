@@ -777,9 +777,9 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
     !q->corner_colour[2] && !q->corner_colour[3] && state->write_mask==15u;
   int source_colour_text=op->scene_family==GML_RENDER_SCENE_TEXT && !row && !flat &&
     (blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_PRESERVE || blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE);
-  int native_runtime=gml_render_blend_snapshot_native(state) && !state->alpha_test_enabled &&
-    op->scene_family==GML_RENDER_SCENE_SPRITE && source &&
-    (source->ref.identity&UINT32_C(0x80000000)) && !row && !flat;
+  int native_sprite=gml_render_blend_snapshot_native(state) && !state->alpha_test_enabled &&
+    op->scene_family==GML_RENDER_SCENE_SPRITE && !row && !flat;
+  int native_runtime=native_sprite && source && (source->ref.identity&UINT32_C(0x80000000));
   int source_colour_runtime=source && op->scene_family==GML_RENDER_SCENE_SPRITE &&
     (source->ref.identity&UINT32_C(0x80000000)) && !row && !flat &&
     (blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_PRESERVE || blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE || native_runtime);
@@ -794,7 +794,7 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
     q->y[0]==q->y[1] && q->y[2]==q->y[3] &&
     q->x[1]>q->x[0] && q->y[2]>q->y[0];
   if(source_colour_runtime && !runtime_rect) return 0;
-  int background_blend=native_runtime || ((background || source_colour_text || (op->scene_family==GML_RENDER_SCENE_SPRITE && !row && !flat)) &&
+  int background_blend=native_sprite || ((background || source_colour_text || (op->scene_family==GML_RENDER_SCENE_SPRITE && !row && !flat)) &&
     (blend==24 || blend==25 || blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_PRESERVE ||
      blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE || blend==GL_SCENE_BLEND_DEST_ALPHA_MASK ||
      blend==GL_SCENE_BLEND_DEST_ALPHA_MASK_OPAQUE ||
@@ -3845,6 +3845,9 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
        memcmp(&pending_palette,&batch->states[op->state_index].source_palette,sizeof pending_palette) ||
        pending_alpha_test!=(batch->states[op->state_index].alpha_test_enabled
          ?(int)batch->states[op->state_index].alpha_test_reference:-1) ||
+       /* Preserve atomic preparation, then finish the prior alpha stamp
+        * before any later native factor can read destination alpha. */
+       ((pending_blend&GL_SCENE_BLEND_NATIVE_OPAQUE) && (pending_write_mask&8u)) ||
        qualified_blend(&batch->states[op->state_index])==2 ||
        qualified_blend(&batch->states[op->state_index])==4 ||
        qualified_blend(&batch->states[op->state_index])==5 ||
