@@ -32,6 +32,40 @@ static void ini_write_number(GmlVM *vm,const char *section,const char *key,doubl
   (void)gml_builtin_call(vm,"ini_write_real",args,3);
 }
 
+int expect_buffer_resize_cursor_case(void){
+  GmlWin win={0}; GmlVM vm={0}; vm.win=&win;
+  vm.particles=gml_particle_state_create(&vm);
+  gml_vm_software3d_reset(&vm);
+  GmlVal create[]={vreal(1),vreal(1),vreal(1)};
+  GmlVal buffer=gml_builtin_call(&vm,"buffer_create",create,3);
+  GmlVal write[]={buffer,vreal(11),vstr("first")};
+  (void)gml_builtin_call(&vm,"buffer_write",write,3);
+  GmlVal resize[]={buffer,vreal(1)};
+  (void)gml_builtin_call(&vm,"buffer_resize",resize,2);
+  GmlVal cursor=gml_builtin_call(&vm,"buffer_tell",&buffer,1);
+  int ok=cursor.t==V_REAL && cursor.d==0;
+  write[2]=vstr("second");
+  (void)gml_builtin_call(&vm,"buffer_write",write,3);
+  GmlVal seek[]={buffer,vreal(0),vreal(0)};
+  (void)gml_builtin_call(&vm,"buffer_seek",seek,3);
+  GmlVal read[]={buffer,vreal(11)};
+  GmlVal text=gml_builtin_call(&vm,"buffer_read",read,2);
+  ok=ok && text.t==V_STR && text.s && !strcmp(text.s,"second");
+  if(!ok) fprintf(stderr,"resized buffer cursor=%.0f, reused text=%s\n",cursor.d,text.t==V_STR?text.s:"<non-string>");
+  gml_values_release_owned(&text,1);
+  resize[1]=vreal(32);
+  (void)gml_builtin_call(&vm,"buffer_resize",resize,2);
+  cursor=gml_builtin_call(&vm,"buffer_tell",&buffer,1);
+  ok=ok && cursor.t==V_REAL && cursor.d==7;
+  resize[1]=vreal(4);
+  (void)gml_builtin_call(&vm,"buffer_resize",resize,2);
+  cursor=gml_builtin_call(&vm,"buffer_tell",&buffer,1);
+  ok=ok && cursor.t==V_REAL && cursor.d==0;
+  (void)gml_builtin_call(&vm,"buffer_delete",&buffer,1);
+  gml_vm_free(&vm);
+  return ok;
+}
+
 int expect_ini_close_text_case(void){
   GmlWin win={0}; GmlVM vm={0}; vm.win=&win;
   vm.particles=gml_particle_state_create(&vm);

@@ -915,7 +915,7 @@ static void buffer_resize_slot(GmlVM *vm, int bi, int size){
   buffer_at(vm,bi)->data=nd;
   buffer_at(vm,bi)->cap=alloc;
   buffer_at(vm,bi)->size=size;
-  if(buffer_at(vm,bi)->pos>size) buffer_at(vm,bi)->pos=size;
+  if(buffer_at(vm,bi)->pos>size) buffer_at(vm,bi)->pos=0;
 }
 static void buffer_write_at(GmlVM *vm, int bi, int pos, const void *p, int n){
   if(pos<0 || n<=0 || n>INT_MAX-pos || !buffer_ensure(vm,bi,pos+n)) return;

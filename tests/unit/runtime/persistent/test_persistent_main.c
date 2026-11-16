@@ -135,6 +135,7 @@ int main(int argc,char **argv){
   static const AnygmTestCase io_cases[]={
     {"ini_key_lookup",expect_ini_key_lookup_case},
     {"ini_close_text",expect_ini_close_text_case},
+    {"buffer_resize_cursor",expect_buffer_resize_cursor_case},
     {"save_overlay_sandbox",expect_file_sandbox_case},
     {"file_lookup_probes",expect_file_lookup_probes_case},
     {"missing_path_components",expect_missing_path_components_case},
