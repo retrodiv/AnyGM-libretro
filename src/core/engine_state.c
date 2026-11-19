@@ -841,6 +841,8 @@ bool state_unserialize_impl(AnygmEngine *engine,const void *d, size_t n, int sch
   if(frame<0) frame=0;
   if(frame>(int64_t)LONG_MAX) frame=(int64_t)LONG_MAX;
   { engine->vm.frame=(long)frame; }
+  /* The phase is derived from the restored clock, with no additional state bytes. */
+  engine_input_latch_turbo(engine,(unsigned long)frame,frame?(unsigned long)frame-1u:0u);
   cr_raw(&core,engine->pad_current,sizeof(engine->pad_current)); cr_raw(&core,engine->pad_previous,sizeof(engine->pad_previous));
   cr_raw(&core,engine->key_current,sizeof(engine->key_current)); cr_raw(&core,engine->key_previous,sizeof(engine->key_previous));
   cr_raw(&core,engine->key_press_carry,sizeof engine->key_press_carry);

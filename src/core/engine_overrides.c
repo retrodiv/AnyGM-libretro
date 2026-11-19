@@ -869,7 +869,7 @@ static int keyboard_binding_key(const char **cursor){
 }
 
 /* Auto restores the ordinary keyboard mapping. A nonempty mask replaces it. */
-static int keyboard_binding_buttons(const char *scan,unsigned *buttons){
+static int keyboard_binding_buttons(const char *scan,unsigned *buttons,bool *turbo){
   static const struct { const char *name; int button; } names[]={
     {"b",ANYGM_PAD_FACE_BOTTOM},{"a",ANYGM_PAD_FACE_RIGHT},
     {"y",ANYGM_PAD_FACE_LEFT},{"x",ANYGM_PAD_FACE_TOP},
@@ -881,9 +881,10 @@ static int keyboard_binding_buttons(const char *scan,unsigned *buttons){
     {"l3",ANYGM_PAD_LEFT_STICK},{"r3",ANYGM_PAD_RIGHT_STICK}
   };
   unsigned mask=0;
+  bool repeat=false;
   if(strcmp(scan,"auto")){
     for(;;){
-      size_t length=strcspn(scan,",");
+      size_t length=strcspn(scan,",|");
       unsigned bit=0;
       for(size_t i=0;i<sizeof names/sizeof names[0];i++){
         if(strlen(names[i].name)==length && !memcmp(scan,names[i].name,length)){
@@ -895,19 +896,26 @@ static int keyboard_binding_buttons(const char *scan,unsigned *buttons){
       mask|=bit;
       scan+=length;
       if(!*scan) break;
+      if(*scan=='|'){
+        if(strcmp(scan+1,"turbo")) return 0;
+        repeat=true;
+        break;
+      }
       scan++;
     }
   }
   if(buttons) *buttons=mask;
+  if(turbo) *turbo=repeat;
   return 1;
 }
 
 /* Boot parsing stores exactly one destination key per slot. */
-static int keyboard_binding_parse(const char *code,int *virtual_key,unsigned *buttons,unsigned *port){
+static int keyboard_binding_parse(const char *code,int *virtual_key,unsigned *buttons,unsigned *port,
+                                  bool *turbo){
   const char *scan=keyboard_binding_keys(code,port);
   if(!scan) return 0;
   int key=keyboard_binding_key(&scan);
-  if(key<0 || *scan!='|' || !keyboard_binding_buttons(scan+1,buttons)) return 0;
+  if(key<0 || *scan!='|' || !keyboard_binding_buttons(scan+1,buttons,turbo)) return 0;
   *virtual_key=key;
   return 1;
 }
@@ -932,8 +940,8 @@ static int boot_same_target(const CheatSlot *left,const CheatSlot *right){
     if(!strncmp(left->code,singletons[i],length) && !strncmp(right->code,singletons[i],length)) return 1;
   }
   int left_key,right_key;
-  if(keyboard_binding_parse(left->code,&left_key,NULL,NULL) &&
-     keyboard_binding_parse(right->code,&right_key,NULL,NULL))
+  if(keyboard_binding_parse(left->code,&left_key,NULL,NULL,NULL) &&
+     keyboard_binding_parse(right->code,&right_key,NULL,NULL,NULL))
     return left_key==right_key;
   if(boot_line_is_menu(left->code) && boot_line_is_menu(right->code)){
     char l[6][128],r[6][128];
@@ -974,7 +982,7 @@ static int boot_store_key_binding(const CheatSlot *candidate,CheatSlot *slots,in
       if(key<0 || seen[key] || key_count>=GML_MAX_CHEATS) break;
       seen[key]=1;
       keys[key_count++]=key;
-      if(*scan=='|' && keyboard_binding_buttons(scan+1,NULL)){
+      if(*scan=='|' && keyboard_binding_buttons(scan+1,NULL,NULL)){
         if(key_count==1)
           return boot_store_override(slots,count,candidate,error,error_capacity);
         /* Expand a chord into the same effective directives as its individual
@@ -990,7 +998,7 @@ static int boot_store_key_binding(const CheatSlot *candidate,CheatSlot *slots,in
     } while(*scan++==',');
   }
   snprintf(error,error_capacity,
-           "directive %d: keybind| takes port 1 to %u, a comma-separated list of keys from 2 to 255 and a comma-separated button list or auto",
+           "directive %d: keybind| takes port 1 to %u, keys 2 to 255 and a button list with optional |turbo, or auto",
            line_number,(unsigned)ANYGM_MAX_GAMEPADS);
   return 0;
 }
@@ -1884,14 +1892,19 @@ unsigned engine_overrides_gamepad_limit(AnygmEngine *engine){
   return ANYGM_MAX_GAMEPADS;
 }
 /* Binding declarations never select input ownership or alter physical keyboard state. */
-unsigned engine_overrides_key_button_mask(AnygmEngine *engine,int virtual_key,unsigned *port){
+unsigned engine_overrides_key_button_mask(AnygmEngine *engine,int virtual_key,unsigned *port,
+                                          bool *turbo){
   if(port) *port=0;
+  if(turbo) *turbo=false;
   int active=engine_boot_cheats_active(engine);
   for(int i=0;i<active;i++){
     int key;unsigned buttons,selected;
+    bool repeat;
     if(engine->boot_cheats[i].enabled &&
-       keyboard_binding_parse(engine->boot_cheats[i].code,&key,&buttons,&selected) && key==virtual_key){
+       keyboard_binding_parse(engine->boot_cheats[i].code,&key,&buttons,&selected,&repeat) &&
+       key==virtual_key){
       if(port && buttons) *port=selected;
+      if(turbo) *turbo=repeat;
       return buttons;
     }
   }
@@ -1906,7 +1919,7 @@ unsigned engine_overrides_keyboard_bindings(AnygmEngine *engine,
   for(int i=0;i<active;i++){
     int key;unsigned mask,port;
     if(engine->boot_cheats[i].enabled &&
-       keyboard_binding_parse(engine->boot_cheats[i].code,&key,&mask,&port) && mask){
+       keyboard_binding_parse(engine->boot_cheats[i].code,&key,&mask,&port,NULL) && mask){
       ports|=1u<<port;
       if(buttons) buttons[port]|=mask;
     }

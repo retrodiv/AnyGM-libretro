@@ -334,6 +334,8 @@ struct AnygmEngine {
   /* One row per pad port. Core overrides and the keyboard bridge use row zero; explicit
    * device queries can reach every row. */
   uint8_t pad_current[ANYGM_MAX_GAMEPADS][NPAD],pad_previous[ANYGM_MAX_GAMEPADS][NPAD];
+  /* Derived once per input sample so keyboard tracking and Step see the same pulse. */
+  bool keyboard_turbo_current,keyboard_turbo_previous;
   uint8_t key_current[NKEY],key_previous[NKEY];
   /* A simulated key pressed and released in one step must retain its press edge.
    * raised records the current frame's edge and carry records only edges
@@ -507,7 +509,8 @@ int  engine_overrides_declared_os_type(AnygmEngine *engine);
 uint32_t engine_overrides_declared_renderer(AnygmEngine *engine);
 int  engine_overrides_keyboard_emulation(AnygmEngine *engine);
 unsigned engine_overrides_gamepad_limit(AnygmEngine *engine);
-unsigned engine_overrides_key_button_mask(AnygmEngine *engine,int virtual_key,unsigned *port);
+unsigned engine_overrides_key_button_mask(AnygmEngine *engine,int virtual_key,unsigned *port,
+                                          bool *turbo);
 unsigned engine_overrides_keyboard_bindings(AnygmEngine *engine,
                                             unsigned buttons[ANYGM_MAX_GAMEPADS]);
 
@@ -634,6 +637,7 @@ int render_multiview_application(AnygmEngine *engine);
 void content_router_log(void *userdata,int level,const char *message);
 
 void engine_input_bind(AnygmEngine *engine);
+void engine_input_latch_turbo(AnygmEngine *engine,unsigned long current,unsigned long previous);
 int engine_input_keyboard_emulation_selected(AnygmEngine *engine);
 void engine_input_poll_keyboard(AnygmEngine *engine);
 void engine_input_poll_mouse(AnygmEngine *engine);

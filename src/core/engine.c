@@ -568,6 +568,7 @@ static int boot_runtime_prepare(AnygmEngine *engine) {
   engine->state_frame_width = engine->state_frame_height = 0;
   memset(engine->pad_current, 0, sizeof(engine->pad_current));
   memset(engine->pad_previous, 0, sizeof(engine->pad_previous));
+  engine_input_latch_turbo(engine,0,0);
   memset(engine->axis_current, 0, sizeof(engine->axis_current));
   memset(engine->axis_previous, 0, sizeof(engine->axis_previous));
   memset(engine->key_current, 0, sizeof(engine->key_current));
@@ -1272,6 +1273,11 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     memcpy(engine->mouse_button_previous, engine->mouse_button_current, sizeof(engine->mouse_button_current));
     engine->mouse_wheel = 0;
   }
+  /* The VM advances its clock inside Step, after sampling keyboard tracking.
+   * Choose the phase once here for every read of this input snapshot. */
+  unsigned long input_frame=(unsigned long)engine->vm.frame;
+  engine_input_latch_turbo(engine,input_frame+(run_step && !engine->vm.classic_info_active),
+                           input_frame);
   if (anygm_host_development_setting(&engine->host,"GML_DBG_PAD")) { engine->diagnostics.pad_frame++;
     unsigned bits = 0; for (int b = 0; b < NPAD; b++) if (engine->pad_current[0][b]) bits |= 1u << b;
     if (bits) engine_logf(engine,ANYGM_LOG_DEBUG, "[pad] f%d bits=%04x\n", engine->diagnostics.pad_frame, bits); }

@@ -2988,7 +2988,9 @@ static int declared_keyboard_binding_policy(void){
     "keybind|1|65|b,,r2","keybind|1|65|b,auto","keybind|1|65|auto,b",
     "keybind|1|65|b,b","keybind|1|65|b,unknown","keybind|1|65,|b",
     "keybind|1|,65|b","keybind|1|65,,83|b","keybind|1|65,065|b",
-    "keybind|1|65,256|b","keybind|1|65,x|b","keybind|1|65,1|b"};
+    "keybind|1|65,256|b","keybind|1|65,x|b","keybind|1|65,1|b",
+    "keybind|1|65|b|","keybind|1|65|b|repeat","keybind|1|65|b|turbo|turbo",
+    "keybind|1|65|auto|turbo","keybind|1|65|b,|turbo"};
   for(unsigned i=0;ok && i<sizeof invalid/sizeof invalid[0];i++)
     ok=!engine_boot_overrides_parse(invalid[i],engine.boot_cheats,
         &engine.boot_cheat_count,error,sizeof error);
@@ -3115,6 +3117,68 @@ static int declared_keyboard_port_transport_policy(void){
   }
   if(!ok) fputs("explicit keyboard port transport exposed unbound rows or lost a bound row\n",stderr);
   anygm_destroy(engine);anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
+static int declared_keyboard_turbo_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_content_create(&fixture)) return 0;
+  char anchor[256];
+  snprintf(anchor,sizeof anchor,"%s/turbo.anygm",fixture.directory);
+  FILE *file=fopen(anchor,"wb");
+  const char *payload=strrchr(fixture.path,'/');
+  int ok=file && fprintf(file,"[anygm]\npayload=%s\n[overrides]\ngamepad|keyboard\n"
+      "keybind|2|65,83|b,r2|turbo\nkeybind|2|88|b,r2\n",
+      payload?payload+1:fixture.path)>0;
+  if(file && fclose(file)!=0) ok=0;
+
+  AnygmHostServices services={0};services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL;
+  AnygmContentSource source={0};source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;source.path=anchor;
+  source.cache_directory=source.save_directory=fixture.directory;
+  ok=ok && anygm_create(&services,&engine)==ANYGM_OK && anygm_load(engine,&source,NULL)==ANYGM_OK;
+  AnygmInputFrame input={0};input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  AnygmFrameOutput output={0};output.struct_size=sizeof output;
+  uint8_t *state=NULL;size_t state_size=0;
+  for(int frame=1;ok && frame<=8;frame++){
+    input.gamepad_buttons[1][ANYGM_PAD_FACE_BOTTOM]=frame<=3;
+    input.gamepad_buttons[1][ANYGM_PAD_RIGHT_TRIGGER]=frame>=3;
+    int held=frame<=3 || frame>=7;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK && engine->vm.frame==frame;
+    for(int key=65;ok && key<=83;key+=18)
+      ok=engine->vm.input.key(engine,key,0)==held &&
+        engine->vm.input.key(engine,key,1)==(frame==1 || frame==7) &&
+        engine->vm.input.key(engine,key,2)==(frame==4);
+    ok=ok && engine->vm.current_key==(held?65:88) &&
+      engine->vm.input.key(engine,88,0) &&
+      engine->vm.input.key(engine,88,1)==(frame==1) &&
+      !engine->vm.input.key(engine,88,2);
+    if(ok && frame==5) ok=save_state(engine,&state,&state_size);
+  }
+
+  /* Restore an off pulse while a button is held and resume at the same next edge. */
+  ok=ok && anygm_state_load(engine,state,state_size)==ANYGM_OK &&
+    engine->vm.frame==5 && !engine->vm.input.key(engine,65,0) &&
+    anygm_run_frame(engine,&input,&output)==ANYGM_OK && engine->vm.frame==5 &&
+    anygm_run_frame(engine,&input,&output)==ANYGM_OK && engine->vm.frame==6 &&
+    !engine->vm.input.key(engine,65,0) &&
+    anygm_run_frame(engine,&input,&output)==ANYGM_OK && engine->vm.frame==7 &&
+    engine->vm.input.key(engine,65,1) && engine->vm.input.key(engine,83,1);
+  ok=ok && anygm_reset(engine)==ANYGM_OK &&
+    anygm_run_frame(engine,&input,&output)==ANYGM_OK && engine->vm.frame==1 &&
+    engine->vm.input.key(engine,65,1);
+  for(int frame=2;ok && frame<=4;frame++){
+    input.keys['a']=frame==4;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK && engine->vm.frame==frame;
+  }
+  ok=ok && engine->vm.input.key(engine,65,0) && !engine->vm.input.key(engine,83,0);
+  if(!ok) fputs("keyboard turbo lost pulse cadence, grouped input, restore or physical input\n",stderr);
+  free(state);
+  anygm_destroy(engine);remove(anchor);anygm_synthetic_content_destroy(&fixture);
   return ok;
 }
 
@@ -4340,6 +4404,8 @@ int main(int argc,char **argv){
       return declared_keyboard_port_binding_policy()?0:1;
     if(!strcmp(argv[2],"input_declared_keyboard_port_transport"))
       return declared_keyboard_port_transport_policy()?0:1;
+    if(!strcmp(argv[2],"input_declared_keyboard_turbo"))
+      return declared_keyboard_turbo_policy()?0:1;
     if(!strcmp(argv[2],"instance_variable_diagnostic"))
       return instance_variable_diagnostic_policy()?0:1;
     if(!strcmp(argv[2],"simulated_key_lifetime"))
@@ -4381,7 +4447,7 @@ int main(int argc,char **argv){
           "background_color|view_surface_room_lifetime|view_surface_frame_mirror|"
           "view_surface_actual_target|multi_view_application_canvas|game_change|"
           "input_binding_ownership|input_zero_native_count|input_declared_keyboard_binding|"
-          "input_declared_keyboard_ports|input_declared_keyboard_port_transport|"
+          "input_declared_keyboard_ports|input_declared_keyboard_port_transport|input_declared_keyboard_turbo|"
           "instance_variable_diagnostic|"
           "simulated_key_lifetime|simulated_key_frame_lifetime|"
           "bridged_key_press_delivery|bridged_key_hold|bridged_key_restore|undefined_placement|"
@@ -4439,6 +4505,7 @@ int main(int argc,char **argv){
   if(!declared_keyboard_binding_policy()) return 1;
   if(!declared_keyboard_port_binding_policy()) return 1;
   if(!declared_keyboard_port_transport_policy()) return 1;
+  if(!declared_keyboard_turbo_policy()) return 1;
   if(!instance_variable_diagnostic_policy()) return 1;
   if(!simulated_key_lifetime_policy()) return 1;
   if(!simulated_key_frame_lifetime_policy()) return 1;

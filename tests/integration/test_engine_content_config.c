@@ -309,7 +309,7 @@ static void lifecycle(void){
   const unsigned button_b=1u<<ANYGM_PAD_FACE_BOTTOM;
   const unsigned trigger_r=1u<<ANYGM_PAD_RIGHT_TRIGGER;
   unsigned bound_port=ANYGM_MAX_GAMEPADS;
-  assert(engine_overrides_key_button_mask(engine,65,&bound_port)==button_b && bound_port==0);
+  assert(engine_overrides_key_button_mask(engine,65,&bound_port,NULL)==button_b && bound_port==0);
   frame(engine);
   assert(gml_global_num(&engine->vm,"anygm_probe")==2);
   assert(gml_global_num(&engine->vm,"retained")==7);
@@ -323,10 +323,10 @@ static void lifecycle(void){
   assert(anygm_reset(engine)==ANYGM_OK); frame(engine);
   assert(gml_global_num(&engine->vm,"anygm_probe")==2);
   assert(engine_overrides_keyboard_emulation(engine));
-  assert(engine_overrides_key_button_mask(engine,65,NULL)==button_b);
+  assert(engine_overrides_key_button_mask(engine,65,NULL,NULL)==button_b);
   assert(anygm_state_load(engine,state,written)==ANYGM_OK);
   assert(engine_overrides_keyboard_emulation(engine));
-  assert(engine_overrides_key_button_mask(engine,65,NULL)==button_b);
+  assert(engine_overrides_key_button_mask(engine,65,NULL,NULL)==button_b);
 
   /* Adding a button rejects the earlier identity without changing the live state. */
   anygm_unload(engine);
@@ -334,7 +334,7 @@ static void lifecycle(void){
     "$anygm_probe=2\nostype|6\n$anchor_only=9\ngamepad|keyboard\nkeybind|1|65|b,r2\n",name);
   write_text(anchor,text);
   assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
-  assert(engine_overrides_key_button_mask(engine,65,NULL)==(button_b|trigger_r));
+  assert(engine_overrides_key_button_mask(engine,65,NULL,NULL)==(button_b|trigger_r));
   size_t binding_before=0,binding_after=0;
   assert(anygm_state_save(engine,before,capacity,&binding_before)==ANYGM_OK);
   assert(anygm_state_load(engine,state,written)==ANYGM_ERROR_STATE_MISMATCH);
@@ -347,7 +347,7 @@ static void lifecycle(void){
     "$anygm_probe=2\nostype|6\n$anchor_only=9\ngamepad|keyboard\nkeybind|2|65|b\n",name);
   write_text(anchor,text);
   assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
-  assert(engine_overrides_key_button_mask(engine,65,&bound_port)==button_b && bound_port==1);
+  assert(engine_overrides_key_button_mask(engine,65,&bound_port,NULL)==button_b && bound_port==1);
   assert(anygm_state_save(engine,before,capacity,&binding_before)==ANYGM_OK);
   assert(anygm_state_load(engine,state,written)==ANYGM_ERROR_STATE_MISMATCH);
   assert(anygm_state_save(engine,after,capacity,&binding_after)==ANYGM_OK);
@@ -391,7 +391,7 @@ static void lifecycle(void){
   delta.values.content_overrides=0;
   assert(anygm_set_config(engine,&delta)==ANYGM_OK);
   assert(!engine_overrides_keyboard_emulation(engine));
-  assert(!engine_overrides_key_button_mask(engine,65,NULL));
+  assert(!engine_overrides_key_button_mask(engine,65,NULL,NULL));
   assert(anygm_state_load(engine,state,written)==ANYGM_ERROR_STATE_MISMATCH);
   anygm_unload(engine);
   delta.values.content_overrides=1; assert(anygm_set_config(engine,&delta)==ANYGM_OK);

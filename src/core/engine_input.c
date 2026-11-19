@@ -72,6 +72,14 @@ static int engine_pad_reserved_for_pad_api(AnygmEngine *engine){
   return core_opt_gamepad_connected(engine) &&
          gml_win_references_pad_input(&engine->win);
 }
+static bool keyboard_turbo_active(unsigned long frame){
+  /* Six simulation frames per cycle, with the first three pressed. */
+  return frame && (frame-1u)%6u<3u;
+}
+void engine_input_latch_turbo(AnygmEngine *engine,unsigned long current,unsigned long previous){
+  engine->keyboard_turbo_current=keyboard_turbo_active(current);
+  engine->keyboard_turbo_previous=keyboard_turbo_active(previous);
+}
 static int engine_input_key(void *userdata,int vk, int edge){
   AnygmEngine *engine=userdata;
   if(vk == 1 || vk == 0){   /* vk_anykey (1) / vk_nokey (0): aggregate over every input */
@@ -121,7 +129,8 @@ static int engine_input_key(void *userdata,int vk, int edge){
   int key_p = event_key_state_for_vk(engine,vk, 1);
   if(!engine_pad_reserved_for_pad_api(engine)){
     unsigned port=0;
-    unsigned buttons=engine_overrides_key_button_mask(engine,vk,&port);
+    bool turbo;
+    unsigned buttons=engine_overrides_key_button_mask(engine,vk,&port,&turbo);
     if(!buttons){
       int button=vk_to_default_pad(engine,vk);
       if(button>=0) buttons=1u<<(unsigned)button;
@@ -132,6 +141,10 @@ static int engine_input_key(void *userdata,int vk, int edge){
       unsigned button=(unsigned)__builtin_ctz(buttons);
       pad_c|=engine->pad_current[port][button];
       pad_p|=engine->pad_previous[port][button];
+    }
+    if(turbo){
+      pad_c&=engine->keyboard_turbo_current;
+      pad_p&=engine->keyboard_turbo_previous;
     }
   }
   /* A simulated press cancelled by its own frame's release is not readable in that frame: the

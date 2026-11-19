@@ -130,6 +130,16 @@ The port is explicit in every declaration; the old three-field syntax
 is rejected. Update content declarations when updating a core that used that syntax.
 These content-only declarations share ordinary override disabling and save-state identity.
 
+Append `|turbo` to repeat a binding while any listed button is held. For example,
+`keybind|1|65,83|b,r2|turbo` repeats both virtual keys together from either button.
+The game sees three simulation frames pressed followed by three released, repeating
+on the simulation clock. This gives ten presses per second at 60 Hz. The first pulse
+can wait up to three simulation frames, and releasing all mapped buttons stops the
+input immediately. The saved simulation clock preserves the repeat phase on restore;
+physical keyboard input and native pad reads retain their ordinary behavior. A
+later declaration replaces the turbo setting along with the button list. `auto`
+is a complete binding value and cannot take the `|turbo` suffix.
+
 Load-time `renderer|...` declarations and reversible `?crt setcall|...` settings are documented
 in [Content configuration](CONTENT_CONFIGURATION.md#content-renderer-selection).
 
