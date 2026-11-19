@@ -2950,9 +2950,45 @@ static int declared_keyboard_binding_policy(void){
       engine.boot_cheat_count==2 && !engine.vm.input.key(engine.vm.input.userdata,65,0) &&
       engine.vm.input.key(engine.vm.input.userdata,90,0);
   }
+  ok=ok && engine_boot_overrides_parse("gamepad|keyboard\nkeybind|2|65,83|b,r2\n",
+      engine.boot_cheats,&engine.boot_cheat_count,error,sizeof error);
+  char effective[128];
+  ok=ok && engine_boot_overrides_text(engine.boot_cheats,engine.boot_cheat_count,
+      effective,sizeof effective) &&
+      !strcmp(effective,"gamepad|keyboard\nkeybind|2|65|b,r2\nkeybind|2|83|b,r2\n");
+  memset(engine.pad_current,0,sizeof engine.pad_current);
+  memset(engine.pad_previous,0,sizeof engine.pad_previous);
+  static const struct { int b,rt,held,pressed,released; } handoff[]={
+    {1,0,1,1,0}, {1,1,1,0,0}, {0,1,1,0,0}, {1,0,1,0,0}, {0,0,0,0,1}, {0,1,1,1,0}
+  };
+  for(unsigned i=0;ok && i<sizeof handoff/sizeof handoff[0];i++){
+    memcpy(engine.pad_previous,engine.pad_current,sizeof engine.pad_previous);
+    engine.pad_current[1][ANYGM_PAD_FACE_BOTTOM]=handoff[i].b;
+    engine.pad_current[1][ANYGM_PAD_RIGHT_TRIGGER]=handoff[i].rt;
+    ok=engine.vm.input.key(&engine,65,0)==handoff[i].held &&
+      engine.vm.input.key(&engine,65,1)==handoff[i].pressed &&
+      engine.vm.input.key(&engine,65,2)==handoff[i].released &&
+      engine.vm.input.key(&engine,83,0)==handoff[i].held &&
+      engine.vm.input.key(&engine,83,1)==handoff[i].pressed &&
+      engine.vm.input.key(&engine,83,2)==handoff[i].released &&
+      engine.vm.input.key(&engine,1,0)==handoff[i].held;
+  }
+  ok=ok && engine_boot_overrides_parse("gamepad|keyboard\nkeybind|2|65,83|b,r2\n"
+      "keybind|2|65|b\n",engine.boot_cheats,&engine.boot_cheat_count,error,sizeof error) &&
+      engine.boot_cheat_count==3 &&
+      !engine.vm.input.key(&engine,65,0) && engine.vm.input.key(&engine,83,0) &&
+      engine.vm.input.key(&engine,1,0);
+  ok=ok && engine_boot_overrides_parse("gamepad|keyboard\nkeybind|2|65,83|b,r2\n"
+      "keybind|1|65,83|auto\n",engine.boot_cheats,&engine.boot_cheat_count,error,sizeof error) &&
+      engine.boot_cheat_count==3 && !engine.vm.input.key(&engine,65,0) &&
+      !engine.vm.input.key(&engine,83,0) && !engine.vm.input.key(&engine,1,0);
   static const char *invalid[]={"keybind|1|0|b","keybind|1|1|b","keybind|1|256|b",
     "keybind|1|-2|b","keybind|1|2x|b","keybind|1|65|unknown","keybind|1|65|b|a",
-    "keybind|1||b","keybind|1|65|"};
+    "keybind|1||b","keybind|1|65|","keybind|1|65|b,","keybind|1|65|,b",
+    "keybind|1|65|b,,r2","keybind|1|65|b,auto","keybind|1|65|auto,b",
+    "keybind|1|65|b,b","keybind|1|65|b,unknown","keybind|1|65,|b",
+    "keybind|1|,65|b","keybind|1|65,,83|b","keybind|1|65,065|b",
+    "keybind|1|65,256|b","keybind|1|65,x|b","keybind|1|65,1|b"};
   for(unsigned i=0;ok && i<sizeof invalid/sizeof invalid[0];i++)
     ok=!engine_boot_overrides_parse(invalid[i],engine.boot_cheats,
         &engine.boot_cheat_count,error,sizeof error);

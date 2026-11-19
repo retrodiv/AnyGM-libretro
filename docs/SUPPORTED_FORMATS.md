@@ -109,17 +109,24 @@ in charge. These singleton declarations follow ordinary content-override layerin
 save-state identity. They do not edit the frontend option or the content's own controller settings.
 
 `keybind|2|87|up` assigns Up on RetroPad port 2 to virtual key 87 during keyboard emulation.
-The port is a decimal number from 1 to 4; the virtual key is a decimal Win32 key number
-from 2 to 255. Button names are `b`, `a`, `y`, `x`,
+The port is a decimal number from 1 to 4. Use decimal Win32 key numbers from 2 to 255.
+Both the key and button fields accept a single value or a comma-separated list of distinct
+values without spaces.
+For example, `keybind|1|90|b,r2` maps both B and the right trigger on port 1 to virtual key 90.
+With `keybind|1|65,83|b,r2`, either button holds both keys in the same frame.
+The key is held while any listed button is down. Switching between buttons while the key stays
+held does not produce another press or release. Button names are `b`, `a`, `y`, `x`,
 `start`, `select`, `up`, `down`, `left`, `right`, `l`, `r`, `l2`, `r2`, `l3` and `r3`.
 Only the named key changes; other default aliases and physical keyboard input remain intact.
-Each key names one source port and button. Directions on other ports do not activate that
+Each key names one source port. Buttons on other ports do not activate that
 key; physical keyboard input still reaches it independently. Only the declared buttons on
 additional ports contribute to the keyboard's any-key check. Bindings do not select
 keyboard emulation or affect native pad input. Declare
 `gamepad|keyboard` as well when content contains native pad references. Declarations layer
-by virtual key; `keybind|1|65|auto` withdraws that key's binding and restores its default
-mapping on port 1. The port is explicit in every declaration; the old three-field syntax
+by virtual key. A later declaration replaces the entire button list and port for each key it
+names. Use `auto` alone in the button field, as in `keybind|1|65,83|auto`, to restore the
+default mapping on port 1 for those keys. Each key in a list counts as one effective directive.
+The port is explicit in every declaration; the old three-field syntax
 is rejected. Update content declarations when updating a core that used that syntax.
 These content-only declarations share ordinary override disabling and save-state identity.
 

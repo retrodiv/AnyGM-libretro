@@ -841,25 +841,35 @@ static int introstep_parse(const char *code,int *room,char *object,size_t object
   return 1;
 }
 
-/* Content keyboard bindings use pad button names and Win32 virtual-key numbers.
- * Auto removes only this key's declaration, retaining the ordinary keyboard mapping. */
-static int keyboard_binding_parse(const char *code,int *virtual_key,int *button,unsigned *port){
-  if(strncmp(code,"keybind|",8)) return 0;
+static const char *keyboard_binding_keys(const char *code,unsigned *port){
+  if(strncmp(code,"keybind|",8)) return NULL;
   const char *scan=code+8;
-  if(*scan<'0' || *scan>'9') return 0;
+  if(*scan<'0' || *scan>'9') return NULL;
   unsigned selected=0;
   while(*scan>='0' && *scan<='9'){
     selected=selected*10u+(unsigned)(*scan++-'0');
-    if(selected>ANYGM_MAX_GAMEPADS) return 0;
+    if(selected>ANYGM_MAX_GAMEPADS) return NULL;
   }
-  if(!selected || *scan++!='|') return 0;
-  if(*scan<'0' || *scan>'9') return 0;
+  if(!selected || *scan!='|') return NULL;
+  if(port) *port=selected-1u;
+  return scan+1;
+}
+
+static int keyboard_binding_key(const char **cursor){
+  const char *scan=*cursor;
+  if(*scan<'0' || *scan>'9') return -1;
   unsigned key=0;
   while(*scan>='0' && *scan<='9'){
     key=key*10u+(unsigned)(*scan++-'0');
-    if(key>255u) return 0;
+    if(key>255u) return -1;
   }
-  if(key<2u || *scan++!='|') return 0;
+  if(key<2u) return -1;
+  *cursor=scan;
+  return (int)key;
+}
+
+/* Auto restores the ordinary keyboard mapping. A nonempty mask replaces it. */
+static int keyboard_binding_buttons(const char *scan,unsigned *buttons){
   static const struct { const char *name; int button; } names[]={
     {"b",ANYGM_PAD_FACE_BOTTOM},{"a",ANYGM_PAD_FACE_RIGHT},
     {"y",ANYGM_PAD_FACE_LEFT},{"x",ANYGM_PAD_FACE_TOP},
@@ -868,14 +878,38 @@ static int keyboard_binding_parse(const char *code,int *virtual_key,int *button,
     {"left",ANYGM_PAD_LEFT},{"right",ANYGM_PAD_RIGHT},
     {"l",ANYGM_PAD_LEFT_SHOULDER},{"r",ANYGM_PAD_RIGHT_SHOULDER},
     {"l2",ANYGM_PAD_LEFT_TRIGGER},{"r2",ANYGM_PAD_RIGHT_TRIGGER},
-    {"l3",ANYGM_PAD_LEFT_STICK},{"r3",ANYGM_PAD_RIGHT_STICK},{"auto",-1}
+    {"l3",ANYGM_PAD_LEFT_STICK},{"r3",ANYGM_PAD_RIGHT_STICK}
   };
-  for(size_t i=0;i<sizeof names/sizeof names[0];i++){
-    if(strcmp(scan,names[i].name)) continue;
-    *virtual_key=(int)key;*button=names[i].button;*port=selected-1u;
-    return 1;
+  unsigned mask=0;
+  if(strcmp(scan,"auto")){
+    for(;;){
+      size_t length=strcspn(scan,",");
+      unsigned bit=0;
+      for(size_t i=0;i<sizeof names/sizeof names[0];i++){
+        if(strlen(names[i].name)==length && !memcmp(scan,names[i].name,length)){
+          bit=1u<<(unsigned)names[i].button;
+          break;
+        }
+      }
+      if(!bit || (mask&bit)) return 0;
+      mask|=bit;
+      scan+=length;
+      if(!*scan) break;
+      scan++;
+    }
   }
-  return 0;
+  if(buttons) *buttons=mask;
+  return 1;
+}
+
+/* Boot parsing stores exactly one destination key per slot. */
+static int keyboard_binding_parse(const char *code,int *virtual_key,unsigned *buttons,unsigned *port){
+  const char *scan=keyboard_binding_keys(code,port);
+  if(!scan) return 0;
+  int key=keyboard_binding_key(&scan);
+  if(key<0 || *scan!='|' || !keyboard_binding_buttons(scan+1,buttons)) return 0;
+  *virtual_key=key;
+  return 1;
 }
 
 /* Compare destinations and conditions, never the value being assigned. Resolve
@@ -897,9 +931,9 @@ static int boot_same_target(const CheatSlot *left,const CheatSlot *right){
     size_t length=strlen(singletons[i]);
     if(!strncmp(left->code,singletons[i],length) && !strncmp(right->code,singletons[i],length)) return 1;
   }
-  int left_key,right_key,left_button,right_button;unsigned left_port,right_port;
-  if(keyboard_binding_parse(left->code,&left_key,&left_button,&left_port) &&
-     keyboard_binding_parse(right->code,&right_key,&right_button,&right_port))
+  int left_key,right_key;
+  if(keyboard_binding_parse(left->code,&left_key,NULL,NULL) &&
+     keyboard_binding_parse(right->code,&right_key,NULL,NULL))
     return left_key==right_key;
   if(boot_line_is_menu(left->code) && boot_line_is_menu(right->code)){
     char l[6][128],r[6][128];
@@ -909,6 +943,56 @@ static int boot_same_target(const CheatSlot *left,const CheatSlot *right){
     return lt==rt && !strcmp(l[1],r[1]);
   }
   return !strcmp(left->code,right->code);
+}
+
+static int boot_store_override(CheatSlot *slots,int *count,const CheatSlot *candidate,
+                               char *error,size_t error_capacity){
+  for(int i=0;i<*count;i++){
+    if(!boot_same_target(&slots[i],candidate)) continue;
+    memmove(&slots[i],&slots[i+1],(size_t)(*count-i-1)*sizeof *slots);
+    (*count)--;
+    break;
+  }
+  if(*count>=GML_MAX_CHEATS){
+    snprintf(error,error_capacity,"more than %d effective directives",GML_MAX_CHEATS);
+    return 0;
+  }
+  slots[(*count)++]=*candidate;
+  return 1;
+}
+
+static int boot_store_key_binding(const CheatSlot *candidate,CheatSlot *slots,int *count,
+                                  int line_number,char *error,size_t error_capacity){
+  unsigned port;
+  const char *scan=keyboard_binding_keys(candidate->code,&port);
+  if(scan){
+    int keys[GML_MAX_CHEATS];
+    unsigned char seen[256]={0};
+    int key_count=0;
+    do {
+      int key=keyboard_binding_key(&scan);
+      if(key<0 || seen[key] || key_count>=GML_MAX_CHEATS) break;
+      seen[key]=1;
+      keys[key_count++]=key;
+      if(*scan=='|' && keyboard_binding_buttons(scan+1,NULL)){
+        if(key_count==1)
+          return boot_store_override(slots,count,candidate,error,error_capacity);
+        /* Expand a chord into the same effective directives as its individual
+         * bindings. Layering and state identity continue to resolve by key. */
+        CheatSlot binding={0};
+        binding.enabled=1;
+        for(int i=0;i<key_count;i++){
+          snprintf(binding.code,sizeof binding.code,"keybind|%u|%d|%s",port+1u,keys[i],scan+1);
+          if(!boot_store_override(slots,count,&binding,error,error_capacity)) return 0;
+        }
+        return 1;
+      }
+    } while(*scan++==',');
+  }
+  snprintf(error,error_capacity,
+           "directive %d: keybind| takes port 1 to %u, a comma-separated list of keys from 2 to 255 and a comma-separated button list or auto",
+           line_number,(unsigned)ANYGM_MAX_GAMEPADS);
+  return 0;
 }
 
 int engine_boot_overrides_text(const CheatSlot *slots,int count,char *text,size_t capacity){
@@ -999,13 +1083,9 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
             return 0;
           }
         } else if(!strncmp(slot->code,"keybind|",8)){
-          int virtual_key,button;unsigned port;
-          if(!keyboard_binding_parse(slot->code,&virtual_key,&button,&port)){
-            snprintf(error,error_capacity,
-                     "directive %d: keybind| takes a RetroPad port from 1 to %u, a virtual key from 2 to 255 and a button or auto",
-                     line_number,(unsigned)ANYGM_MAX_GAMEPADS);
+          if(!boot_store_key_binding(slot,slots,count,line_number,error,error_capacity))
             return 0;
-          }
+          continue;
         } else if(!strncmp(slot->code,"introstep|",10)){
           int room,alarm;char object[64];
           if(!introstep_parse(slot->code,&room,object,sizeof object,&alarm)){
@@ -1048,17 +1128,7 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
             return 0;
           }
         }
-        for(int i=0;i<*count;i++){
-          if(!boot_same_target(&slots[i],slot)) continue;
-          memmove(&slots[i],&slots[i+1],(size_t)(*count-i-1)*sizeof *slots);
-          (*count)--;
-          break;
-        }
-        if(*count>=GML_MAX_CHEATS){
-          snprintf(error,error_capacity,"more than %d effective directives",GML_MAX_CHEATS);
-          return 0;
-        }
-        slots[(*count)++]=candidate;
+        if(!boot_store_override(slots,count,slot,error,error_capacity)) return 0;
       }
     }
     if(!line_end) break;
@@ -1814,18 +1884,18 @@ unsigned engine_overrides_gamepad_limit(AnygmEngine *engine){
   return ANYGM_MAX_GAMEPADS;
 }
 /* Binding declarations never select input ownership or alter physical keyboard state. */
-int engine_overrides_key_binding(AnygmEngine *engine,int virtual_key,unsigned *port){
+unsigned engine_overrides_key_button_mask(AnygmEngine *engine,int virtual_key,unsigned *port){
   if(port) *port=0;
   int active=engine_boot_cheats_active(engine);
   for(int i=0;i<active;i++){
-    int key,button;unsigned selected;
+    int key;unsigned buttons,selected;
     if(engine->boot_cheats[i].enabled &&
-       keyboard_binding_parse(engine->boot_cheats[i].code,&key,&button,&selected) && key==virtual_key){
-      if(port && button>=0) *port=selected;
-      return button;
+       keyboard_binding_parse(engine->boot_cheats[i].code,&key,&buttons,&selected) && key==virtual_key){
+      if(port && buttons) *port=selected;
+      return buttons;
     }
   }
-  return -1;
+  return 0;
 }
 /* Only explicitly bound ports add keyboard sources beyond the ordinary first pad. */
 unsigned engine_overrides_keyboard_bindings(AnygmEngine *engine,
@@ -1834,11 +1904,11 @@ unsigned engine_overrides_keyboard_bindings(AnygmEngine *engine,
   unsigned ports=0;
   int active=engine_boot_cheats_active(engine);
   for(int i=0;i<active;i++){
-    int key,button;unsigned port;
+    int key;unsigned mask,port;
     if(engine->boot_cheats[i].enabled &&
-       keyboard_binding_parse(engine->boot_cheats[i].code,&key,&button,&port) && button>=0){
+       keyboard_binding_parse(engine->boot_cheats[i].code,&key,&mask,&port) && mask){
       ports|=1u<<port;
-      if(buttons) buttons[port]|=1u<<(unsigned)button;
+      if(buttons) buttons[port]|=mask;
     }
   }
   return ports;

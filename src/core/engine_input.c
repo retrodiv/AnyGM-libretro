@@ -25,10 +25,8 @@ static void dbg_key_log(AnygmEngine *engine,int vk, int edge, int cur, int prev,
   if(!out || !dbg_key_enabled(engine)) return;
   engine_logf(engine,ANYGM_LOG_DEBUG,"[key] f%ld vk=%d edge=%d cur=%d prev=%d -> %d\n",engine->vm.frame,vk,edge,cur,prev,out);
 }
-/* map a GM virtual-key code to a RetroPad button id (-1 = unmapped) */
-static int vk_to_pad(AnygmEngine *engine,int vk,unsigned *port){
-  int declared=engine_overrides_key_binding(engine,vk,port);
-  if(declared>=0) return declared;
+/* Map a GM virtual key to its default RetroPad button (-1 = unmapped). */
+static int vk_to_default_pad(AnygmEngine *engine,int vk){
   if(anygm_policy_uses_classic_runtime(&engine->win)){
     switch(vk){
       case 37: return ANYGM_PAD_LEFT;
@@ -123,8 +121,18 @@ static int engine_input_key(void *userdata,int vk, int edge){
   int key_p = event_key_state_for_vk(engine,vk, 1);
   if(!engine_pad_reserved_for_pad_api(engine)){
     unsigned port=0;
-    int b = vk_to_pad(engine,vk,&port);
-    if(b >= 0){ pad_c=engine->pad_current[port][b]; pad_p=engine->pad_previous[port][b]; }
+    unsigned buttons=engine_overrides_key_button_mask(engine,vk,&port);
+    if(!buttons){
+      int button=vk_to_default_pad(engine,vk);
+      if(button>=0) buttons=1u<<(unsigned)button;
+    }
+    /* Compute edges after joining the declared pad buttons so a handoff
+     * between two held sources keeps the virtual key held. */
+    for(;buttons;buttons&=buttons-1u){
+      unsigned button=(unsigned)__builtin_ctz(buttons);
+      pad_c|=engine->pad_current[port][button];
+      pad_p|=engine->pad_previous[port][button];
+    }
   }
   /* A simulated press cancelled by its own frame's release is not readable in that frame: the
    * carry hands it to the following one, where the key events run. Reading it in both frames
