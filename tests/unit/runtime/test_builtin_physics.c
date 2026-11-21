@@ -155,6 +155,32 @@ static void binding_origin_and_phase(void){
   gml_vm_free(&vm);
 }
 
+/* A room change destroys every body. An instance that survives it keeps the ordinary coordinates
+ * written before the change, and the next world builds its body there with no carried motion. */
+static void room_change_rebuilds_body(void){
+  GmlVM vm; GmlWin win; setup(&vm,&win);
+  CALL(&vm,"physics_world_gravity",0,0);
+  vm.objects[0].physics_enabled=1;
+  vm.objects[0].physics_shape=0;
+  vm.objects[0].physics_point_count=1;
+  vm.objects[0].physics_point[0][0]=4;
+  vm.objects[0].physics_density=1;
+  vm.inst[0].x=10; vm.inst[0].y=20;
+  step(&vm,1);
+  assert(get(&vm,0,"phy_position_x")==10 && get(&vm,0,"phy_position_y")==20);
+  assert(gml_physics_variable_set(&vm,&vm.inst[0],"phy_linear_velocity_x",vreal(30)));
+  assert(gml_physics_variable_set(&vm,&vm.inst[0],"phy_fixed_rotation",vreal(1)));
+  vm.inst[0].x=500; vm.inst[0].y=600;
+  gml_builtin_physics_room_reset(&vm);
+  CALL(&vm,"physics_world_gravity",0,0);
+  step(&vm,1);
+  assert(vm.inst[0].x==500 && vm.inst[0].y==600);
+  assert(get(&vm,0,"phy_position_x")==500 && get(&vm,0,"phy_position_y")==600);
+  assert(get(&vm,0,"phy_linear_velocity_x")==0 && get(&vm,0,"phy_fixed_rotation")==0);
+  assert(get(&vm,0,"phy_mass")>0);
+  gml_vm_free(&vm);
+}
+
 static void floor_joints_and_restore(void){
   GmlVM vm; GmlWin win; setup(&vm,&win);
   bind_box(&vm,0,0,100,100,5,0);
@@ -1769,7 +1795,7 @@ int main(void){
   particle_kernel_flags();
   if(!particle_configuration()) return EXIT_FAILURE;
   error_output_control();
-  units_and_ownership(); offset_and_rotation(); binding_origin_and_phase(); floor_joints_and_restore(); filtering_and_sensors(); malformed_geometry_and_mass();
+  units_and_ownership(); offset_and_rotation(); binding_origin_and_phase(); floor_joints_and_restore(); room_change_rebuilds_body(); filtering_and_sensors(); malformed_geometry_and_mass();
   if(!bound_fixture_properties()) return EXIT_FAILURE;
   direct_joint_constructors();
   motor_joint_constructors();
@@ -1782,6 +1808,6 @@ int main(void){
   chain_state_budget();
   outline_geometry();
   instance_debug_drawing();
-  puts("physics: units, fixture lifetime, offsets, rotation, contacts, joints and restore passed");
+  puts("physics: units, fixture lifetime, offsets, rotation, room changes, contacts, joints and restore passed");
   return 0;
 }

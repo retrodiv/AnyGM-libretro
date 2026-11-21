@@ -107,6 +107,24 @@ uint32_t gml_physics_bind_fixture(GmlVM *vm,const GmlPhysicsFixture *source,
   return id;
 }
 
+/* A room change destroys the physics world together with every body in it. An instance that
+ * survives the change keeps its ordinary x, y and image_angle, and the next world builds its body
+ * from those, so a coordinate written just before the change is where it appears. Clearing the
+ * body state rather than the keys keeps the instance's variable map unchanged in shape. */
+void gml_physics_discard_body(GmlInstance *in){
+  if(!in || value(in,"__phy_body",0)<=0) return;
+  static const char *const reset[]={
+    "__phy_body","__phy_offset_x","__phy_offset_y","__phy_kinematic","__phy_force_x",
+    "__phy_force_y","__phy_torque","__phy_mass_override","__phy_center_x","__phy_center_y",
+    "phy_linear_velocity_x","phy_linear_velocity_y","phy_angular_velocity","phy_bullet",
+    "phy_fixed_rotation","phy_linear_damping","phy_angular_damping"
+  };
+  for(size_t i=0;i<sizeof reset/sizeof reset[0];i++)
+    if(gml_varmap_get(&in->vars,reset[i])) store(in,reset[i],0);
+  store(in,"phy_position_x",in->x); store(in,"phy_position_y",in->y);
+  store(in,"phy_rotation",-in->image_angle); store(in,"phy_active",1);
+}
+
 void gml_physics_initialize_body(GmlVM *vm,GmlInstance *in){
   if(!gml_physics_body_enabled(vm,in) || initialized(in)) return;
   initialize_values(in,0,0);

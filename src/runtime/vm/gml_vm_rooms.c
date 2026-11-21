@@ -2443,6 +2443,71 @@ void gml_vm_warm_audio_for_room_window(GmlVM *vm){
 static int room_creation_pending(const GmlInstance *in){
   return !in->marked && (in->active || in->deactivated);
 }
+/* Room Start (Other_4). Every instance present when the dispatch begins receives it once, in
+ * pool order. An instance created while that dispatch runs normally waits for the next room:
+ * an event that creates an instance of its own object would otherwise feed itself.
+ *
+ * Second-generation Studio walks its events resource by resource, so a handler can create an
+ * instance of an object whose turn has not come yet, and that instance still receives the event.
+ * Under that policy a creation joins the dispatch when its object's resource index is above the
+ * index of the object whose instance was being dispatched. Each such link climbs the resource
+ * order, so the dispatch always ends; a creation at or below the creator's index waits as before.
+ * Late members run after the present ones, lowest resource index first and newest first within
+ * one object, which is the order the resource dispatcher gives them. */
+static void room_start_dispatch(GmlVM *vm){
+  int n0=vm->inst_count;
+  int later=vm->win && !anygm_policy_uses_classic_runtime(vm->win) &&
+            anygm_policy_resource_major_normal_step(vm->win);
+  if(!later){
+    for(int i=0;i<n0;i++) if(vm->inst[i].active && !vm->inst[i].marked)
+      gml_run_event(vm,&vm->inst[i],"Other_4");
+    return;
+  }
+  /* Pending late members, by instance id. */
+  uint32_t *late=NULL; int late_n=0, late_cap=0;
+  for(int step=0;;step++){
+    GmlInstance *in=NULL;
+    if(step<n0){
+      in=&vm->inst[step];
+      if(!in->active || in->marked) continue;
+    } else {
+      /* Select the eligible pending instance with the lowest object index; newest first. */
+      int best=-1, best_slot=-1;
+      for(int k=0;k<late_n;k++){
+        int slot=-1;
+        for(int i=0;i<vm->inst_count;i++)
+          if(vm->inst[i].id==late[k]){ slot=i; break; }
+        if(slot<0 || !vm->inst[slot].active || vm->inst[slot].marked){
+          late[k]=late[--late_n]; k--; continue;
+        }
+        if(best<0 || vm->inst[slot].obj<vm->inst[best_slot].obj ||
+           (vm->inst[slot].obj==vm->inst[best_slot].obj && late[k]>late[best])){
+          best=k; best_slot=slot;
+        }
+      }
+      if(best<0) break;
+      in=&vm->inst[best_slot];
+      late[best]=late[--late_n];
+    }
+    uint32_t first_new=vm->next_id;
+    int creator_obj=in->obj;
+    gml_run_event(vm,in,"Other_4");
+    if(vm->next_id==first_new) continue;
+    for(int i=0;i<vm->inst_count;i++){
+      GmlInstance *created=&vm->inst[i];
+      if(!created->active || created->marked || created->id<first_new ||
+         created->id>=vm->next_id || created->obj<=creator_obj) continue;
+      if(late_n==late_cap){
+        int cap=late_cap?late_cap*2:16;
+        uint32_t *grown=realloc(late,(size_t)cap*sizeof(*grown));
+        if(!grown) break;
+        late=grown; late_cap=cap;
+      }
+      late[late_n++]=created->id;
+    }
+  }
+  free(late);
+}
 void gml_room_enter(GmlVM *vm, int room_index){
   gml_colgrid_invalidate(vm);
   int prev_room=vm->room_index;
@@ -2551,9 +2616,7 @@ void gml_room_enter(GmlVM *vm, int room_index){
       gml_obj_alive_adjust(vm,in->obj,1); gml_vm_instances_link(vm,in);
     }
     room_bind_instance_layers(vm,room_index,0);
-    int n0=vm->inst_count;
-    for(int i=0;i<n0;i++) if(vm->inst[i].active && !vm->inst[i].marked)
-      gml_run_event(vm,&vm->inst[i],"Other_4");
+    room_start_dispatch(vm);
     gml_fire_gamepad_connected(vm);
     gml_vm_instances_reap(vm); gml_vm_instances_rebase_order(vm);
     gml_vm_warm_audio_for_room(vm,vm->room_index); gml_vm_prefetch_room_assets(vm);
@@ -2792,10 +2855,7 @@ void gml_room_enter(GmlVM *vm, int room_index){
     gml_varmap_free_ex(&cc_scratch.vars,0);
     memset(&cc_scratch.vars,0,sizeof cc_scratch.vars);
   }
-  /* Room Start (Other_4) for the instances that existed at room start */
-  n0 = vm->inst_count;
-  for(int i=0;i<n0;i++) if(vm->inst[i].active && !vm->inst[i].marked)
-    gml_run_event(vm,&vm->inst[i],"Other_4");
+  room_start_dispatch(vm);
   /* Emit GM's asynchronous gamepad-discovered event so event-driven input can retain a device id. */
   gml_fire_gamepad_connected(vm);
   gml_vm_instances_reap(vm);

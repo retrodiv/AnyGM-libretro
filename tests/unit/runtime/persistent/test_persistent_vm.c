@@ -1909,6 +1909,127 @@ int expect_initial_create_redirect_begin_step(void){
   return ok;
 }
 
+/* Room Start reaches a creation only under second-generation Studio's resource-major dispatch,
+ * and only for an object later in resource order than the instance whose handler created it.
+ * Earlier generations keep the dispatch to the instances present when it began. */
+static int expect_room_start_creation_revision(int revision){
+  GmlcProject project={0};
+  GmlcObject objects[3]={{0}};
+  GmlcObjectEvent events[3]={{0}};
+  GmlcRoom room={0};
+  GmlcRoomInstance placed={0};
+  int room_order[1]={0};
+  AnygmHostServices services={0};
+  char paths[4][64]={
+    "/tmp/gml-room-start-earlier-XXXXXX",
+    "/tmp/gml-room-start-creator-XXXXXX",
+    "/tmp/gml-room-start-later-XXXXXX",
+    "/tmp/gml-room-start-package-XXXXXX"
+  };
+  const char *sources[3]={
+    "global.earlier_hits+=1;\n",
+    "global.creator_hits+=1;\n"
+    "if(global.creator_hits==1){\n"
+    "  instance_create_depth(0,0,0,obj_earlier);\n"
+    "  instance_create_depth(0,0,0,obj_creator);\n"
+    "  instance_create_depth(0,0,0,obj_later);\n"
+    "}\n",
+    "global.later_hits+=1;\n"
+  };
+  int created=0,ok=0;
+  for(int index=0;index<4;index++){
+    int fd=mkstemp(paths[index]);
+    if(fd<0) goto cleanup;
+    close(fd);
+    created++;
+    if(index<3 && !fixture_write_text(paths[index],sources[index])) goto cleanup;
+  }
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  project.name="room-start-creation-fixture";
+  project.host=&services;
+  project.objects=objects;
+  project.n_objects=project.cap_objects=3;
+  project.rooms=&room;
+  project.n_rooms=project.cap_rooms=1;
+  project.room_order=room_order;
+  project.n_room_order=1;
+  const char *object_names[3]={"obj_earlier","obj_creator","obj_later"};
+  for(int index=0;index<3;index++){
+    objects[index].id=objects[index].name=(char*)object_names[index];
+    objects[index].sprite_id=objects[index].mask_id=objects[index].parent_id=-1;
+    objects[index].visible=1;
+    objects[index].events=&events[index];
+    objects[index].n_events=objects[index].cap_events=1;
+    events[index].event_type=7;
+    events[index].event_number=4;
+    events[index].source_path=paths[index];
+  }
+  room.id=room.name=(char*)"room_start";
+  room.width=320;
+  room.height=240;
+  room.speed=60;
+  placed.id=placed.name=(char*)"placed_creator";
+  placed.object_id=1;
+  placed.instance_id=100000;
+  room.instances=&placed;
+  room.n_instances=room.cap_instances=1;
+  {
+    char error[256]={0};
+    if(!gmlc_package_write_structural(&project,paths[3],error,sizeof error)){
+      fprintf(stderr,"Room Start creation package failed: %s\n",error);
+      goto cleanup;
+    }
+    GmlWin win;
+    if(anygm_stdio_load_win(&win,paths[3])) goto cleanup;
+    win.bytecode=revision;
+    AnygmContentFacts facts={0};
+    AnygmCompatibilityProfile profile={0};
+    if(!anygm_content_facts_detect(&win,&facts,error,sizeof error) ||
+       !anygm_compatibility_resolve(&facts,&profile,error,sizeof error)){
+      fprintf(stderr,"Room Start creation profile failed: %s\n",error);
+      gml_win_free(&win);
+      goto cleanup;
+    }
+    win.compatibility=&profile;
+    GmlVM vm;
+    if(gml_vm_init(&vm,&win,&services)){
+      win.compatibility=NULL;
+      gml_win_free(&win);
+      goto cleanup;
+    }
+    *gml_varmap_put(&vm.globals,"earlier_hits")=vreal(0);
+    *gml_varmap_put(&vm.globals,"creator_hits")=vreal(0);
+    *gml_varmap_put(&vm.globals,"later_hits")=vreal(0);
+    gml_room_enter(&vm,0);
+    GmlVal *earlier=gml_varmap_get(&vm.globals,"earlier_hits");
+    GmlVal *creator=gml_varmap_get(&vm.globals,"creator_hits");
+    GmlVal *later=gml_varmap_get(&vm.globals,"later_hits");
+    double expected_later=revision>=17?1:0;
+    ok=earlier && earlier->t==V_REAL && earlier->d==0 &&
+       creator && creator->t==V_REAL && creator->d==1 &&
+       later && later->t==V_REAL && later->d==expected_later;
+    if(!ok)
+      fprintf(stderr,"revision %d Room Start creation mismatch: earlier=%.0f creator=%.0f later=%.0f\n",
+        revision,earlier&&earlier->t==V_REAL?earlier->d:-1.0,
+        creator&&creator->t==V_REAL?creator->d:-1.0,later&&later->t==V_REAL?later->d:-1.0);
+    gml_vm_free(&vm);
+    win.compatibility=NULL;
+    gml_win_free(&win);
+  }
+cleanup:
+  for(int index=0;index<created;index++) unlink(paths[index]);
+  return ok;
+}
+
+int expect_room_start_creation(void){
+  int ok=1;
+  for(int revision=16;revision<=17;revision++)
+    if(!expect_room_start_creation_revision(revision)) ok=0;
+  return ok;
+}
+
 int expect_room_transition_animation_phase(void){
   GmlcProject project={0};
   GmlcSprite project_sprite={0};

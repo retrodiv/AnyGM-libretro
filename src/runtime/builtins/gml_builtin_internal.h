@@ -260,6 +260,7 @@ GmlPhysicsFixture *gml_physics_fixture_new(GmlVM *vm,int units);
 void gml_physics_fixture_drop(GmlPhysicsFixture *fixture);
 double gml_physics_world_scale(GmlVM *vm);
 void gml_physics_initialize_body(GmlVM *vm,GmlInstance *instance);
+void gml_physics_discard_body(GmlInstance *instance);
 int gml_physics_copy_requires_unbound(const GmlVM *vm,const GmlInstance *source);
 int gml_physics_copy_omits_key(const char *name);
 uint32_t gml_physics_bind_fixture(GmlVM *vm,const GmlPhysicsFixture *fixture,

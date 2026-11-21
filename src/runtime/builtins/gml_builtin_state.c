@@ -483,6 +483,11 @@ static void builtin_state_physics_reset(GmlBuiltinState *state){
 
 void gml_builtin_physics_room_reset(GmlVM *vm){
   builtin_state_physics_reset(gml_builtin_state_ensure(vm));
+  if(!vm) return;
+  for(int i=0;i<vm->inst_count;i++){
+    GmlInstance *in=&vm->inst[i];
+    if((in->active || in->deactivated) && !in->room_dormant) gml_physics_discard_body(in);
+  }
 }
 
 void gml_builtin_state_reset(GmlBuiltinState *state){
