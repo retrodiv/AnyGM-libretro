@@ -598,6 +598,8 @@ int gml_room_layer_data_off(GmlVM *vm);
 unsigned long gml_vm_unset_reads(const GmlVM *vm);
 uint32_t gml_room_layer_type_off(GmlVM *vm, uint32_t lp);  /* per-layer type-data offset with effect fields */
 void gml_struct_gc(GmlVM *vm);
+/* Whether the between-frames collection should run before this frame's step. */
+int gml_vm_periodic_collection_due(const GmlVM *vm);
 /* Array lvalue keys stay exactly representable in writable bytecode views. */
 #define GML_ARRAY_OWNER_MAX UINT64_C(9007199254740991)
 void gml_path_eval_public(GmlVM *vm, int pi, double t, double *ox, double *oy);

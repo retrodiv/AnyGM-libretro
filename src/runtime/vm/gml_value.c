@@ -164,6 +164,9 @@ int gml_array_heap_collection_due(const GmlArrayHeap *heap){
   if(nodes<256u) nodes=256u;
   return heap->new_nodes>=nodes || heap->new_bytes>=8u*1024u*1024u;
 }
+int gml_array_heap_grew_since_sweep(const GmlArrayHeap *heap){
+  return heap && (heap->new_nodes>0 || heap->new_bytes>0);
+}
 void gml_array_heap_sweep(GmlArrayHeap *heap,unsigned epoch){
   if(!heap) return;
   for(GmlArr *array=heap->first,*next;array;array=next){

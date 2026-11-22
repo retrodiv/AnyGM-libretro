@@ -43,6 +43,9 @@ void gml_arr_row_ensure(GmlArr *array, int row);
  * address so a transactional engine move preserves its allocation ownership. */
 size_t gml_array_heap_count(const GmlArrayHeap *heap);
 int gml_array_heap_collection_due(const GmlArrayHeap *heap);
+/* Whether anything was adopted since the last sweep. Without an adoption the tracked set can only
+ * have lost references, so a collection could free memory but never bound a growing heap. */
+int gml_array_heap_grew_since_sweep(const GmlArrayHeap *heap);
 void gml_array_heap_sweep(GmlArrayHeap *heap, unsigned epoch);
 void gml_array_heap_destroy(GmlArrayHeap **heap);
 void gml_array_heap_mark_text(GmlArrayHeap *heap,const char *text,unsigned epoch);

@@ -213,8 +213,50 @@ static int collection_work_is_amortized_over_live_values(void){
   return ok;
 }
 
+/* A heap that adopted nothing since its sweep keeps its retained set without a periodic walk;
+ * a new adoption or a live struct restores the period, and dropped roots are released then. */
+static int an_unchanged_heap_skips_the_periodic_pass(void){
+  GmlWin content={0};GmlVM vm;
+  if(gml_vm_init(&vm,&content,NULL))return 0;
+  int ok=1;
+#define PERIOD_EXPECT(condition) do { if(!(condition)){ \
+  fprintf(stderr,"periodic pass: %s\n",#condition);ok=0;goto period_done; \
+} }while(0)
+  GmlVal kept=gml_arr_new(8,vreal(1));
+  PERIOD_EXPECT(kept.t==V_ARR && kept.arr);
+  PERIOD_EXPECT(gml_array_heap_adopt(&vm.array_heap,kept));
+  *gml_varmap_put(&vm.globals,"kept")=kept;
+  vm.frame=vm.structs_last_gc_frame+120;
+  PERIOD_EXPECT(gml_vm_periodic_collection_due(&vm));
+  vm.structs_last_gc_frame=vm.frame; gml_struct_gc(&vm);
+  PERIOD_EXPECT(gml_array_heap_count(vm.array_heap)==1);
+  vm.frame+=1000;
+  PERIOD_EXPECT(!gml_vm_periodic_collection_due(&vm));
+  *gml_varmap_get(&vm.globals,"kept")=vreal(0);
+  PERIOD_EXPECT(!gml_vm_periodic_collection_due(&vm));
+  {GmlVal temporary=gml_arr_new(0,vreal(0));
+    PERIOD_EXPECT(temporary.t==V_ARR && temporary.arr);
+    PERIOD_EXPECT(gml_array_heap_adopt(&vm.array_heap,temporary));}
+  PERIOD_EXPECT(gml_vm_periodic_collection_due(&vm));
+  vm.structs_last_gc_frame=vm.frame; gml_struct_gc(&vm);
+  PERIOD_EXPECT(gml_array_heap_count(vm.array_heap)==0);
+  vm.frame+=119;
+  PERIOD_EXPECT(!gml_vm_periodic_collection_due(&vm));
+  {GmlInstance *live=gml_struct_new(&vm);
+    PERIOD_EXPECT(live);
+    *gml_varmap_put(&vm.globals,"live")=vreal((double)live->id);}
+  PERIOD_EXPECT(!gml_vm_periodic_collection_due(&vm));
+  vm.frame+=1;
+  PERIOD_EXPECT(gml_vm_periodic_collection_due(&vm));
+ period_done:
+  gml_vm_free(&vm);
+#undef PERIOD_EXPECT
+  return ok;
+}
+
 int main(void){
   int ok=1;
+  ok &= an_unchanged_heap_skips_the_periodic_pass();
   ok &= collection_work_is_amortized_over_live_values();
   ok &= a_shared_graph_is_walked_once_per_array();
   ok &= a_cycle_terminates();

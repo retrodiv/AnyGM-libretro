@@ -1748,6 +1748,18 @@ static void gc_scan_vm(GmlVM *vm, GmlVarMap *m, GmlInstance ***wl, int *wn, int 
   if(!m || !m->slots) return;
   for(int i=0;i<m->cap;i++) if(m->slots[i].key) gc_scan_val(vm,m->slots[i].val,wl,wn,wcap);
 }
+/* The periodic pass bounds what step code leaves behind. A live struct keeps its 120-frame period.
+ * With none, the period waits for the tracked array and text heap to adopt something: a heap that
+ * has adopted nothing since its last sweep cannot have grown, and walking a large retained set
+ * unchanged since that sweep would only repeat its result as a periodic stall. Releasing arrays
+ * and text is not observable to content, and the allocation budget still triggers on its own. */
+int gml_vm_periodic_collection_due(const GmlVM *vm){
+  if(!vm) return 0;
+  if(gml_array_heap_collection_due(vm->array_heap)) return 1;
+  if(vm->frame - vm->structs_last_gc_frame < 120) return 0;
+  int live_structs=vm->n_structs>0 && vm->n_struct_free<vm->n_structs;
+  return live_structs || gml_array_heap_grew_since_sweep(vm->array_heap);
+}
 void gml_struct_gc(GmlVM *vm){
   if(!vm || vm->execution_depth>0) return;
   /* No slot can be reached or swept when the complete pool is already free. */
