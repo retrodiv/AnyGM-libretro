@@ -361,6 +361,7 @@ int gml_vm_init_launch(GmlVM *vm,GmlWin *win,const AnygmHostServices *host,
   vm->diagnostics.collision_candidate_debug=-1;
   vm->diagnostics.collision_candidate_last_frame=-1;
   vm->diagnostics.collision_event_time_enabled=-1;
+  vm->diagnostics.builtin_dispatch_settings=-1;
   vm->diagnostics.rng_call_logging=-1;
   vm->diagnostics.state_variable_debug=-1;
   vm->diagnostics.state_variable_load_debug=-1;
@@ -559,6 +560,7 @@ void gml_vm_free(GmlVM *vm){
   free(vm->code_static); free(vm->code_static_init);
   vm->code_static=NULL; vm->code_static_init=NULL; vm->code_static_count=0;
   free(vm->state_sort_slots); vm->state_sort_slots=NULL; vm->state_sort_slots_capacity=0;
+  gml_vm_state_key_cache_free(vm);
   for(int i=0;i<vm->n_structs;i++) free(vm->structs[i]);
   free(vm->structs); free(vm->struct_gen); free(vm->struct_free);
   free(vm->inst);

@@ -22,6 +22,8 @@ struct GmlRoomVisualState;
 #define GML_GAME_CHANGE_TEXT_MAX 1024
 #define GML_PARAMETER_COUNT_MAX 64
 #define GML_PARAMETER_TEXT_MAX 256
+#define GML_VM_INSTANCE_FIELD_NAMES 38
+
 typedef struct {
   int     active;      /* slot in use */
   int     marked;      /* pending destroy */
@@ -254,6 +256,13 @@ typedef struct {
   int collision_line_setting_initialized;
   char collision_line_setting[16];
   int collision_event_time_enabled;
+  /* Development settings read on every builtin call, code run or drawn instance. Their values are
+   * fixed for the session, so each is read once: -1 until then. */
+  int builtin_dispatch_settings;
+  int code_args_setting_read;
+  const char *code_args_setting;
+  int draw_skip_setting_read;
+  const char *draw_skip_setting;
   int rng_call_logging;
   /* How many values the sequence has produced. A change in consumption moves the whole scene
    * downstream without necessarily moving any single frame, so it is the one number that catches a
@@ -361,6 +370,11 @@ typedef struct GmlVM {
    * initialization latch driven by the isstaticok/setstatic bytecode pair. */
   GmlVarMap *code_static; unsigned char *code_static_init; int code_static_count;
   GmlVarSlot **state_sort_slots; int state_sort_slots_capacity;
+  struct GmlVmStateKeyCache *state_key_cache;   /* maps' sorted keys, across state writes */
+  size_t state_string_capacity_hint;
+  /* Name hashes of the instance fields var_get_h answers directly; filled on first use. */
+  uint32_t instance_field_hash[GML_VM_INSTANCE_FIELD_NAMES];
+  int instance_field_hash_ready;            /* string table size the last state write reached */
   /* Heap strings reconstructed from a state and borrowed by its values. One pool owns them
    * because a restored string may be aliased across runtime containers. */
   char **state_runtime_strings; int state_runtime_string_count, state_runtime_string_capacity;
@@ -369,6 +383,9 @@ typedef struct GmlVM {
   int *obj_alive;    /* live instances per object INCLUDING descendants (family counts; runtime-only) */
   int *obj_head;     /* per exact object type: first live instance slot (-1 none; runtime-only) */
   int *inst_next, *inst_prev;   /* doubly-linked per-type instance lists over pool slots */
+  /* The pool slot of the last instance found by id. Ids are never shared by two slots, so a slot
+   * that still carries the id is the one a scan would find; anything else is ignored. */
+  int instance_id_hint;
   long obj_list_gen; /* bumped on any create/destroy/change — invalidates per-frame candidate caches */
   GmlPath *paths; int n_paths;
   int n_authored_paths;      /* paths parsed from PATH; anything above came from path_add */
@@ -478,6 +495,7 @@ typedef struct GmlVM {
   int      code_depth;       /* number of entries, including unrecorded deeper frames */
   int      callv_reports;    /* diagnostics only: bounded stack-balance reports */
   int32_t call_script_ci;   /* side channel: generic dispatch reports "name resolved to script <ci>" for the caller's per-site cache */
+  const char *unknown_builtin_name; /* side channel: the name the generic dispatch last answered as an unknown builtin */
   const char *cur_event; int cur_event_obj;   /* current event suffix + object level (for event_inherited) */
   int      event_type, event_number;          /* transient GM event_type/event_number builtins */
   GmlVal script_args[16]; int script_argc;     /* current script argumentN/argument_count */
@@ -729,6 +747,10 @@ int          gml_object_is(GmlVM *vm, int obj, int target);  /* obj == target or
 int          gml_object_set_parent(GmlVM *vm, int obj, int parent); /* cycle-safe runtime hierarchy mutation */
 int          gml_object_index_by_name(GmlVM *vm, const char *name);  /* -1 if not found */
 GmlInstance *gml_find_instance(GmlVM *vm, int obj);          /* first active instance of obj (or child) */
+GmlInstance *gml_vm_live_instance_with_id(GmlVM *vm, int id); /* active, unmarked instance with this id */
+/* The object and its descendants whose per-object instance lists (obj_head/inst_next) together
+ * hold every instance an object-index target can name; NULL when those lists are unavailable. */
+const int *gml_vm_object_family(GmlVM *vm, int obj, int *count);
 int          gml_run_event(GmlVM *vm, GmlInstance *in, const char *suffix); /* e.g. "Create_0" */
 /* Whether an object, or an ancestor of it, registers a handler for an event suffix. Performing an
  * event needs the answer to resolve which handler a name reaches, so it belongs to the VM's

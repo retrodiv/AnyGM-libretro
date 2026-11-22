@@ -35,6 +35,7 @@ static void engine_graphics_lose_scene_context(AnygmEngine *engine){
 }
 
 AnygmResult anygm_graphics_context_reset(AnygmEngine *engine,const AnygmGraphicsContext *context){
+  engine_state_prepared_discard(engine);
   GmlGpuContext adopted;
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD) return ANYGM_ERROR_INVALID_STATE;
   if(!context || context->struct_size<sizeof *context) return ANYGM_ERROR_INCOMPATIBLE_ABI;
@@ -98,6 +99,7 @@ void engine_graphics_bind_renderer(AnygmEngine *engine){
 }
 
 void anygm_graphics_context_destroy(AnygmEngine *engine,uint32_t context_is_current){
+  engine_state_prepared_discard(engine);
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD) return;
   engine_graphics_release(engine,context_is_current?1:0);
 }
@@ -1091,12 +1093,14 @@ void engine_graphics_bind_renderer(AnygmEngine *engine){
 }
 
 AnygmResult anygm_graphics_context_reset(AnygmEngine *engine,const AnygmGraphicsContext *context){
+  engine_state_prepared_discard(engine);
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD) return ANYGM_ERROR_INVALID_STATE;
   if(!context || context->struct_size<sizeof *context) return ANYGM_ERROR_INCOMPATIBLE_ABI;
   return ANYGM_ERROR_UNSUPPORTED;
 }
 
 void anygm_graphics_context_destroy(AnygmEngine *engine,uint32_t context_is_current){
+  engine_state_prepared_discard(engine);
   (void)engine;
   (void)context_is_current;
 }

@@ -54,7 +54,10 @@ The lifecycle in `src/api/anygm.h` is deliberately small:
 5. It uses `anygm_state_size`, `anygm_state_save`, and `anygm_state_load` for complete save states.
    A high-frequency in-memory resume ring may instead size and write the explicit frame-free form
    with `anygm_state_resume_size` and `anygm_state_save_for_resume`; both forms load through the
-   same transactional reader.
+   same transactional reader. A host that knows its next call is a save, as a rewind ring
+   recording every Nth frame does, may call `anygm_state_prepare` as that frame ends: the engine
+   then writes the state's sections while the host presents, and the save completes from them
+   with the bytes it would have written alone. Any other call discards that work first.
 6. It calls `anygm_unload` and `anygm_destroy` at the corresponding lifecycle
    boundaries.
 

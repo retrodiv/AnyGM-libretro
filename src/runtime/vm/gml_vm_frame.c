@@ -2028,7 +2028,11 @@ void gml_vm_draw(GmlVM *vm){
       continue; }
     GmlInstance *in=&vm->inst[it[k].idx];
     if(vm->draw_events_off) continue;   /* draw_enable_drawevent(false): no instance drawing */
-    { const char *sk=anygm_host_development_setting(vm->host,"GML_SKIP");                  /* debug: skip drawing a named object */
+    if(!vm->diagnostics.draw_skip_setting_read){
+      vm->diagnostics.draw_skip_setting=anygm_host_development_setting(vm->host,"GML_SKIP");
+      vm->diagnostics.draw_skip_setting_read=1;
+    }
+    { const char *sk=vm->diagnostics.draw_skip_setting;                  /* debug: skip drawing a named object */
       if(sk && in->obj>=0 && in->obj<vm->n_objects && vm->objects[in->obj].name
          && strstr(vm->objects[in->obj].name,sk)) continue; }
     if(in->visible<0.5) continue;   /* GM: an invisible instance runs neither

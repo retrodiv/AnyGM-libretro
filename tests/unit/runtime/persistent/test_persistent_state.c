@@ -227,7 +227,7 @@ int expect_vm_state_map_string_replacement(void){
     free(first); free(second);
   }
   if(!ok) fputs("map string replacement changed text or canonical state bytes\n",stderr);
-  gml_vm_free(&vm); free(win.str_hix);
+  gml_vm_free(&vm); free(win.str_hix);free(win.str_hix_hash);
   return ok;
 }
 
@@ -327,6 +327,6 @@ int expect_vm_state_case(void){
   free(second);
   free(first);
   gml_vm_free(&vm);
-  free(win.str_hix);
+  free(win.str_hix);free(win.str_hix_hash);
   return ok;
 }

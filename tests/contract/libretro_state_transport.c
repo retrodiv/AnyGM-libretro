@@ -135,6 +135,8 @@ AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size
   complete_saves++;
   return ANYGM_OK;
 }
+static unsigned stub_prepare_calls;
+void anygm_state_prepare(AnygmEngine *engine){ (void)engine; stub_prepare_calls++; }
 AnygmResult anygm_state_save_for_resume(AnygmEngine *engine,void *data,size_t capacity,
                                         size_t *written){
   (void)engine;
@@ -327,6 +329,39 @@ static int stable_transport(int negotiation_result){
   free(state);
   retro_unload_game();
   if(g_libretro.fixed_state_capacity!=0) ok=0;
+  retro_deinit();
+  return ok;
+}
+
+/* A rewind ring saves every Nth tick. Once one interval has repeated, the tick that completes the
+ * next announces the save to the engine, so the runtime section can be written while the frontend
+ * presents; a restored state forgets the interval, and only an interval seen twice predicts. */
+static int repeated_save_interval_announces_the_next_save(void){
+  stub_state_bytes=113u;
+  if(!begin_frontend(0)) return 0;
+  stub_capacity_reserve=4u*1024u*1024u;
+  const size_t capacity=retro_serialize_size();
+  uint8_t *state=(uint8_t *)malloc(capacity);
+  int ok=state!=NULL;
+  unsigned announced[4]={0};
+  for(int save=0;ok && save<4;save++){
+    unsigned before=stub_prepare_calls;
+    for(int tick=0;tick<3;tick++) retro_run();
+    announced[save]=stub_prepare_calls-before;
+    ok=retro_serialize(state,capacity);
+  }
+  /* The second save repeats the first interval of three ticks, so the third and fourth saves are
+   * announced, each once, on the tick that completes the interval. */
+  if(!ok || announced[0] || announced[1] || announced[2]!=1 || announced[3]!=1)
+    fprintf(stderr,"save announcements: %u %u %u %u\n",announced[0],announced[1],announced[2],
+            announced[3]);
+  if(ok) ok=!announced[0] && !announced[1] && announced[2]==1 && announced[3]==1;
+  if(ok) ok=retro_unserialize(state,capacity);
+  unsigned before=stub_prepare_calls;
+  for(int tick=0;ok && tick<3;tick++) retro_run();
+  if(ok) ok=stub_prepare_calls==before;
+  free(state);
+  retro_unload_game();
   retro_deinit();
   return ok;
 }
@@ -862,6 +897,7 @@ int main(void){
      !cold_required_state_fits_without_a_declaration(1)) return 1;
   if(retro_serialize_size()!=0 || retro_serialize(&byte,1) || retro_unserialize(&byte,1) ||
      !stable_transport(1) || !stable_transport(0) || !stable_transport(-1) ||
+     !repeated_save_interval_announces_the_next_save() ||
      !first_size_query_after_gameplay_respects_negotiation(1) ||
      !first_size_query_after_gameplay_respects_negotiation(0) ||
      !first_size_query_after_gameplay_respects_negotiation(-1) ||

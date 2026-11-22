@@ -80,6 +80,7 @@ int main(int argc,char **argv){
   };
   static const AnygmTestCase audio_cases[]={
     {"ogg_stream_windows",expect_ogg_stream_windows},
+    {"stored_compressed_sound_streams",expect_stored_compressed_sound_streams},
     {"room_audio_condition_cache",expect_room_audio_condition_cache},
     {"room_audio_stream_prefetch",expect_room_audio_stream_prefetch},
     {"room_audio_scan_cache_ownership",expect_room_audio_scan_cache_ownership},

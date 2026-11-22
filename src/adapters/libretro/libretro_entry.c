@@ -3,6 +3,7 @@
  */
 #include "libretro_internal.h"
 
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -241,6 +242,10 @@ void retro_get_system_info(struct retro_system_info *info){
   info->block_extract=true;
 }
 
+static double content_fps(void){
+  return g_libretro.av.frames_per_second>0?g_libretro.av.frames_per_second:60.0;
+}
+
 static void fill_av_info(struct retro_system_av_info *info){
   memset(info,0,sizeof *info);
   info->geometry.base_width=g_libretro.av.base_width?g_libretro.av.base_width:288;
@@ -248,7 +253,7 @@ static void fill_av_info(struct retro_system_av_info *info){
   info->geometry.max_width=g_libretro.av.max_width?g_libretro.av.max_width:3840;
   info->geometry.max_height=g_libretro.av.max_height?g_libretro.av.max_height:2160;
   info->geometry.aspect_ratio=g_libretro.av.aspect_ratio>0?(float)g_libretro.av.aspect_ratio:4.0f/3.0f;
-  info->timing.fps=g_libretro.av.frames_per_second>0?g_libretro.av.frames_per_second:60.0;
+  info->timing.fps=g_libretro.presented_fps>0?g_libretro.presented_fps:content_fps();
   if(g_libretro.display_notification_pending){
     if(g_libretro.display_requested_hz) info->timing.fps=g_libretro.display_requested_hz;
   }
@@ -268,7 +273,13 @@ void retro_get_system_av_info(struct retro_system_av_info *info){
    * creates the requested context. The prepared runtime cannot run authored boot code yet, so the
    * fallback answer is provisional and the exact result is published from the first frame. */
   if(g_libretro.prepared) g_libretro.provisional_av_exposed=true;
+  /* A frontend asking afresh adopts the content's current cadence. */
+  g_libretro.presented_fps=0.0;
+  g_libretro.cadence_candidate_fps=0.0;
+  g_libretro.cadence_candidate_ticks=0;
   fill_av_info(info);
+  if(!g_libretro.display_active_hz && !g_libretro.display_notification_pending)
+    g_libretro.presented_fps=info->timing.fps;
   /* The initial AV answer is the frontend's startup cadence, not a SET_SYSTEM_AV_INFO call
    * outside retro_run. Subsequent requests still require that callback. */
   if(!g_libretro.frame_completed && g_libretro.display_notification_pending &&
@@ -537,6 +548,11 @@ void retro_unload_game(void){
   g_libretro.provisional_av_exposed=false;
   g_libretro.startup_av_notification_pending=false;
   g_libretro.content_glsl_candidate=false;
+  g_libretro.presented_fps=0.0;
+  g_libretro.cadence_candidate_fps=0.0;
+  g_libretro.cadence_candidate_ticks=0;
+  g_libretro.run_ticks=g_libretro.save_tick=g_libretro.save_interval=0;
+  g_libretro.save_interval_repeats=0;
   g_libretro.frame_completed=false;
   g_libretro.reset_pending_frame=false;
   g_libretro.reset_ring_rejection_reported=false;
@@ -700,11 +716,75 @@ static void state_profile_report(LibretroFrameTiming *timing,const char *operati
     g_libretro.variable_state_supported?1u:0u);
 }
 
+static void deliver_audio(const int16_t *audio,size_t frames){
+  if(!audio || !frames) return;
+  if(g_libretro.audio_batch)
+    g_libretro.audio_batch(audio,frames);
+  else if(g_libretro.audio_sample)
+    for(size_t i=0;i<frames;i++) g_libretro.audio_sample(audio[i*2],audio[i*2+1]);
+}
+
+/* With no display request owning the clock, steps follow the content's own cadence against the
+ * one the frontend holds. While the two agree this is exactly one step per tick. */
+static bool paced_cadence_active(void){
+  return !g_libretro.display_active_hz && !g_libretro.display_requested_hz &&
+         !g_libretro.display_notification_pending && g_libretro.presented_fps>=2.0;
+}
+
+/* A content cadence different from the presented one is announced once it has held for one
+ * second of presented ticks. A momentary change, such as one slowed step marking an impact, is
+ * then played out on the existing clock and never reconfigures the frontend; a lasting one still
+ * reaches it, so a display mode can follow the content. */
+static void paced_cadence_settle(void){
+  if(g_libretro.display_active_hz || g_libretro.display_requested_hz ||
+     g_libretro.display_notification_pending || g_libretro.presented_fps<=0.0) return;
+  double fps=content_fps();
+  if(fps==g_libretro.presented_fps){
+    g_libretro.cadence_candidate_fps=0.0;
+    g_libretro.cadence_candidate_ticks=0;
+    return;
+  }
+  if(fps!=g_libretro.cadence_candidate_fps){
+    g_libretro.cadence_candidate_fps=fps;
+    g_libretro.cadence_candidate_ticks=0;
+  }
+  if(++g_libretro.cadence_candidate_ticks<(uint32_t)ceil(g_libretro.presented_fps)) return;
+  g_libretro.presented_fps=fps;
+  g_libretro.cadence_candidate_fps=0.0;
+  g_libretro.cadence_candidate_ticks=0;
+  if(g_libretro.environment){
+    struct retro_system_av_info av;
+    fill_av_info(&av);
+    g_libretro.environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO,&av);
+  }
+}
+
+/* A rewind ring records every Nth tick, so retro_serialize arrives at a fixed interval of ticks.
+ * Once the same interval has been seen twice, the tick that completes the next one tells the
+ * engine a save is coming before the frame is handed over: the runtime section is then written
+ * while the frontend presents and waits for the display. A restored state (rewinding) or any other
+ * departure forgets the interval; the engine discards unused work, so a miss costs only time. */
+static void prepare_expected_save(void){
+  if(g_libretro.save_interval_repeats && g_libretro.save_interval &&
+     g_libretro.run_ticks-g_libretro.save_tick==g_libretro.save_interval &&
+     !g_libretro.display_notification_pending &&
+     !(g_libretro.frame.flags&ANYGM_FRAME_SHUTDOWN_REQUESTED))
+    anygm_state_prepare(g_libretro.engine);
+}
+static void note_save_tick(void){
+  uint64_t interval=g_libretro.run_ticks-g_libretro.save_tick;
+  g_libretro.save_interval_repeats=interval && interval==g_libretro.save_interval?
+    g_libretro.save_interval_repeats+1u:0u;
+  g_libretro.save_interval=interval;
+  g_libretro.save_tick=g_libretro.run_ticks;
+}
+
 void retro_run(void){
   if(!g_libretro.loaded){
     if(g_libretro.video) g_libretro.video(NULL,288,216,0);
     return;
   }
+  g_libretro.run_ticks++;
   LibretroFrameTiming timing={0};
   timing.active=g_libretro.frame_profile_enabled;
   timing.valid=true;
@@ -734,6 +814,16 @@ void retro_run(void){
   if(g_libretro.display_active_hz &&
      anygm_schedule_frame(g_libretro.engine,g_libretro.display_active_hz,&steps)!=ANYGM_OK){
     libretro_log(RETRO_LOG_ERROR,"Could not schedule independent display cadence\n");
+    steps=1;
+  }
+  /* Content that changes its own speed within a room keeps the frontend on the cadence it already
+   * holds until the new speed persists (see paced_cadence_settle). Meanwhile its steps follow the
+   * same fractional clock as a display request: a slower step holds the picture, with sound
+   * continuing, on the ticks it spans instead of reconfiguring the frontend's video, audio and
+   * display mode for it. */
+  if(paced_cadence_active() &&
+     anygm_schedule_frame(g_libretro.engine,g_libretro.presented_fps,&steps)!=ANYGM_OK){
+    libretro_log(RETRO_LOG_ERROR,"Could not schedule content cadence\n");
     steps=1;
   }
   uint32_t calls=steps?steps:1;
@@ -807,13 +897,26 @@ void retro_run(void){
   }
   if((geometry_changed || timing_changed) && g_libretro.environment){
     if(!av_refreshed) libretro_update_av();
+    /* Startup, a room's own cadence and display requests announce timing at once. A change made
+     * by content within a room waits in paced_cadence_settle; its geometry still goes out now. */
+    bool display_cadence=g_libretro.display_active_hz || g_libretro.display_requested_hz ||
+                         g_libretro.display_notification_pending;
+    bool room_cadence=(g_libretro.frame.flags&ANYGM_FRAME_TIMING_ROOM_CHANGED)!=0;
+    bool announce=timing_changed &&
+      (av_refreshed || room_cadence || display_cadence || g_libretro.presented_fps<=0);
+    if(announce && !display_cadence){
+      g_libretro.presented_fps=content_fps();
+      g_libretro.cadence_candidate_fps=0.0;
+      g_libretro.cadence_candidate_ticks=0;
+    }
     struct retro_system_av_info av;
     fill_av_info(&av);
-    if(timing_changed)
+    if(announce)
       g_libretro.environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO,&av);
-    else
+    else if(geometry_changed)
       g_libretro.environment(RETRO_ENVIRONMENT_SET_GEOMETRY,&av.geometry);
   }
+  if(step+1==calls) prepare_expected_save();
   uint64_t video_started=timing.active && step+1==calls?frame_profile_now(&timing):0;
   if(step+1==calls && g_libretro.video && g_libretro.video_enabled){
     /* The engine reports which target it rendered into. The hardware sentinel says the frame is
@@ -833,11 +936,7 @@ void retro_run(void){
     frame_profile_callback(&timing,video_started,&timing.video_ns);
   if(g_libretro.frame.audio && g_libretro.frame.audio_frames && g_libretro.audio_enabled){
     uint64_t audio_started=timing.active?frame_profile_now(&timing):0;
-    if(g_libretro.audio_batch)
-      g_libretro.audio_batch(g_libretro.frame.audio,g_libretro.frame.audio_frames);
-    else if(g_libretro.audio_sample)
-      for(size_t i=0;i<g_libretro.frame.audio_frames;i++)
-        g_libretro.audio_sample(g_libretro.frame.audio[i*2],g_libretro.frame.audio[i*2+1]);
+    deliver_audio(g_libretro.frame.audio,g_libretro.frame.audio_frames);
     if(timing.active && (g_libretro.audio_batch || g_libretro.audio_sample))
       frame_profile_callback(&timing,audio_started,&timing.audio_ns);
   }
@@ -848,6 +947,7 @@ void retro_run(void){
     libretro_update_av();
     update_display_request();
   }
+  paced_cadence_settle();
   frame_profile_report(&timing,ANYGM_OK,completed_steps);
 }
 
@@ -946,6 +1046,7 @@ bool retro_serialize(void *data,size_t size){
     state_profile_report(&timing,"save",size,0,false);
     return false;
   }
+  note_save_tick();
   bool startup_slot=g_libretro.frame_completed && g_libretro.startup_ring_compact &&
                     g_libretro.startup_resume_capacity &&
                     size<=g_libretro.startup_resume_capacity;
@@ -991,6 +1092,8 @@ bool retro_serialize(void *data,size_t size){
 
 bool retro_unserialize(const void *data,size_t size){
   LibretroFrameTiming timing=state_profile_begin();
+  g_libretro.save_interval=0;
+  g_libretro.save_interval_repeats=0;
   if(!g_libretro.loaded){
     state_profile_report(&timing,"load",size,size,false);
     return false;

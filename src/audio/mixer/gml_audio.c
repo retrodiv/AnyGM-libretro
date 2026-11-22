@@ -69,6 +69,9 @@ typedef struct {
   int content_hash_known;
   int queue_format,queue_channels,queue_internal;
   int stream_policy;
+  /* SOND IsCompressed on an embedded Vorbis blob: the content asked for it to stay compressed,
+   * so it decodes as its voices consume it, like a loose stream, not all at its first play. */
+  int stored_compressed;
   GmlAudioBlock *queue_head,*queue_tail,*queue_shutdown;
 } GmlSound; /* own is decoded/copied PCM; encoded_own backs a dynamic compressed blob */
 typedef struct {
@@ -583,6 +586,7 @@ GmlAudio *gml_audio_create(GmlWin *win){
           if(wave_parse(gd,gbase,gbase+gblen,&w)) sound_take_wave(a,&a->snd[i],&w);
         } else if(memcmp(gd+gbase,"OggS",4)==0){
           a->snd[i].ogg=gd+gbase; a->snd[i].ogg_len=gblen;
+          a->snd[i].stored_compressed=(flags&2u)!=0;
         } else if(is_mp3_blob(gd+gbase,gblen)){
           a->snd[i].mp3=gd+gbase; a->snd[i].mp3_len=gblen;
         }
@@ -616,6 +620,7 @@ GmlAudio *gml_audio_create(GmlWin *win){
     }
     if((uint32_t)audoid>=na) continue;
     audio_sound_attach_embedded(a,&a->snd[i],(uint32_t)audoid);
+    a->snd[i].stored_compressed=a->snd[i].ogg && (flags&2u);
   }
   a->n_base_snd=a->n_snd;
   audio_warm_initial_ogg(a);
@@ -1069,8 +1074,8 @@ int gml_audio_warm_sound(GmlAudio *a, int snd){
     anygm_host_logf(a && a->win ? a->win->host : NULL,ANYGM_LOG_DEBUG,"[audio] warm_sound sound=%d ogg=%u pcm=%u\n",snd,s->ogg_len,s->nval);
   return 1;
 }
-/* Loose and dynamically supplied Ogg streams need only the samples the voices consume.
- * Embedded effects and explicit full-PCM observations retain the established decoder. */
+/* Loose, dynamically supplied and stored-compressed Ogg streams need only the samples the voices
+ * consume. Other embedded Ogg and explicit full-PCM observations retain the complete decoder. */
 static int sound_ensure_playable(GmlAudio *a,GmlSound *s){
   if(!s) return 0;
   if(s->pcm || s->queue_format) return 1;
@@ -1078,7 +1083,7 @@ static int sound_ensure_playable(GmlAudio *a,GmlSound *s){
     (void)audio_sound_load_loose(a,s);
   if(s->stream_policy>0) return 1;
   if(!s->stream_policy && s->ogg && !s->ogg_failed &&
-     (s->external_filename || s->encoded_own)){
+     (s->external_filename || s->encoded_own || s->stored_compressed)){
     s->stream_policy=-1;
     int error=0;
     stb_vorbis *decoder=stb_vorbis_open_memory(s->ogg,(int)s->ogg_len,&error,NULL);

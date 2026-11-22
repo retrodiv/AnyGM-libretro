@@ -225,6 +225,11 @@ int gml_utf8_character_bytes(const unsigned char *text){
   return 1;
 }
 
+static uint64_t g_varmap_key_version;
+static void varmap_keys_changed(GmlVarMap *m){
+  m->key_version=__atomic_add_fetch(&g_varmap_key_version,1,__ATOMIC_RELAXED);
+}
+
 static void varmap_grow(GmlVarMap *m){
   int nc = m->cap? m->cap*2 : 16;
   GmlVarSlot *ns = calloc(nc,sizeof(GmlVarSlot));
@@ -235,6 +240,7 @@ static void varmap_grow(GmlVarMap *m){
     ns[h]=m->slots[i];
   }
   free(m->slots); m->slots=ns; m->cap=nc;
+  varmap_keys_changed(m);
 }
 GmlVal *gml_varmap_get_hashed(GmlVarMap *m, const char *key, uint32_t kh){
   if(!m->cap) return NULL;
@@ -262,6 +268,7 @@ static GmlVarSlot *gml_varmap_put_slot_h(GmlVarMap *m, const char *key, uint32_t
   }
   m->slots[h].key=key; m->slots[h].hash=kh; m->slots[h].val=vreal(0);
   m->slots[h].key_owned=(unsigned char)(key_owned!=0); m->len++;
+  varmap_keys_changed(m);
   return &m->slots[h];
 }
 GmlVal *gml_varmap_put_hashed(GmlVarMap *m, const char *key, uint32_t kh){
@@ -620,6 +627,7 @@ void gml_varmap_free_with_context(GmlVarMap *m,int skip_escaped,GmlValueFreeCont
   context->skip_escaped=previous_skip;
   if(owns_context) gml_value_free_context_end(context);
   free(m->slots); m->slots=0; m->cap=m->len=0;
+  m->key_version=0;
 }
 void gml_varmap_free_ex(GmlVarMap *m,int skip_escaped){
   gml_varmap_free_with_context(m,skip_escaped,NULL);

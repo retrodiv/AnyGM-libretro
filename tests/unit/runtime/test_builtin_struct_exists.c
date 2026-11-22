@@ -111,7 +111,7 @@ static int hashed_struct_members(void){
     named[1]=vstr("orphan_member");
     HASH_REQUIRE(gml_builtin_call(&vm,"struct_get",named,2).d==41);
 done:
-    free(state);free(again);gml_vm_free(&vm);gml_vm_free(&other);free(win.str_hix);
+    free(state);free(again);gml_vm_free(&vm);gml_vm_free(&other);free(win.str_hix);free(win.str_hix_hash);
     all &= ok;
 #undef HASH_REQUIRE
   }
@@ -170,7 +170,7 @@ static int json_struct_key_lifetimes(void){
     }
   }
   gml_vm_free(&vm);
-  free(win.str_hix);
+  free(win.str_hix);free(win.str_hix_hash);
   if(!ok) fprintf(stderr,"JSON struct keys did not retain the expected ownership\n");
   return ok;
 }

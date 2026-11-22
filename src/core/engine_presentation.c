@@ -565,6 +565,9 @@ static double cur_room_fps_unclamped(AnygmEngine *engine) {
 static double cur_room_fps(AnygmEngine *engine) {
   return clamp_reported_fps(cur_room_fps_unclamped(engine));
 }
+double engine_content_fps(AnygmEngine *engine) {
+  return cur_room_fps(engine);
+}
 /* Resolve a view through its opaque GMS camera handle.  Camera resources are maintained by the VM
  * builtins in reserved, serialized global arrays; rooms and classic games that only use view_*
  * variables fall back to those values unchanged. */
@@ -1469,6 +1472,7 @@ void sync_room_fps(AnygmEngine *engine,int publish_changes) {
     engine->fps_room = room;
     return;
   }
+  int room_changed = room != engine->fps_room;
   engine->fps_room = room;
   int fps_changed = (fps != engine->fps);
   int geom_changed = (nw != prev_w) || (nh != prev_h) ||
@@ -1481,10 +1485,13 @@ void sync_room_fps(AnygmEngine *engine,int publish_changes) {
       room, (unsigned)engine->win.bytecode, fps, nw, nh, engine->output_width, engine->output_height,
       engine->host_output_width,engine->host_output_height,
       engine->vm.window_w,engine->vm.window_h,engine->vm.gui_w,engine->vm.gui_h);
-  if (fps_changed) engine->audio_accumulator = 0.0;
+  /* A new rate drops the old rate's fractional carry. Audio already mixed for ticks that held the
+   * picture stays owed, or the held time would be heard twice. */
+  if (fps_changed && engine->audio_accumulator > 0.0) engine->audio_accumulator = 0.0;
   engine->fps = fps;
   if(changed && publish_changes){
-    if(fps_changed) engine->frame_flags|=ANYGM_FRAME_TIMING_CHANGED;
+    if(fps_changed) engine->frame_flags|=ANYGM_FRAME_TIMING_CHANGED|
+                                         (room_changed?ANYGM_FRAME_TIMING_ROOM_CHANGED:0u);
     if(geom_changed) engine->frame_flags|=ANYGM_FRAME_GEOMETRY_CHANGED;
   }
 }

@@ -176,25 +176,31 @@ static uint32_t win_strhash(const char *s){
   uint32_t h=2166136261u; while(*s){ h^=(uint8_t)*s++; h*=16777619u; } return h;
 }
 const char *gml_win_intern_lookup(GmlWin *w, const char *s){
+  return s?gml_win_intern_lookup_hashed(w,s,(uint32_t)gml_win_text_hash(s,strlen(s))):NULL;
+}
+const char *gml_win_intern_lookup_hashed(GmlWin *w, const char *s, uint32_t hash){
   if(!w || !s || w->n_strs<=0) return NULL;
   if(!w->str_hix){
     uint32_t cap=1; while(cap < (uint32_t)w->n_strs*2u) cap<<=1;
-    w->str_hix=malloc((size_t)cap*sizeof(int32_t));
-    if(!w->str_hix) return NULL;
-    for(uint32_t i=0;i<cap;i++) w->str_hix[i]=-1;
-    w->str_hix_cap=cap;
+    int32_t *index=malloc((size_t)cap*sizeof(*index));
+    uint32_t *hashes=malloc((size_t)cap*sizeof(*hashes));
+    if(!index || !hashes){ free(index); free(hashes); return NULL; }
+    for(uint32_t i=0;i<cap;i++) index[i]=-1;
     for(int i=0;i<w->n_strs;i++){
       if(!w->strs[i]) continue;
-      uint32_t h=win_strhash(w->strs[i]) & (cap-1);
-      while(w->str_hix[h]>=0) h=(h+1)&(cap-1);
-      w->str_hix[h]=i;
+      uint32_t full=(uint32_t)gml_win_text_hash(w->strs[i],strlen(w->strs[i]));
+      uint32_t h=full & (cap-1);
+      while(index[h]>=0) h=(h+1)&(cap-1);
+      index[h]=i; hashes[h]=full;
     }
+    w->str_hix=index; w->str_hix_hash=hashes; w->str_hix_cap=cap;
   }
-  uint32_t h=win_strhash(s) & (w->str_hix_cap-1);
+  /* The stored hash rules out a slot before its text is read. */
+  uint32_t h=hash & (w->str_hix_cap-1);
   for(uint32_t probe=0; probe<w->str_hix_cap; probe++){
     int32_t i=w->str_hix[h];
     if(i<0) return NULL;
-    if(w->strs[i] && !strcmp(w->strs[i],s)) return w->strs[i];
+    if(w->str_hix_hash[h]==hash && w->strs[i] && !strcmp(w->strs[i],s)) return w->strs[i];
     h=(h+1)&(w->str_hix_cap-1);
   }
   return NULL;
@@ -846,7 +852,7 @@ void gml_win_free(GmlWin *w){
     }
   }
   free(w->strs); free(w->str_charoff); free(w->code);
-  free(w->str_hix);
+  free(w->str_hix); free(w->str_hix_hash);
   free(w->code_hix);
   free(w->ref_hix);
   for(int i=0;i<w->n_asset_index_cache;i++) free(w->asset_index_cache[i].hix);

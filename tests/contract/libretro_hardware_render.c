@@ -368,6 +368,7 @@ AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size
   if(written) *written=state_written;
   return state_save_result;
 }
+void anygm_state_prepare(AnygmEngine *engine){ (void)engine; }
 AnygmResult anygm_state_save_for_resume(AnygmEngine *engine,void *data,size_t capacity,
                                         size_t *written){
   (void)engine; (void)data; (void)capacity;

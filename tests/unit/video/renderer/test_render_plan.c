@@ -1344,8 +1344,9 @@ static const char *plan_band_setting(void *userdata,const char *name){
   return !strcmp(name,"GML_ROW_THREADS")?settings->threads:NULL;
 }
 
-static int pooled_box_identity_case(void){
-  enum { SOURCE_WIDTH=853,SOURCE_HEIGHT=641,HOST_WIDTH=640,HOST_HEIGHT=480 };
+/* A pooled full-frame fit writes the bytes of its one-band execution at every band count. */
+static int pooled_identity(int sharp,uint32_t SOURCE_WIDTH,uint32_t SOURCE_HEIGHT){
+  enum { HOST_WIDTH=640,HOST_HEIGHT=480 };
   static const char *thread_counts[]={"1","2","4","8","16"};
   const size_t source_count=(size_t)SOURCE_WIDTH*SOURCE_HEIGHT;
   const size_t target_count=(size_t)HOST_WIDTH*HOST_HEIGHT;
@@ -1370,7 +1371,8 @@ static int pooled_box_identity_case(void){
   gml_render_plan_reset(&plan,GML_PLAN_TARGET_CPU_FRAME,HOST_WIDTH,HOST_HEIGHT);
   image_index=gml_render_plan_add_image(&plan,&image);
   if(image_index==GML_PLAN_NO_IMAGE ||
-     !gml_render_plan_add_blit_box(&plan,image_index,whole,0u) ||
+     !(sharp?gml_render_plan_add_blit_sharp_bilinear(&plan,image_index,whole,0u)
+            :gml_render_plan_add_blit_box(&plan,image_index,whole,0u)) ||
      !gml_render_plan_validate(&plan)){
     fprintf(stderr,"render plan failed: pooled reduction plan\n");
     goto done;
@@ -1391,8 +1393,8 @@ static int pooled_box_identity_case(void){
     memset(actual,0xCD,target_count*sizeof *actual);
     if(!gml_render_cpu_plan_execute_pooled(&plan,actual,HOST_WIDTH,&pool_owner) ||
        !pool_owner.row_pool || memcmp(reference,actual,target_count*sizeof *actual)){
-      fprintf(stderr,"render plan failed: reduction differs at %s bands\n",
-              thread_counts[count]);
+      fprintf(stderr,"render plan failed: %s differs at %s bands\n",
+              sharp?"sharp fit":"reduction",thread_counts[count]);
       goto done;
     }
   }
@@ -1404,6 +1406,8 @@ done:
   free(actual);
   return passed;
 }
+static int pooled_box_identity_case(void){ return pooled_identity(0,853,641); }
+static int pooled_sharp_identity_case(void){ return pooled_identity(1,383,217); }
 
 static int axis_map_case(void){
   enum { SOURCE=37,DESTINATION=277 };
@@ -1933,6 +1937,7 @@ int main(int argc,char **argv){
     {"host_canvas_reduce",host_canvas_reduce_case},
     {"sharp_bilinear",sharp_bilinear_case},
     {"pooled_box_identity",pooled_box_identity_case},
+    {"pooled_sharp_identity",pooled_sharp_identity_case},
     {"axis_map",axis_map_case},
     {"composed_leading_nearest",composed_leading_nearest_case},
     {"validation",plan_validation_case},

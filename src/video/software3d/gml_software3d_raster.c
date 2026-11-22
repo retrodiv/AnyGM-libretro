@@ -1055,7 +1055,11 @@ void gml_d3_set_draw_depth(GmlRender *R,double depth){
   g_d3.draw_depth=depth;
   gml_d3_sync_sprite_fog(R);
 }
-int gml_d3_is_active(GmlRender *R){ return GML_GRAPHICS && g_d3.active; }
+int gml_d3_is_active(GmlRender *R){
+  /* Asked several times for every sprite drawn: read the state once. */
+  GmlSoftware3D *graphics=graphics_state_for_render(R);
+  return graphics && graphics->d3.active;
+}
 static void d3_sprite_vertices(GmlRender *R,const GmlRenderCpuBackendTextureView *view,
                                 double x,double y,double xs,double ys,double rotation,
                                 uint32_t blend,double alpha,GmlD3Vertex vertex[4]){

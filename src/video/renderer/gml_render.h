@@ -993,6 +993,9 @@ int  gml_render_atlas_texture_handle(const GmlRender *r,int atlas);
  * Missing or malformed groups return zero with empty outputs. */
 int  gml_render_texture_group_handles(const GmlRender *r,const char *name,
                                       int **handles,size_t *count);
+/* Queues every page of the named group for background decoding, as content's request to load
+ * a group ahead of its first draw. Draws still decode synchronously what has not arrived. */
+int  gml_render_prefetch_texture_group(GmlRender *r,const char *name);
 int  gml_render_surface_texture_handle(int surface);
 int  gml_render_texture_metrics(GmlRender *r,int texture,
                                 GmlRenderTextureMetrics *metrics);

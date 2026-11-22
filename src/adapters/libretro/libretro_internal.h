@@ -29,6 +29,14 @@ typedef struct LibretroAdapter {
   uint32_t display_requested_hz,display_active_hz,display_source_hz;
   bool display_notification_pending;
   int32_t display_mouse_x,display_mouse_y,display_wheel;
+  /* Content cadence the frontend holds, and a different content cadence still waiting to show that
+   * it persists before the frontend is reconfigured for it (see retro_run). */
+  double presented_fps,cadence_candidate_fps;
+  /* Ticks run, and the tick count at the last retro_serialize with the interval before it; a
+   * repeated interval predicts the next save (see prepare_expected_save). */
+  uint64_t run_ticks,save_tick,save_interval;
+  uint32_t save_interval_repeats;
+  uint32_t cadence_candidate_ticks;
   uint8_t keyboard_events[ANYGM_MAX_KEYS];
   bool keyboard_events_accepted;
   uint32_t keyboard_text[ANYGM_MAX_TEXT_EVENTS];

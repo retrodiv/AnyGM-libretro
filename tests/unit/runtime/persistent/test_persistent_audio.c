@@ -187,6 +187,60 @@ static int room_audio_condition_fixture(int streamed){
   free(vm.audio_room_warm_scan);gml_audio_free(audio);
   return ok;
 }
+/* An embedded Vorbis entry whose SOND keeps IsCompressed decodes as its voices consume it, with
+ * the samples and state bytes of the same entry without that flag. */
+static uint8_t *stored_compressed_fixture(GmlWin *win,AnygmHostServices *host,uint32_t flags){
+  enum { sond=0, record=8, audo=44, blob=56 };
+  size_t size=blob+4+sizeof audio_stream_fixture;
+  uint8_t *data=calloc(1,size);
+  if(!data) return NULL;
+  fixture_write_u32(data,sond,1);
+  fixture_write_u32(data,sond+4,record);
+  fixture_write_u32(data,record+4,flags);
+  float one=1.0f; memcpy(data+record+20,&one,sizeof one);
+  fixture_write_u32(data,record+32,0);
+  fixture_write_u32(data,audo,1);
+  fixture_write_u32(data,audo+4,blob);
+  fixture_write_u32(data,blob,sizeof audio_stream_fixture);
+  memcpy(data+blob+4,audio_stream_fixture,sizeof audio_stream_fixture);
+  memset(host,0,sizeof *host);host->struct_size=sizeof *host;
+  host->abi_version=ANYGM_HOST_SERVICES_VERSION;host->development_setting=room_audio_no_initial_warm;
+  memset(win,0,sizeof *win);
+  win->data=data;win->size=size;win->n_chunks=2;win->host=host;
+  memcpy(win->chunks[0].name,"SOND",5);win->chunks[0].off=sond;win->chunks[0].size=audo;
+  memcpy(win->chunks[1].name,"AUDO",5);win->chunks[1].off=audo;win->chunks[1].size=(uint32_t)(size-audo);
+  return data;
+}
+int expect_stored_compressed_sound_streams(void){
+  GmlWin stream_win,reference_win;AnygmHostServices stream_host,reference_host;
+  /* Regular|IsEmbedded|IsCompressed against Regular|IsEmbedded over the same Vorbis blob. */
+  uint8_t *stream_data=stored_compressed_fixture(&stream_win,&stream_host,0x67u);
+  uint8_t *reference_data=stored_compressed_fixture(&reference_win,&reference_host,0x65u);
+  GmlAudio *stream=stream_data?gml_audio_create(&stream_win):NULL;
+  GmlAudio *reference=reference_data?gml_audio_create(&reference_win):NULL;
+  uint32_t count=0;int channels=0;
+  int first=stream?gml_audio_play(stream,0,1):-1,second=reference?gml_audio_play(reference,0,1):-1;
+  int ok=stream && reference && first>=1000000 && first==second;
+  static const int blocks[]={31,1500,4096,317,2053};
+  for(size_t i=0;ok && i<sizeof blocks/sizeof *blocks;i++)
+    ok=stream_pair_matches(reference,stream,blocks[i]);
+  gml_audio_sound_set_track_position(stream,first,0.547);
+  gml_audio_sound_set_track_position(reference,second,0.547);
+  ok=ok && stream_pair_matches(reference,stream,2300);
+  /* Playback never needed the complete image; the reference decoded it on its first play. */
+  ok=ok && !gml_audio_sound_pcm16(stream,0,&count,&channels) &&
+    gml_audio_sound_pcm16(reference,0,&count,&channels);
+  size_t bytes=ok?gml_audio_state_size(reference):0;
+  uint8_t *expected=bytes?malloc(bytes):NULL,*actual=bytes?malloc(bytes):NULL;size_t written=0;
+  ok=ok && expected && actual && gml_audio_state_size(stream)==bytes &&
+    gml_audio_state_save(reference,expected,bytes,&written) && written==bytes &&
+    gml_audio_state_save(stream,actual,bytes,&written) && written==bytes &&
+    !memcmp(expected,actual,bytes);
+  if(!ok) fprintf(stderr,"a stored-compressed sound decoded completely or changed its samples\n");
+  free(expected);free(actual);
+  gml_audio_free(stream);gml_audio_free(reference);free(stream_data);free(reference_data);
+  return ok;
+}
 int expect_room_audio_condition_cache(void){
   return room_audio_condition_fixture(0);
 }

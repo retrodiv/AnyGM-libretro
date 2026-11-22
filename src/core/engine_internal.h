@@ -305,6 +305,7 @@ struct AnygmEngine {
    * scene dependencies before the next observation without transferring pixels to the CPU. */
   int state_gpu_frame_capture;
   size_t state_vm_size_hint;
+  struct EngineStatePrepared *state_prepared;   /* see engine_state_prepare */
   /* Latest frame-free size query; metadata baseline for pending known media allocations. */
   size_t state_resume_measured_hint;
   /* Last complete write in this engine, used only to try allocating a rollback snapshot.
@@ -459,6 +460,8 @@ void engine_overrides_after_draw(AnygmEngine *engine,GmlVM *vm,unsigned instance
 void screen_redraw_room_layer_hook(GmlVM *vm,int foreground,void *user);
 void screen_refresh_present_latch_hook(GmlVM *vm,void *user);
 void sync_room_fps(AnygmEngine *engine,int publish_changes);
+/* The cadence content currently asks for, without adopting it or publishing a change. */
+double engine_content_fps(AnygmEngine *engine);
 void screen_stage_gui_geometry(
   const AnygmEngine *engine,const GmlRenderPresentationMetrics *presentation,
   int window_width,int window_height,int *target_width,int *target_height,
@@ -659,6 +662,13 @@ bool state_unserialize_impl(AnygmEngine *engine,const void *data,size_t size,
 size_t engine_state_size(AnygmEngine *engine);
 size_t engine_state_resume_size(AnygmEngine *engine);
 bool engine_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written);
+void engine_state_prepare(AnygmEngine *engine);
+void engine_state_prepared_discard(AnygmEngine *engine);
+void engine_state_prepared_free(AnygmEngine *engine);
+/* Observers for tests: background work is running or joined but unused; the last save used
+ * the prepared runtime section (1) or it and the sections before it (2). */
+int engine_state_prepared_pending(const AnygmEngine *engine);
+int engine_state_prepared_consumed(const AnygmEngine *engine);
 bool engine_state_save_for_resume(AnygmEngine *engine,void *data,size_t capacity,size_t *written);
 bool engine_state_load(AnygmEngine *engine,const void *data,size_t size);
 

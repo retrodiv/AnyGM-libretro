@@ -626,11 +626,11 @@ static int texture_group_read(const GmlWin *win,const GmlChunk *chunk,uint32_t i
     chunk_has_absolute(win,chunk,(size_t)group->pages+4,(size_t)group->page_count*4);
 }
 
-int gml_render_texture_group_handles(const GmlRender *r,const char *name,
-                                     int **handles,size_t *count){
-  if(handles) *handles=NULL;
-  if(count) *count=0;
-  if(!r || !r->win || !r->win->data || r->n_atlas<0 || !name || !handles || !count) return 0;
+/* The named group's validated page list: every page names an existing atlas. */
+static int texture_group_pages(const GmlRender *r,const char *name,
+                               uint32_t *pages,uint32_t *page_count){
+  *pages=0;*page_count=0;
+  if(!r || !r->win || !r->win->data || r->n_atlas<0 || !name) return 0;
   uint32_t groups=0,atlas_count=0;
   const GmlChunk *chunk=texture_group_table(r->win,&groups);
   const GmlChunk *txtr=gml_chunk(r->win,"TXTR");
@@ -647,15 +647,33 @@ int gml_render_texture_group_handles(const GmlRender *r,const char *name,
       uint32_t page=u32(r->win->data,group.pages+4+j*4);
       if(page>=atlas_count || page>=(uint32_t)r->n_atlas) return 0;
     }
-    if(!group.page_count) return 1;
-    int *result=malloc((size_t)group.page_count*sizeof(*result));
-    if(!result) return 0;
-    for(uint32_t j=0;j<group.page_count;j++)
-      result[j]=gml_render_atlas_texture_handle(r,(int)u32(r->win->data,group.pages+4+j*4));
-    *handles=result;*count=group.page_count;
+    *pages=group.pages;*page_count=group.page_count;
     return 1;
   }
   return 0;
+}
+
+int gml_render_texture_group_handles(const GmlRender *r,const char *name,
+                                     int **handles,size_t *count){
+  uint32_t pages=0,page_count=0;
+  if(handles) *handles=NULL;
+  if(count) *count=0;
+  if(!handles || !count || !texture_group_pages(r,name,&pages,&page_count)) return 0;
+  if(!page_count) return 1;
+  int *result=malloc((size_t)page_count*sizeof(*result));
+  if(!result) return 0;
+  for(uint32_t j=0;j<page_count;j++)
+    result[j]=gml_render_atlas_texture_handle(r,(int)u32(r->win->data,pages+4+j*4));
+  *handles=result;*count=page_count;
+  return 1;
+}
+
+int gml_render_prefetch_texture_group(GmlRender *r,const char *name){
+  uint32_t pages=0,page_count=0;
+  if(!texture_group_pages(r,name,&pages,&page_count)) return 0;
+  for(uint32_t j=0;j<page_count;j++)
+    gml_render_prefetch_atlas(r,(int)u32(r->win->data,pages+4+j*4));
+  return 1;
 }
 
 static int texture_group_leaf_safe(const char *text){

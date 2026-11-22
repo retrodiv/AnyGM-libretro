@@ -310,19 +310,28 @@ static uint32_t sharp_lerp(uint32_t a,uint32_t b,uint32_t weight){
   return result;
 }
 
-static void execute_sharp_bilinear(const GmlPlanOp *op,const GmlPlanImage *image,
-                                   uint32_t *target,uint32_t pitch){
-  uint32_t width=op->destination.width,height=op->destination.height;
-  uint32_t scale=gml_plan_sharp_scale(&op->destination,image);
-  PlanSharpTap stack[PLAN_COLUMN_STACK];
-  PlanSharpTap *columns=width<=PLAN_COLUMN_STACK?stack:malloc((size_t)width*sizeof(*columns));
-  if(columns)
-    for(uint32_t x=0;x<width;x++) columns[x]=sharp_tap(x,image->width,width,scale);
-  for(uint32_t y=0;y<height;y++){
+typedef struct {
+  const GmlPlanOp *op;
+  const GmlPlanImage *image;
+  uint32_t *target;
+  uint32_t pitch,scale;
+  const PlanSharpTap *columns;
+} PlanSharpBand;
+
+static void execute_sharp_bilinear_rows(const PlanSharpBand *band,uint32_t row_start,
+                                        uint32_t row_end){
+  const GmlPlanOp *op=band->op;
+  const GmlPlanImage *image=band->image;
+  const PlanSharpTap *columns=band->columns;
+  const uint32_t width=op->destination.width,height=op->destination.height;
+  const uint32_t scale=band->scale,pitch=band->pitch,alpha_write=op->alpha_write;
+  const uint32_t destination_x=(uint32_t)op->destination.x;
+  const uint32_t destination_y=(uint32_t)op->destination.y;
+  for(uint32_t y=row_start;y<row_end;y++){
     PlanSharpTap vertical=sharp_tap(y,image->height,height,scale);
     const uint32_t *row0=image->cpu_pixels+(size_t)vertical.first*image->pitch_pixels;
     const uint32_t *row1=image->cpu_pixels+(size_t)vertical.second*image->pitch_pixels;
-    uint32_t *out=target+(size_t)((uint32_t)op->destination.y+y)*pitch+(uint32_t)op->destination.x;
+    uint32_t *out=band->target+(size_t)(destination_y+y)*pitch+destination_x;
     for(uint32_t x=0;x<width;x++){
       PlanSharpTap horizontal=columns?columns[x]:sharp_tap(x,image->width,width,scale);
       uint32_t a=sharp_lerp(row0[horizontal.first],row0[horizontal.second],horizontal.weight);
@@ -330,9 +339,34 @@ static void execute_sharp_bilinear(const GmlPlanOp *op,const GmlPlanImage *image
         uint32_t b=sharp_lerp(row1[horizontal.first],row1[horizontal.second],horizontal.weight);
         a=sharp_lerp(a,b,vertical.weight);
       }
-      out[x]=plan_pixel(a,op->alpha_write);
+      out[x]=plan_pixel(a,alpha_write);
     }
   }
+}
+
+static void plan_sharp_band(void *context,int row_start,int row_end,int slot){
+  (void)slot;
+  execute_sharp_bilinear_rows((const PlanSharpBand*)context,(uint32_t)row_start,
+                              (uint32_t)row_end);
+}
+
+/* Every destination row depends only on the source, so rows are independent: a large fit shares
+ * the row-band pool like the box and accumulator kernels, with identical bytes. Each pixel costs
+ * up to three blends, several times a nearest copy, so a fit pays for the handover at half the
+ * area those kernels need: a 16:9 picture fitted into a 4:3 CRT canvas (640x360) qualifies. */
+static void execute_sharp_bilinear(const GmlPlanOp *op,const GmlPlanImage *image,
+                                   uint32_t *target,uint32_t pitch,GmlRender *pool_owner){
+  uint32_t width=op->destination.width,height=op->destination.height;
+  uint32_t scale=gml_plan_sharp_scale(&op->destination,image);
+  PlanSharpTap stack[PLAN_COLUMN_STACK];
+  PlanSharpTap *columns=width<=PLAN_COLUMN_STACK?stack:malloc((size_t)width*sizeof(*columns));
+  if(columns)
+    for(uint32_t x=0;x<width;x++) columns[x]=sharp_tap(x,image->width,width,scale);
+  PlanSharpBand band={op,image,target,pitch,scale,columns};
+  if(pool_owner && (uint64_t)width*(uint64_t)height>=131072ull)
+    gml_run_row_bands(pool_owner,(int)height,plan_sharp_band,&band);
+  else
+    execute_sharp_bilinear_rows(&band,0,height);
   if(columns!=stack) free(columns);
 }
 
@@ -391,7 +425,7 @@ int gml_render_cpu_plan_execute_pooled(const GmlRenderPlan *plan,uint32_t *targe
         execute_present(op,image,target,target_pitch_pixels);
         break;
       case GML_PLAN_OP_BLIT_OPAQUE_SHARP_BILINEAR:
-        execute_sharp_bilinear(op,image,target,target_pitch_pixels);
+        execute_sharp_bilinear(op,image,target,target_pitch_pixels,pool_owner);
         break;
       default:
         return 0;

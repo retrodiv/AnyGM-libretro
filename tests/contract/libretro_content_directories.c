@@ -205,6 +205,7 @@ uint32_t anygm_state_capacity_flags(const AnygmEngine *engine){ (void)engine; re
 AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t size,size_t *written){
   (void)engine; (void)data; (void)size; (void)written; return ANYGM_ERROR_INVALID_STATE;
 }
+void anygm_state_prepare(AnygmEngine *engine){ (void)engine; }
 AnygmResult anygm_state_save_for_resume(AnygmEngine *engine,void *data,size_t capacity,
                                         size_t *written){
   (void)engine; (void)data; (void)capacity; (void)written; return ANYGM_ERROR_INVALID_STATE;

@@ -82,7 +82,10 @@ typedef struct {
   GmlVal val; /* keep key ownership in the alignment gap before the value */
   uint64_t array_owner;
 } GmlVarSlot;
-typedef struct { GmlVarSlot *slots; int cap, len; } GmlVarMap;
+/* key_version names the map's current key set and slot layout. Every insertion, growth or release
+ * assigns a value never used before by any map, so an unchanged version proves that the keys and
+ * their slots are the ones seen when it was recorded; zero is never recorded. */
+typedef struct { GmlVarSlot *slots; int cap, len; uint64_t key_version; } GmlVarMap;
 /* The largest index gml_arr_index_ensure will grow an array to, and the largest capacity that
  * growth can leave behind. Capacity doubles, so it overshoots the highest index stored by up to a
  * factor of two: a sanity check that bounds capacity by the index limit rejects arrays this

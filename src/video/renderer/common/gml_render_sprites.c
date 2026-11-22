@@ -465,6 +465,28 @@ static int resident_outside_sprite_noop(GmlRender *r,GmlSprite *sprite,int subim
     gml_render_sprite_source_is_outside(r,sprite,&r->tpag[page],x,y,xs,ys,rotation);
 }
 
+/* A target-space rectangle, of either orientation, that misses the current target by more than
+ * one pixel. The gate mirrors resident_outside_sprite_noop: specialised programs, 3D, rotated
+ * views or batches and pending composition keep their ordered owners. */
+static int resident_outside_part_noop(GmlRender *r,const GmlSprite *sprite,
+                                      double left,double top,double width,double height){
+  if(!r || !r->resident_application_pass || !sprite || sprite->runtime_rgba ||
+     sprite->spine || sprite->ns_enabled ||
+     !isfinite(left) || !isfinite(top) || !isfinite(width) || !isfinite(height) ||
+     r->fbw<=0 || r->fbh<=0 ||
+     resident_sprite_program_blocks(r) || gml_d3_is_active(r) ||
+     gml_render_view_rotation_active(r) ||
+     gml_render_classic_vertical_phase_blocks_scene(r) ||
+     r->rotated_batch_count || r->rotated_batch_building ||
+     r->pending_underlay || r->pending_presentation ||
+     !gml_render_scene_target_matches(r) ||
+     gml_render_interpolated_phase_blocks_scene(r)) return 0;
+  double x0=left,x1=left+width,y0=top,y1=top+height;
+  if(x1<x0){ double t=x0; x0=x1; x1=t; }
+  if(y1<y0){ double t=y0; y0=y1; y1=t; }
+  return x1<=-1.0 || y1<=-1.0 || x0>=(double)r->fbw+1.0 || y0>=(double)r->fbh+1.0;
+}
+
 int gml_render_resident_sprite_outside(GmlRender *r,int sprite,int subimg,
                                       double x,double y,double xs,double ys,double rotation){
   if(!r || !r->resident_application_pass || sprite<0 || sprite>=r->n_spr) return 0;
@@ -6856,6 +6878,13 @@ void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, d
           view.scene_fully_opaque=0;
           double left=mapped_x+(anchor_x-sx)*draw_xscale-r->cam_x;
           double top=mapped_y+(anchor_y-sy)*draw_yscale-r->cam_y;
+          /* R03-SPR-PART-OUTSIDE: the selected crop lies within the requested part, whose
+           * destination is the part rectangle at the unmapped anchor; the ordinary leaf
+           * writes nothing when that rectangle, widened by one pixel for filtering, misses
+           * the target. Large tile layers issue mostly such draws, so leave before
+           * preparing the crop. Same metadata-only gate as the outside sprite no-op. */
+          if(resident_outside_part_noop(r,resident_sprite,
+               mapped_x-r->cam_x,mapped_y-r->cam_y,sw*draw_xscale,sh*draw_yscale)) return;
           if(resident_modern_unit_sprite_part(r,page,&view,sx,sy,sw,sh,left,top,
                mapped_xs,mapped_ys,blend,resident_alpha)) return;
           if(!r->interp && anygm_policy_has_modern_layer_semantics(r->win) &&

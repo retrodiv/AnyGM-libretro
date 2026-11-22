@@ -111,6 +111,9 @@ struct GmlVmStateWriter {
   StateStringEntry *strings;
   size_t string_capacity,string_bytes;
   uint32_t string_count;
+  struct StateTextDigest *digests;  /* per slot of the map being written; see sw_varmap */
+  size_t digest_capacity;
+  int digests_busy;
 };
 struct GmlVmStateReader {
   const uint8_t *data;
@@ -133,6 +136,8 @@ struct GmlVmStateReader {
 typedef GmlVmStateWriter StateW;
 typedef GmlVmStateReader StateR;
 static void sw_release(StateW *s){
+  if(s->vm && s->string_capacity>s->vm->state_string_capacity_hint)
+    s->vm->state_string_capacity_hint=s->string_capacity;
   for(size_t i=0;i<s->string_capacity;i++)
     if(!s->strings[i].borrowed) free((void*)s->strings[i].text);
   for(uint32_t i=0;i<s->shape_count;i++)free(s->shapes[i].slots);
@@ -141,6 +146,7 @@ static void sw_release(StateW *s){
   free(s->strings);free(s->maps.entries);free(s->maps.index);
   free(s->arrays);free(s->array_index);
   free(s->owners);
+  free(s->digests);
 }
 
 static int state_debug_enabled(const GmlVM *vm){
@@ -239,8 +245,26 @@ static int state_str_index_by_ptr(GmlVM *vm, const char *canonical){
   }
   return -1;
 }
+/* One walk of a map value's text answers the three questions a write asks of it: the map's
+ * identity hash, the content-table lookup and the snapshot's text deduplication. Each answer is
+ * the one its own walk would give, so the bytes written are unchanged. */
+typedef struct StateTextDigest {
+  uint64_t hash;        /* state_map_text_hash; its low half is the content table's hash */
+  uint32_t length;
+  int known;            /* 0 for a text too long to describe in 32 bits */
+} StateTextDigest;
+static void state_text_digest(const char *text,StateTextDigest *digest){
+  size_t length=strlen(text);
+  digest->hash=gml_win_text_hash(text,length);
+  digest->length=(uint32_t)length;
+  digest->known=length<=UINT32_MAX;
+}
+static uint32_t state_string_encoding_with(StateW *s,const char *p,const StateTextDigest *digest);
 static uint32_t state_string_encoding(StateW *s, const char *p){
-  if(!p) p="";
+  return state_string_encoding_with(s,p,NULL);
+}
+static uint32_t state_string_encoding_with(StateW *s,const char *p,const StateTextDigest *digest){
+  if(!p){ p=""; digest=NULL; }
   if(s->compact_strings){
     /* A prior answer for an immutable content pointer remains valid for this VM. Test its range
      * before using the pointer memo; runtime strings can be freed and reused after a restore. */
@@ -257,7 +281,10 @@ static uint32_t state_string_encoding(StateW *s, const char *p){
     /* Only mapping-owned pointers are stable for the lifetime of this memo. A runtime allocation
      * may be freed during state restore and later reused for unrelated text, so retaining that
      * address could emit a stale STRG index on the next save. */
-    const char *stable=s->vm&&s->vm->win?gml_win_intern_lookup(s->vm->win,p):NULL;
+    const char *stable=NULL;
+    if(s->vm && s->vm->win)
+      stable=digest?gml_win_intern_lookup_hashed(s->vm->win,p,(uint32_t)digest->hash)
+                   :gml_win_intern_lookup(s->vm->win,p);
     int idx=-1;
     if(stable){
       unsigned slot=state_str_memo_slot(stable);
@@ -269,6 +296,7 @@ static uint32_t state_string_encoding(StateW *s, const char *p){
     }
     if(idx>=0) return 0x80000000u | (uint32_t)idx;
   }
+  if(digest) return digest->length;
   size_t n=strlen(p); if(n>UINT32_MAX) n=UINT32_MAX;
   return (uint32_t)n;
 }
@@ -399,7 +427,12 @@ static void sw_encoded_string(StateW *s,const char *p,uint32_t encoding,
   s->string_bytes+=encoding;
   if(!s->string_capacity ||
      (s->string_count>=s->string_capacity/2 && s->string_count<STATE_MAX_STRINGS)){
+    /* A snapshot usually holds as many strings as the previous one: start at that size rather
+     * than rehashing the table through every doubling. Ids follow insertion order either way. */
     size_t capacity=s->string_capacity?s->string_capacity*2:64;
+    if(!s->string_capacity && s->vm && s->vm->state_string_capacity_hint>capacity &&
+       s->vm->state_string_capacity_hint<=(size_t)STATE_MAX_STRINGS*2u)
+      capacity=s->vm->state_string_capacity_hint;
     StateStringEntry *entries=calloc(capacity,sizeof(*entries));
     if(!entries){ s->ok=0; return; }
     for(size_t i=0;i<s->string_capacity;i++) if(s->strings[i].text){
@@ -1160,14 +1193,14 @@ static uint64_t state_map_mix(uint64_t value){
   value^=value>>27; value*=UINT64_C(0x94d049bb133111eb);
   return value^(value>>31);
 }
+/* Selects table slots for text within one write (map identity and snapshot deduplication); it is
+ * never written, and equal hashes are always confirmed by comparing the text. */
 static uint64_t state_map_text_hash(const char *text){
-  uint64_t hash=UINT64_C(14695981039346656037);
-  for(const unsigned char *p=(const unsigned char*)(text?text:"");*p;p++)
-    hash=(hash^*p)*UINT64_C(1099511628211);
-  return hash;
+  if(!text) text="";
+  return gml_win_text_hash(text,strlen(text));
 }
 static uint64_t state_map_hash(const GmlVarMap *map,uint32_t *count,uint64_t *shape,
-                               int *has_array_owners){
+                               int *has_array_owners,StateTextDigest *digests){
   uint64_t hash=0,keys=0;
   *count=0;
   *has_array_owners=0;
@@ -1178,6 +1211,10 @@ static uint64_t state_map_hash(const GmlVarMap *map,uint32_t *count,uint64_t *sh
     if(value.t==V_REAL && value.number_kind!=GML_NUM_REAL)
       bits=state_map_mix((uint64_t)value.integer)^((uint64_t)value.number_kind<<56);
     else if(value.t==V_REAL || value.t==V_OBJECT) memcpy(&bits,&value.d,sizeof bits);
+    else if(value.t==V_STR && digests && value.s){
+      state_text_digest(value.s,&digests[i]);
+      bits=digests[i].hash;
+    }
     else if(value.t==V_STR) bits=state_map_text_hash(value.s);
     else if(value.t==V_ARR) bits=(uintptr_t)value.arr;
     hash+=state_map_mix(slot->hash^state_map_mix(bits)^value.t);
@@ -1291,6 +1328,133 @@ static GmlVarSlot **state_shape_slots(GmlVM *vm,GmlVarMap *m,uint32_t count){
   if(slots)memcpy(slots,vm->state_sort_slots,(size_t)count*sizeof(*slots));
   return slots;
 }
+/* A map's key shape is its keys in byte order, with each key's string encoding. Writing it sorts
+ * and encodes every key, which every rewind snapshot repeats for every map although keys rarely
+ * change: a text table of thousands of entries, and equally hundreds of instances of a few dozen
+ * variables each. The answer is kept per map and reused while the map's key_version is the one it
+ * was derived for: that version is drawn from one counter on every insertion, growth or release,
+ * so it proves the same keys in the same slots, also for a new map at a freed one's address. The
+ * bytes written are unchanged; only their derivation is skipped.
+ *
+ * A map is looked for in a short run of slots from the one its address selects, and a new map takes
+ * a free slot of the run or else one no map has used during this write. Only when every slot of
+ * the run already served this write is a live map evicted; a write that meets more such conflicts
+ * than a sixteenth of the slots enlarges the table for the next write (never during one: entries
+ * are borrowed while a write runs). */
+#define STATE_KEY_CACHE_INITIAL_SLOTS 256u
+#define STATE_KEY_CACHE_PROBE 4u
+#define STATE_KEY_CACHE_MAX_SLOTS 65536u
+#define STATE_KEY_CACHE_MIN_KEYS 2u
+typedef struct {
+  const GmlVarMap *map;
+  uint64_t version;          /* 0 while being filled or after a failed write */
+  uint32_t count;
+  GmlVarSlot **slots;        /* sorted, as state_shape_slots answers */
+  uint32_t *encoding;        /* state_string_encoding of each sorted key */
+  uint64_t *hash;            /* sw_encoded_string's text hash of each sorted key */
+  unsigned char *hash_valid;
+  int busy;                  /* in use by a write that nested maps must not evict */
+  uint32_t write;            /* the write that last used it */
+} StateKeyCacheEntry;
+struct GmlVmStateKeyCache {
+  StateKeyCacheEntry *entry;
+  unsigned capacity;         /* a power of two */
+  unsigned conflicts;        /* evictions of another live map during the current write */
+  uint32_t write;            /* the current write, counted from 1 */
+};
+
+static void state_key_cache_entry_clear(StateKeyCacheEntry *entry){
+  free(entry->slots);free(entry->encoding);free(entry->hash);free(entry->hash_valid);
+  *entry=(StateKeyCacheEntry){0};
+}
+static void state_key_cache_entries_free(struct GmlVmStateKeyCache *cache){
+  for(unsigned i=0;i<cache->capacity;i++) state_key_cache_entry_clear(&cache->entry[i]);
+  free(cache->entry);
+  cache->entry=NULL;
+  cache->capacity=0;
+}
+void gml_vm_state_key_cache_free(GmlVM *vm){
+  if(!vm || !vm->state_key_cache) return;
+  state_key_cache_entries_free(vm->state_key_cache);
+  free(vm->state_key_cache);
+  vm->state_key_cache=NULL;
+}
+/* Called before a write borrows any entry: applies the previous write's verdict on the size. */
+static void state_key_cache_begin_write(GmlVM *vm){
+  struct GmlVmStateKeyCache *cache=vm?vm->state_key_cache:NULL;
+  if(!cache) return;
+  if(cache->capacity && cache->conflicts>cache->capacity/16u &&
+     cache->capacity<STATE_KEY_CACHE_MAX_SLOTS){
+    unsigned next=cache->capacity*4u;
+    if(next>STATE_KEY_CACHE_MAX_SLOTS) next=STATE_KEY_CACHE_MAX_SLOTS;
+    StateKeyCacheEntry *entries=calloc(next,sizeof *entries);
+    if(entries){
+      state_key_cache_entries_free(cache);
+      cache->entry=entries;
+      cache->capacity=next;
+    }
+  }
+  cache->conflicts=0;
+  if(++cache->write==0) cache->write=1;
+}
+static StateKeyCacheEntry *state_key_cache_slot(StateW *s,const GmlVarMap *m,uint32_t count){
+  /* The encodings are those of compact strings for this VM's content. */
+  if(!s->vm || !s->compact_strings || !m->key_version || count<STATE_KEY_CACHE_MIN_KEYS)
+    return NULL;
+  struct GmlVmStateKeyCache *cache=s->vm->state_key_cache;
+  if(!cache){
+    cache=calloc(1,sizeof *cache);
+    if(!cache) return NULL;
+    s->vm->state_key_cache=cache;
+  }
+  if(!cache->entry){
+    cache->entry=calloc(STATE_KEY_CACHE_INITIAL_SLOTS,sizeof *cache->entry);
+    if(!cache->entry) return NULL;
+    cache->capacity=STATE_KEY_CACHE_INITIAL_SLOTS;
+  }
+  uint64_t address=(uintptr_t)m;
+  address^=address>>33; address*=UINT64_C(0xff51afd7ed558ccd); address^=address>>29;
+  unsigned first=(unsigned)address&(cache->capacity-1u);
+  StateKeyCacheEntry *free_slot=NULL,*unused=NULL;
+  for(unsigned probe=0;probe<STATE_KEY_CACHE_PROBE;probe++){
+    StateKeyCacheEntry *entry=&cache->entry[(first+probe)&(cache->capacity-1u)];
+    if(entry->map==m) return entry;
+    if(!entry->map){ if(!free_slot) free_slot=entry; }
+    else if(!unused && !entry->busy && entry->write!=cache->write) unused=entry;
+  }
+  if(free_slot) return free_slot;
+  if(unused) return unused;
+  return &cache->entry[first];
+}
+/* The cached shape of m, or a cleared entry ready to record it (NULL when not cached). */
+static StateKeyCacheEntry *state_key_cache_get(StateW *s,const GmlVarMap *m,uint32_t count,
+                                               int *hit){
+  *hit=0;
+  StateKeyCacheEntry *entry=state_key_cache_slot(s,m,count);
+  if(!entry || entry->busy) return NULL;
+  uint32_t write=s->vm->state_key_cache->write;
+  if(entry->map==m && entry->version==m->key_version && entry->count==count){
+    entry->write=write;
+    *hit=1;
+    return entry;
+  }
+  if(entry->map && entry->map!=m && entry->version &&
+     entry->write==write) s->vm->state_key_cache->conflicts++;
+  state_key_cache_entry_clear(entry);
+  entry->slots=malloc((size_t)count*sizeof(*entry->slots));
+  entry->encoding=malloc((size_t)count*sizeof(*entry->encoding));
+  entry->hash=malloc((size_t)count*sizeof(*entry->hash));
+  entry->hash_valid=calloc(count,sizeof(*entry->hash_valid));
+  if(!entry->slots || !entry->encoding || !entry->hash || !entry->hash_valid){
+    state_key_cache_entry_clear(entry);
+    return NULL;
+  }
+  entry->map=m;
+  entry->count=count;
+  entry->write=write;
+  return entry;
+}
+
 static int state_shapes_reserve(StateKeyShape **shapes,size_t *capacity,uint32_t count){
   if(count>=STATE_MAX_MAPS)return 0;
   if(count==*capacity){
@@ -1316,7 +1480,26 @@ static void sw_lvalue_owner(StateW *s,uint64_t owner,uint32_t kind,
   }
   s->owners[s->owner_count++]=(StateLvalueOwner){owner,kind,target,index};
 }
-static void sw_varmap(StateW *s,GmlVarMap *m){
+/* A map value's text, with the digest its slot received while the map was hashed. The map is not
+ * changed while it is written, so its text is borrowed for the snapshot like its keys. */
+static int sw_map_text(StateW *s,const GmlVarMap *m,const GmlVal *value,
+                       const StateTextDigest *digests){
+  if(!digests || value->t!=V_STR || !value->s) return 0;
+  uintptr_t offset=(uintptr_t)value-(uintptr_t)m->slots;
+  size_t index=offset/sizeof(GmlVarSlot);
+  if((uintptr_t)value<(uintptr_t)m->slots || index>=(size_t)m->cap ||
+     &m->slots[index].val!=value || !digests[index].known) return 0;
+  if(!s->ok) return 1;
+  const StateTextDigest *digest=&digests[index];
+  sw_u8(s,(uint8_t)V_STR);
+  uint32_t encoding=state_string_encoding_with(s,value->s,digest);
+  uint64_t hash=state_map_mix(digest->hash);
+  unsigned char valid=1;
+  sw_encoded_string(s,value->s,encoding,&hash,&valid,NULL,NULL,NULL);
+  return 1;
+}
+static void sw_varmap_entries(StateW *s,GmlVarMap *m,StateKeyCacheEntry **cache_out,int *hit_out,
+                              StateTextDigest *digests){
   int dbg=0;
   if(s->vm){
     if(s->vm->diagnostics.state_variable_debug<0)
@@ -1326,7 +1509,7 @@ static void sw_varmap(StateW *s,GmlVarMap *m){
   }
   int has_array_owners=0;
   uint32_t n=0;uint64_t shape_hash=0;
-  uint64_t hash=state_map_hash(m,&n,&shape_hash,&has_array_owners);
+  uint64_t hash=state_map_hash(m,&n,&shape_hash,&has_array_owners,digests);
   if(n!=(uint32_t)m->len) state_debug(s->vm,"varmap len mismatch",s->pos,(uint32_t)m->len);
   if(n>100000 || n>STATE_MAX_MAP_ENTRIES-s->map_entries){s->ok=0;return;}
   s->map_entries+=n;
@@ -1352,10 +1535,25 @@ static void sw_varmap(StateW *s,GmlVarMap *m){
                                        s->shape_count,m,(uint32_t)shape_hash,n,1);
   if(!shape)return;
   int shared=shape->map!=NULL;
+  StateKeyCacheEntry *cached=NULL;
+  int cache_hit=0;
+  *cache_out=NULL;
   if(!shared){
     if(!state_shapes_reserve(&s->shapes,&s->shape_capacity,s->shape_count)){s->ok=0;return;}
-    GmlVarSlot **slots=state_shape_slots(s->vm,m,n);
-    if(!slots){s->ok=0;return;}
+    cached=state_key_cache_get(s,m,n,&cache_hit);
+    if(cached){ cached->busy=1; *cache_out=cached; *hit_out=cache_hit; }
+    GmlVarSlot **slots=NULL;
+    if(cache_hit){
+      slots=malloc((size_t)n*sizeof(*slots));
+      if(slots) memcpy(slots,cached->slots,(size_t)n*sizeof(*slots));
+    } else {
+      slots=state_shape_slots(s->vm,m,n);
+      if(slots && cached) memcpy(cached->slots,slots,(size_t)n*sizeof(*slots));
+    }
+    if(!slots){
+      if(cached && !cache_hit) state_key_cache_entry_clear(cached);
+      s->ok=0;return;
+    }
     s->shapes[s->shape_count]=(StateKeyShape){slots,n,0};
     *shape=(StateMapEntry){m,(uint32_t)shape_hash,s->shape_count++,n,0};
   }
@@ -1372,15 +1570,20 @@ static void sw_varmap(StateW *s,GmlVarMap *m){
     if(!value){s->ok=0;return;}
     if(dbg)anygm_host_logf(s->vm?s->vm->host:NULL,ANYGM_LOG_DEBUG,"[svar] %s t=%d\n",slot->key,value->t);
     if(!shared){
-      uint32_t text=state_string_encoding(s,slot->key);
+      uint32_t text=cache_hit?cached->encoding[i]:state_string_encoding(s,slot->key);
+      if(cached && !cache_hit) cached->encoding[i]=text;
       if(!(text&UINT32_C(0x80000000))){
         if(text>1024u*1024u*1024u-keys->key_bytes){s->ok=0;return;}
         keys->key_bytes+=text;
       }
-      sw_encoded_string(s,slot->key,text,NULL,NULL,NULL,NULL,NULL);
+      /* The map is not changed while it is written, so its keys can be borrowed for the
+       * snapshot; the hash memo is the cached one. */
+      if(cached) sw_encoded_string(s,slot->key,text,&cached->hash[i],&cached->hash_valid[i],
+                                   NULL,NULL,NULL);
+      else sw_encoded_string(s,slot->key,text,NULL,NULL,NULL,NULL,NULL);
     }
     if(value->t==V_REAL && value->number_kind==GML_NUM_REAL) sw_real(s,value->d);
-    else sw_val(s,*value,0);
+    else if(!sw_map_text(s,m,value,digests)) sw_val(s,*value,0);
   }
   /* The key shape and shared values already identify each binding's canonical
    * wire index. Retain the positive owners here while those values are hot. */
@@ -1392,6 +1595,27 @@ static void sw_varmap(StateW *s,GmlVarMap *m){
     }
   }
   record->key_bytes=keys->key_bytes;
+}
+static void sw_varmap(StateW *s,GmlVarMap *m){
+  StateKeyCacheEntry *cached=NULL;
+  int hit=0;
+  /* One scratch serves the map being written; a write nested inside it takes the plain path. */
+  StateTextDigest *digests=NULL;
+  if(!s->digests_busy && m->cap>0){
+    if((size_t)m->cap>s->digest_capacity){
+      StateTextDigest *next=realloc(s->digests,(size_t)m->cap*sizeof(*next));
+      if(next){ s->digests=next; s->digest_capacity=(size_t)m->cap; }
+    }
+    if((size_t)m->cap<=s->digest_capacity) digests=s->digests;
+  }
+  if(digests) s->digests_busy=1;
+  sw_varmap_entries(s,m,&cached,&hit,digests);
+  if(digests) s->digests_busy=0;
+  if(cached){
+    /* A shape derived in full is recorded for this key set; a failed or partial write is not. */
+    if(!hit) cached->version=s->ok?m->key_version:0;
+    cached->busy=0;
+  }
 }
 static int sr_varmap(GmlVM *vm,StateR *s,GmlVarMap *m){
   /* A second definition cannot invalidate slot pointers retained by a preceding key shape. */
@@ -2587,6 +2811,7 @@ size_t gml_vm_state_size(GmlVM *vm){
     gml_struct_gc(vm);
   }
   StateW s={0}; s.ok=1; s.vm=vm; s.compact_strings=1; s.memo=state_str_memo(vm);
+  state_key_cache_begin_write(vm);
   sw_vm(&s,vm);
   sw_release(&s);
   return s.ok?s.pos:0;
@@ -2599,6 +2824,7 @@ int gml_vm_state_save(GmlVM *vm, void *data, size_t len, size_t *written){
   }
   StateW s={.data=(uint8_t*)data,.cap=len,.pos=0,.ok=1,.vm=vm,.compact_strings=1,
             .memo=state_str_memo(vm)};
+  state_key_cache_begin_write(vm);
   sw_vm(&s,vm);
   sw_release(&s);
   if(written) *written=s.pos;

@@ -41,7 +41,11 @@ int gml_physics_copy_omits_key(const char *name){
 enum { PHYS_KINEMATIC_FROM_FIXTURE=2 };
 
 int gml_physics_body_enabled(GmlVM *vm,const GmlInstance *in){
-  if(!vm || !in || gml_physics_world_scale(vm)<=0) return 0;
+  return gml_physics_body_enabled_in_world(vm,in,vm?gml_physics_world_scale(vm):0.0);
+}
+
+int gml_physics_body_enabled_in_world(GmlVM *vm,const GmlInstance *in,double world_scale){
+  if(!vm || !in || world_scale<=0) return 0;
   /* Negative body state suppresses template materialization for instance_copy.
    * Explicit fixture binding initializes ordinary positive body state again. */
   if(value(in,"__phy_body",0)<0) return 0;

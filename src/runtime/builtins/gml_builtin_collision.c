@@ -1224,6 +1224,23 @@ GmlVal gml_builtin_try_collision_planning(GmlVM *vm, const char *nm, GmlVal *a, 
   if(!strcmp(nm,"instance_nearest")||!strcmp(nm,"instance_furthest")){
     int far=!strcmp(nm,"instance_furthest"); double px=N(a,n,0),py=N(a,n,1); int obj=(int)N(a,n,2);
     double best=far?-1:1e18; int bid=-4;
+    int family_count=0;
+    const int *family=gml_vm_object_family(vm,obj,&family_count);
+    if(family){
+      /* Only the object's family can match an object index. Visiting it list by list instead of
+       * in pool order, an equal distance keeps the lower slot, which the pool scan reached first. */
+      int best_slot=-1;
+      for(int member=0;member<family_count;member++)
+        for(int i=vm->obj_head[family[member]];i>=0;i=vm->inst_next[i]){
+          GmlInstance *o=&vm->inst[i];
+          if(!o->active || o->marked) continue;
+          double d=hypot(o->x-px,o->y-py);
+          if((far&&d>best)||(!far&&d<best)||(best_slot>=0 && d==best && i<best_slot)){
+            best=d; bid=(int)o->id; best_slot=i;
+          }
+        }
+      return vreal(bid);
+    }
     for(int i=0;i<vm->inst_count;i++){ GmlInstance*o=&vm->inst[i];
       if(!target_matches_instance(vm,vm->cur_self,o,obj)) continue;
       double d=hypot(o->x-px,o->y-py); if((far&&d>best)||(!far&&d<best)){ best=d; bid=(int)o->id; } }

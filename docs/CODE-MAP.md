@@ -76,6 +76,11 @@ also invokes `common/gml_render_atlas.c::gml_render_prepare_scene_sprite`,
 These reuse immutable source views and device uploads, require on-demand context access,
 and bound speculative packaged real/sprite-font work independently of unchanged CPU warming.
 `tests/unit/video/renderer/test_render_resources.c` covers identity, refusal and retry.
+Content's own load requests, `texturegroup_load` with prefetch and `texture_prefetch` of a group
+name, queue that group's pages on the same workers through
+`common/gml_render_atlas.c::gml_render_prefetch_texture_group`. `texturegroup_get_status` keeps
+answering fetched, so content never observes decoder timing.
+`tests/unit/runtime/test_builtin_resource_queries.c` covers the request, its scope and the status.
 
 | Path | Responsibility | Public or internal entry points | Mutable owner | Allowed dependencies | Forbidden dependencies | Compatibility policies | Tests | Focused command |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |

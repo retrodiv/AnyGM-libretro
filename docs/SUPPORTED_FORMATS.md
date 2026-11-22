@@ -452,7 +452,10 @@ links, and select a normalized payload deterministically. See
 A sound stored in a container is decoded from what its own header declares, not
 from its extension. RIFF/WAVE carries 16-bit PCM in place, and 8-bit PCM and
 four-bit MS ADPCM are decoded into a bounded per-sound buffer; OGG Vorbis and
-MP3 stay compressed until first playback. A WAVE in any other encoding is
+MP3 stay compressed until first playback. An Ogg entry that its sound record
+declares compressed is then decoded as its voices consume it, in bounded windows,
+as a loose Ogg file is; any other Ogg entry is decoded completely on its first
+play. Both produce the same samples. A WAVE in any other encoding is
 silent and reports itself under the audio log rather than being played as if
 its bytes were samples.
 

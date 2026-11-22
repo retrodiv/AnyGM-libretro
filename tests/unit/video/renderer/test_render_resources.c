@@ -8894,6 +8894,85 @@ static int resident_offscreen_sprite_part_preserves_queued_draws(void){
   return 1;
 }
 
+/* R03-SPR-PART-OUTSIDE: a selected part whose destination rectangle misses the target by more
+ * than one pixel is a no-op under every content policy, sign and size of scale, filter, tint and
+ * opacity. The queued prefix stays resident, the picture equals the CPU's and the source page is
+ * never demanded: with its pixels absent the draw still costs no submission, read or replay. A
+ * rectangle that ends inside the one-pixel rim is not admitted and must still match the CPU. */
+static int resident_outside_sprite_part_any_policy(void){
+  enum {WIDTH=24,HEIGHT=20};
+  const double scales[][2]={{1,1},{2,3},{-1,1},{1,-2},{.5,.75}};
+  const struct { uint32_t colour; double alpha; } tints[]={{0xFFFFFFu,1.0},{0x80C040u,0.5}};
+  for(unsigned policy=0;policy<3u;policy++) for(unsigned scale=0;scale<5u;scale++)
+  for(unsigned filter=0;filter<2u;filter++) for(unsigned tint=0;tint<2u;tint++)
+  for(unsigned edge=0;edge<5u;edge++) for(unsigned phase=0;phase<2u;phase++)
+  for(unsigned absent=0;absent<(edge<4u?2u:1u);absent++){
+    GmlRender *r=calloc(1,sizeof *r);
+    GmlWin content=policy==0u?(GmlWin){.bytecode=14}:
+                   policy==1u?(GmlWin){.bytecode=17,.has_room_layers=1}:
+                   (GmlWin){.classic_version=810};
+    FakeDevice fake={0};GmlRenderDeviceServices device=service(&fake);
+    GmlRenderJournalMetrics before={0},after={0};
+    GmlRenderApplicationWriteView view={0};
+    uint32_t expected[WIDTH*HEIGHT];
+    CHECK(r && gml_render_init(r,NULL)==0 &&
+          gml_render_application_surface_ensure_owned(r,WIDTH,HEIGHT));
+    r->win=&content;
+    free(r->atlas[0].px);
+    r->atlas[0]=(GmlAtlas){.w=12,.h=12,.px=malloc(12u*12u*4u)};
+    r->tpag=calloc(1,sizeof *r->tpag);r->spr=calloc(1,sizeof *r->spr);
+    CHECK(r->atlas[0].px && r->tpag && r->spr);
+    r->n_tpag=r->n_spr=1;
+    for(unsigned pixel=0;pixel<144u;pixel++){
+      uint8_t *rgba=r->atlas[0].px+pixel*4u;
+      rgba[0]=230u;rgba[1]=173u;rgba[2]=91u;
+      rgba[3]=pixel%3u==0u?0u:pixel%3u==1u?128u:255u;
+    }
+    r->tpag[0]=(GmlTpag){.sx=1,.sy=1,.sw=9,.sh=9,.tw=9,.th=9,.bw=9,.bh=9};
+    r->spr[0].w=r->spr[0].h=9;r->spr[0].n_frames=1;
+    r->spr[0].originx=4;r->spr[0].originy=3;
+    r->spr[0].frame=calloc(1,sizeof(int));CHECK(r->spr[0].frame);
+    const double xs=scales[scale][0],ys=scales[scale][1];
+    const double w=7.0*xs,h=7.0*ys,step=0.25*(double)phase;
+    /* Place the near edge of the destination rectangle beyond the rim, or inside it (edge 4).
+     * The owned application below sets a (2,3) camera. */
+    const double cam_x=2.0,cam_y=3.0;
+    double left=cam_x+6.0,top=cam_y+5.0;
+    if(edge==0u) left=cam_x-1.0-step-(w>0?w:0);
+    if(edge==1u) left=cam_x+WIDTH+1.0+step-(w<0?w:0);
+    if(edge==2u) top=cam_y-1.0-step-(h>0?h:0);
+    if(edge==3u) top=cam_y+HEIGHT+1.0+step-(h<0?h:0);
+    if(edge==4u) left=cam_x-0.5-step-(w>0?w:0);
+    if(absent){ free(r->atlas[0].px); r->atlas[0].px=NULL; }
+    for(unsigned accelerated=0;accelerated<2u;accelerated++){
+      gml_render_bind_device(r,accelerated?&device:NULL);
+      if(accelerated) CHECK(gml_render_begin_resident_owned_application(r,2,3,0));
+      else CHECK(gml_render_begin_owned_application(r,2,3,0));
+      r->interp=(int)filter;r->active_shader=-1;r->alphablend=1;r->blendmode=0;
+      r->blend_equation=r->blend_equation_alpha=1;r->color_write_mask=15u;
+      gml_render_set_pending_fill(r,0xFF102030u);
+      gml_render_primitive_rectangle(r,4,5,8,9,0x2468ACu,0);
+      gml_render_resource_journal_metrics(r->app_surface_resource,&before);
+      int submits=fake.submits,reads=fake.readbacks;
+      CHECK(r->cam_x==cam_x && r->cam_y==cam_y);
+      gml_draw_sprite_part_ext(r,0,0,1,1,7,7,left,top,xs,ys,tints[tint].colour,tints[tint].alpha);
+      if(accelerated && edge<4u){
+        gml_render_resource_journal_metrics(r->app_surface_resource,&after);
+        CHECK(r->resident_application_pass && fake.submits==submits &&
+              fake.readbacks==reads && after.logical_version==before.logical_version &&
+              after.cpu_replays==before.cpu_replays);
+      }
+      gml_render_primitive_rectangle(r,6,7,10,11,0x13579Bu,0);
+      if(accelerated) CHECK(gml_render_scene_submit_pending(r));
+      CHECK(gml_render_application_surface_owned_view(r,&view));
+      if(accelerated) CHECK(!memcmp(expected,view.pixels,sizeof expected));
+      else memcpy(expected,view.pixels,sizeof expected);
+    }
+    gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int resident_filtered_gui_offscreen_sprite_noop(void){
   enum {WIDTH=24,HEIGHT=20};
   for(unsigned mapped=0;mapped<2u;mapped++) for(unsigned trim=0;trim<2u;trim++)
@@ -21964,6 +22043,7 @@ int main(void){
   passed+=resident_empty_sprite_part_preserves_pending_work();
   passed+=resident_zero_alpha_sprite_part_noop();
   passed+=resident_offscreen_sprite_part_preserves_queued_draws();
+  passed+=resident_outside_sprite_part_any_policy();
   passed+=resident_filtered_gui_offscreen_sprite_noop();
   passed+=resident_filtered_application_offscreen_sprite_noop();
   passed+=resident_clipped_filtered_background_part_noop();
@@ -22165,7 +22245,7 @@ int main(void){
   passed+=resident_lazy_native_atlas();
   passed+=resident_unit_texel_magnification();
   passed+=opaque_rectangle_clear_complement();
-  enum { total=349 };
+  enum { total=350 };
   printf("render resource cases: passed=%d failed=%d\n",passed,total-passed);
   return passed==total?EXIT_SUCCESS:EXIT_FAILURE;
 }

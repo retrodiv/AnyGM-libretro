@@ -319,6 +319,9 @@ static GmlInstance *var_target(GmlVM *vm, int inst){
   if(inst==IT_OTHER) return vm->cur_other;
   if(inst==IT_ALL)   return first_active_instance(vm);
   if(inst<0)         return vm->cur_self;
+  /* An object index names its first live family member in pool order, which the per-object
+   * lists answer without testing the ancestry of every instance in the room. */
+  if(inst<vm->n_objects) return gml_find_instance(vm,inst);
   for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
     if(o->active && !o->marked && gml_object_is(vm,o->obj,inst)) return o; }
   return NULL;
@@ -654,6 +657,39 @@ unsigned long gml_vm_unset_reads(const GmlVM *vm){
   return vm?vm->diagnostics.unset_reads:0ul;
 }
 
+/* Instance variables that inst_builtin_get answers from the instance alone. None of them is
+ * named by var_get_h's constant and global chain, so for an instance target that chain only
+ * costs its comparisons; the names are kept as hashes to be recognised without them. */
+static const char *const g_instance_field_names[]={
+  "x","y","xprevious","yprevious","xstart","ystart","sprite_index","mask_index","image_index",
+  "image_speed","image_xscale","image_yscale","image_angle","image_alpha","image_blend","depth",
+  "visible","solid","persistent","hspeed","vspeed","direction","speed","gravity",
+  "gravity_direction","friction","path_index","path_position","path_speed","path_orientation",
+  "path_scale","path_positionprevious","path_endaction","timeline_index","timeline_position",
+  "timeline_speed","timeline_running","timeline_loop"
+};
+#define N_INSTANCE_FIELD (int)(sizeof g_instance_field_names/sizeof g_instance_field_names[0])
+_Static_assert(N_INSTANCE_FIELD==GML_VM_INSTANCE_FIELD_NAMES,"instance field hash capacity");
+static int instance_field_name(GmlVM *vm,const char *name,uint32_t nh){
+  if(!vm->instance_field_hash_ready){
+    for(int i=0;i<N_INSTANCE_FIELD;i++)
+      vm->instance_field_hash[i]=gml_value_name_hash(g_instance_field_names[i]);
+    vm->instance_field_hash_ready=1;
+  }
+  for(int i=0;i<N_INSTANCE_FIELD;i++)
+    if(vm->instance_field_hash[i]==nh && !strcmp(g_instance_field_names[i],name)) return 1;
+  return 0;
+}
+
+/* Read on every code run; the session's value is fixed, so it is read once. */
+static const char *code_args_setting(GmlVM *vm){
+  if(!vm->diagnostics.code_args_setting_read){
+    vm->diagnostics.code_args_setting=anygm_host_development_setting(vm->host,"GML_LOG_CODE_ARGS");
+    vm->diagnostics.code_args_setting_read=1;
+  }
+  return vm->diagnostics.code_args_setting;
+}
+
 static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   GmlVal out;
   if(inst==IT_STATIC){
@@ -703,6 +739,19 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
       if(p) return *p;
     }
     unset_read(vm,"unset",0,self,name);
+    return vreal(0);
+  }
+  if(inst!=IT_GLOBAL && instance_field_name(vm,name,nh)){
+    /* The same instance tail the chain below reaches for these names. */
+    GmlInstance *self=var_target(vm,inst);
+    if(self){
+      if(inst_is_struct_ref(self)){
+        GmlVal *p=struct_field_get_h(vm,self,name,nh);
+        return p?*p:vreal(0);
+      }
+      if(inst_builtin_get(vm,self,name,&out)) return out;
+      GmlVal *p=gml_varmap_get_hashed(&self->vars,name,nh); if(p) return *p;
+    }
     return vreal(0);
   }
   /* Argument names cannot match the global constants below. Keep dynamic
@@ -1561,6 +1610,14 @@ static GmlInstance *inst_by_id(GmlVM *vm, double idv){
    * directly instead of first scanning every room instance for an impossible low instance id;
    * array-heavy draw loops can perform thousands of these object-scoped reads per frame. */
   if(id>=0 && id<vm->n_objects){
+    if(vm->obj_head && vm->inst_next){
+      /* The object's own instance list holds every slot this scan can find. */
+      int best=-1;
+      for(int i=vm->obj_head[id];i>=0;i=vm->inst_next[i])
+        if((best<0 || i<best) && vm->inst[i].active && !vm->inst[i].marked && vm->inst[i].obj==id)
+          best=i;
+      return best>=0?&vm->inst[best]:NULL;
+    }
     for(int i=0;i<vm->inst_count;i++)
       if(vm->inst[i].active && !vm->inst[i].marked && vm->inst[i].obj==id)
         return &vm->inst[i];
@@ -1571,11 +1628,15 @@ static GmlInstance *inst_by_id(GmlVM *vm, double idv){
    * their marker and immediately read its geometry to decide which instances to reactivate.
    * A disposal callback likewise retains its receiver until Destroy/CleanUp finish. The pending
    * mark still prevents recursive destruction and keeps it out of ordinary instance queries. */
-  for(int i=0;i<vm->inst_count;i++)
-    if((vm->inst[i].active || vm->inst[i].deactivated) &&
-       (!vm->inst[i].marked || vm->inst[i].disposal_callback_active) &&
-       (int)vm->inst[i].id==id) return &vm->inst[i];
-  return NULL;
+  int hint=vm->instance_id_hint;
+  if(!(hint>=0 && hint<vm->inst_count && (int)vm->inst[hint].id==id)){
+    hint=-1;
+    for(int i=0;i<vm->inst_count;i++)
+      if((int)vm->inst[i].id==id){ hint=i; vm->instance_id_hint=i; break; }
+    if(hint<0) return NULL;
+  }
+  GmlInstance *in=&vm->inst[hint];
+  return (in->active || in->deactivated) && (!in->marked || in->disposal_callback_active)?in:NULL;
 }
 GmlInstance *gml_vm_instance_by_id(GmlVM *vm, double id){
   return inst_by_id(vm,id);
@@ -2599,7 +2660,7 @@ static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *o
   if(!code_cache_ensure(vm->win,ci)) return 0;
   if(c->micro_kind==GML_MICRO_NONE) return 0;
   if(builtin_hotprof_on(vm)) return 0;
-  const char *arglog=anygm_host_development_setting(vm->host,"GML_LOG_CODE_ARGS");
+  const char *arglog=code_args_setting(vm);
   if(arglog && *arglog && c->name && strstr(c->name,arglog)) return 0;
   double t0=codeprof_on(vm)?codeprof_now_ms(vm):0.0;
   if(c->micro_kind==GML_MICRO_DS_MAP_GLOBAL_ARG0 && c->micro_name){
@@ -3237,11 +3298,12 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
   GmlVarMap locals={0};
   int argc=n_args<0?0:(n_args<16?n_args:16);
   vm->script_argc=argc;
+  const GmlVal missing=argument_missing(vm);
   for(int i=0;i<16;i++){
-    vm->script_args[i]=(i<argc && args)?(resume?args[i]:gml_arr_publish(args[i])):argument_missing(vm);
+    vm->script_args[i]=(i<argc && args)?(resume?args[i]:gml_arr_publish(args[i])):missing;
     vm->script_array_owner[i]=resume?resume->array_owner[i]:0;
   }
-  const char *arglog=anygm_host_development_setting(vm->host,"GML_LOG_CODE_ARGS");
+  const char *arglog=code_args_setting(vm);
   if(arglog && *arglog && strstr(w->code[ci].name,arglog)){
     
     anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[args] f%ld %s argc=%d self=%u obj=%d:",vm->frame,w->code[ci].name,argc,self?self->id:0,self?self->obj:-1);
@@ -3900,14 +3962,23 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
             VM_DIRECT_CALL(rv,gml_vm_run_code(vm,sci,vm->cur_self,vm->cur_other,a,na));
         }
         else if(bid>0 && !hp_builtin) rv=gml_builtin_call_fast_id(vm,bid,nm,a,na);
+        else if(bid==GML_BUILTIN_ID_UNKNOWN && !hp_builtin) rv=vreal(0);
         else {
           vm->call_script_ci=-1;
+          vm->unknown_builtin_name=NULL;
           const char *previous_fallback=exception_context.direct_fallback_name;
           exception_context.direct_fallback_name=nm;
           rv=gml_builtin_call(vm,nm,a,na);
           exception_context.direct_fallback_name=previous_fallback;
           if(pin && vm->call_script_ci>=0) pin->funcval_ci=vm->call_script_ci;
+          /* The whole dispatch chain answered this name as unknown. Later calls from this site
+           * return the same zero without walking every builtin family and script table again;
+           * the self-field method test above still runs first on every call. */
+          else if(pin && nm && vm->unknown_builtin_name==nm && rv.t==V_REAL && rv.d==0.0 &&
+                  pin->builtin_id<=0)
+            pin->builtin_id=GML_BUILTIN_ID_UNKNOWN;
           vm->call_script_ci=-1;
+          vm->unknown_builtin_name=NULL;
         }
         /* track a freshly-malloc'd string result so it's freed (else string builtins leak). Skip
          * arg pass-through (the arg's owner frees it) to avoid double-tracking a var's string. */

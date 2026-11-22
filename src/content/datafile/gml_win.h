@@ -7,6 +7,7 @@
 #define GML_WIN_H
 #include <stdint.h>
 #include <stddef.h>
+#include <string.h>
 #include "gml_source_options.h"
 
 struct AnygmCompatibilityProfile;
@@ -73,8 +74,10 @@ typedef struct {
   const char *refname; /* VM cache: gml_ref_name(refaddr), when applicable */
   uint32_t refhash;    /* VM cache: strhash(refname), when applicable */
   int32_t  funcval_ci; /* VM cache: GMS2.3 push.i32 function-value code index, -1 if none */
-  int16_t  builtin_id; /* VM cache: hot builtin dispatch id; 0=unresolved, -1=generic path */
+  int16_t  builtin_id; /* VM cache: hot builtin dispatch id; 0=unresolved, -1=generic path,
+                          GML_BUILTIN_ID_UNKNOWN=the generic path answered an unknown builtin */
 } GmlInsn;
+#define GML_BUILTIN_ID_UNKNOWN (-2)
 
 typedef struct { char name[8]; uint32_t off, size; } GmlChunk;
 /* content-hash index over one chunk's asset-name table (lazy; for O(1) exact asset-name lookup) */
@@ -128,7 +131,7 @@ typedef struct GmlWin {
   /* strings, in STRG order */
   char   **strs;  uint32_t *str_charoff; int n_strs;
   /* content-hash index over strs (lazy; for O(1) intern lookups) */
-  int32_t *str_hix; uint32_t str_hix_cap;
+  int32_t *str_hix; uint32_t *str_hix_hash; uint32_t str_hix_cap;
   /* code entries */
   GmlCode *code;  int n_code;
   /* content-hash index over code names (lazy; for O(1) exact code lookup) */
@@ -179,6 +182,23 @@ const GmlChunk *gml_chunk(const GmlWin *w, const char *name);
 const char  *gml_str_by_index(const GmlWin *w, uint32_t idx);
 const char  *gml_str_by_ptr(const GmlWin *w, uint32_t fileoff);
 const char  *gml_win_intern_lookup(GmlWin *w, const char *s);   /* O(1) STRG content lookup, NULL if absent */
+/* The hash the STRG lookup indexes by: text of a known length taken eight bytes at a time. It
+ * selects table slots and is never stored, so a caller that has already hashed the text with it can
+ * pass the low 32 bits to gml_win_intern_lookup_hashed; equality is always confirmed by comparing
+ * the text, so the answer is gml_win_intern_lookup's. */
+static inline uint64_t gml_win_text_hash(const char *s,size_t n){
+  const uint64_t k=UINT64_C(0xff51afd7ed558ccd);
+  uint64_t h=UINT64_C(0x9e3779b97f4a7c15)^((uint64_t)n*UINT64_C(0xc2b2ae3d27d4eb4f));
+  for(;n>=8;s+=8,n-=8){
+    uint64_t w; memcpy(&w,s,8);
+    h=(h^w)*k; h^=h>>32;
+  }
+  uint64_t tail=0;
+  if(n) memcpy(&tail,s,n);
+  h=(h^tail)*k; h^=h>>29; h*=UINT64_C(0xc4ceb9fe1a85ec53); h^=h>>32;
+  return h;
+}
+const char  *gml_win_intern_lookup_hashed(GmlWin *w, const char *s, uint32_t hash);
 /* O(1) exact name lookup in one asset chunk's name table (e.g. "SPRT", "FONT"); -1 if chunk
  * missing/malformed or name absent. versioned=1 when the chunk's own count field sits 4 bytes
  * into the chunk body instead of at its start (a leading version word, e.g. SEQN/ACRV/PSYS). */

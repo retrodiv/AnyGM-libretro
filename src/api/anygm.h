@@ -15,7 +15,7 @@ extern "C" {
  * runtime library version, and every publishable metadata file declares the literal "Git" instead
  * of a number, so no copy can promise a value that has gone stale. CONTRIBUTING.md owns the single
  * increment step. */
-#define ANYGM_VERSION "0.1.957"
+#define ANYGM_VERSION "0.1.958"
 #define ANYGM_API_VERSION 8u
 #define ANYGM_HOST_SERVICES_VERSION 2u
 #define ANYGM_STATE_SCHEMA 70u
@@ -518,7 +518,10 @@ enum {
   /* The logical input phase accepted this call's text batch. Repeated or
    * restored completed pictures do not acknowledge unexecuted input. This
    * acknowledgement remains valid if later execution or presentation fails. */
-  ANYGM_FRAME_TEXT_INPUT_CONSUMED=1u<<4
+  ANYGM_FRAME_TEXT_INPUT_CONSUMED=1u<<4,
+  /* Accompanies ANYGM_FRAME_TIMING_CHANGED when the new cadence arrived with a room change rather
+   * than from content altering its speed within a room. A host may defer the latter. */
+  ANYGM_FRAME_TIMING_ROOM_CHANGED=1u<<5
 };
 
 /* Optional host graphics target.
@@ -660,6 +663,14 @@ uint32_t anygm_state_capacity_flags(const AnygmEngine *engine);
  * in the content's writable namespace. A hint is advisory: the current complete-state buffer
  * requirement is always anygm_state_size. */
 size_t anygm_state_capacity_hint(const AnygmEngine *engine);
+/* Optional: declares that the next call on this engine is expected to be anygm_state_save or
+ * anygm_state_save_for_resume, with the runtime unchanged, as when a frame has finished and a
+ * rewind ring records this one. The engine may begin writing the state's runtime section in the
+ * background while the host presents the frame; the save then completes from it and writes the
+ * same bytes it would have written alone. Any other call that can change the runtime first waits
+ * for and discards that work, so a wrong expectation costs time, never correctness. The host must
+ * not call the engine concurrently, as with every other function. */
+void anygm_state_prepare(AnygmEngine *engine);
 AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written);
 /* Writes the canonical state without its optional completed frame. This is the explicit form of
  * the fallback anygm_state_save already uses when the supplied capacity can hold every required

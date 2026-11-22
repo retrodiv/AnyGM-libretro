@@ -25,6 +25,87 @@ static void *vm_state_write_worker(void *opaque){
   task->ok=gml_vm_state_save(task->vm,task->data,task->capacity,&task->written);
   return NULL;
 }
+static size_t vm_state_task_capacity(const AnygmEngine *engine){
+  size_t growth=engine->state_vm_size_hint/2u;
+  if(growth<65536u) growth=65536u;
+  size_t capacity=engine->state_vm_size_hint;
+  if(growth<=SIZE_MAX-capacity) capacity+=growth;
+  return capacity;
+}
+/* A host that knows its next call is a save (a rewind ring records every Nth frame) can say so as
+ * a frame ends. The VM section, the bulk of a state, is then written on a worker while the host
+ * presents the frame and waits for the display, and the save that follows only joins it. Nothing
+ * may change the runtime in between: every engine call that can is preceded by
+ * engine_state_prepared_discard, and a state write joins the worker before it reads anything. The
+ * bytes are those the save would have written itself, from the same runtime. */
+struct EngineStatePrepared {
+  VmStateWriteTask task;
+  gml_thread_t thread;
+  int running;   /* the worker may still be writing */
+  int ready;     /* task holds a joined result */
+  int consumed;  /* the last state write used a prepared section */
+  /* The sections before the runtime section (header space, core, completed frame, renderer),
+   * written on the calling thread while the worker writes the runtime section. They hold for the
+   * form (complete or resume) of the save that preceded the announcement. */
+  uint8_t *prefix;
+  size_t prefix_size,prefix_capacity,prefix_core,prefix_render;
+  int prefix_ready,prefix_omit_frame,last_omit_frame;
+  size_t last_size;   /* the size of the last state written, which sizes the stash */
+};
+static void state_prepare_prefix(AnygmEngine *engine,struct EngineStatePrepared *prepared);
+int engine_state_prepared_pending(const AnygmEngine *engine){
+  const struct EngineStatePrepared *prepared=engine?engine->state_prepared:NULL;
+  return prepared && (prepared->running || prepared->ready);
+}
+int engine_state_prepared_consumed(const AnygmEngine *engine){
+  const struct EngineStatePrepared *prepared=engine?engine->state_prepared:NULL;
+  return prepared?prepared->consumed:0;
+}
+void engine_state_prepare(AnygmEngine *engine){
+  if(!engine || !engine->loaded || engine->state_vm_size_hint<32768u) return;
+  struct EngineStatePrepared *prepared=engine->state_prepared;
+  if(!prepared){
+    prepared=calloc(1,sizeof *prepared);
+    if(!prepared) return;
+    engine->state_prepared=prepared;
+  }
+  if(prepared->running || prepared->ready) return;
+  prepared->task=(VmStateWriteTask){0};
+  prepared->task.capacity=vm_state_task_capacity(engine);
+  prepared->task.data=malloc(prepared->task.capacity);
+  if(!prepared->task.data) return;
+  prepared->task.vm=&engine->vm;
+  if(gml_thread_create(&prepared->thread,vm_state_write_worker,&prepared->task)!=0){
+    free(prepared->task.data);
+    prepared->task.data=NULL;
+    return;
+  }
+  prepared->running=1;
+  state_prepare_prefix(engine,prepared);
+}
+static void engine_state_prepared_join(AnygmEngine *engine){
+  struct EngineStatePrepared *prepared=engine?engine->state_prepared:NULL;
+  if(!prepared || !prepared->running) return;
+  gml_thread_join(prepared->thread);
+  prepared->running=0;
+  prepared->ready=1;
+}
+void engine_state_prepared_free(AnygmEngine *engine){
+  if(!engine || !engine->state_prepared) return;
+  engine_state_prepared_discard(engine);
+  free(engine->state_prepared->prefix);
+  free(engine->state_prepared);
+  engine->state_prepared=NULL;
+}
+void engine_state_prepared_discard(AnygmEngine *engine){
+  struct EngineStatePrepared *prepared=engine?engine->state_prepared:NULL;
+  if(!prepared) return;
+  engine_state_prepared_join(engine);
+  free(prepared->task.data);
+  prepared->task=(VmStateWriteTask){0};
+  prepared->ready=0;
+  prepared->prefix_ready=0;
+}
 static void cw_raw(CoreW *s, const void *p, size_t n){
   if(n>SIZE_MAX-s->pos){ s->ok=0; s->pos=SIZE_MAX; return; }
   if(s->data){
@@ -561,12 +642,12 @@ static int state_launch_matches_engine(const AnygmEngine *engine,
     !strcmp(engine->launch_parameters,launch->launch_parameters);
 }
 
-static void state_write(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity){
-  uint64_t save_t0=0,save_t1=0,save_t2=0,save_t3=0,save_t4=0,save_t5=0;
-  int save_time=s->data &&
-    anygm_host_development_setting(&engine->host,"GML_DBG_STATE_TIME")!=NULL;
-  if(save_time) save_t0=anygm_host_monotonic_time_ns(&engine->host);
-  uint32_t save_frame_authority=engine->frame_authority;
+/* Writes the header space and the core, completed-frame and renderer sections, starting the
+ * runtime-section worker when asked. Returns 1 when written, 0 when the completed frame exceeds
+ * the capacity (the caller retries without it), and -1 when the state cannot be written. */
+static int state_write_prefix(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity,
+                              int start_vm,VmStateWriteTask *vm_task,gml_thread_t *vm_thread,
+                              int *vm_thread_started,size_t *coren,size_t *rendern){
   /* A proven current context lets a writer preserve the actual resident pixels,
    * rather than substituting their CPU recipe. Metadata queries do neither, and
    * hosts without this proof retain the established context-free state path. */
@@ -584,7 +665,7 @@ static void state_write(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity
       /* Reject before a renderer writer can turn replayable GPU authority into CPU bytes.
        * Already observed CPU images remain serializable while the host is unbound. */
       s->ok=0;
-      return;
+      return -1;
     }
   }
   uint8_t empty_header[ANYGM_STATE_HEADER_SIZE]={0};
@@ -603,30 +684,19 @@ static void state_write(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity
   cw_raw(s,engine->key_press_carry,sizeof engine->key_press_carry);
   cw_raw(s,engine->key_release_defer,sizeof engine->key_release_defer);
   cw_u32(s,engine->mouse_button_cleared);
-  VmStateWriteTask vm_task={0};
-  gml_thread_t vm_thread;
-  int vm_thread_started=0;
-  if(s->data && s->ok && engine->state_vm_size_hint>=32768u){
-    size_t growth=engine->state_vm_size_hint/2u;
-    if(growth<65536u) growth=65536u;
-    vm_task.capacity=engine->state_vm_size_hint;
-    if(growth<=SIZE_MAX-vm_task.capacity) vm_task.capacity+=growth;
-    if(vm_task.capacity>s->cap) vm_task.capacity=s->cap;
-    if((vm_task.data=malloc(vm_task.capacity))!=NULL){
-      vm_task.vm=&engine->vm;
-      if(gml_thread_create(&vm_thread,vm_state_write_worker,&vm_task)==0)
-        vm_thread_started=1;
-      else { free(vm_task.data); vm_task.data=NULL; }
+  if(start_vm && s->data && s->ok && engine->state_vm_size_hint>=32768u){
+    vm_task->capacity=vm_state_task_capacity(engine);
+    if(vm_task->capacity>s->cap) vm_task->capacity=s->cap;
+    if((vm_task->data=malloc(vm_task->capacity))!=NULL){
+      vm_task->vm=&engine->vm;
+      if(gml_thread_create(vm_thread,vm_state_write_worker,vm_task)==0)
+        *vm_thread_started=1;
+      else { free(vm_task->data); vm_task->data=NULL; }
     }
   }
   state_write_completed_frame(engine,s,frame_exceeds_capacity);
-  if(frame_exceeds_capacity && *frame_exceeds_capacity){
-    if(vm_thread_started) gml_thread_join(vm_thread);
-    free(vm_task.data);
-    return;
-  }
-  if(save_time) save_t1=anygm_host_monotonic_time_ns(&engine->host);
-  size_t coren=s->pos-core_start;
+  if(frame_exceeds_capacity && *frame_exceeds_capacity) return 0;
+  *coren=s->pos-core_start;
   size_t render_start=s->pos;
   /* Assigning a view does not make a game-owned surface disposable. A later
    * view draw may retain transparent pixels or the room may stop drawing it.
@@ -645,11 +715,73 @@ static void state_write(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity
     if(!measured) s->ok=0;
     cw_raw(s,NULL,measured);
   }
-  size_t rendern=s->pos-render_start;
+  *rendern=s->pos-render_start;
+  return 1;
+}
+
+static void state_write(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity){
+  uint64_t save_t0=0,save_t2=0,save_t3=0,save_t4=0,save_t5=0;
+  int save_time=s->data &&
+    anygm_host_development_setting(&engine->host,"GML_DBG_STATE_TIME")!=NULL;
+  if(save_time) save_t0=anygm_host_monotonic_time_ns(&engine->host);
+  /* A prepared VM section is complete before anything is read; a measurement keeps it. */
+  engine_state_prepared_join(engine);
+  VmStateWriteTask prepared_vm={0};
+  struct EngineStatePrepared *prepared=s->data?engine->state_prepared:NULL;
+  int use_prefix=0;
+  if(prepared){
+    prepared->consumed=0;
+    if(prepared->ready){
+      prepared_vm=prepared->task;
+      prepared->task=(VmStateWriteTask){0};
+      prepared->ready=0;
+      prepared->consumed=1;
+      use_prefix=prepared->prefix_ready && prepared->prefix_omit_frame==engine->state_omit_frame &&
+                 prepared->prefix_size<=s->cap;
+      if(use_prefix) prepared->consumed=2;
+    }
+    prepared->prefix_ready=0;
+    prepared->last_omit_frame=engine->state_omit_frame;
+  }
+  uint32_t save_frame_authority=engine->frame_authority;
+  size_t coren=0,rendern=0;
+  if(use_prefix){
+    memcpy(s->data,prepared->prefix,prepared->prefix_size);
+    s->pos=prepared->prefix_size;
+    coren=prepared->prefix_core;
+    rendern=prepared->prefix_render;
+  }
+  VmStateWriteTask vm_task={0};
+  gml_thread_t vm_thread;
+  int vm_thread_started=0;
+  int vm_task_done=0;
+  if(prepared_vm.data){
+    vm_task=prepared_vm;
+    vm_task_done=1;
+  }
+  if(!use_prefix){
+    int result=state_write_prefix(engine,s,frame_exceeds_capacity,!vm_task_done,&vm_task,
+                                  &vm_thread,&vm_thread_started,&coren,&rendern);
+    if(result<0){
+      free(vm_task.data);
+      return;
+    }
+    if(result==0){
+      /* The retry without a frame writes the same VM section; keep it for that write. */
+      if(vm_task_done && prepared && !prepared->ready){
+        prepared->task=vm_task;
+        prepared->ready=1;
+        return;
+      }
+      if(vm_thread_started) gml_thread_join(vm_thread);
+      free(vm_task.data);
+      return;
+    }
+  }
   if(save_time) save_t2=anygm_host_monotonic_time_ns(&engine->host);
   size_t vmn=0, audn=0;
-  if(vm_thread_started){
-    gml_thread_join(vm_thread);
+  if(vm_thread_started || vm_task_done){
+    if(vm_thread_started) gml_thread_join(vm_thread);
     if(vm_task.ok && vm_task.written && vm_task.written<=vm_task.capacity){
       vmn=vm_task.written;
       cw_raw(s,vm_task.data,vmn);
@@ -703,21 +835,50 @@ static void state_write(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity
                                              (size_t)header.payload_size);
     state_header_write(s->data,&header);
     if(!engine->state_omit_frame) engine->state_written_size_hint=s->pos;
+    if(prepared) prepared->last_size=s->pos;
   }
   if(save_time){
     save_t5=anygm_host_monotonic_time_ns(&engine->host);
     if(engine->diagnostics.state_save_time_prints++<16){
       #define SAVE_MS(a,b) ((double)((b)-(a))/1000000.0)
       engine_logf(engine,ANYGM_LOG_DEBUG,
-        "[state-save-time] core=%.2fms frame=%.2fms render=%.2fms vm=%.2fms "
-        "audio=%.2fms checksum=%.2fms bytes=%llu authority=%u\n",
-        SAVE_MS(save_t0,save_t5),SAVE_MS(save_t0,save_t1),SAVE_MS(save_t1,save_t2),
+        "[state-save-time] core=%.2fms frame+render=%.2fms vm=%.2fms "
+        "audio=%.2fms checksum=%.2fms bytes=%llu authority=%u prepared=%d+%d\n",
+        SAVE_MS(save_t0,save_t5),SAVE_MS(save_t0,save_t2),
         SAVE_MS(save_t2,save_t3),SAVE_MS(save_t3,save_t4),SAVE_MS(save_t4,save_t5),
-        (unsigned long long)s->pos,save_frame_authority);
+        (unsigned long long)s->pos,save_frame_authority,vm_task_done,use_prefix);
       #undef SAVE_MS
     }
   }
   state_profile_maybe_log(engine,s->pos, rendern, vmn, audn);
+}
+static void state_prepare_prefix(AnygmEngine *engine,struct EngineStatePrepared *prepared){
+  prepared->prefix_ready=0;
+  /* Before the first save the engine has seen with this record, the last complete state. */
+  size_t capacity=prepared->last_size?prepared->last_size:engine->state_written_size_hint;
+  if(!capacity || capacity>SIZE_MAX-262144u) return;
+  capacity+=262144u;
+  if(prepared->prefix_capacity<capacity){
+    uint8_t *next=realloc(prepared->prefix,capacity);
+    if(!next) return;
+    prepared->prefix=next;
+    prepared->prefix_capacity=capacity;
+  }
+  int previous=engine->state_omit_frame;
+  engine->state_omit_frame=prepared->last_omit_frame;
+  CoreW stash={prepared->prefix,prepared->prefix_capacity,0,1};
+  int frame_exceeds=0;
+  size_t coren=0,rendern=0;
+  int started=0;
+  int result=state_write_prefix(engine,&stash,&frame_exceeds,0,NULL,NULL,&started,&coren,
+                                &rendern);
+  engine->state_omit_frame=previous;
+  if(result!=1 || !stash.ok || stash.pos>stash.cap) return;
+  prepared->prefix_size=stash.pos;
+  prepared->prefix_core=coren;
+  prepared->prefix_render=rendern;
+  prepared->prefix_omit_frame=prepared->last_omit_frame;
+  prepared->prefix_ready=1;
 }
 size_t engine_state_size(AnygmEngine *engine){
   if(!engine->loaded) return 0;

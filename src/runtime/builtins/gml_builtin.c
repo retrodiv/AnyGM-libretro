@@ -1906,6 +1906,9 @@ GmlVal gml_builtin_try_platform_tail(GmlVM *vm, const char *nm, GmlVal *a, int n
 
   /* Log each unknown builtin name once so later misses remain visible. */
   if(log_stub) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[unk] %s\n",nm);
+  /* Every handler above is keyed on the name alone, so a name that arrives here always will.
+   * Report it to the caller's per-site cache, except while each call must stay visible. */
+  else if(vm) vm->unknown_builtin_name=nm;
   if(state){
     uint32_t hash=2166136261u; const char *c; int i, seen=0;
     int capacity=(int)(sizeof state->unknown_builtin_seen/sizeof state->unknown_builtin_seen[0]);

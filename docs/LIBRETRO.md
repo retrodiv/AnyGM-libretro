@@ -37,11 +37,37 @@ observe the already-selected frequency and omit a redundant setter call.
 One presentation tick can require zero, one or several logical steps. Audio
 from every executed step is consumed before the next one; only the final
 picture is presented. Zero-step ticks repeat the completed picture without
-executing content or mixing duplicate audio. The engine owns and serializes
+executing content. Sound keeps playing through them: each repeat mixes its
+tick's share of audio, and the steps that follow owe it, so the sample count
+over time stays that of the executed steps. The engine owns and serializes
 the fractional clock phase. Relative mouse and wheel input accumulates across
 zero-step ticks and is consumed once when logical execution resumes.
-Content making no display request retains the
-ordinary one-step-per-callback path.
+
+## Content cadence changes
+
+Content making no display request presents at the cadence the frontend holds:
+the startup answer, then any cadence that arrives with a room change, announced
+at once with `SET_SYSTEM_AV_INFO`. A change content makes within a room, through
+`game_set_speed` or `room_speed`, is announced only once it has held for one
+second of presented ticks. Until then its steps follow the fractional clock
+above against the held cadence. A single slowed step, used to mark an impact,
+therefore holds the picture for its authored duration without the frontend
+rebuilding its video and audio pipelines or switching a display mode, and a
+lasting change still reaches the frontend so a display mode can follow it.
+While the two cadences agree the clock yields exactly one step per tick.
+
+## Rewind snapshots
+
+A rewind ring calls `retro_serialize` every Nth tick. The adapter counts ticks between saves, and
+once the same interval has been seen twice it announces the expected save with
+`anygm_state_prepare` on the tick that completes the next interval, after the frame has run and
+before the picture is handed to `video_cb`. The engine then writes the runtime section on a worker
+thread and the core, completed-frame and renderer sections on the calling thread, while the
+frontend presents and waits for the display; `retro_serialize` joins the worker and assembles the
+same bytes an unannounced save writes. A restored state forgets the interval, and any engine call
+between the announcement and the save discards the prepared work, so a misprediction costs time,
+never state content. Sections are prepared for the form, complete or frame-free, of the previous
+save.
 
 ## Optional call-boundary profiling
 

@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static int expect(int condition,const char *message);
 static int real_is(GmlVal value,double number);
@@ -62,6 +63,56 @@ static int texture_groups_case(void){
     ok &= expect(gml_val_array_length(missing)==0,"group names use exact case-sensitive matching");
     gml_values_release(&missing,1);
     vm.render=NULL;gml_vm_free(&vm);
+  }
+  return ok;
+}
+/* Requests to load a group ahead of use decode its pages on the background workers, without a
+ * draw and without changing what content observes. */
+static int page_decoded(GmlRender *render,int atlas){
+  for(int wait=0;wait<5000;wait++){
+    if(__atomic_load_n(&render->atlas[atlas].px,__ATOMIC_ACQUIRE)) return 1;
+    struct timespec pause={0,1000000};
+    nanosleep(&pause,NULL);
+  }
+  return 0;
+}
+static int texture_group_load_case(void){
+  static const uint8_t encoded[]={'f','i','o','q',1,0,1,0,0,0,0,0,0xFF,17,39,61,255};
+  int ok=1;
+  for(int request=0;request<2;request++){
+    unsigned char data[512];GmlWin win;
+    group_fixture(&win,data,1);
+    GmlRender *render=calloc(1,sizeof *render);
+    if(!render) return 0;
+    render->win=&win;render->n_atlas=3;
+    render->atlas=calloc(3,sizeof *render->atlas);
+    if(!render->atlas){ free(render); return 0; }
+    for(int i=0;i<3;i++){
+      render->atlas[i].external_blob=malloc(sizeof encoded);
+      if(render->atlas[i].external_blob) memcpy(render->atlas[i].external_blob,encoded,sizeof encoded);
+      render->atlas[i].external_size=sizeof encoded;
+      render->atlas[i].w=render->atlas[i].h=1;
+    }
+    GmlVM vm={.win=&win,.render=render};
+    GmlVal without[]={vstr("texture_group"),vreal(0)};
+    GmlVal result=gml_builtin_call(&vm,"texturegroup_load",without,2);
+    ok &= expect(real_is(result,0) && !render->prefetch,
+                 "a group load without prefetch decodes nothing");
+    GmlVal argument=vstr("Texture_group");
+    (void)gml_builtin_call(&vm,request?"texture_prefetch":"texturegroup_load",&argument,1);
+    ok &= expect(!render->prefetch,"an unknown group requests nothing");
+    argument=vstr("texture_group");
+    result=gml_builtin_call(&vm,request?"texture_prefetch":"texturegroup_load",&argument,1);
+    ok &= expect(real_is(result,0),"a group request answers success");
+    ok &= expect(page_decoded(render,2) && page_decoded(render,0),
+                 "every page of the requested group decodes without a draw");
+    ok &= expect(!render->atlas[1].px && !render->atlas[1].decode_attempted,
+                 "a page outside the group stays undecoded");
+    ok &= expect(!memcmp(render->atlas[2].px,encoded+13,4),"the decoded page holds its pixels");
+    result=gml_builtin_call(&vm,"texturegroup_get_status",&argument,1);
+    ok &= expect(real_is(result,3),"the group status never depends on decoder timing");
+    vm.render=NULL;gml_vm_free(&vm);
+    gml_render_free(render);free(render);
   }
   return ok;
 }
@@ -350,7 +401,7 @@ static int sprite_information_case(void){
     vm.render=NULL;
     ok &= expect(query(&vm,"sprite_get_info",vreal(0),cached,&ok).t==V_UNDEF,
                  "an absent renderer cannot supply sprite information");
-    gml_vm_free(&vm);free(win.str_hix);all &=ok;
+    gml_vm_free(&vm);free(win.str_hix);free(win.str_hix_hash);all &=ok;
   }
   return all;
 }
@@ -482,6 +533,7 @@ int main(void){
   static const AnygmTestCase cases[]={
     {"authored_texture_groups",texture_groups_case},
     {"malformed_texture_groups",malformed_texture_groups_case},
+    {"texture_group_load_prefetches",texture_group_load_case},
     {"sprite_information",sprite_information_case},
     {"room_information",room_information_case},
     {"room_information_nested",room_information_nested_case},

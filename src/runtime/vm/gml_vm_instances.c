@@ -238,12 +238,30 @@ int gml_object_index_by_name(GmlVM *vm, const char *name){
   return -1;
 }
 static const int *object_descendants(GmlVM *vm,int target,int *count);
-GmlInstance *gml_find_instance(GmlVM *vm, int obj){
-  if(obj>=100000){
-    for(int i=0;i<vm->inst_count;i++)
-      if(vm->inst[i].active && !vm->inst[i].marked && (int)vm->inst[i].id==obj) return &vm->inst[i];
-    return NULL;
+const int *gml_vm_object_family(GmlVM *vm, int obj, int *count){
+  if(count) *count=0;
+  if(!vm || !count || obj<0 || obj>=vm->n_objects || !vm->obj_head || !vm->inst_next) return NULL;
+  return object_descendants(vm,obj,count);
+}
+/* The live (active, unmarked) instance with this id, through the id hint. */
+static GmlInstance *live_instance_with_id(GmlVM *vm, int id){
+  int hint=vm->instance_id_hint;
+  if(hint>=0 && hint<vm->inst_count && (int)vm->inst[hint].id==id){
+    GmlInstance *in=&vm->inst[hint];
+    return in->active && !in->marked?in:NULL;
   }
+  for(int i=0;i<vm->inst_count;i++)
+    if((int)vm->inst[i].id==id){
+      vm->instance_id_hint=i;
+      return vm->inst[i].active && !vm->inst[i].marked?&vm->inst[i]:NULL;
+    }
+  return NULL;
+}
+GmlInstance *gml_vm_live_instance_with_id(GmlVM *vm, int id){
+  return vm?live_instance_with_id(vm,id):NULL;
+}
+GmlInstance *gml_find_instance(GmlVM *vm, int obj){
+  if(obj>=100000) return live_instance_with_id(vm,obj);
   if(obj>=0 && obj<vm->n_objects && vm->obj_head && vm->inst_next){
     int count=0,best=vm->inst_count;
     const int *family=object_descendants(vm,obj,&count);
@@ -267,11 +285,9 @@ int gml_instance_number(GmlVM *vm, int target){
   }
   if(target==IT_SELF)  return (vm->cur_self  && vm->cur_self->active  && !vm->cur_self->marked)  ? 1 : 0;
   if(target==IT_OTHER) return (vm->cur_other && vm->cur_other->active && !vm->cur_other->marked) ? 1 : 0;
-  if(target>=100000){
-    for(int i=0;i<vm->inst_count;i++)
-      if(vm->inst[i].active && !vm->inst[i].marked && (int)vm->inst[i].id==target) return 1;
-    return 0;
-  }
+  if(target>=100000) return live_instance_with_id(vm,target)!=NULL;
+  /* Only an object index has a family; any other value names no instance. */
+  if(target<0 || target>=vm->n_objects) return 0;
   /* Family counts include deactivated instances, so only zero is an exact shortcut here. */
   if(target>=0 && target<vm->n_objects && vm->obj_alive && vm->obj_alive[target]==0) return 0;
   if(target>=0 && target<vm->n_objects && vm->obj_head && vm->inst_next){
@@ -1298,7 +1314,10 @@ static int vm_bbox_at(GmlVM *vm, GmlInstance *in, double atx, double aty,
   }
   double xs=in->image_xscale, ys=in->image_yscale;
   if(fabs(xs)<1e-9 || fabs(ys)<1e-9) return 0;
-  double ang=in->image_angle*M_PI/180.0, c=cos(ang), sn=sin(ang);
+  /* cos(+-0) is 1 and sin(+-0) keeps the zero's sign, so an unrotated mask skips both calls
+   * and still transforms its corners bit for bit as before. */
+  double ang=in->image_angle*M_PI/180.0;
+  double c=ang==0.0?1.0:cos(ang), sn=ang==0.0?ang:sin(ang);
   double minx=1e30,miny=1e30,maxx=-1e30,maxy=-1e30;
   double x0, x1, y0, y1;
   /* Studio's inclusive far edge belongs to the transformed world-space box. Only Classic
@@ -1672,12 +1691,33 @@ static int colcand_get(GmlVM *vm, int obj, int **out){
   *out=cache->slots;
   return n;
 }
+/* Within one collision pass an instance's box and the room's physics world change only when
+ * event code runs (or the pass itself moves a participant just before running it). The pass
+ * keeps both until then instead of re-deriving them for every pair. */
+typedef struct { double l,t,r,b; uint32_t generation; int ok; } CollisionBox;
+static int collision_box(GmlVM *vm,CollisionBox *boxes,int box_count,uint32_t generation,int index,
+                         double *l,double *t,double *r,double *b){
+  CollisionBox *box=boxes && index>=0 && index<box_count?&boxes[index]:NULL;
+  if(box && box->generation==generation){
+    *l=box->l; *t=box->t; *r=box->r; *b=box->b;
+    return box->ok;
+  }
+  int ok=gml_vm_instances_bbox(vm,&vm->inst[index],l,t,r,b);
+  if(box){ box->l=*l; box->t=*t; box->r=*r; box->b=*b; box->ok=ok; box->generation=generation; }
+  return ok;
+}
+
 void gml_vm_instances_run_collisions(GmlVM *vm){
   if(!vm->render) return;
   const char *clog=anygm_host_development_setting(vm->host,"GML_LOG_COLLISION");   /* hoisted: this ran PER PAIR (1.3M getenv/frame) */
   int cmode=gml_colgrid_mode(vm);
   uint64_t *collision_done=NULL;
   int collision_done_n=0, collision_done_cap=0;
+  int box_count=vm->inst_count;
+  CollisionBox *boxes=box_count>0?calloc((size_t)box_count,sizeof *boxes):NULL;
+  uint32_t box_generation=1;
+  double world_scale=0.0;
+  int world_known=0;
   for(int i=0;i<vm->inst_count;i++){ GmlInstance *si=&vm->inst[i];
     if(!si->active||si->marked||si->obj<0||si->obj>=vm->n_objects) continue;
     if(!vm->objects[si->obj].colself) continue;   /* no Collision_* handler anywhere in its chain */
@@ -1694,8 +1734,14 @@ void gml_vm_instances_run_collisions(GmlVM *vm){
       }
       GmlInstance *oi=&vm->inst[j];
       if(oi==si||!oi->active||oi->marked||oi->obj<0||oi->obj>=vm->n_objects) continue;
+      /* Both skips below are pure. The handler lookup is cached per object pair and rejects
+       * most pairs, so it runs first; the body test reads the room's physics world each time. */
+      int handler_obj=-1, target_obj=-1, code=-1;
+      if(!col_event_for_pair(vm,si->obj,oi->obj,&handler_obj,&target_obj,&code)) continue;
       /* The physics solve owns contacts once both bodies have been materialized. */
-      if(gml_physics_body_enabled(vm,si) && gml_physics_body_enabled(vm,oi) &&
+      if(!world_known){ world_scale=gml_physics_world_scale(vm); world_known=1; }
+      if(gml_physics_body_enabled_in_world(vm,si,world_scale) &&
+         gml_physics_body_enabled_in_world(vm,oi,world_scale) &&
          gml_varmap_get(&si->vars,"__phy_body") && gml_varmap_get(&oi->vars,"__phy_body")) continue;
       int solid_pair=si->solid || oi->solid;
       int classic_pair=solid_pair && vm->win && anygm_policy_uses_classic_runtime(vm->win);
@@ -1706,8 +1752,6 @@ void gml_vm_instances_run_collisions(GmlVM *vm){
       if(classic_pair || fixture_pair)
         for(int p=0;p<collision_done_n;p++) if(collision_done[p]==pair_key){ pair_done=1; break; }
       if(pair_done) continue;
-      int handler_obj=-1, target_obj=-1, code=-1;
-      if(!col_event_for_pair(vm,si->obj,oi->obj,&handler_obj,&target_obj,&code)) continue;
       if(cmode==2 && vm->obj_head){   /* verify: a firing-capable pair must be in the candidate set */
         int *vc=NULL; int vn=colcand_get(vm,si->obj,&vc), found=0;
         for(int q=0;q<vn;q++) if(vc[q]==j){ found=1; break; }
@@ -1718,8 +1762,8 @@ void gml_vm_instances_run_collisions(GmlVM *vm){
         if(!vm_fixture_bbox(vm,si,&l1,&t1,&r1,&b1) ||
            !vm_fixture_bbox(vm,oi,&l2,&t2,&r2,&b2)) continue;
       } else {
-        if(!gml_vm_instances_bbox(vm,si,&l1,&t1,&r1,&b1) ||
-           !gml_vm_instances_bbox(vm,oi,&l2,&t2,&r2,&b2)) continue;
+        if(!collision_box(vm,boxes,box_count,box_generation,i,&l1,&t1,&r1,&b1) ||
+           !collision_box(vm,boxes,box_count,box_generation,j,&l2,&t2,&r2,&b2)) continue;
       }
       int bbox_hit=vm_overlap(l1,t1,r1,b1,l2,t2,r2,b2);
       double fixture_normal_x=0.0,fixture_normal_y=0.0,fixture_penetration=0.0;
@@ -1735,6 +1779,9 @@ void gml_vm_instances_run_collisions(GmlVM *vm){
             vm->frame,sn,si->id,l1,t1,r1,b1,on,oi->id,l2,t2,r2,b2,mask_hit,target_obj);
       }
       if(bbox_hit && mask_hit){
+        /* Everything below may move, change or create instances and the physics world. */
+        box_generation++;
+        world_known=0;
         if(fixture_pair)
           vm_fixture_resolve(vm,si,oi,fixture_normal_x,fixture_normal_y,fixture_penetration);
         if(clog){
@@ -1855,6 +1902,7 @@ void gml_vm_instances_run_collisions(GmlVM *vm){
       }
     }
   }
+  free(boxes);
   free(collision_done);
 }
 /* Precompute boundary handlers (including inherited ones). Bits 0..1 are room events,

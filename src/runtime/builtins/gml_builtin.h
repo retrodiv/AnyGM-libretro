@@ -52,6 +52,9 @@ int gml_builtin_ini_entry_count(const GmlVM *vm);
 int gml_builtin_account_picker_pending_count(const GmlVM *vm);
 void gml_builtin_physics_room_reset(GmlVM *vm);
 int gml_physics_body_enabled(GmlVM *vm,const GmlInstance *instance);
+/* The same test against a physics world scale the caller already read for this room. */
+int gml_physics_body_enabled_in_world(GmlVM *vm,const GmlInstance *instance,double world_scale);
+double gml_physics_world_scale(GmlVM *vm);
 void gml_physics_step(GmlVM *vm);
 int gml_physics_variable_get(GmlVM *vm,GmlInstance *instance,const char *name,GmlVal *out);
 int gml_physics_variable_set(GmlVM *vm,GmlInstance *instance,const char *name,GmlVal value);

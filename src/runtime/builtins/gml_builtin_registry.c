@@ -263,10 +263,25 @@ static int shader_account_kind(const char *nm){
 
 /* A draw made with a content program active is accounted by whether it reached the device, which
  * the executed counter answers: it moves only when a program ran there. */
+enum {
+  BUILTIN_DISPATCH_SHADER_ACCOUNT=1,
+  BUILTIN_DISPATCH_LOG_CALLS_IN_TARGET=2,
+  BUILTIN_DISPATCH_LOG_SURF_DELTA=4
+};
+
+static int builtin_dispatch_settings(GmlVM *vm){
+  if(vm->diagnostics.builtin_dispatch_settings<0)
+    vm->diagnostics.builtin_dispatch_settings=
+      (builtin_setting(vm,"GML_SHADER_ACCOUNT")?BUILTIN_DISPATCH_SHADER_ACCOUNT:0)|
+      (builtin_setting(vm,"GML_LOG_CALLS_IN_TARGET")?BUILTIN_DISPATCH_LOG_CALLS_IN_TARGET:0)|
+      (builtin_setting(vm,"GML_LOG_SURF_DELTA")?BUILTIN_DISPATCH_LOG_SURF_DELTA:0);
+  return vm->diagnostics.builtin_dispatch_settings;
+}
+
 static int shader_account_begin(GmlVM *vm,const char *nm,GmlRender **render,int *kind,uint32_t *mark){
   GmlRender *r;
   if(!vm || !nm || strncmp(nm,"draw_",5) || !shader_account_is_draw(nm)) return 0;
-  if(!builtin_setting(vm,"GML_SHADER_ACCOUNT")) return 0;
+  if(!(builtin_dispatch_settings(vm)&BUILTIN_DISPATCH_SHADER_ACCOUNT)) return 0;
   r=(GmlRender*)vm->render;
   if(!r || gml_render_shader_current(r)<0) return 0;
   *render=r;
@@ -294,14 +309,15 @@ static GmlVal gml_builtin_call_fast_id_original(GmlVM *vm, int id, const char *n
   if(!gml_builtin_state_ensure(vm)) return vundef();
   GmlRender *R=(GmlRender*)vm->render;
   (void)graphics_state_for_vm(vm);
-  if(builtin_setting(vm,"GML_LOG_CALLS_IN_TARGET")){
+  int settings=builtin_dispatch_settings(vm);
+  if(settings&BUILTIN_DISPATCH_LOG_CALLS_IN_TARGET){
     /* Cover the direct cached-dispatch path while a surface target is active. */
     int tgt_=R?gml_surface_get_target(R):-1;
     if(tgt_>0){
       anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[call] target=%d %s/%d\n",tgt_,nm?nm:"?",n);
     }
   }
-  if(R && nm && builtin_setting(vm,"GML_LOG_SURF_DELTA") && strstr(nm,"draw")){
+  if(R && nm && (settings&BUILTIN_DISPATCH_LOG_SURF_DELTA) && strstr(nm,"draw")){
     /* Scan only selected drawing calls while a surface target is active. */
     int before_=gml_surface_target_lit(R);
     if(before_>=0){

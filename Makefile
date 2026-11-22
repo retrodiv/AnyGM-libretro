@@ -225,7 +225,7 @@ AUDIO_TESTS := test_mp3_detect
 COMPATIBILITY_TESTS := test_compatibility
 CHECK_TARGETS := $(addprefix $(TEST_DIR)/,$(RUNTIME_TESTS) $(VIDEO_RENDERER_TESTS) \
 	$(CONTENT_TESTS) $(MEDIA_TESTS) $(AUDIO_TESTS) $(COMPATIBILITY_TESTS))
-INTEGRATION_TESTS := $(TEST_DIR)/test_engine_instances $(TEST_DIR)/test_mouse_input $(TEST_DIR)/test_host_setting_budget $(TEST_DIR)/test_engine_blocking_wait \
+INTEGRATION_TESTS := $(TEST_DIR)/test_engine_instances $(TEST_DIR)/test_mouse_input $(TEST_DIR)/test_host_setting_budget $(TEST_DIR)/test_engine_blocking_wait $(TEST_DIR)/test_engine_state_prepare \
 	$(TEST_DIR)/test_font_state \
 	$(TEST_DIR)/test_engine_content_config \
 	$(TEST_DIR)/test_engine_content_patch \
@@ -239,6 +239,7 @@ endif
 CONTRACT_TESTS := $(TEST_DIR)/dummy_host $(TEST_DIR)/test_builtin_file_io $(TEST_DIR)/test_libretro_state_transport \
 	$(TEST_DIR)/test_libretro_tilemap_state \
 	$(TEST_DIR)/test_libretro_display_cadence \
+	$(TEST_DIR)/test_libretro_content_cadence \
 	$(TEST_DIR)/test_libretro_crt_output \
 	$(TEST_DIR)/test_libretro_vfs_transport $(TEST_DIR)/test_libretro_option_defaults \
 	$(TEST_DIR)/test_libretro_keyboard_source $(TEST_DIR)/test_libretro_gamepad_ports \
@@ -919,6 +920,7 @@ $(TEST_DIR)/public_header_cpp.o: tests/contract/public_header_cpp.cpp src/api/an
 integration-check: $(INTEGRATION_TESTS)
 	$(TEST_DIR)/test_engine_instances
 	$(TEST_DIR)/test_engine_blocking_wait
+	$(TEST_DIR)/test_engine_state_prepare
 	$(TEST_DIR)/test_gpu_scene_route
 	$(TEST_DIR)/test_gpu_scene_route --dense
 	$(TEST_DIR)/test_mouse_input
@@ -937,6 +939,7 @@ contract-check: $(CONTRACT_TESTS)
 	$(TEST_DIR)/test_libretro_state_transport
 	$(TEST_DIR)/test_libretro_tilemap_state
 	$(TEST_DIR)/test_libretro_display_cadence
+	$(TEST_DIR)/test_libretro_content_cadence
 	$(TEST_DIR)/test_libretro_crt_output
 	$(TEST_DIR)/test_libretro_vfs_transport
 	$(TEST_DIR)/test_libretro_option_defaults
@@ -1056,6 +1059,11 @@ $(TEST_DIR)/test_engine_blocking_wait: tests/integration/test_engine_blocking_wa
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
+$(TEST_DIR)/test_engine_state_prepare: tests/integration/test_engine_state_prepare.c \
+	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
+	mkdir -p $(dir $@)
+	$(call link_runtime_test,$(TEST_CPPFLAGS))
+
 $(TEST_DIR)/test_engine_scoped_overrides: tests/integration/test_engine_scoped_overrides.c \
 	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
@@ -1111,6 +1119,11 @@ $(TEST_DIR)/test_libretro_tilemap_state: tests/contract/libretro_tilemap_state.c
 	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS) $(VIDEO_PROVIDER_LDLIBS)
 
 $(TEST_DIR)/test_libretro_display_cadence: tests/contract/libretro_display_cadence.c \
+	tests/support/synthetic_content.c $(CORE_OBJECTS) $(TEST_HOST_OBJECTS)
+	mkdir -p $(dir $@)
+	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS) $(VIDEO_PROVIDER_LDLIBS)
+
+$(TEST_DIR)/test_libretro_content_cadence: tests/contract/libretro_content_cadence.c \
 	tests/support/synthetic_content.c $(CORE_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
 	$(CC) $(LIBRETRO_CPPFLAGS) -Itests/support $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS) $(VIDEO_PROVIDER_LDLIBS)

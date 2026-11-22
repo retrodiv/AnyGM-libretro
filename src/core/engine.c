@@ -59,6 +59,13 @@ static void engine_errorf(AnygmEngine *engine,AnygmResult result,const char *fmt
  * presentation to discard those render-only side effects before simulation resumes. */
 static AnygmResult engine_run_frame(AnygmEngine *engine);
 
+/* Whole stereo frames owed by the audio clock; none while ticks that held the picture are still
+ * owed (a negative accumulator). Callers subtract the answer and mix at most one output buffer
+ * of it, as before. */
+static int engine_audio_frames_due(double accumulator){
+  return accumulator>=1.0?(int)accumulator:0;
+}
+
 static uint32_t engine_display_request(const AnygmEngine *engine){
   const GmlVal *frequency=gml_varmap_get((GmlVarMap*)&engine->vm.globals,"__display_request_hz");
   return frequency && frequency->t==V_REAL && isfinite(frequency->d) &&
@@ -1196,7 +1203,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   if(engine->runtime_ended){
     memset(engine->audio_output,0,sizeof engine->audio_output);
     engine->audio_accumulator+=44100.0/(engine->fps>0.0?engine->fps:60.0);
-    int nf=(int)engine->audio_accumulator; engine->audio_accumulator-=nf;
+    int nf=engine_audio_frames_due(engine->audio_accumulator); engine->audio_accumulator-=nf;
     if(nf>4096) nf=4096;
     if(nf>0) engine->audio_frames=(size_t)nf;
     engine->frame_flags|=ANYGM_FRAME_SHUTDOWN_REQUESTED;
@@ -1399,7 +1406,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   /* While a prior wait remains active, skip Step and Draw while mixing audio and updating input history. */
   if(wait_held_frame && engine->vm.wait.active){
     engine->audio_accumulator += 44100.0 / (engine->fps>0.0?engine->fps:60.0);
-    int held_frames = (int)engine->audio_accumulator;
+    int held_frames = engine_audio_frames_due(engine->audio_accumulator);
     engine->audio_accumulator -= held_frames;
     if(held_frames>4096) held_frames=4096;
     if(held_frames>0){
@@ -2706,7 +2713,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   if(prof){ t1 = profile_now_ms(engine); engine->profile.video_ms += t1 - t0; t0 = t1; }
   /* audio: emit ~44100/fps stereo frames this tick, mixing active voices (acc handles the remainder) */
   {
-    engine->audio_accumulator += 44100.0 / engine->fps; int nf = (int)engine->audio_accumulator; engine->audio_accumulator -= nf;
+    engine->audio_accumulator += 44100.0 / engine->fps; int nf = engine_audio_frames_due(engine->audio_accumulator); engine->audio_accumulator -= nf;
     if (nf > 4096) nf = 4096;
     if(nf>0){ gml_audio_mix(engine->audio,engine->audio_output,nf); engine->audio_frames=(size_t)nf; }
   }
@@ -2896,6 +2903,7 @@ AnygmResult anygm_create(const AnygmHostServices *services,AnygmEngine **out_eng
 
 void anygm_destroy(AnygmEngine *engine){
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD) return;
+  engine_state_prepared_free(engine);
   if(engine->lifecycle!=ENGINE_EMPTY) anygm_unload(engine);
   engine_clear_video_restore_source(engine);
   free(engine->state_reapply);
@@ -2916,6 +2924,7 @@ void anygm_destroy(AnygmEngine *engine){
 
 AnygmResult anygm_load_prepare(AnygmEngine *engine,const AnygmContentSource *source,
                                const AnygmLoadConfig *config,AnygmContentInfo *info){
+  engine_state_prepared_discard(engine);
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || !source ||
      source->struct_size<sizeof(AnygmContentSource)) return ANYGM_ERROR_INVALID_ARGUMENT;
   if(config && config->struct_size<sizeof(AnygmLoadConfig)) return ANYGM_ERROR_INCOMPATIBLE_ABI;
@@ -2962,6 +2971,7 @@ AnygmResult anygm_load_prepare(AnygmEngine *engine,const AnygmContentSource *sou
 }
 
 AnygmResult anygm_load_start(AnygmEngine *engine){
+  engine_state_prepared_discard(engine);
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_PREPARED)
     return ANYGM_ERROR_INVALID_STATE;
   int diagnostic_room=-1;
@@ -2987,6 +2997,7 @@ AnygmResult anygm_load_start(AnygmEngine *engine){
 
 AnygmResult anygm_load(AnygmEngine *engine,const AnygmContentSource *source,
                        const AnygmLoadConfig *config){
+  engine_state_prepared_discard(engine);
   AnygmResult result=anygm_load_prepare(engine,source,config,NULL);
   if(result!=ANYGM_OK) return result;
   result=anygm_load_start(engine);
@@ -2995,6 +3006,7 @@ AnygmResult anygm_load(AnygmEngine *engine,const AnygmContentSource *source,
 }
 
 void anygm_unload(AnygmEngine *engine){
+  engine_state_prepared_discard(engine);
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle==ENGINE_EMPTY) return;
   if(engine->lifecycle==ENGINE_LOADED){
     /* A session that never saved still teaches the cache: measure once at teardown. */
@@ -3010,6 +3022,7 @@ void anygm_unload(AnygmEngine *engine){
 }
 
 AnygmResult anygm_reset(AnygmEngine *engine){
+  engine_state_prepared_discard(engine);
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED)
     return ANYGM_ERROR_INVALID_STATE;
   uint32_t display_request=engine_display_request(engine);
@@ -3058,13 +3071,15 @@ AnygmResult anygm_get_av_info(const AnygmEngine *engine,AnygmAvInfo *info){
 }
 
 AnygmResult anygm_schedule_frame(AnygmEngine *engine,double presentation_hz,uint32_t *steps){
+  engine_state_prepared_discard(engine);
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED)
     return ANYGM_ERROR_INVALID_STATE;
   if(!steps || !isfinite(presentation_hz) || presentation_hz<2)
     return ANYGM_ERROR_INVALID_ARGUMENT;
   if(engine->state_just_loaded){ *steps=1; return ANYGM_OK; }
-  sync_room_fps(engine,0);
-  double increment=engine->fps/presentation_hz;
+  /* Read the cadence without adopting it: the next step adopts and publishes it, and its
+   * change flags must reach the host. */
+  double increment=engine_content_fps(engine)/presentation_hz;
   if(!isfinite(increment) || increment>65535) return ANYGM_ERROR_INVALID_ARGUMENT;
   double phase=engine->presentation_hz==presentation_hz?engine->presentation_phase:0;
   if(!engine->have_presented_frame && increment<1) phase=1-increment;
@@ -3102,22 +3117,37 @@ AnygmResult anygm_get_room_name(const AnygmEngine *engine,uint32_t index,
 static AnygmResult engine_present_frame_output(AnygmEngine *engine,AnygmFrameOutput *output);
 
 AnygmResult anygm_repeat_frame(AnygmEngine *engine,AnygmFrameOutput *output){
+  engine_state_prepared_discard(engine);
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED ||
      !engine->have_presented_frame || !output) return ANYGM_ERROR_INVALID_STATE;
   if(output->struct_size<sizeof *output) return ANYGM_ERROR_INCOMPATIBLE_ABI;
   if(!engine_materialize_completed_frame(engine)) return ANYGM_ERROR_INTERNAL;
   gml_render_discard_deferred_presentation(&engine->render);
   engine->frame_authority=ENGINE_FRAME_CPU_MATERIALIZED;
-  size_t audio_frames=engine->audio_frames;
   engine->audio_frames=0;
   engine->frame_flags=0;
-  AnygmResult result=engine_present_frame_output(engine,output);
-  engine->audio_frames=audio_frames;
-  return result;
+  /* Sound keeps playing while the picture holds, as it does under a runner whose audio does not
+   * wait for the next step. The tick's share is mixed now and owed by the steps that follow, so
+   * the total sample count stays that of the executed steps. The debt is bounded to one second. */
+  if(isfinite(engine->presentation_hz) && engine->presentation_hz>=2 &&
+     engine->audio_accumulator>-44100.0){
+    /* The tick's share plus the clock's fractional carry, whatever the steps already owe. */
+    double share=44100.0/engine->presentation_hz;
+    double carry=engine->audio_accumulator-floor(engine->audio_accumulator);
+    int nf=(int)(carry+share);
+    engine->audio_accumulator-=(double)nf;
+    if(nf>4096) nf=4096;
+    if(nf>0){
+      gml_audio_mix(engine->audio,engine->audio_output,nf);
+      engine->audio_frames=(size_t)nf;
+    }
+  }
+  return engine_present_frame_output(engine,output);
 }
 
 AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
                             AnygmFrameOutput *output){
+  engine_state_prepared_discard(engine);
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED || !output)
     return ANYGM_ERROR_INVALID_STATE;
   if(output->struct_size<sizeof *output || (input && input->struct_size<sizeof *input))
@@ -3279,6 +3309,7 @@ static void release_fullwidth_gui_extent(AnygmEngine *engine,unsigned next_mode)
 }
 
 AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
+  engine_state_prepared_discard(engine);
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || !delta) return ANYGM_ERROR_INVALID_ARGUMENT;
   if(delta->struct_size<sizeof *delta || delta->values.struct_size<sizeof delta->values)
     return ANYGM_ERROR_INCOMPATIBLE_ABI;
@@ -3370,6 +3401,7 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
 
 AnygmResult anygm_set_runtime_override(AnygmEngine *engine,uint32_t slot,uint32_t enabled,
                                        const char *expression){
+  engine_state_prepared_discard(engine);
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED)
     return ANYGM_ERROR_INVALID_STATE;
   if(slot>=GML_MAX_CHEATS ||
@@ -3451,6 +3483,10 @@ size_t anygm_state_capacity_hint(const AnygmEngine *engine){
   return frame>hint?frame:hint;
 }
 
+void anygm_state_prepare(AnygmEngine *engine){
+  if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED) return;
+  engine_state_prepare(engine);
+}
 AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written){
   size_t local_written=0;
   if(!written) written=&local_written;
@@ -3476,6 +3512,7 @@ AnygmResult anygm_state_save_for_resume(AnygmEngine *engine,void *data,size_t ca
 }
 
 AnygmResult anygm_state_load(AnygmEngine *engine,const void *data,size_t size){
+  engine_state_prepared_discard(engine);
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED || !data)
     return ANYGM_ERROR_INVALID_STATE;
   return engine_state_load(engine,data,size)?ANYGM_OK:ANYGM_ERROR_STATE_MISMATCH;

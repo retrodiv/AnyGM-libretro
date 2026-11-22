@@ -318,7 +318,7 @@ static int authored_case(void){
   GmlVal lookup=gml_builtin_call(&vm,"asset_get_index",&name,1);
   ok &= expect(lookup.t==V_REAL && lookup.d==duplicate.d,
                "a runtime path name resolves back to its resource");
-  gml_vm_free(&vm); free(win.str_hix);
+  gml_vm_free(&vm); free(win.str_hix);free(win.str_hix_hash);
   return ok;
 }
 static int sparse_authored_case(void){
@@ -363,7 +363,7 @@ static int sparse_authored_case(void){
       ok &= expect(added.t==V_REAL && added.d==3,
                    "runtime paths follow the complete authored index range");
     }
-    gml_vm_free(&vm);free(win.str_hix);
+    gml_vm_free(&vm);free(win.str_hix);free(win.str_hix_hash);
   }
   /* A nonzero pointer into the table, a short record and an out-of-file pointer remain invalid. */
   const unsigned invalid[]={4,112,UINT32_MAX};
@@ -373,7 +373,7 @@ static int sparse_authored_case(void){
     memcpy(win.chunks[0].name,"PATH",5);win.chunks[0].size=120;
     GmlVM vm={0};int status=gml_vm_init(&vm,&win,NULL);
     ok &= expect(status!=0,"nonzero malformed path pointers retain strict bounds rejection");
-    gml_vm_free(&vm);free(win.str_hix);
+    gml_vm_free(&vm);free(win.str_hix);free(win.str_hix_hash);
   }
   return ok;
 }

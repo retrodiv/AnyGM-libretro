@@ -766,13 +766,22 @@ GmlVal gml_builtin_try_platform(GmlVM *vm, const char *nm, GmlVal *a, int n){
     free(handles);
     return result;
   }
-  if(!strcmp(nm,"texturegroup_get_status")) return vreal(3);   /* loaded */
-  if(!strcmp(nm,"texturegroup_load")||!strcmp(nm,"texturegroup_unload")||
-     !strcmp(nm,"texturegroup_set_mode")) return vreal(0);
+  /* Every group reads as fetched, whatever the decoders have finished: content never waits on
+   * background timing. A load with prefetch, the default, starts decoding the group's pages
+   * so the first draw from them does not decode them itself. */
+  if(!strcmp(nm,"texturegroup_get_status")) return vreal(3);   /* fetched */
+  if(!strcmp(nm,"texturegroup_load")){
+    if(vm->render && n>0 && a[0].t==V_STR && (n<2 || !gml_val_is_number_or_object(a[1]) || a[1].d>=0.5))
+      (void)gml_render_prefetch_texture_group((GmlRender*)vm->render,a[0].s);
+    return vreal(0);
+  }
+  if(!strcmp(nm,"texturegroup_unload")||!strcmp(nm,"texturegroup_set_mode")) return vreal(0);
   if(!strcmp(nm,"texture_is_ready")) return vreal(1);
   if(!strcmp(nm,"texture_prefetch")){
     GmlRenderTextureMetrics metrics;
-    if(n>0 && a[0].t==V_REAL && isfinite(a[0].d) &&
+    if(vm->render && n>0 && a[0].t==V_STR)
+      (void)gml_render_prefetch_texture_group((GmlRender*)vm->render,a[0].s);
+    else if(n>0 && a[0].t==V_REAL && isfinite(a[0].d) &&
        a[0].d>=0 && a[0].d<=INT_MAX && a[0].d==floor(a[0].d))
       (void)gml_render_texture_metrics(vm->render,(int)a[0].d,&metrics);
     return vreal(0);
