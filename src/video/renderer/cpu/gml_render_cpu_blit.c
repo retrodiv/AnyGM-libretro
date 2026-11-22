@@ -3065,6 +3065,116 @@ static void nearest_opaque_alpha_band_rows(
   }
 }
 
+/* One channel of the normal source-over blend of blit_one's general loop. That loop and the run
+ * writer below both evaluate this single expression, so a compiler that contracts its products
+ * into fused multiply-adds contracts them the same way in both and the two paths cannot round a
+ * channel differently. split_rounding rounds each contribution separately; otherwise rounding
+ * is the bias added to the unrounded sum. */
+static inline int blit_one_normal_channel(int split_rounding,double rounding,int source,
+                                          int destination,double source_alpha){
+  int value=split_rounding
+    ? (int)(source*source_alpha+0.5)+(int)(destination*(1-source_alpha)+0.5)
+    : (int)(source*source_alpha+destination*(1-source_alpha)+rounding);
+  if(value>255) value=255; else if(value<0) value=0;
+  return value;
+}
+
+/* The normal-blend source state of one source texel: everything the general loop derives from
+ * the sample before it reads the destination. */
+typedef struct {
+  int red,green,blue;
+  double alpha;
+  unsigned coverage;
+} BlitOneRunSource;
+
+/* Per-destination-byte results of one source state. Every entry is produced by the general loop's
+ * own channel expression, so a lookup returns exactly what that loop computes for the byte. */
+typedef struct {
+  int valid;
+  BlitOneRunSource key;
+  uint8_t red[256],green[256],blue[256];
+  uint32_t coverage[256];
+} BlitOneRunTable;
+
+static int blit_one_run_source_equal(const BlitOneRunSource *left,const BlitOneRunSource *right){
+  return left->red==right->red && left->green==right->green && left->blue==right->blue &&
+         left->alpha==right->alpha && left->coverage==right->coverage;
+}
+
+/* A magnified nearest-neighbour texel covers a contiguous destination run, and in a plain normal
+ * blend every pixel of that run receives the same source colour, weight and coverage. Derive them
+ * once per run instead of once per pixel. A long run, or a run repeating the state of the previous
+ * table, uses per-byte tables; full-viewport fades and tints are runs of one state over every row.
+ * The arithmetic is the general loop's, written per destination byte instead of per pixel. */
+static void blit_one_run_row(GmlRender *r,const GmlTpag *t,const uint8_t *source_row,
+                             uint32_t *destination_row,const int *lxtab,int xx0,int xx1,
+                             int x0,int flipx,int sx_max,double alpha,int quantize_alpha,
+                             int bR,int bG,int bB,int tint_bias,int split_rounding,
+                             double rounding,int preserve_alpha,BlitOneRunTable *table,
+                             int *dispatch_marked){
+  for(int xx=xx0;xx<xx1;){
+    int lx=lxtab[xx-xx0];
+    int end=xx+1;
+    while(end<xx1 && lxtab[end-xx0]==lx) end++;
+    int start=xx;
+    xx=end;
+    if(t->project_authored_edges){
+      if(lx<0) lx=0;
+      else if(lx>=t->sw) lx=t->sw-1;
+    }
+    if(lx<0||lx>=t->sw) continue;
+    int sx=t->sx+lx;
+    if(sx<0) sx=0; else if(sx>sx_max) sx=sx_max;
+    const uint8_t *sp=source_row+(size_t)sx*4u;
+    int sample_a=sp[3];
+    double sa=(sample_a/255.0)*alpha;
+    if(quantize_alpha) sa=lround(sample_a*alpha)/255.0;
+    if(sa<=0) continue;
+    if(!*dispatch_marked){
+      gml_render_dispatch_cpu_scope_write(r);
+      *dispatch_marked=1;
+    }
+    BlitOneRunSource source={
+      (int)((sp[0]*bR+tint_bias)/255),
+      (int)((sp[1]*bG+tint_bias)/255),
+      (int)((sp[2]*bB+tint_bias)/255),
+      sa,
+      (unsigned)lround((double)sample_a*alpha)
+    };
+    int tabulated=table->valid && blit_one_run_source_equal(&table->key,&source);
+    if(!tabulated && end-start>=64){
+      for(int value=0;value<256;value++){
+        table->red[value]=(uint8_t)blit_one_normal_channel(
+          split_rounding,rounding,source.red,value,source.alpha);
+        table->green[value]=(uint8_t)blit_one_normal_channel(
+          split_rounding,rounding,source.green,value,source.alpha);
+        table->blue[value]=(uint8_t)blit_one_normal_channel(
+          split_rounding,rounding,source.blue,value,source.alpha);
+        table->coverage[value]=gml_render_target_source_over_alpha(
+          r,(uint32_t)value<<24,source.coverage);
+      }
+      table->key=source;
+      table->valid=1;
+      tabulated=1;
+    }
+    for(int column=start;column<end;column++){
+      uint32_t *dp=&destination_row[flipx?(x0-column):(x0+column)];
+      uint32_t destination=*dp;
+      int dr=(destination>>16)&0xFF, dg=(destination>>8)&0xFF, db=destination&0xFF;
+      if(tabulated){
+        *dp=table->coverage[preserve_alpha?destination>>24:0]|
+            ((uint32_t)table->red[dr]<<16)|((uint32_t)table->green[dg]<<8)|table->blue[db];
+        continue;
+      }
+      int or_=blit_one_normal_channel(split_rounding,rounding,source.red,dr,source.alpha);
+      int og=blit_one_normal_channel(split_rounding,rounding,source.green,dg,source.alpha);
+      int ob=blit_one_normal_channel(split_rounding,rounding,source.blue,db,source.alpha);
+      *dp=gml_render_target_source_over_alpha(r,destination,source.coverage)|
+          ((uint32_t)or_<<16)|((uint32_t)og<<8)|(uint32_t)ob;
+    }
+  }
+}
+
 static void blit_one_band_rows(void *context,int row_start,int row_end,int slot){
   GmlBlitOneBand *b=(GmlBlitOneBand*)context;
   GmlRender *r=b->r;
@@ -3091,6 +3201,24 @@ static void blit_one_band_rows(void *context,int row_start,int row_end,int slot)
   const int bR=b->bR,bG=b->bG,bB=b->bB;
   int dispatch_marked=0;
   (void)slot;
+  /* The general loop's plain normal blend: no warped, blurred or mapped sample, no alpha test or
+   * discard, no fog and no destination-colour factor. Its per-pixel decisions are then fixed for
+   * the whole draw, and blit_one_run_row applies them per source run. */
+  const int run_blend=!fastcase && lxtab && !wave_map && !solid_blur_alpha &&
+    r->alphablend && r->blendmode==0 && !r->fog_flat &&
+    !destination_colour_blend_active(r) && !shader_alpha_test_active(r) &&
+    !mapped_texture_active(r);
+  const int run_family=run_blend?gml_blend_family(r):GML_BLEND_STUDIO1;
+  const int run_classic=run_family==GML_BLEND_CLASSIC || b->quantize_alpha;
+  const int run_split_rounding=run_classic &&
+    (b->quantize_alpha || !reciprocal_x || !reciprocal_y);
+  const double run_rounding=run_classic ? 0.5 :
+    ((run_family==GML_BLEND_STUDIO2 ||
+      (run_blend && gml_render_target_is_first_generation_application_surface(r)))?0.5:0.0);
+  const int run_tint_bias=run_family==GML_BLEND_STUDIO2?127:0;
+  const int run_preserve_alpha=run_blend && gml_render_target_preserves_alpha(r);
+  BlitOneRunTable run_table;
+  run_table.valid=0;
   for(int row=row_start; row<row_end; row++){
     int yy=yy0+row;
     int py = flipy ? (y0-yy) : (y0+yy);
@@ -3146,6 +3274,13 @@ static void blit_one_band_rows(void *context,int row_start,int row_end,int slot)
         unsigned source_alpha=(unsigned)lround((double)aa*alpha);
         *dp=gml_render_target_source_over_alpha(r,destination,source_alpha)|(or_<<16)|(og<<8)|ob;
       }
+      continue;
+    }
+    if(run_blend){
+      blit_one_run_row(r,t,a->px+(size_t)sy*a->w*4u,r->fb+(size_t)py*r->fbw,lxtab,xx0,xx1,
+                       x0,flipx,sx_max,alpha,b->quantize_alpha,bR,bG,bB,run_tint_bias,
+                       run_split_rounding,run_rounding,run_preserve_alpha,&run_table,
+                       &dispatch_marked);
       continue;
     }
     for(int xx=xx0; xx<xx1; xx++){
@@ -3236,29 +3371,18 @@ static void blit_one_band_rows(void *context,int row_start,int row_end,int slot)
           blend_destination_factor_pixel(r,*dp,sr,sg,sb,source_alpha));
         continue;
       }
-      /* clamp each channel to [0,255]: a blend>255 or a (legitimately clamped) alpha can still push
-       * sr*sa over 255, and packing an out-of-range byte would corrupt the neighbouring channel. */
-      int or_,og,ob;
-      if(family==GML_BLEND_CLASSIC || b->quantize_alpha){
-        if(b->quantize_alpha || !reciprocal_x || !reciprocal_y){
-          or_=(int)(sr*sa+0.5)+(int)(dr*(1-sa)+0.5);
-          og=(int)(sg*sa+0.5)+(int)(dg*(1-sa)+0.5);
-          ob=(int)(sb*sa+0.5)+(int)(db*(1-sa)+0.5);
-        } else {
-          or_=(int)(sr*sa+dr*(1-sa)+0.5);
-          og=(int)(sg*sa+dg*(1-sa)+0.5);
-          ob=(int)(sb*sa+db*(1-sa)+0.5);
-        }
-      } else {
-        double bias=(family==GML_BLEND_STUDIO2 ||
-                     gml_render_target_is_first_generation_application_surface(r))?0.5:0.0;
-        or_=(int)(sr*sa+dr*(1-sa)+bias);
-        og=(int)(sg*sa+dg*(1-sa)+bias);
-        ob=(int)(sb*sa+db*(1-sa)+bias);
-      }
-      if(or_>255) or_=255; else if(or_<0) or_=0;
-      if(og>255) og=255; else if(og<0) og=0;
-      if(ob>255) ob=255; else if(ob<0) ob=0;
+      /* blit_one_normal_channel clamps each channel to [0,255]: a blend>255 or a (legitimately
+       * clamped) alpha can still push sr*sa over 255, and packing an out-of-range byte would
+       * corrupt the neighbouring channel. */
+      int classic_rounding=family==GML_BLEND_CLASSIC || b->quantize_alpha;
+      int split_rounding=classic_rounding &&
+        (b->quantize_alpha || !reciprocal_x || !reciprocal_y);
+      double rounding=classic_rounding ? 0.5 :
+        ((family==GML_BLEND_STUDIO2 ||
+          gml_render_target_is_first_generation_application_surface(r))?0.5:0.0);
+      int or_=blit_one_normal_channel(split_rounding,rounding,sr,dr,sa);
+      int og=blit_one_normal_channel(split_rounding,rounding,sg,dg,sa);
+      int ob=blit_one_normal_channel(split_rounding,rounding,sb,db,sa);
       unsigned source_alpha=(unsigned)lround((double)sample_a*alpha);
       *dp=gml_render_target_source_over_alpha(r,destination,source_alpha)|(or_<<16)|(og<<8)|ob;
     }

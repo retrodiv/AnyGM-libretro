@@ -2885,6 +2885,115 @@ static void check_dispatch_rgba_textures(void){
   }
 }
 
+static int expected_normal_channel(int split_rounding, double rounding, int source,
+                                   int destination, double source_alpha) {
+  int value = split_rounding
+    ? (int)(source * source_alpha + 0.5) + (int)(destination * (1 - source_alpha) + 0.5)
+    : (int)(source * source_alpha + destination * (1 - source_alpha) + rounding);
+  return value < 0 ? 0 : value > 255 ? 255 : value;
+}
+
+/* A magnified nearest draw at partial alpha applies one source state per texel run: per-pixel
+ * arithmetic for short runs, per-destination-byte tables for long runs and for repeated states.
+ * Every covered pixel must still receive the normal blend of its own texel, uncovered pixels and
+ * transparent texels must leave the target alone, and a reflected draw must mirror the runs. */
+static void check_magnified_alpha_runs(void) {
+  enum { TARGET_WIDTH = 320, TARGET_HEIGHT = 3, SOURCE_WIDTH = 3 };
+  static const uint8_t rgba[SOURCE_WIDTH * 4] = {
+    200, 10, 90, 255,
+    30, 240, 60, 128,
+    77, 77, 77, 0
+  };
+  static const struct {
+    int classic;
+    double xscale;
+    double x;
+    double alpha;
+    uint32_t tint;
+  } cases[] = {
+    {0, 40.0, 10.0, 0.16, 0xFFFFFFu},
+    {0, 100.0, 10.0, 0.68, 0x4080FFu},
+    {1, 40.0, 10.0, 0.68, 0x4080FFu},
+    {1, 100.0, 10.0, 0.16, 0xFFFFFFu},
+    {0, -100.0, 310.0, 0.16, 0x4080FFu},
+    {1, -40.0, 130.0, 0.68, 0xFFFFFFu}
+  };
+  for (size_t c = 0; c < sizeof cases / sizeof cases[0]; c++) {
+    uint32_t target[TARGET_WIDTH * TARGET_HEIGHT];
+    uint32_t before[TARGET_WIDTH * TARGET_HEIGHT];
+    int frame_index = 0;
+    GmlSprite sprite;
+    GmlTpag tpag;
+    GmlAtlas atlas;
+    GmlRender render;
+    memset(&sprite, 0, sizeof sprite);
+    memset(&tpag, 0, sizeof tpag);
+    memset(&atlas, 0, sizeof atlas);
+    memset(&render, 0, sizeof render);
+    fill_stretch_band_target(target, TARGET_WIDTH, TARGET_HEIGHT);
+    memcpy(before, target, sizeof before);
+    sprite.w = SOURCE_WIDTH;
+    sprite.h = 1;
+    sprite.n_frames = 1;
+    sprite.frame = &frame_index;
+    tpag.sw = tpag.bw = SOURCE_WIDTH;
+    tpag.sh = tpag.bh = 1;
+    atlas.w = SOURCE_WIDTH;
+    atlas.h = 1;
+    atlas.px = (uint8_t *)rgba;
+    atlas.decode_attempted = 1;
+    render.spr = &sprite;
+    render.tpag = &tpag;
+    render.atlas = &atlas;
+    render.n_spr = render.n_tpag = render.n_atlas = 1;
+    render.fb = render.base_fb = target;
+    render.fbw = render.base_fbw = TARGET_WIDTH;
+    render.fbh = render.base_fbh = TARGET_HEIGHT;
+    render.target_id = -1;
+    render.alpha = 1.0;
+    render.alphablend = 1;
+    render.classic = cases[c].classic;
+    render.blend_equation = render.blend_equation_alpha = 1;
+    render.color_write_mask = 0x0F;
+    render.active_shader = -1;
+    render.lut_pal_sprite = -1;
+    gml_draw_sprite_ext(&render, 0, 0, cases[c].x, 0.0, cases[c].xscale, 2.0, 0.0,
+                        cases[c].tint, cases[c].alpha);
+    double scale = fabs(cases[c].xscale);
+    int tint[3] = {(int)(cases[c].tint & 0xFFu), (int)((cases[c].tint >> 8) & 0xFFu),
+                   (int)((cases[c].tint >> 16) & 0xFFu)};
+    /* No content is attached, so the family is the renderer's explicit mode. A fractional
+     * reciprocal scale selects the classic family's separately rounded contributions. */
+    int split_rounding = cases[c].classic;
+    double rounding = cases[c].classic ? 0.5 : 0.0;
+    int mismatches = 0;
+    for (int y = 0; y < TARGET_HEIGHT; y++) {
+      for (int x = 0; x < TARGET_WIDTH; x++) {
+        size_t index = (size_t)y * TARGET_WIDTH + (size_t)x;
+        uint32_t expected = before[index];
+        double offset = cases[c].xscale > 0 ? x - cases[c].x : cases[c].x - 1 - x;
+        int texel = offset >= 0 ? (int)floor(offset / scale) : -1;
+        if (y < 2 && texel >= 0 && texel < SOURCE_WIDTH && rgba[texel * 4 + 3]) {
+          double source_alpha = (rgba[texel * 4 + 3] / 255.0) * cases[c].alpha;
+          int channel[3];
+          for (int k = 0; k < 3; k++) {
+            int source = (rgba[texel * 4 + k] * tint[k]) / 255;
+            int destination = (int)((before[index] >> (16 - 8 * k)) & 0xFFu);
+            channel[k] = expected_normal_channel(split_rounding, rounding, source,
+                                                 destination, source_alpha);
+          }
+          expected = UINT32_C(0xFF000000) | ((uint32_t)channel[0] << 16) |
+                     ((uint32_t)channel[1] << 8) | (uint32_t)channel[2];
+        }
+        if (target[index] != expected && mismatches++ < 4)
+          fprintf(stderr, "case %zu pixel %d,%d: %08x expected %08x\n", c, x, y,
+                  target[index], expected);
+      }
+    }
+    expect(mismatches == 0, "magnified partial-alpha runs differ from the normal blend");
+  }
+}
+
 int main(void) {
   static const struct {
     const char *name;
@@ -2928,6 +3037,7 @@ int main(void) {
   check_optimized_primitives();
   check_batched_solid_mask_order();
   check_maximum_preset_sprite();
+  check_magnified_alpha_runs();
   check_stretched_band_identity();
   check_stretched_band_lazy_lut();
   expect(noise == UINT64_C(0x7aa110cb68a28fc5), "rgb-noise");
