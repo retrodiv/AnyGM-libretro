@@ -41,7 +41,7 @@ operation kind and conditions. For example, `$counter=5` replaces `$counter=3`,
 but `?gameres $counter=5` and `$counter=3` remain distinct scoped operations.
 Indexes distinguish array/list items; camera destinations use the normalized
 handle mask and field. A surface resize is one operation with two dimensions.
-`ostype`, `renderer`, `gamepad`, `introskip`, `introauto`, `monitorview` and the menu declaration are
+`ostype`, `renderer`, `gamepad`, `monitorview` and the menu declaration are
 singletons within their applicable scope. Menu rows replace the same label;
 `keybind` declarations replace the whole button list and port for each virtual key they name.
 `auto` restores the default mapping for each named key.
@@ -356,13 +356,15 @@ payload=data.win
 [overrides]
 ostype|6
 $counter=3
-introskip|1,3-5
-introstep|78|obj_intro|0
+roomskip|1,3-5|pad1:a,pad1:b,pad1:start|next
+roomalarm|78|pad1:start,key:enter|obj_intro|0
 ```
 
 The operating-system declaration is 6 and the anchor holds the global at 3,
 overriding the INI default of 5. A global override holds a value while enabled;
-it is not merely an initial-value declaration.
+it is not merely an initial-value declaration. See the
+[room action reference](SUPPORTED_FORMATS.md#room-actions-and-triggers) for the shared
+trigger syntax, room transitions and content-owned timers.
 
 ## Content renderer selection
 

@@ -536,7 +536,7 @@ static int content_override_state_cases(const AnygmHostServices *services,
                              "$anygm_probe=1\n"
                              "listset|obj_fixture|fixture_lists[0]|1|40\n"
                              "listset|global|fixture_global_list|1|41\n"
-                             "introskip|3-5,9\nintroauto|2\n",payload_name);
+                             "roomskip|3-5,9|pad1:a,pad1:b,pad1:start|next\nroomskip|2|room-enter|next\n",payload_name);
   if(anchor_length<0 || (size_t)anchor_length>=sizeof anchor_text)
     return fail("anchor text is too long");
   FILE *file=fopen(anchor,"wb");
@@ -622,28 +622,28 @@ static int content_override_state_cases(const AnygmHostServices *services,
   file=fopen(anchor,"wb");
   written=file && fwrite("[anygm]\npayload=",1,16,file)==16 &&
           fwrite(payload_name,1,strlen(payload_name),file)==strlen(payload_name) &&
-          fwrite("\n[overrides]\nintroskip|abc\n",1,27,file)==27;
+          fputs("\n[overrides]\nroomskip|abc|pad1:a|next\n",file)>=0;
   if(file && fclose(file)!=0) written=0;
-  if(!written) return fail("could not rewrite the introskip anchor");
+  if(!written) return fail("could not rewrite the roomskip anchor");
   engine=NULL;
-  if(anygm_create(services,&engine)!=ANYGM_OK) return fail("introskip engine creation failed");
+  if(anygm_create(services,&engine)!=ANYGM_OK) return fail("roomskip engine creation failed");
   ok=anygm_load(engine,&source,NULL)!=ANYGM_OK;
   anygm_destroy(engine);
-  if(!ok){ remove(anchor); return fail("a malformed introskip list did not fail the load"); }
+  if(!ok){ remove(anchor); return fail("a malformed roomskip list did not fail the load"); }
 
-  /* introauto| carries the same room list, so it is held to the same grammar. */
+  /* An automatic trigger uses the same strict source-room syntax. */
   file=fopen(anchor,"wb");
   written=file && fwrite("[anygm]\npayload=",1,16,file)==16 &&
           fwrite(payload_name,1,strlen(payload_name),file)==strlen(payload_name) &&
-          fwrite("\n[overrides]\nintroauto|abc\n",1,27,file)==27;
+          fputs("\n[overrides]\nroomskip|abc|room-enter|next\n",file)>=0;
   if(file && fclose(file)!=0) written=0;
-  if(!written) return fail("could not rewrite the introauto anchor");
+  if(!written) return fail("could not rewrite the automatic roomskip anchor");
   engine=NULL;
-  if(anygm_create(services,&engine)!=ANYGM_OK) return fail("introauto engine creation failed");
+  if(anygm_create(services,&engine)!=ANYGM_OK) return fail("automatic roomskip engine creation failed");
   ok=anygm_load(engine,&source,NULL)!=ANYGM_OK;
   anygm_destroy(engine);
   remove(anchor);
-  if(!ok) return fail("a malformed introauto list did not fail the load");
+  if(!ok) return fail("a malformed automatic roomskip list did not fail the load");
   return 1;
 }
 

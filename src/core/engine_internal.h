@@ -412,9 +412,6 @@ struct AnygmEngine {
   char content_overrides_text[4096];
   char launch_overrides_text[4096];
   MenuState menu;
-  uint8_t introskip_set[1024/8];
-  int introskip_enabled;
-  uint8_t introauto_set[1024/8];      /* rooms an anchor answers without waiting for a button */
   /* A configured virtual-monitor edge is consumed once by ?monitor override directives. The
    * program is external content data; the core retains only this transient scheduling latch. */
   int monitor_override_pending;
@@ -511,9 +508,8 @@ void apply_monitor_overrides(AnygmEngine *engine);
 void aspect_apply_program(AnygmEngine *engine);
 void menu_run(AnygmEngine *engine);
 void room_skip_hook(AnygmEngine *engine);
-void introskip_hook(AnygmEngine *engine);
-void introstep_hook(AnygmEngine *engine);
-void introcount_hook(AnygmEngine *engine);
+void room_counter_hook(AnygmEngine *engine);
+void room_overrides_after_step(AnygmEngine *engine,int previous_room);
 int  engine_overrides_declared_os_type(AnygmEngine *engine);
 uint32_t engine_overrides_declared_renderer(AnygmEngine *engine);
 int  engine_overrides_keyboard_emulation(AnygmEngine *engine);

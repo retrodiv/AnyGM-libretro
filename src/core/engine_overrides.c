@@ -86,7 +86,9 @@ int core_opt_redirect_room_order(AnygmEngine *engine) {
  *   surface|obj|var|W|H         resize surfaces named by an instance variable
  *   surface_canvas|obj|var|W|H  centred native HUD and full-width application composition
  *   monitorview|H|MIN|MAX       declare a monitor-derived logical view (ratios use W:H)
- *   introstep|room|obj|alarm    A/B/Start advances one content-owned intro alarm
+ *   roomskip|rooms|trigger|next     advance in play order or to an explicit room
+ *   roomalarm|rooms|trigger|obj|i   advance one content-owned alarm
+ *   roomcounter|rooms|trigger|obj|phase=V|counter=N   adjust a content-owned counter
  *   @field=V                    engine state and data-declared aspect behavior
  *   obj@suffix->mode            event route: full_view | visible_view | backdrop | default
  *
@@ -134,17 +136,22 @@ static void cheat_monitor_dimensions(AnygmEngine *engine,double *monitor_w,doubl
 /* Split a code into its `;`-separated directives, trimmed. Empty pieces are dropped, so a stray
  * or trailing ';' costs nothing, and an unchained code simply yields one part. */
 static int cheat_split_directives(const char *code,
-                                  char parts[CHEAT_MAX_DIRECTIVES][CHEAT_DIRECTIVE_BYTES]){
+                                  char parts[CHEAT_MAX_DIRECTIVES][CHEAT_DIRECTIVE_BYTES],
+                                  bool strict){
   int n=0;
   const char *s=code?code:"";
-  while(*s && n<CHEAT_MAX_DIRECTIVES){
+  while(*s){
     while(*s==';'||*s==' '||*s=='\t') s++;
     if(!*s) break;
+    if(n==CHEAT_MAX_DIRECTIVES) return strict?-1:n;
     const char *end=strchr(s,';');
     size_t length=end?(size_t)(end-s):strlen(s);
     while(length && (s[length-1]==' '||s[length-1]=='\t'||s[length-1]=='\r')) length--;
     if(length){
-      if(length>=CHEAT_DIRECTIVE_BYTES) length=CHEAT_DIRECTIVE_BYTES-1;
+      if(length>=CHEAT_DIRECTIVE_BYTES){
+        if(strict) return -1;
+        length=CHEAT_DIRECTIVE_BYTES-1;
+      }
       memcpy(parts[n],s,length); parts[n][length]=0; n++;
     }
     if(!end) break;
@@ -769,7 +776,7 @@ static int menu_directive_parse(AnygmEngine *engine,const char *code){
 static int menu_decl_code(const char *code){
   if(!code) return 0;
   char parts[CHEAT_MAX_DIRECTIVES][CHEAT_DIRECTIVE_BYTES];
-  int n=cheat_split_directives(code,parts);
+  int n=cheat_split_directives(code,parts,false);
   for(int p=0;p<n;p++){
     const char *s=parts[p];
     while(*s==' '||*s=='\t') s++;
@@ -794,7 +801,7 @@ static void menu_rebuild(AnygmEngine *engine){
   for(int i=0;i<n;i++){
     if(!arr[i].enabled || arr[i].continuation_of) continue;
     char parts[CHEAT_MAX_DIRECTIVES][CHEAT_DIRECTIVE_BYTES];
-    int np=cheat_split_directives(arr[i].code,parts);
+    int np=cheat_split_directives(arr[i].code,parts,false);
     for(int p=0;p<np;p++) menu_directive_parse(engine,parts[p]);
   }
 }
@@ -825,60 +832,183 @@ static int state_reserve_parse(const char *code,size_t *bytes){
   return 1;
 }
 
-static int introstep_parse(const char *code,int *room,char *object,size_t object_capacity,
-                           int *alarm){
-  if(strncmp(code,"introstep|",10)) return 0;
-  const char *scan=code+10;
-  int parsed_room=-1,parsed_alarm=-1;
-  if(!parse_nonnegative_index(&scan,&parsed_room) || parsed_room>=1024 || *scan++!='|') return 0;
-  const char *name=scan;
-  while(*scan && CHEAT_NAMECH(*scan)) scan++;
-  size_t length=(size_t)(scan-name);
-  if(!length || length>=object_capacity || *scan++!='|' ||
-     !parse_nonnegative_index(&scan,&parsed_alarm) || *scan || parsed_alarm>=GML_ALARMS) return 0;
-  memcpy(object,name,length);object[length]=0;
-  *room=parsed_room;*alarm=parsed_alarm;
-  return 1;
+static unsigned override_pad_button_bit(const char *name,size_t length){
+  static const struct { const char *name; int button; } names[]={
+    {"b",ANYGM_PAD_FACE_BOTTOM},{"a",ANYGM_PAD_FACE_RIGHT},
+    {"y",ANYGM_PAD_FACE_LEFT},{"x",ANYGM_PAD_FACE_TOP},
+    {"start",ANYGM_PAD_START},{"select",ANYGM_PAD_SELECT},
+    {"up",ANYGM_PAD_UP},{"down",ANYGM_PAD_DOWN},
+    {"left",ANYGM_PAD_LEFT},{"right",ANYGM_PAD_RIGHT},
+    {"l",ANYGM_PAD_LEFT_SHOULDER},{"r",ANYGM_PAD_RIGHT_SHOULDER},
+    {"l2",ANYGM_PAD_LEFT_TRIGGER},{"r2",ANYGM_PAD_RIGHT_TRIGGER},
+    {"l3",ANYGM_PAD_LEFT_STICK},{"r3",ANYGM_PAD_RIGHT_STICK}
+  };
+  for(size_t i=0;i<sizeof names/sizeof names[0];i++)
+    if(strlen(names[i].name)==length && !memcmp(name,names[i].name,length))
+      return 1u<<(unsigned)names[i].button;
+  return 0;
 }
 
+enum { ROOM_RULE_NONE, ROOM_RULE_SKIP, ROOM_RULE_COUNTER, ROOM_RULE_ALARM };
+enum { ROOM_RULE_LIMIT=1024 };
+
 typedef struct {
-  int room;
+  unsigned pads[ANYGM_MAX_GAMEPADS];
+  uint8_t keys[(ANYGM_KEY_LAST+7)/8];
+  bool room_enter;
+} RoomTrigger;
+
+typedef struct {
+  int kind,destination,alarm;
+  uint8_t rooms[ROOM_RULE_LIMIT/8];
+  RoomTrigger trigger;
   char object[64],guard[64],counter[64];
   int32_t expected,value;
-} IntroCounter;
+} RoomRule;
 
-static int intro_field_name(const char **cursor,char *name,size_t capacity){
+static int room_rule_kind(const char *code){
+  if(!strncmp(code,"roomskip|",9)) return ROOM_RULE_SKIP;
+  if(!strncmp(code,"roomcounter|",12)) return ROOM_RULE_COUNTER;
+  if(!strncmp(code,"roomalarm|",10)) return ROOM_RULE_ALARM;
+  return ROOM_RULE_NONE;
+}
+
+static bool room_rule_contains(const RoomRule *rule,int room){
+  return room>=0 && room<ROOM_RULE_LIMIT &&
+    (rule->rooms[room/8] & (1u<<(room%8)))!=0;
+}
+
+static bool room_rule_rooms(const char **cursor,RoomRule *rule){
+  const char *scan=*cursor;
+  for(;;){
+    int first,last;
+    if(!parse_nonnegative_index(&scan,&first) || first>=ROOM_RULE_LIMIT) return false;
+    last=first;
+    if(*scan=='-'){
+      scan++;
+      if(!parse_nonnegative_index(&scan,&last) || last<first || last>=ROOM_RULE_LIMIT)
+        return false;
+    }
+    for(int room=first;room<=last;room++) rule->rooms[room/8]|=(uint8_t)(1u<<(room%8));
+    if(*scan!=','){
+      if(*scan!='|') return false;
+      *cursor=scan+1;
+      return true;
+    }
+    scan++;
+  }
+}
+
+static int room_key_code(const char *name,size_t length){
+  static const struct { const char *name; int code; } keys[]={
+    {"escape",ANYGM_KEY_ESCAPE},{"enter",ANYGM_KEY_RETURN},{"space",ANYGM_KEY_SPACE},
+    {"backspace",ANYGM_KEY_BACKSPACE},{"tab",ANYGM_KEY_TAB},{"delete",ANYGM_KEY_DELETE},
+    {"insert",ANYGM_KEY_INSERT},{"home",ANYGM_KEY_HOME},{"end",ANYGM_KEY_END},
+    {"pageup",ANYGM_KEY_PAGEUP},{"pagedown",ANYGM_KEY_PAGEDOWN},
+    {"up",ANYGM_KEY_UP},{"down",ANYGM_KEY_DOWN},{"left",ANYGM_KEY_LEFT},{"right",ANYGM_KEY_RIGHT},
+    {"lshift",ANYGM_KEY_LSHIFT},{"rshift",ANYGM_KEY_RSHIFT},
+    {"lctrl",ANYGM_KEY_LCTRL},{"rctrl",ANYGM_KEY_RCTRL},
+    {"lalt",ANYGM_KEY_LALT},{"ralt",ANYGM_KEY_RALT},
+  };
+  if(length==1 && ((*name>='a' && *name<='z') || (*name>='0' && *name<='9')))
+    return (unsigned char)*name;
+  if(length>=2 && length<=3 && *name=='f' && name[1]>='1' && name[1]<='9'){
+    const char *number=name+1;
+    int value;
+    if(parse_nonnegative_index(&number,&value) && number==name+length && value<=12)
+      return ANYGM_KEY_F1+value-1;
+  }
+  for(size_t i=0;i<sizeof keys/sizeof keys[0];i++)
+    if(strlen(keys[i].name)==length && !memcmp(keys[i].name,name,length)) return keys[i].code;
+  return -1;
+}
+
+static bool room_trigger_parse(const char **cursor,RoomTrigger *trigger){
+  const char *scan=*cursor;
+  if(!strncmp(scan,"room-enter|",11)){
+    trigger->room_enter=true;
+    *cursor=scan+11;
+    return true;
+  }
+  for(;;){
+    size_t length=strcspn(scan,",|");
+    if(length>=6 && !memcmp(scan,"pad",3) && scan[3]>='1' &&
+       (unsigned)(scan[3]-'1')<ANYGM_MAX_GAMEPADS && scan[4]==':'){
+      unsigned port=(unsigned)(scan[3]-'1');
+      unsigned bit=override_pad_button_bit(scan+5,length-5);
+      if(!bit || (trigger->pads[port]&bit)) return false;
+      trigger->pads[port]|=bit;
+    } else if(length>4 && !memcmp(scan,"key:",4)){
+      int key=room_key_code(scan+4,length-4);
+      if(key<0) return false;
+      unsigned bit=1u<<(key%8);
+      if(trigger->keys[key/8]&bit) return false;
+      trigger->keys[key/8]|=(uint8_t)bit;
+    } else return false;
+    scan+=length;
+    if(*scan!=','){
+      if(*scan!='|') return false;
+      *cursor=scan+1;
+      return true;
+    }
+    scan++;
+  }
+}
+
+static bool room_field_name(const char **cursor,char *name,size_t capacity,char separator){
   const char *start=*cursor,*scan=start;
   while(CHEAT_NAMECH(*scan)) scan++;
   size_t length=(size_t)(scan-start);
-  if(!length || length>=capacity || *scan!='|') return 0;
+  if(!length || length>=capacity || *scan!=separator) return false;
   memcpy(name,start,length);
   name[length]=0;
   *cursor=scan+1;
-  return 1;
+  return true;
 }
 
-static int intro_field_integer(const char **cursor,int32_t *value,char separator){
+static bool room_field_integer(const char **cursor,int32_t *value,char separator){
   const char *digits=**cursor=='-'?*cursor+1:*cursor;
-  if(*digits<'0' || *digits>'9') return 0;
+  if(*digits<'0' || *digits>'9') return false;
   char *end;
   long long parsed=strtoll(*cursor,&end,10);
-  if(parsed<INT32_MIN || parsed>INT32_MAX || *end!=separator) return 0;
+  if(parsed<INT32_MIN || parsed>INT32_MAX || *end!=separator) return false;
   *value=(int32_t)parsed;
   *cursor=end+(separator!=0);
-  return 1;
+  return true;
 }
 
-static int introcount_parse(const char *code,IntroCounter *rule){
-  if(strncmp(code,"introcount|",11)) return 0;
-  const char *scan=code+11;
-  return parse_nonnegative_index(&scan,&rule->room) && *scan++=='|' &&
-    intro_field_name(&scan,rule->object,sizeof rule->object) &&
-    intro_field_name(&scan,rule->guard,sizeof rule->guard) &&
-    intro_field_integer(&scan,&rule->expected,'|') &&
-    intro_field_name(&scan,rule->counter,sizeof rule->counter) &&
-    strcmp(rule->guard,rule->counter) &&
-    intro_field_integer(&scan,&rule->value,0);
+static bool room_rule_parse(const char *code,RoomRule *rule){
+  int kind=room_rule_kind(code);
+  if(!kind) return false;
+  memset(rule,0,sizeof *rule);
+  rule->kind=kind;
+  const char *scan=strchr(code,'|')+1;
+  if(!room_rule_rooms(&scan,rule) || !room_trigger_parse(&scan,&rule->trigger)) return false;
+  if(kind==ROOM_RULE_SKIP){
+    if(!strcmp(scan,"next")){
+      rule->destination=-1;
+      return true;
+    }
+    return parse_nonnegative_index(&scan,&rule->destination) && !*scan &&
+      (!rule->trigger.room_enter || !room_rule_contains(rule,rule->destination));
+  }
+  if(rule->trigger.room_enter ||
+     !room_field_name(&scan,rule->object,sizeof rule->object,'|')) return false;
+  if(kind==ROOM_RULE_ALARM)
+    return parse_nonnegative_index(&scan,&rule->alarm) && !*scan && rule->alarm<GML_ALARMS;
+  return room_field_name(&scan,rule->guard,sizeof rule->guard,'=') &&
+    room_field_integer(&scan,&rule->expected,'|') &&
+    room_field_name(&scan,rule->counter,sizeof rule->counter,'=') &&
+    strcmp(rule->guard,rule->counter) && room_field_integer(&scan,&rule->value,0);
+}
+
+static bool room_rule_same_target(const RoomRule *a,const RoomRule *b){
+  return a->kind==b->kind && !memcmp(a->rooms,b->rooms,sizeof a->rooms) &&
+    a->trigger.room_enter==b->trigger.room_enter &&
+    !memcmp(a->trigger.pads,b->trigger.pads,sizeof a->trigger.pads) &&
+    !memcmp(a->trigger.keys,b->trigger.keys,sizeof a->trigger.keys) &&
+    a->alarm==b->alarm && a->expected==b->expected &&
+    !strcmp(a->object,b->object) && !strcmp(a->guard,b->guard) && !strcmp(a->counter,b->counter);
 }
 
 static const char *keyboard_binding_keys(const char *code,unsigned *port){
@@ -910,28 +1040,12 @@ static int keyboard_binding_key(const char **cursor){
 
 /* Auto restores the ordinary keyboard mapping. A nonempty mask replaces it. */
 static int keyboard_binding_buttons(const char *scan,unsigned *buttons,bool *turbo){
-  static const struct { const char *name; int button; } names[]={
-    {"b",ANYGM_PAD_FACE_BOTTOM},{"a",ANYGM_PAD_FACE_RIGHT},
-    {"y",ANYGM_PAD_FACE_LEFT},{"x",ANYGM_PAD_FACE_TOP},
-    {"start",ANYGM_PAD_START},{"select",ANYGM_PAD_SELECT},
-    {"up",ANYGM_PAD_UP},{"down",ANYGM_PAD_DOWN},
-    {"left",ANYGM_PAD_LEFT},{"right",ANYGM_PAD_RIGHT},
-    {"l",ANYGM_PAD_LEFT_SHOULDER},{"r",ANYGM_PAD_RIGHT_SHOULDER},
-    {"l2",ANYGM_PAD_LEFT_TRIGGER},{"r2",ANYGM_PAD_RIGHT_TRIGGER},
-    {"l3",ANYGM_PAD_LEFT_STICK},{"r3",ANYGM_PAD_RIGHT_STICK}
-  };
   unsigned mask=0;
   bool repeat=false;
   if(strcmp(scan,"auto")){
     for(;;){
       size_t length=strcspn(scan,",|");
-      unsigned bit=0;
-      for(size_t i=0;i<sizeof names/sizeof names[0];i++){
-        if(strlen(names[i].name)==length && !memcmp(scan,names[i].name,length)){
-          bit=1u<<(unsigned)names[i].button;
-          break;
-        }
-      }
+      unsigned bit=override_pad_button_bit(scan,length);
       if(!bit || (mask&bit)) return 0;
       mask|=bit;
       scan+=length;
@@ -974,7 +1088,7 @@ static int boot_same_target(const CheatSlot *left,const CheatSlot *right){
     return !strcmp(a->obj,b->obj) && !strcmp(a->var,b->var) &&
       a->idx==b->idx && a->idx2==b->idx2 && a->has_index==b->has_index &&
       a->eng==b->eng && a->camera_field==b->camera_field && a->camera_mask==b->camera_mask;
-  static const char *singletons[]={"ostype|","renderer|","gamepad|","introskip|","introauto|","menu|"};
+  static const char *singletons[]={"ostype|","renderer|","gamepad|","menu|"};
   for(size_t i=0;i<sizeof singletons/sizeof singletons[0];i++){
     size_t length=strlen(singletons[i]);
     if(!strncmp(left->code,singletons[i],length) && !strncmp(right->code,singletons[i],length)) return 1;
@@ -983,11 +1097,9 @@ static int boot_same_target(const CheatSlot *left,const CheatSlot *right){
   if(keyboard_binding_parse(left->code,&left_key,NULL,NULL,NULL) &&
      keyboard_binding_parse(right->code,&right_key,NULL,NULL,NULL))
     return left_key==right_key;
-  IntroCounter lcounter,rcounter;
-  if(introcount_parse(left->code,&lcounter) && introcount_parse(right->code,&rcounter))
-    return lcounter.room==rcounter.room && lcounter.expected==rcounter.expected &&
-      !strcmp(lcounter.object,rcounter.object) && !strcmp(lcounter.guard,rcounter.guard) &&
-      !strcmp(lcounter.counter,rcounter.counter);
+  RoomRule lrule,rrule;
+  if(room_rule_parse(left->code,&lrule) && room_rule_parse(right->code,&rrule))
+    return room_rule_same_target(&lrule,&rrule);
   if(boot_line_is_menu(left->code) && boot_line_is_menu(right->code)){
     char l[6][128],r[6][128];
     int ln=menu_split(left->code,l),rn=menu_split(right->code,r);
@@ -1075,9 +1187,7 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
     while(length && (cursor[length-1]==' '||cursor[length-1]=='\t'||cursor[length-1]=='\r'))
       length--;
     if(length && cursor[0]!='#'){
-      /* A chained line fans out into one slot per directive, so every consumer below — the
-       * introskip anchor lookup, the menu builder, the per-frame passes — keeps reading exactly
-       * one directive per slot and needs no chain handling of its own. */
+      /* Keep one complete directive per slot so runtime consumers can read each independently. */
       char line[CHEAT_DIRECTIVE_BYTES*CHEAT_MAX_DIRECTIVES];
       if(length>=sizeof line){
         snprintf(error,error_capacity,"directive %d is longer than %llu bytes",
@@ -1087,16 +1197,17 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
       memcpy(line,cursor,length);
       line[length]=0;
       char parts[CHEAT_MAX_DIRECTIVES][CHEAT_DIRECTIVE_BYTES];
-      int part_count=cheat_split_directives(line,parts);
+      int part_count=cheat_split_directives(line,parts,true);
+      if(part_count<0){
+        snprintf(error,error_capacity,"directive %d exceeds the chain or directive length limit",
+                 line_number);
+        return 0;
+      }
       for(int p=0;p<part_count;p++){
         CheatSlot candidate={0};
         CheatSlot *slot=&candidate;
-        if(strlen(parts[p])>=sizeof slot->code){
-          snprintf(error,error_capacity,"directive %d is longer than %llu bytes",
-                   line_number,(unsigned long long)(sizeof slot->code-1u));
-          return 0;
-        }
-        snprintf(slot->code,sizeof slot->code,"%s",parts[p]);
+        _Static_assert(CHEAT_DIRECTIVE_BYTES<=sizeof slot->code,"override text must fit its slot");
+        memcpy(slot->code,parts[p],strlen(parts[p])+1);
         slot->enabled=1;
         if(!strncmp(slot->code,"ostype|",7)){
           /* Declares which system this content is told it stands on: one non-negative os_* value,
@@ -1139,41 +1250,10 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
           if(!boot_store_key_binding(slot,slots,count,line_number,error,error_capacity))
             return 0;
           continue;
-        } else if(!strncmp(slot->code,"introstep|",10)){
-          int room,alarm;char object[64];
-          if(!introstep_parse(slot->code,&room,object,sizeof object,&alarm)){
-            snprintf(error,error_capacity,
-                     "directive %d: introstep| takes room|object|alarm",line_number);
-            return 0;
-          }
-        } else if(!strncmp(slot->code,"introcount|",11)){
-          IntroCounter rule;
-          if(!introcount_parse(slot->code,&rule)){
-            snprintf(error,error_capacity,
-                     "directive %d: introcount| takes room|object|guard|expected|counter|value",
-                     line_number);
-            return 0;
-          }
-        } else if(!strncmp(slot->code,"introskip|",10) || !strncmp(slot->code,"introauto|",10)){
-          const char *list=slot->code+10;
-          int digits=0,list_ok=list[0]!=0;
-          const char *destination=strchr(list,'|');
-          if(destination){
-            const char *cursor=destination+1;int target;
-            if(strncmp(slot->code,"introskip|",10) ||
-               !parse_nonnegative_index(&cursor,&target) || *cursor || target>=1024){
-              snprintf(error,error_capacity,"directive %d: invalid intro destination",line_number);
-              return 0;
-            }
-          }
-          for(const char *scan=list;*scan && scan!=destination && list_ok;scan++){
-            if(*scan>='0' && *scan<='9') digits=1;
-            else if(*scan!=',' && *scan!='-' && *scan!=' ' && *scan!='\t') list_ok=0;
-          }
-          if(!list_ok || !digits){
-            snprintf(error,error_capacity,
-                     "directive %d: %.10s takes a room index list such as 1,3-5",
-                     line_number,slot->code);
+        } else if(room_rule_kind(slot->code)){
+          RoomRule rule;
+          if(!room_rule_parse(slot->code,&rule)){
+            snprintf(error,error_capacity,"directive %d: invalid room override",line_number);
             return 0;
           }
         } else if(!boot_line_is_menu(slot->code)){
@@ -1410,7 +1490,7 @@ void engine_override_set(AnygmEngine *engine,unsigned i,bool e,const char *c){
   slot->enabled = e ? 1 : 0;
   snprintf(slot->code, sizeof slot->code, "%s", c);
   char parts[CHEAT_MAX_DIRECTIVES][CHEAT_DIRECTIVE_BYTES];
-  int part_count=cheat_split_directives(slot->code,parts);
+  int part_count=cheat_split_directives(slot->code,parts,false);
   cheat_parse(part_count>0?parts[0]:"", &slot->act);
   if(slot->enabled && (!was_enabled || repointed)){
     cheat_slot_capture(engine,slot);
@@ -1877,40 +1957,6 @@ void room_skip_hook(AnygmEngine *engine){
   }
 }
 
-
-/* "1,2,4,5" or "1-4,9": in the listed room indices, A, B, or Start advances to the next room in
- * play order. The list comes from the GML_INTROSKIP development setting, or — when the setting is
- * absent — from the loaded content's introskip| anchor directive, which follows the
- * content-override switch like every other content directive. */
-/* Rooms listed by introauto| advance without a button when entered. The directive
- * shares introskip|'s list grammar and next-room-order operation. */
-static void introauto_parse(AnygmEngine *engine,const char *s){
-  memset(engine->introauto_set, 0, sizeof engine->introauto_set);
-  if(!s || !*s) return;
-  while(*s){
-    while(*s==' '||*s=='\t'||*s==',') s++;
-    if(!*s) break;
-    int a=atoi(s); while(*s>='0'&&*s<='9') s++;
-    int b=a;
-    if(*s=='-'){ s++; b=atoi(s); while(*s>='0'&&*s<='9') s++; }
-    for(int r=a; r<=b && r<1024; r++) if(r>=0) engine->introauto_set[r>>3] |= (uint8_t)(1u<<(r&7));
-  }
-}
-static void introskip_parse(AnygmEngine *engine,const char *s){
-  memset(engine->introskip_set, 0, sizeof engine->introskip_set);
-  engine->introskip_enabled = (s && *s) ? 1 : 0;
-  if(!engine->introskip_enabled) return;
-  while(*s && *s!='|'){
-    while(*s==' '||*s==',') s++;
-    if(*s=='|') break;
-    if(!*s) break;
-    int a=atoi(s); while(*s && *s!=',' && *s!='-' && *s!=' ' && *s!='|') s++;
-    int b=a;
-    if(*s=='-'){ s++; b=atoi(s); while(*s && *s!=',' && *s!=' ' && *s!='|') s++; }
-    if(a>b){ int t=a; a=b; b=t; }
-    for(int r=a; r<=b && r<1024; r++) if(r>=0) engine->introskip_set[r>>3] |= (uint8_t)(1u<<(r&7));
-  }
-}
 /* Return the declared os_type, or -1 when no active directive supplies one. */
 int engine_overrides_declared_os_type(AnygmEngine *engine){
   int active=engine_boot_cheats_active(engine);
@@ -1979,61 +2025,45 @@ unsigned engine_overrides_keyboard_bindings(AnygmEngine *engine,
   }
   return ports;
 }
-static const char *introskip_setting(AnygmEngine *engine){
-    const char *setting=anygm_host_development_setting(&engine->host,"GML_INTROSKIP");
-    if(!setting || !setting[0]){
-      int active=engine_boot_cheats_active(engine);
-      for(int i=0;i<active && (!setting || !setting[0]);i++)
-        if(engine->boot_cheats[i].enabled &&
-           !strncmp(engine->boot_cheats[i].code,"introskip|",10))
-          setting=engine->boot_cheats[i].code+10;
-    }
-    return setting;
-}
-void introskip_hook(AnygmEngine *engine){
-  if(engine->introskip_enabled < 0){
-    introskip_parse(engine,introskip_setting(engine));
-    { const char *automatic=NULL;
-      int active=engine_boot_cheats_active(engine);
-      for(int i=0;i<active && !automatic;i++)
-        if(engine->boot_cheats[i].enabled &&
-           !strncmp(engine->boot_cheats[i].code,"introauto|",10))
-          automatic=engine->boot_cheats[i].code+10;
-      introauto_parse(engine,automatic);
-      if(automatic) engine->introskip_enabled=1; }
+static bool room_trigger_pressed(const AnygmEngine *engine,const RoomTrigger *trigger){
+  for(unsigned port=0;port<ANYGM_MAX_GAMEPADS;port++){
+    unsigned mask=trigger->pads[port];
+    for(unsigned button=0;mask;button++,mask>>=1)
+      if((mask&1u) && engine->pad_current[port][button] && !engine->pad_previous[port][button])
+        return true;
   }
-  if(!engine->introskip_enabled) return;
-  int room = engine->vm.room_index;
-  if(room < 0 || room >= 1024) return;
-  if(engine->introauto_set[room>>3] & (1u<<(room&7))){
-    if(engine->vm.pending_room < 0){
-      int ord=-1; for(int i=0;i<engine->win.n_room_order;i++) if((int)engine->win.room_order[i]==room){ ord=i; break; }
-      if(ord>=0 && ord+1<engine->win.n_room_order) gml_vm_goto_room_order(&engine->vm, ord+1);
+  for(int byte=0;byte<(int)sizeof trigger->keys;byte++){
+    unsigned mask=trigger->keys[byte];
+    for(int bit=0;mask;bit++,mask>>=1){
+      int key=8*byte+bit;
+      if((mask&1u) && engine->event_key_current[key] && !engine->event_key_previous[key])
+        return true;
     }
-    return;
   }
-  if(!(engine->introskip_set[room>>3] & (1u<<(room&7)))) return;   /* not a listed intro room */
-  int a = engine->pad_current[0][ANYGM_PAD_FACE_RIGHT] && !engine->pad_previous[0][ANYGM_PAD_FACE_RIGHT];
-  int b = engine->pad_current[0][ANYGM_PAD_FACE_BOTTOM] && !engine->pad_previous[0][ANYGM_PAD_FACE_BOTTOM];
-  int start = engine->pad_current[0][ANYGM_PAD_START] && !engine->pad_previous[0][ANYGM_PAD_START];
-  if((a||b||start) && engine->vm.pending_room < 0){
-    const char *setting=introskip_setting(engine);
-    const char *destination=setting?strchr(setting,'|'):NULL;
-    if(destination){
-      const char *cursor=destination+1;int target;
-      if(parse_nonnegative_index(&cursor,&target) && !*cursor &&
-         target<gml_room_count(&engine->win)){
-        gml_audio_stop_all(engine->audio);
-        gml_room_enter(&engine->vm,target);
-      }
-      return;
-    }
-    int ord=-1; for(int i=0;i<engine->win.n_room_order;i++) if((int)engine->win.room_order[i]==room){ ord=i; break; }
-    if(ord>=0 && ord+1<engine->win.n_room_order) gml_vm_goto_room_order(&engine->vm, ord+1);
-  }
+  return false;
 }
 
-static void introcount_apply(GmlVM *vm,const IntroCounter *rule){
+static bool room_rule_transition(AnygmEngine *engine,int room,int destination){
+  if(destination>=0){
+    if(destination>=gml_room_count(&engine->win)) return false;
+    gml_audio_stop_all(engine->audio);
+    gml_room_enter(&engine->vm,destination);
+    return true;
+  }
+  for(int i=0;i+1<engine->win.n_room_order;i++){
+    if((int)engine->win.room_order[i]!=room) continue;
+    gml_vm_goto_room_order(&engine->vm,i+1);
+    return true;
+  }
+  return false;
+}
+
+static bool room_rule_active(const CheatSlot *slot,int kind,int room,RoomRule *rule){
+  return slot->enabled && room_rule_kind(slot->code)==kind &&
+    room_rule_parse(slot->code,rule) && room_rule_contains(rule,room);
+}
+
+static void room_counter_apply(GmlVM *vm,const RoomRule *rule){
   int target=gml_object_index_by_name(vm,rule->object);
   if(target<0) return;
   for(int i=0;i<vm->inst_count;i++){
@@ -2052,43 +2082,56 @@ static void introcount_apply(GmlVM *vm,const IntroCounter *rule){
   }
 }
 
-static int intro_button_pressed(const AnygmEngine *engine){
-  return (engine->pad_current[0][ANYGM_PAD_FACE_RIGHT] &&
-               !engine->pad_previous[0][ANYGM_PAD_FACE_RIGHT]) ||
-              (engine->pad_current[0][ANYGM_PAD_FACE_BOTTOM] &&
-               !engine->pad_previous[0][ANYGM_PAD_FACE_BOTTOM]) ||
-              (engine->pad_current[0][ANYGM_PAD_START] &&
-               !engine->pad_previous[0][ANYGM_PAD_START]);
-}
-
-/* Inspect the phase before Step so an input on the frame that enters the panel
- * cannot also skip a panel the player has not yet seen. */
-void introcount_hook(AnygmEngine *engine){
-  if(!intro_button_pressed(engine) || engine->vm.pending_room>=0) return;
+/* Read the phase from the frame the player saw before the current Step. */
+void room_counter_hook(AnygmEngine *engine){
+  if(engine->vm.pending_room>=0) return;
   int active=engine_boot_cheats_active(engine);
-  for(int slot_index=0;slot_index<active;slot_index++){
-    const CheatSlot *slot=&engine->boot_cheats[slot_index];
-    IntroCounter rule;
-    if(slot->enabled && introcount_parse(slot->code,&rule) &&
-       rule.room==engine->vm.room_index) introcount_apply(&engine->vm,&rule);
+  for(int i=0;i<active;i++){
+    RoomRule rule;
+    if(room_rule_active(&engine->boot_cheats[i],ROOM_RULE_COUNTER,engine->vm.room_index,&rule) &&
+       room_trigger_pressed(engine,&rule.trigger)) room_counter_apply(&engine->vm,&rule);
   }
 }
 
-/* Let the authored alarm advance an intro panel on the next Step. */
-void introstep_hook(AnygmEngine *engine){
-  if(!intro_button_pressed(engine) || engine->vm.pending_room>=0) return;
-  int active=engine_boot_cheats_active(engine);
-  for(int slot_index=0;slot_index<active;slot_index++){
-    const CheatSlot *slot=&engine->boot_cheats[slot_index];
-    int room,alarm;char object[64];
-    if(!slot->enabled || !introstep_parse(slot->code,&room,object,sizeof object,&alarm) ||
-       room!=engine->vm.room_index) continue;
-    int target=gml_object_index_by_name(&engine->vm,object);
+void room_overrides_after_step(AnygmEngine *engine,int previous_room){
+  GmlVM *vm=&engine->vm;
+  if(vm->pending_room>=0) return;
+  int active=engine_boot_cheats_active(engine),room=vm->room_index;
+  /* An immediate jump after the previous Step still gives the entered room its
+   * first Step this frame. This also covers an initial room created at load. */
+  bool entered=room!=previous_room || vm->room_enter_frame==vm->frame ||
+    (vm->frame>0 && vm->room_enter_frame==vm->frame-1);
+  for(int i=active-1;entered && i>=0;i--){
+    RoomRule rule;
+    if(room_rule_active(&engine->boot_cheats[i],ROOM_RULE_SKIP,room,&rule) &&
+       rule.trigger.room_enter && room_rule_transition(engine,room,rule.destination)) return;
+  }
+  if(room!=previous_room || (vm->frame>1 && vm->room_enter_frame==vm->frame)) return;
+
+  /* The development setting supplies an explicit replacement for input-driven jumps. */
+  const char *setting=anygm_host_development_setting(&engine->host,"GML_ROOMSKIP");
+  RoomRule diagnostic;
+  bool replace=setting && room_rule_parse(setting,&diagnostic) &&
+    diagnostic.kind==ROOM_RULE_SKIP && !diagnostic.trigger.room_enter;
+  if(replace && room_rule_contains(&diagnostic,room) && room_trigger_pressed(engine,&diagnostic.trigger) &&
+     room_rule_transition(engine,room,diagnostic.destination)) return;
+
+  for(int i=active-1;!replace && i>=0;i--){
+    RoomRule rule;
+    if(room_rule_active(&engine->boot_cheats[i],ROOM_RULE_SKIP,room,&rule) &&
+       room_trigger_pressed(engine,&rule.trigger) &&
+       room_rule_transition(engine,room,rule.destination)) return;
+  }
+  for(int i=0;i<active;i++){
+    RoomRule rule;
+    if(!room_rule_active(&engine->boot_cheats[i],ROOM_RULE_ALARM,room,&rule) ||
+       !room_trigger_pressed(engine,&rule.trigger)) continue;
+    int target=gml_object_index_by_name(vm,rule.object);
     if(target<0) continue;
-    for(int instance_index=0;instance_index<engine->vm.inst_count;instance_index++){
-      GmlInstance *instance=&engine->vm.inst[instance_index];
-      if(instance->active && !instance->marked &&
-         gml_object_is(&engine->vm,instance->obj,target)) instance->alarm[alarm]=1.0;
+    for(int j=0;j<vm->inst_count;j++){
+      GmlInstance *instance=&vm->inst[j];
+      if(instance->active && !instance->marked && gml_object_is(vm,instance->obj,target))
+        instance->alarm[rule.alarm]=1.0;
     }
   }
 }

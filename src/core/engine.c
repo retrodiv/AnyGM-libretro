@@ -503,7 +503,6 @@ static void engine_adopt_boot_overrides(AnygmEngine *engine,
          strlen(prepared->content_overrides)+1u);
   memcpy(engine->launch_overrides_text,prepared->anchor_overrides,
          strlen(prepared->anchor_overrides)+1u);
-  engine->introskip_enabled=-1;
   engine->vm.os_type_declared=engine_overrides_declared_os_type(engine);
   engine_override_menu_refresh(engine);
   if(engine->boot_cheat_count)
@@ -1387,7 +1386,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
                                           0.0,0.0);
       }
     }
-    introcount_hook(engine);       /* A/B/Start can advance a counter in the visible intro phase */
+    room_counter_hook(engine);
     gml_vm_step(&engine->vm);
     if(anygm_policy_uses_classic_runtime(&engine->win) && room_before_step>=0 && engine->vm.room_index!=room_before_step){
       int kind=(int)lround(gml_global_num(&engine->vm,"transition_kind"));
@@ -1402,8 +1401,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     apply_sticky_cheats(engine);   /* generic freeze cheats (user-supplied global writes) */
     menu_run(engine);              /* generic pause-menu editor (inject entries + handle input) */
     room_skip_hook(engine);        /* generic room-skip button (Select/Start, any room) */
-    introskip_hook(engine);        /* A/B skip, only in a user-supplied intro-room list (GML_INTROSKIP) */
-    introstep_hook(engine);        /* A/B/Start advances a declared content-owned intro alarm */
+    room_overrides_after_step(engine,room_before_step);
   }
   /* While a prior wait remains active, skip Step and Draw while mixing audio and updating input history. */
   if(wait_held_frame && engine->vm.wait.active){
@@ -2896,7 +2894,6 @@ AnygmResult anygm_create(const AnygmHostServices *services,AnygmEngine **out_eng
   engine->diagnostics.cursor_frame=-1;
   engine->diagnostics.multiview_frame=-1;
   engine->diagnostics.profile_spike_ms=-2.0;
-  engine->introskip_enabled=-1;
   engine->vm.os_type_declared=engine_overrides_declared_os_type(engine);
   engine->last_error[0]=0;
   *out_engine=engine;
@@ -3372,9 +3369,6 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
     uint32_t want=delta->values.content_overrides?1u:0u;
     if(want!=engine->config.content_overrides){
       engine->config.content_overrides=want;
-      /* The development menu and the intro-skip list can be declared by content directives;
-       * both follow the toggle. */
-      engine->introskip_enabled=-1;
       engine->vm.os_type_declared=engine_overrides_declared_os_type(engine);
       if(engine->lifecycle==ENGINE_LOADED){
         engine_override_menu_refresh(engine);

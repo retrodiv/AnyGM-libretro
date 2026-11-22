@@ -44,50 +44,65 @@ Named external xdelta3/VCDIFF patches can be applied in an explicit pipeline ord
 result SHA-256 values and exact result sizes are checked. The generic declaration, resource-path
 and decoder limits are owned by `CONTENT_TRANSFORMS.md`, not by any particular format family.
 
-Each `[overrides]` line is one directive in the same grammar the host cheat
-interface uses, including development-menu declarations. System `AnyGM.ini`
-defaults and anchor declarations combine per
-destination and condition before execution; `CONTENT_CONFIGURATION.md`
-defines their syntax, precedence and fast payload recognition. An
-`introskip|1,3-5` directive lists room indices where A, B, or Start advances
-to the next room in play order; the `GML_INTROSKIP` development setting, when
-present, may also use `1,3-5|8` to select room index 8 explicitly. The anchor
-form is `introskip|1,3-5|8`; the destination must exist in the payload.
-An explicit destination stops current audio before entering the target room.
-An unavailable destination leaves the current room and audio unchanged. This is
-a room transition and does not execute the content's own skip handler.
-The `GML_INTROSKIP` development setting, when
-present, takes precedence over it. `introauto|1,3-5` takes the same room list
-and advances the moment such a room is entered, with no button at all. Both forms
-advance the same way; a room listed by `introauto|` advances before
-`introskip|` is consulted for it. Directives load into
-a channel separate from host cheats: host cheat resets do not clear them, and
-the content-override configuration switch disables them without touching host
-cheats. Parsing is fail-closed — an unrecognized directive, or the one-shot
-`room=` form, rejects the load rather than being dropped. Active directives
-join the save-state identity, so a state saved with them loads only while
-they are active; content without directives keeps its state identity
-unchanged.
+Each `[overrides]` line declares a content rule. System `AnyGM.ini` defaults and anchor
+declarations combine before execution. See [Content configuration](CONTENT_CONFIGURATION.md)
+for syntax and precedence. A frontend cheat reset leaves content declarations in place.
+The Content override directives option disables them. Unknown directives reject content
+loading. Enabled declarations participate in save-state identity.
 
-An intro implemented as several timed panels in one room can instead declare
-`introstep|78|obj_intro|0`. On a new A, B, or Start press in room 78, AnyGM shortens alarm 0 on
-each live `obj_intro` instance (including descendants) to one step. The content's own alarm event
-therefore performs the advance; the directive does not call game code by name, change rooms, or
-invent panel state. It is inactive with Content override directives disabled. Use it only when the
-named alarm is the measured authored transition between panels; `introskip|` remains the declaration
-for whole-room introductions.
+### Room actions and triggers
 
-`introcount|4|obj_panel|phase|2|elapsed|120` handles a custom counter. On a new A, B,
-or Start press in room 4, before Step, AnyGM assigns 120 to the existing numeric instance
-variable `elapsed` on each active `obj_panel` instance (including descendants) whose
-numeric `phase` equals 2. The ordinary Step observes the new value and performs
-any transition authored by the content. Choose a value that satisfies that content's
-completion condition, for either an elapsed or a remaining counter. Both numeric fields
-are signed 32-bit decimal integers. A missing or nonnumeric variable leaves the instance
-unchanged. A press that enters the guarded phase cannot also advance its counter.
-Holding the button does not repeat the assignment. Content overrides Off
-disables the directive. Layered declarations for the same room, object, guard variable,
-guard value and counter use the last declared replacement value.
+Room actions share the order `action|rooms|trigger|...`. List source room indices
+from 0 to 1023, with commas and ascending inclusive ranges such as `1,3-5`.
+
+```ini
+roomskip|1,3-5|pad1:a,pad1:b,pad1:start|next
+roomskip|8|key:escape|12
+roomskip|2|room-enter|next
+roomalarm|4|pad2:a,key:enter|obj_panel|0
+roomcounter|4|pad1:b,key:space|obj_panel|phase=2|elapsed=120
+```
+
+Input triggers are comma-separated alternatives without spaces. Each `pad1:` through
+`pad4:` prefix names a RetroPad port. The button names match `keybind`. Each `key:`
+prefix names a physical keyboard key independently of RetroPad emulation and simulated
+content keypresses. Supported names are lowercase `a` through `z`, `0` through `9`,
+`f1` through `f12`, `escape`, `enter`, `space`, `backspace`, `tab`, `delete`,
+`insert`, `home`, `end`, `pageup`, `pagedown`, `up`, `down`, `left`, `right`,
+`lshift`, `rshift`, `lctrl`, `rctrl`, `lalt` and `ralt`. A fresh press triggers
+the rule once. The trigger does not consume the input seen by the game. A held button
+or a press on the frame that enters a source room does not repeat or carry over.
+
+- `roomskip` transitions to `next` in authored play order or to the explicit room index.
+  A valid explicit destination stops current audio before entering it. A rule whose
+  destination is unavailable does nothing. `room-enter` selects an automatic skip
+  when that room is entered. It is exclusive to `roomskip` and is written by itself.
+  An explicit automatic destination must lie outside its own source list.
+- `roomalarm` sets the numbered alarm (0 through 11) to one step on each active
+  instance of the named object or its descendants. The ordinary alarm event runs
+  the authored transition on the following step.
+- `roomcounter` sets an existing numeric instance counter before Step when the
+  named object or descendant has the specified numeric guard value. Both values
+  are signed 32-bit integers. Choose a value that satisfies the authored completion
+  condition. Missing or nonnumeric variables are ignored. A press that enters the
+  guarded phase cannot also advance that phase.
+
+Room rules layer by action, normalized source set, normalized trigger set, and
+the addressed alarm or guarded counter when applicable. A replacement occupies
+its last declaration position. At most one room jump runs per frame. An automatic
+entry rule gets priority, then the last matching input rule with a valid destination.
+A room change already requested by content gets priority over these rules.
+
+For local development, `GML_ROOMSKIP` can hold one complete input-driven
+`roomskip|...` directive and replace anchor input-driven jumps. Automatic
+entry rules and timer rules retain their ordinary behavior.
+
+The former `introskip`, `introauto`, `introstep` and `introcount` spellings
+must be migrated. To retain the previous input, use `pad1:a,pad1:b,pad1:start`.
+Use `roomskip` with `next` or the old explicit destination, `roomskip` with
+`room-enter` for automatic advances, `roomalarm` for alarms and `roomcounter`
+with `guard=value|counter=value` for counters. Changes to an anchor's rule text
+change the identity of savestates created with that anchor enabled.
 
 `ostype|N` declares which operating system this content is told it is running on, using the same
 numbering used by `os_type` (0 Windows, 1 macOS, 6 Linux, and so on). Without it content is
