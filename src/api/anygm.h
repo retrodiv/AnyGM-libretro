@@ -15,7 +15,7 @@ extern "C" {
  * runtime library version, and every publishable metadata file declares the literal "Git" instead
  * of a number, so no copy can promise a value that has gone stale. CONTRIBUTING.md owns the single
  * increment step. */
-#define ANYGM_VERSION "0.1.961"
+#define ANYGM_VERSION "0.1.962"
 #define ANYGM_API_VERSION 8u
 #define ANYGM_HOST_SERVICES_VERSION 2u
 #define ANYGM_STATE_SCHEMA 70u
@@ -519,9 +519,14 @@ enum {
    * restored completed pictures do not acknowledge unexecuted input. This
    * acknowledgement remains valid if later execution or presentation fails. */
   ANYGM_FRAME_TEXT_INPUT_CONSUMED=1u<<4,
-  /* Accompanies ANYGM_FRAME_TIMING_CHANGED when the new cadence arrived with a room change rather
-   * than from content altering its speed within a room. A host may defer the latter. */
-  ANYGM_FRAME_TIMING_ROOM_CHANGED=1u<<5
+  /* Accompanies ANYGM_FRAME_TIMING_CHANGED when the new cadence belongs to a room's start: it
+   * arrived with the room change or during the new room's first step, where room creation code and
+   * start events set a room's speed. A change made later within a room is content altering its
+   * speed - an impact pause, slow motion - and a host may leave it off its own clock. */
+  ANYGM_FRAME_TIMING_ROOM_CHANGED=1u<<5,
+  /* A room started during this frame, whether or not its cadence differs from the previous room.
+   * A host that kept a cadence change off its clock may adopt the content's cadence here. */
+  ANYGM_FRAME_ROOM_STARTED=1u<<6
 };
 
 /* Optional host graphics target.

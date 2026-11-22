@@ -286,6 +286,11 @@ struct AnygmEngine {
   double fps;
   double presentation_phase,presentation_hz;
   int fps_room,follow_player,player_object;
+  /* The room whose start was last reported and the VM frame it started at: a speed change by its
+   * first step is the room's own. Unlike fps_room, which is cleared to force a republish, this
+   * changes only when content enters a room; a restored state resumes its room. */
+  int started_room;
+  long started_room_frame;
   double audio_accumulator;
   int state_just_loaded;
   /* The first advancing frame after a load begins from input continuity: a key held now was held

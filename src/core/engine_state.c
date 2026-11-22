@@ -1086,6 +1086,10 @@ bool state_unserialize_impl(AnygmEngine *engine,const void *d, size_t n, int sch
    * so its framebuffer can be reconstructed, then the normal Game End handling freezes it. */
   engine->runtime_ended = 0;
   engine->shutdown_sent = 0;
+  /* A restored state resumes its room where it was saved; it does not start it, so neither the
+   * load nor a speed change by the next step is a room start. */
+  engine->started_room = engine->vm.room_index;
+  engine->started_room_frame = engine->vm.frame - 2;
   engine->fps_room = -1;
   sync_room_fps(engine,1);
   classic_transition_reset(engine);

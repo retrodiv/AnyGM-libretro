@@ -1473,6 +1473,14 @@ void sync_room_fps(AnygmEngine *engine,int publish_changes) {
     return;
   }
   int room_changed = room != engine->fps_room;
+  int room_started = room != engine->started_room;
+  if (room_started) {
+    engine->started_room = room;
+    engine->started_room_frame = engine->vm.frame;
+  }
+  /* A room's speed is often set by its creation code or a start event rather than its definition,
+   * so a change by the new room's first step is still the room's cadence. */
+  int room_start = room_changed || engine->vm.frame - engine->started_room_frame <= 1;
   engine->fps_room = room;
   int fps_changed = (fps != engine->fps);
   int geom_changed = (nw != prev_w) || (nh != prev_h) ||
@@ -1489,9 +1497,10 @@ void sync_room_fps(AnygmEngine *engine,int publish_changes) {
    * picture stays owed, or the held time would be heard twice. */
   if (fps_changed && engine->audio_accumulator > 0.0) engine->audio_accumulator = 0.0;
   engine->fps = fps;
+  if(room_started && publish_changes) engine->frame_flags|=ANYGM_FRAME_ROOM_STARTED;
   if(changed && publish_changes){
     if(fps_changed) engine->frame_flags|=ANYGM_FRAME_TIMING_CHANGED|
-                                         (room_changed?ANYGM_FRAME_TIMING_ROOM_CHANGED:0u);
+                                         (room_start?ANYGM_FRAME_TIMING_ROOM_CHANGED:0u);
     if(geom_changed) engine->frame_flags|=ANYGM_FRAME_GEOMETRY_CHANGED;
   }
 }

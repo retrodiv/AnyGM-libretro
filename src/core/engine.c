@@ -599,7 +599,7 @@ static int boot_runtime_prepare(AnygmEngine *engine) {
   engine->mouse_button_cleared=engine->mouse_button_edges_cleared=0;
   engine->mouse_wheel = 0;
   engine->present_mouse_valid = 0;
-  engine->follow_player = 0; engine->player_object = -1; engine->audio_accumulator = 0.0; engine->fps = 60.0; engine->fps_room = -1;
+  engine->follow_player = 0; engine->player_object = -1; engine->audio_accumulator = 0.0; engine->fps = 60.0; engine->fps_room = -1; engine->started_room = -1;
   engine->state_just_loaded = 0;
   engine->state_resume_measured_hint=0;
   engine->runtime_ended = 0;
@@ -1145,6 +1145,7 @@ static void engine_unload(AnygmEngine *engine){
   gml_win_free(&engine->win);
   classic_transition_release(engine);
   engine->have_presented_frame=0; engine->audio_accumulator=0.0; engine->fps=60.0; engine->fps_room=-1;
+  engine->started_room=-1;
   engine->state_just_loaded=0; engine->state_reapply_size=0;
   engine->state_resume_measured_hint=0;
   engine->state_frame_available=0; engine->input_continuity_pending=0;
@@ -2883,7 +2884,7 @@ AnygmResult anygm_create(const AnygmHostServices *services,AnygmEngine **out_eng
   snprintf(engine->region,sizeof engine->region,"US");
   snprintf(engine->language_tag,sizeof engine->language_tag,"en-US");
   engine->width=288; engine->height=216; engine->base_width=288; engine->base_height=216;
-  engine->fps=60.0; engine->fps_room=-1;
+  engine->fps=60.0; engine->fps_room=-1; engine->started_room=-1;
   engine->player_object=-1;
   engine->mouse_pixel_x=-1.0; engine->mouse_pixel_y=-1.0;
   engine->mouse_warped=0; engine->mouse_host_x=0; engine->mouse_host_y=0;

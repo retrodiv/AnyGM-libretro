@@ -46,15 +46,22 @@ zero-step ticks and is consumed once when logical execution resumes.
 ## Content cadence changes
 
 Content making no display request presents at the cadence the frontend holds:
-the startup answer, then any cadence that arrives with a room change, announced
-at once with `SET_SYSTEM_AV_INFO`. A change content makes within a room, through
-`game_set_speed` or `room_speed`, is announced only once it has held for one
-second of presented ticks. Until then its steps follow the fractional clock
-above against the held cadence. A single slowed step, used to mark an impact,
-therefore holds the picture for its authored duration without the frontend
-rebuilding its video and audio pipelines or switching a display mode, and a
-lasting change still reaches the frontend so a display mode can follow it.
-While the two cadences agree the clock yields exactly one step per tick.
+the startup answer, then a room's own cadence, announced at once with
+`SET_SYSTEM_AV_INFO`. A room's cadence is the one that arrives with the room
+change or is set by the new room's first step, where room creation code and
+start events usually set it. A change content makes later within a room,
+through `game_set_speed` or `room_speed`, is never announced, however long it
+lasts: its steps follow the fractional clock above against the held cadence, so
+an impact pause holds the picture for its authored duration and slow motion
+runs on the frontend's clock, with sound continuing. This is how the original
+runner treats its monitor, whose refresh never follows the game speed. Every
+`SET_SYSTEM_AV_INFO` makes RetroArch rebuild its video, audio and input drivers
+on any display, and on a CRT switch the mode as well, so following such changes
+would flash the picture at each one. When a room starts while the content runs
+at a cadence other than the held one, that cadence is announced then, at a scene
+change rather than in the middle of one. A restored state resumes its room and
+announces nothing. While the two cadences agree the clock yields exactly one
+step per tick.
 
 ## Rewind snapshots
 

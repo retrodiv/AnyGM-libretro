@@ -275,8 +275,6 @@ void retro_get_system_av_info(struct retro_system_av_info *info){
   if(g_libretro.prepared) g_libretro.provisional_av_exposed=true;
   /* A frontend asking afresh adopts the content's current cadence. */
   g_libretro.presented_fps=0.0;
-  g_libretro.cadence_candidate_fps=0.0;
-  g_libretro.cadence_candidate_ticks=0;
   fill_av_info(info);
   if(!g_libretro.display_active_hz && !g_libretro.display_notification_pending)
     g_libretro.presented_fps=info->timing.fps;
@@ -549,8 +547,6 @@ void retro_unload_game(void){
   g_libretro.startup_av_notification_pending=false;
   g_libretro.content_glsl_candidate=false;
   g_libretro.presented_fps=0.0;
-  g_libretro.cadence_candidate_fps=0.0;
-  g_libretro.cadence_candidate_ticks=0;
   g_libretro.run_ticks=g_libretro.save_tick=g_libretro.save_interval=0;
   g_libretro.save_interval_repeats=0;
   g_libretro.frame_completed=false;
@@ -731,34 +727,6 @@ static bool paced_cadence_active(void){
          !g_libretro.display_notification_pending && g_libretro.presented_fps>=2.0;
 }
 
-/* A content cadence different from the presented one is announced once it has held for one
- * second of presented ticks. A momentary change, such as one slowed step marking an impact, is
- * then played out on the existing clock and never reconfigures the frontend; a lasting one still
- * reaches it, so a display mode can follow the content. */
-static void paced_cadence_settle(void){
-  if(g_libretro.display_active_hz || g_libretro.display_requested_hz ||
-     g_libretro.display_notification_pending || g_libretro.presented_fps<=0.0) return;
-  double fps=content_fps();
-  if(fps==g_libretro.presented_fps){
-    g_libretro.cadence_candidate_fps=0.0;
-    g_libretro.cadence_candidate_ticks=0;
-    return;
-  }
-  if(fps!=g_libretro.cadence_candidate_fps){
-    g_libretro.cadence_candidate_fps=fps;
-    g_libretro.cadence_candidate_ticks=0;
-  }
-  if(++g_libretro.cadence_candidate_ticks<(uint32_t)ceil(g_libretro.presented_fps)) return;
-  g_libretro.presented_fps=fps;
-  g_libretro.cadence_candidate_fps=0.0;
-  g_libretro.cadence_candidate_ticks=0;
-  if(g_libretro.environment){
-    struct retro_system_av_info av;
-    fill_av_info(&av);
-    g_libretro.environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO,&av);
-  }
-}
-
 /* A rewind ring records every Nth tick, so retro_serialize arrives at a fixed interval of ticks.
  * Once the same interval has been seen twice, the tick that completes the next one tells the
  * engine a save is coming before the frame is handed over: the runtime section is then written
@@ -817,10 +785,11 @@ void retro_run(void){
     steps=1;
   }
   /* Content that changes its own speed within a room keeps the frontend on the cadence it already
-   * holds until the new speed persists (see paced_cadence_settle). Meanwhile its steps follow the
-   * same fractional clock as a display request: a slower step holds the picture, with sound
-   * continuing, on the ticks it spans instead of reconfiguring the frontend's video, audio and
-   * display mode for it. */
+   * holds, as the original runner keeps its monitor's refresh: the frontend would otherwise rebuild
+   * its video, audio and input drivers, and switch a CRT mode, at every impact pause or slow motion.
+   * Its steps follow the same fractional clock as a display request: a slower step holds the
+   * picture, with sound continuing, on the ticks it spans; a faster one runs several steps a tick.
+   * The frontend adopts the content's cadence at the next room start (see below). */
   if(paced_cadence_active() &&
      anygm_schedule_frame(g_libretro.engine,g_libretro.presented_fps,&steps)!=ANYGM_OK){
     libretro_log(RETRO_LOG_ERROR,"Could not schedule content cadence\n");
@@ -895,20 +864,21 @@ void retro_run(void){
       (float)g_libretro.av.aspect_ratio!=4.0f/3.0f;
     g_libretro.startup_av_notification_pending=false;
   }
-  if((geometry_changed || timing_changed) && g_libretro.environment){
+  /* Startup, a room's own cadence and display requests announce timing at once. A change made by
+   * content within a room is never announced, however long it lasts: the frontend keeps its clock
+   * until a room starts, and a room that starts while the content runs at another cadence announces
+   * that cadence then, at a scene change rather than in the middle of one. Geometry goes out now. */
+  bool display_cadence=g_libretro.display_active_hz || g_libretro.display_requested_hz ||
+                       g_libretro.display_notification_pending;
+  bool room_started=(g_libretro.frame.flags&ANYGM_FRAME_ROOM_STARTED)!=0;
+  bool held_cadence=room_started && !display_cadence && g_libretro.presented_fps>0 &&
+                    content_fps()!=g_libretro.presented_fps;
+  if((geometry_changed || timing_changed || held_cadence) && g_libretro.environment){
     if(!av_refreshed) libretro_update_av();
-    /* Startup, a room's own cadence and display requests announce timing at once. A change made
-     * by content within a room waits in paced_cadence_settle; its geometry still goes out now. */
-    bool display_cadence=g_libretro.display_active_hz || g_libretro.display_requested_hz ||
-                         g_libretro.display_notification_pending;
     bool room_cadence=(g_libretro.frame.flags&ANYGM_FRAME_TIMING_ROOM_CHANGED)!=0;
-    bool announce=timing_changed &&
-      (av_refreshed || room_cadence || display_cadence || g_libretro.presented_fps<=0);
-    if(announce && !display_cadence){
-      g_libretro.presented_fps=content_fps();
-      g_libretro.cadence_candidate_fps=0.0;
-      g_libretro.cadence_candidate_ticks=0;
-    }
+    bool announce=held_cadence || (timing_changed &&
+      (av_refreshed || room_cadence || display_cadence || g_libretro.presented_fps<=0));
+    if(announce && !display_cadence) g_libretro.presented_fps=content_fps();
     struct retro_system_av_info av;
     fill_av_info(&av);
     if(announce)
@@ -947,7 +917,6 @@ void retro_run(void){
     libretro_update_av();
     update_display_request();
   }
-  paced_cadence_settle();
   frame_profile_report(&timing,ANYGM_OK,completed_steps);
 }
 
