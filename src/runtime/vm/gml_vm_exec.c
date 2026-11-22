@@ -417,7 +417,17 @@ static int argument_set(GmlVM *vm, const char *name, GmlVal v){
   if(idx>=vm->script_argc) vm->script_argc=idx+1;
   return 1;
 }
+double gml_room_speed_overridden(const GmlVM *vm){
+  if(!vm || !vm->room_speed_override || vm->room_index<0 ||
+     vm->room_index>=vm->room_speed_override_count) return 0.0;
+  return vm->room_speed_override[vm->room_index];
+}
 double gml_room_speed(GmlVM *vm){
+  double forced=gml_room_speed_overridden(vm);
+  return forced>0?forced:gml_room_speed_authored(vm);
+}
+/* The content's own cadence, which is the only one a room or a state may retain. */
+double gml_room_speed_authored(GmlVM *vm){
   /* game_set_speed() is the authoritative Studio cadence once it has been called. The
    * host uses the same slot when scheduling anygm_run_frame/audio, so VM clocks and delta_time must
    * not continue advancing at the room resource's older speed. */

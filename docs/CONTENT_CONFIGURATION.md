@@ -443,6 +443,36 @@ owner disappears, so a title-only policy cannot reposition a newly entered room'
 port-relative layout rather than `$view_w`/`$view_h`, which read the authored legacy view arrays:
 modern content may resize its camera while leaving those legacy view arrays unchanged.
 
+## Declared CRT mode
+
+Automatic CRT adjustment keeps a small 4:3 raster as it is and presents it at the content's own
+cadence. At low rates a CRT mode switch then selects a mode with many blank lines, which flattens
+the picture. An anchor can name the mode instead:
+
+```ini
+?crt crtmode|320|240|60
+?crt roomspeed|3,5-6|50
+```
+
+`crtmode|width|height|hz` hands the host a frame of exactly `width` by `height` with the picture
+centred at its own pixel size between black margins, and asks the host to present at `hz`. Width
+is 16 to 640, height 16 to 480 and refresh 2 to 300, all integers. A picture larger than the
+declared extent keeps the automatic CRT policy at the declared refresh. Logical steps and game
+speed are unchanged: a slower game holds pictures on some refreshes and a faster one runs several
+steps on some. Content keeps its window, GUI and camera geometry. The frame is a request; physical
+resolution and timings remain the host's.
+
+`roomspeed|rooms|fps` gives the listed room indices an integer cadence of 1 to 300 steps per
+second in place of the room's, `room_speed`'s or `game_set_speed`'s. Rooms use the list syntax of
+`roomskip`. This changes how fast those rooms play. Their timers count steps, so they elapse
+accordingly, and speed queries report the cadence in force. The content's own value is retained
+and applies again immediately on withdrawal.
+
+Both declarations accept only a plain `?crt` scope, so they follow that option and Content
+overrides live. A later `crtmode` replaces an earlier one, as does a later `roomspeed` with the
+same room list. Neither writes content values or state bytes, and neither is part of state
+identity.
+
 ## Measured state reserve in a sibling anchor
 
 A content-specific state reserve belongs beside the payload in its `.anygm` anchor.
@@ -485,8 +515,9 @@ before accepting the state transactionally.
 
 Effective override text and the launch-anchor envelope contribute to the
 active state configuration fingerprint. Replaced default assignments do not.
-The allocation-only `statereserve` declaration is excluded: changing a buffer
-minimum does not change simulation identity. Its enabled values contribute their
+[Declared CRT modes and room cadences](#declared-crt-mode) are excluded because they follow a
+live host option and write no state. The allocation-only `statereserve` declaration is excluded:
+changing a buffer minimum does not change simulation identity. Its enabled values contribute their
 maximum across layers, so a later lower minimum cannot withdraw a larger one.
 Programs, parameters, ordered pipelines and patch declarations contribute to derived-content
 cache identity; bindings do not change declaration identity. Neither programs, patch bytes nor

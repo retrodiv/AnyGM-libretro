@@ -469,12 +469,14 @@ uint64_t state_hash_bytes(const void *data,size_t size){
 }
 
 static void state_write_override_identity(CoreW *writer,const char *text){
-  if(!strstr(text,"statereserve|")){
+  if(!strstr(text,"statereserve|") && !strstr(text,"crtmode|") && !strstr(text,"roomspeed|")){
     cw_u64(writer,state_hash_bytes(text,strlen(text)));
     return;
   }
-  /* Allocation policy does not change simulation. Retain the exact bytes and order of
-   * every other normalized directive, so existing content identities remain unchanged. */
+  /* Allocation policy does not change simulation, and a CRT mode or its room cadence belongs to
+   * the live host option, which is no state identity either: neither is written into the state.
+   * Retain the exact bytes and order of every other normalized directive, so existing content
+   * identities remain unchanged. */
   char filtered[sizeof(((AnygmEngine *)0)->content_overrides_text)];
   _Static_assert(sizeof(((AnygmEngine *)0)->launch_overrides_text)<=sizeof filtered,
                  "override identity scratch covers the launch envelope");
@@ -482,7 +484,7 @@ static void state_write_override_identity(CoreW *writer,const char *text){
   for(const char *line=text;*line;){
     const char *end=strchr(line,'\n');
     size_t length=end?(size_t)(end-line)+1u:strlen(line);
-    if(strncmp(line,"statereserve|",13)){
+    if(strncmp(line,"statereserve|",13) && !engine_override_is_host_policy(line)){
       if(length>sizeof filtered-used){ writer->ok=0;return; }
       memcpy(filtered+used,line,length);used+=length;
     }

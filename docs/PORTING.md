@@ -86,6 +86,9 @@ an intermediate padded image. Thus 320x180 becomes 320x240, while 360x180 would 
 and instead selects 640x480. Window queries, GUI coordinates and camera geometry remain owned by
 the content and the existing aspect policy.
 
+A declared CRT mode replaces these automatic extents whenever the picture fits inside it, padding
+both axes as needed without resampling. A larger picture follows the automatic policy above.
+
 The fit uses sharp bilinear: a virtual integer nearest enlargement followed by bilinear sampling
 at destination pixel centres. Its shared integer prescale is the ceiling of the smaller fitted
 axis scale, with a minimum of one. Exact integer enlargement preserves hard pixel edges; reduction
@@ -360,6 +363,10 @@ otherwise the cache is rebuilt. The runtime does not migrate directories.
 `display_frequency_request` accepts or rejects a request without changing logical game FPS.
 An asynchronous host must document acceptance separately from physical completion. It must
 not report the requested Hz from its query merely because it accepted the request.
+
+`presentation_frequency_hz` in `AnygmAvInfo` is nonzero while a declared CRT mode is active. A
+host that follows it presents at that cadence and schedules steps as below; an accepted content
+display request takes precedence over it.
 
 When the host's presentation cadence differs from `frames_per_second`, call
 `anygm_schedule_frame` once per presentation tick. Execute its returned number of logical

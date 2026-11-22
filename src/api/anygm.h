@@ -15,8 +15,8 @@ extern "C" {
  * runtime library version, and every publishable metadata file declares the literal "Git" instead
  * of a number, so no copy can promise a value that has gone stale. CONTRIBUTING.md owns the single
  * increment step. */
-#define ANYGM_VERSION "0.1.965"
-#define ANYGM_API_VERSION 8u
+#define ANYGM_VERSION "0.1.966"
+#define ANYGM_API_VERSION 9u
 #define ANYGM_HOST_SERVICES_VERSION 2u
 #define ANYGM_STATE_SCHEMA 70u
 #define ANYGM_MAX_GAMEPADS 4u
@@ -522,7 +522,8 @@ enum {
   /* Accompanies ANYGM_FRAME_TIMING_CHANGED when the new cadence belongs to a room's start: it
    * arrived with the room change or during the new room's first step, where room creation code and
    * start events set a room's speed. A change made later within a room is content altering its
-   * speed - an impact pause, slow motion - and a host may leave it off its own clock. */
+   * speed - an impact pause, slow motion - and a host may leave it off its own clock. It also
+   * accompanies a declared presentation cadence selected or withdrawn by a host option. */
   ANYGM_FRAME_TIMING_ROOM_CHANGED=1u<<5,
   /* A room started during this frame, whether or not its cadence differs from the previous room.
    * A host that kept a cadence change off its clock may adopt the content's cadence here. */
@@ -597,6 +598,9 @@ typedef struct AnygmAvInfo {
   uint32_t audio_rate;
   /* Last host-accepted display request, or zero when content made none. */
   uint32_t display_frequency_request_hz;
+  /* Presentation cadence declared by the active CRT mode, or zero without one. The host presents
+   * at it and schedules logical steps with anygm_schedule_frame; frames_per_second is unchanged. */
+  uint32_t presentation_frequency_hz;
 } AnygmAvInfo;
 
 uint32_t anygm_api_version(void);

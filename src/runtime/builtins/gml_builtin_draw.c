@@ -16,6 +16,8 @@
 #include <stdlib.h>
 #include <string.h>
 static double builtin_game_speed(GmlVM *vm){
+  double forced=gml_room_speed_overridden(vm);
+  if(forced>0) return forced;
   GmlVal *p=vm?gml_varmap_get(&vm->globals,"__game_speed_fps"):NULL;
   double v=p?N(p,1,0):60.0;
   return v>0 ? v : 60.0;

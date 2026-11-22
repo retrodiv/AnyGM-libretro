@@ -246,6 +246,11 @@ static double content_fps(void){
   return g_libretro.av.frames_per_second>0?g_libretro.av.frames_per_second:60.0;
 }
 
+/* The cadence the frontend is asked to hold: a declared CRT mode's, else the content's own. */
+static double frontend_cadence(void){
+  return g_libretro.av.presentation_frequency_hz?g_libretro.av.presentation_frequency_hz:content_fps();
+}
+
 static void fill_av_info(struct retro_system_av_info *info){
   memset(info,0,sizeof *info);
   info->geometry.base_width=g_libretro.av.base_width?g_libretro.av.base_width:288;
@@ -253,7 +258,7 @@ static void fill_av_info(struct retro_system_av_info *info){
   info->geometry.max_width=g_libretro.av.max_width?g_libretro.av.max_width:3840;
   info->geometry.max_height=g_libretro.av.max_height?g_libretro.av.max_height:2160;
   info->geometry.aspect_ratio=g_libretro.av.aspect_ratio>0?(float)g_libretro.av.aspect_ratio:4.0f/3.0f;
-  info->timing.fps=g_libretro.presented_fps>0?g_libretro.presented_fps:content_fps();
+  info->timing.fps=g_libretro.presented_fps>0?g_libretro.presented_fps:frontend_cadence();
   if(g_libretro.display_notification_pending){
     if(g_libretro.display_requested_hz) info->timing.fps=g_libretro.display_requested_hz;
   }
@@ -796,7 +801,7 @@ void retro_run(void){
     steps=1;
   }
   uint32_t calls=steps?steps:1;
-  if(g_libretro.display_active_hz){
+  if(g_libretro.display_active_hz || paced_cadence_active()){
     g_libretro.display_mouse_x=accumulated_delta(g_libretro.display_mouse_x,input.mouse_delta_x);
     g_libretro.display_mouse_y=accumulated_delta(g_libretro.display_mouse_y,input.mouse_delta_y);
     g_libretro.display_wheel=accumulated_delta(g_libretro.display_wheel,input.wheel_delta);
@@ -858,7 +863,7 @@ void retro_run(void){
     av_refreshed=true;
     timing_changed=timing_changed ||
       g_libretro.av.max_width!=3840u || g_libretro.av.max_height!=2160u ||
-      g_libretro.av.frames_per_second!=60.0 || g_libretro.av.audio_rate!=44100u;
+      frontend_cadence()!=60.0 || g_libretro.av.audio_rate!=44100u;
     geometry_changed=geometry_changed ||
       g_libretro.av.base_width!=288u || g_libretro.av.base_height!=216u ||
       (float)g_libretro.av.aspect_ratio!=4.0f/3.0f;
@@ -872,13 +877,17 @@ void retro_run(void){
                        g_libretro.display_notification_pending;
   bool room_started=(g_libretro.frame.flags&ANYGM_FRAME_ROOM_STARTED)!=0;
   bool held_cadence=room_started && !display_cadence && g_libretro.presented_fps>0 &&
-                    content_fps()!=g_libretro.presented_fps;
+                    frontend_cadence()!=g_libretro.presented_fps;
   if((geometry_changed || timing_changed || held_cadence) && g_libretro.environment){
     if(!av_refreshed) libretro_update_av();
     bool room_cadence=(g_libretro.frame.flags&ANYGM_FRAME_TIMING_ROOM_CHANGED)!=0;
-    bool announce=held_cadence || (timing_changed &&
+    /* Under a declared mode the content's rate is only a step rate. Announcing it would make the
+     * frontend rebuild the mode it already holds. */
+    bool declared_held=!display_cadence && g_libretro.av.presentation_frequency_hz &&
+      g_libretro.presented_fps==(double)g_libretro.av.presentation_frequency_hz;
+    bool announce=held_cadence || (timing_changed && !declared_held &&
       (av_refreshed || room_cadence || display_cadence || g_libretro.presented_fps<=0));
-    if(announce && !display_cadence) g_libretro.presented_fps=content_fps();
+    if(announce && !display_cadence) g_libretro.presented_fps=frontend_cadence();
     struct retro_system_av_info av;
     fill_av_info(&av);
     if(announce)

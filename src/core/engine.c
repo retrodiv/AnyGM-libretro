@@ -665,6 +665,7 @@ static int boot_runtime_prepare(AnygmEngine *engine) {
   engine->vm.room_layer_hook_user = engine;
   engine->vm.present_latch_hook = screen_refresh_present_latch_hook;
   engine->vm.present_latch_hook_user = engine;
+  engine_overrides_host_policy_refresh(engine);
   engine->audio = gml_audio_create(&engine->win);
   engine->vm.audio = engine->audio;
   return 1;
@@ -911,6 +912,7 @@ static void engine_rebind_moved_runtime(AnygmEngine *engine){
   engine->vm.room_layer_hook_user=engine;
   engine->vm.present_latch_hook=screen_refresh_present_latch_hook;
   engine->vm.present_latch_hook_user=engine;
+  engine_overrides_host_policy_refresh(engine);
 }
 
 AnygmResult engine_state_stage_content(AnygmEngine *engine,const char *locator,
@@ -3066,6 +3068,7 @@ AnygmResult anygm_get_av_info(const AnygmEngine *engine,AnygmAvInfo *info){
   info->frames_per_second=engine->fps;
   info->audio_rate=44100;
   info->display_frequency_request_hz=engine_display_request(engine);
+  info->presentation_frequency_hz=engine->published_crt_mode_hz;
   return ANYGM_OK;
 }
 
@@ -3378,6 +3381,8 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
       }
     }
   }
+  if(f&(ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_ADJUST_CRT_TV|ANYGM_CONFIG_CONTENT_OVERRIDES))
+    engine_overrides_host_policy_refresh(engine);
   if(engine->lifecycle==ENGINE_PREPARED){
     GmlRenderControl control={
       .monitor_width=core_opt_monitor_size(engine,0),

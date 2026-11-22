@@ -554,6 +554,9 @@ typedef struct GmlVM {
    * supplies them to explicit redraw requests through a transient hook. */
   void (*room_layer_hook)(struct GmlVM *vm, int foreground, void *user);
   void *room_layer_hook_user;
+  /* Host-owned, transient cadence per room index; zero keeps the room's own. Never serialized. */
+  const uint16_t *room_speed_override;
+  int room_speed_override_count;
   void (*present_latch_hook)(struct GmlVM *vm, void *user);
   void *present_latch_hook_user;
   int in_screen_redraw;  /* guard nested draw-event redraw requests */
@@ -826,6 +829,8 @@ uint32_t gml_vm_member_hash(const char *name);
 double  gml_global_num(GmlVM *vm, const char *name);
 double  gml_global_arr(GmlVM *vm, const char *name, int idx);
 double  gml_room_speed(GmlVM *vm);
+double  gml_room_speed_authored(GmlVM *vm);
+double  gml_room_speed_overridden(const GmlVM *vm);
 uint32_t gml_vm_room_background_argb(GmlVM *vm);
 void    gml_set_global_arr(GmlVM *vm, const char *name, int idx, double val);
 void    gml_set_global_scalar(GmlVM *vm, const char *name, double val);           /* write V_REAL, not array */

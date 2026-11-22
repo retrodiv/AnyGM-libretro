@@ -50,6 +50,25 @@ static void merge_destinations(void){
   assert(!engine_boot_overrides_parse("$probe=1\nunknown|bad\n",slots,&count,error,sizeof error));
 }
 
+static void crt_host_policy_declarations(void){
+  CheatSlot slots[GML_MAX_CHEATS];int count=0;char error[256],effective[4096];
+  const char *invalid[]={"crtmode|320|240|60","?gameres crtmode|320|240|60",
+    "?crt ?global.flag crtmode|320|240|60","?crt sync|crtmode|320|240|60",
+    "?crt crtmode|15|240|60","?crt crtmode|641|240|60","?crt crtmode|320|481|60",
+    "?crt crtmode|320|240|1","?crt crtmode|320|240|301","?crt crtmode|320|240",
+    "?crt crtmode|320|240|60|1","roomspeed|1|50","?crt roomspeed|1024|50",
+    "?crt roomspeed|2-1|50","?crt roomspeed|1|0","?crt roomspeed|1|301",
+    "?crt roomspeed|1|50x","?crt roomspeed||50","?crt ?instance.obj roomspeed|1|50"};
+  for(size_t i=0;i<sizeof invalid/sizeof invalid[0];i++)
+    assert(!engine_boot_overrides_parse(invalid[i],slots,&count,error,sizeof error));
+  assert(engine_boot_overrides_parse("?crt crtmode|320|240|60\n?crt roomspeed|4,7|50\n"
+    "?crt roomspeed|1-3|50\n?crt crtmode|384|240|50\n?crt roomspeed|4,7|48\n",
+    slots,&count,error,sizeof error));
+  assert(count==3 && engine_boot_overrides_text(slots,count,effective,sizeof effective));
+  assert(!strcmp(effective,"?crt roomspeed|1-3|50\n?crt crtmode|384|240|50\n"
+                           "?crt roomspeed|4,7|48\n"));
+}
+
 static void state_reserve_declarations(void){
   CheatSlot slots[GML_MAX_CHEATS];int count=0;char error[256];
   const char *invalid[]={"","0","-1","1.5","0x100000","1073741825",
@@ -878,6 +897,7 @@ int main(void){
   renderer_declarations();
   crt_setting_callback();
   crt_setting_layout();
+  crt_host_policy_declarations();
   state_reserve_declarations();
   roomskip_destination();
   roomalarm_declaration();

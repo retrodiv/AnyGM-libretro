@@ -545,7 +545,9 @@ static double cur_room_fps_unclamped(AnygmEngine *engine) {
    * GEN8 layout has no global cadence. Presentation is second-generation for those packages, but
    * scheduling still uses the authored room speed. Early revision-15 Studio 2 and revision-17
    * packages retain the modern 60 Hz default when GEN8 supplies no speed. */
-  double fps = explicit_game_speed_fps(engine);
+  double fps = gml_room_speed_overridden(&engine->vm);
+  if(fps > 0.0) return fps;
+  fps = explicit_game_speed_fps(engine);
   if(fps > 0.0) return fps;
   if(anygm_policy_has_modern_layer_semantics(&engine->win)){
     if(engine->win.game_speed > 0.0) return engine->win.game_speed;
@@ -972,13 +974,18 @@ static void host_canvas_update(AnygmEngine *engine){
                                        NULL,NULL,&source_width,&source_height);
   unsigned host_width=source_width;
   unsigned host_height=source_height;
-  int native_padding=0;
+  int native_padding=0,declared=0;
   /* output and its declared crop already include the forced aspect. The TV is only a final
    * destination; it must not become the window, GUI or camera extent seen by content. */
   engine->host_crt_active=0;
   if(engine->config.present_logical_raster && engine->config.adjust_crt_tv &&
      source_width && source_height){
-    if(source_width<=364u && source_height<=244u &&
+    if(engine->crt_mode_width && source_width<=engine->crt_mode_width &&
+       source_height<=engine->crt_mode_height){
+      host_width=engine->crt_mode_width; host_height=engine->crt_mode_height;
+      native_padding=declared=1;
+      engine->host_crt_active=1;
+    } else if(source_width<=364u && source_height<=244u &&
        !aspect_within_tolerance(source_width,source_height,GMC_ASPECT_FORCE_4_3)){
       /* Add pixels on one axis only, never resample the native image. A fractional extent
        * rounds up; the centred integer margins can differ by one pixel. */
@@ -989,7 +996,8 @@ static void host_canvas_update(AnygmEngine *engine){
       native_padding=1;
       engine->host_crt_active=1;
     }
-    if(host_width>364u || host_height>244u){
+    /* A declared mode states its own extent; the automatic limits size only undeclared rasters. */
+    if(!declared && (host_width>364u || host_height>244u)){
       host_width=640u; host_height=480u;
       native_padding=0;
       engine->host_crt_active=1;
@@ -1466,7 +1474,9 @@ void sync_room_fps(AnygmEngine *engine,int publish_changes) {
   unsigned prev_w = engine->width, prev_h = engine->height;
   engine->width = nw; engine->height = nh;
   compute_present(engine);
-  if (room == engine->fps_room && fps == engine->fps && nw == prev_w && nh == prev_h &&
+  int mode_changed = engine->crt_mode_hz != engine->published_crt_mode_hz;
+  engine->published_crt_mode_hz = engine->crt_mode_hz;
+  if (!mode_changed && room == engine->fps_room && fps == engine->fps && nw == prev_w && nh == prev_h &&
       engine->output_width == pw && engine->output_height == ph &&
       engine->host_output_width==host_pw && engine->host_output_height==host_ph) {
     engine->fps_room = room;
@@ -1487,7 +1497,7 @@ void sync_room_fps(AnygmEngine *engine,int publish_changes) {
                      (engine->output_width != pw) || (engine->output_height != ph) ||
                      (engine->host_output_width != host_pw) ||
                      (engine->host_output_height != host_ph);
-  int changed = fps_changed || geom_changed;
+  int changed = fps_changed || geom_changed || mode_changed;
   if(changed && anygm_host_development_setting(&engine->host,"GML_LOG_AV"))
     engine_logf(engine,ANYGM_LOG_DEBUG, "[av] room=%d bytecode=%u fps=%.2f size=%ux%u out=%ux%u host=%ux%u window=%dx%d gui=%dx%d\n",
       room, (unsigned)engine->win.bytecode, fps, nw, nh, engine->output_width, engine->output_height,
@@ -1499,8 +1509,10 @@ void sync_room_fps(AnygmEngine *engine,int publish_changes) {
   engine->fps = fps;
   if(room_started && publish_changes) engine->frame_flags|=ANYGM_FRAME_ROOM_STARTED;
   if(changed && publish_changes){
-    if(fps_changed) engine->frame_flags|=ANYGM_FRAME_TIMING_CHANGED|
-                                         (room_start?ANYGM_FRAME_TIMING_ROOM_CHANGED:0u);
+    /* Selecting or withdrawing a declared mode is the host's own change, announced at once. */
+    if(fps_changed || mode_changed)
+      engine->frame_flags|=ANYGM_FRAME_TIMING_CHANGED|
+                           (room_start || mode_changed?ANYGM_FRAME_TIMING_ROOM_CHANGED:0u);
     if(geom_changed) engine->frame_flags|=ANYGM_FRAME_GEOMETRY_CHANGED;
   }
 }

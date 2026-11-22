@@ -73,6 +73,8 @@ enum {
 #define GML_MAX_CHEATS 64
 #define ASPECT_EVENT_VIEW_STACK_MAX 16
 
+enum { ENGINE_ROOM_RULE_LIMIT=1024 };
+
 typedef struct {
   uint32_t *old_frame;
   size_t capacity;
@@ -142,7 +144,7 @@ enum {
 
 typedef enum {
   CK_NONE=0, CK_ROOM, CK_GARR, CK_GSCALAR, CK_INST, CK_INST_SET, CK_ENGINE, CK_ROUTE,
-  CK_CAMERA, CK_SURFACE, CK_MONITOR_VIEW, CK_ALARM_PAUSE, CK_SCRIPT, CK_LIST_SET,
+  CK_CAMERA, CK_SURFACE, CK_MONITOR_VIEW, CK_CRT_MODE, CK_ROOM_SPEED, CK_ALARM_PAUSE, CK_SCRIPT, CK_LIST_SET,
   CK_DRAW_HOLD, CK_SURFACE_CANVAS, CK_AFTER_DRAW, CK_GSCALAR_CALL, CK_LAYER_OFFSET
 } CheatKind;
 typedef enum {
@@ -181,6 +183,7 @@ typedef struct {
   int route_mode;
   CheatVal val,val2;
   double monitor_height,monitor_min_aspect,monitor_max_aspect;
+  int crt_width,crt_height;
 } CheatAct;
 /* saved/saved_valid hold what the target read before this slot was armed, so disarming it can
  * put the value back instead of leaving the last forced write behind. See cheat_slot_capture.
@@ -368,6 +371,10 @@ struct AnygmEngine {
   unsigned host_output_width,host_output_height;
   int host_canvas_active,host_canvas_x,host_canvas_y,host_canvas_width,host_canvas_height;
   int host_crt_active;
+  /* Live host policy resolved from CRT-scoped declarations. None of it is serialized. */
+  unsigned crt_mode_width,crt_mode_height;
+  uint32_t crt_mode_hz,published_crt_mode_hz;
+  uint16_t room_speed_overrides[ENGINE_ROOM_RULE_LIMIT];
   /* Whole-pixel offset applied to the delivered frame, and the buffer that holds the offset copy
    * so the completed frame the state carries is never moved. Declared by a ?gameres directive and
    * therefore zero unless the logical-raster presentation is selected and an anchor asks for it. */
@@ -495,6 +502,8 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
 /* A state carries the values a scoped override forced into it. Loading one re-opens the question
  * of whether those writes still apply, which only the live scope can answer. */
 void engine_overrides_room_scope_apply(AnygmEngine *engine);
+void engine_overrides_host_policy_refresh(AnygmEngine *engine);
+int engine_override_is_host_policy(const char *code);
 void engine_overrides_presentation_apply(AnygmEngine *engine);
 void engine_overrides_draw_hold_begin(AnygmEngine *engine);
 void engine_overrides_draw_hold_end(AnygmEngine *engine);

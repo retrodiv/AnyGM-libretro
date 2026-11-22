@@ -34,6 +34,27 @@ static int parse_nonnegative_index(const char **cursor,int *value){
   return 1;
 }
 
+static bool parse_room_list(const char **cursor,uint8_t *rooms){
+  const char *scan=*cursor;
+  for(;;){
+    int first,last;
+    if(!parse_nonnegative_index(&scan,&first) || first>=ENGINE_ROOM_RULE_LIMIT) return false;
+    last=first;
+    if(*scan=='-'){
+      scan++;
+      if(!parse_nonnegative_index(&scan,&last) || last<first || last>=ENGINE_ROOM_RULE_LIMIT)
+        return false;
+    }
+    for(int room=first;room<=last;room++) rooms[room/8]|=(uint8_t)(1u<<(room%8));
+    if(*scan!=','){
+      if(*scan!='|') return false;
+      *cursor=scan+1;
+      return true;
+    }
+    scan++;
+  }
+}
+
 int core_opt_diagnostic_start_room(AnygmEngine *engine,int *room_idx){
   const char *setting=anygm_host_development_setting(
     &engine->host,"GML_DIAGNOSTIC_START_ROOM");
@@ -86,6 +107,8 @@ int core_opt_redirect_room_order(AnygmEngine *engine) {
  *   surface|obj|var|W|H         resize surfaces named by an instance variable
  *   surface_canvas|obj|var|W|H  centred native HUD and full-width application composition
  *   monitorview|H|MIN|MAX       declare a monitor-derived logical view (ratios use W:H)
+ *   ?crt crtmode|W|H|HZ         declare the padded raster and refresh handed to a CRT host
+ *   ?crt roomspeed|rooms|FPS    replace the cadence of the listed rooms without writing content
  *   roomskip|rooms|trigger|next     advance in play order or to an explicit room
  *   roomalarm|rooms|trigger|obj|i   advance one content-owned alarm
  *   roomcounter|rooms|trigger|obj|phase=V|counter=N   adjust a content-owned counter
@@ -304,6 +327,32 @@ static void cheat_parse_body(const char *code, CheatAct *a){
     while(*s==' ' || *s=='\t') s++;
   }
   if(!strncmp(s,"sync|",5)){ a->scope_sync=1; s+=5; }
+  if(!strncmp(s,"crtmode|",8) || !strncmp(s,"roomspeed|",10)){
+    /* Host policy follows the CRT selection alone. A content condition could change the mode in
+     * the middle of a room. */
+    if(!a->scope_crt || a->scope_sync || a->scope_global[0] || a->scope_instance[0]) return;
+    if(s[0]=='c'){
+      int width,height,hz;
+      s+=8;
+      if(!parse_nonnegative_index(&s,&width) || *s++!='|' ||
+         !parse_nonnegative_index(&s,&height) || *s++!='|' ||
+         !parse_nonnegative_index(&s,&hz) || *s ||
+         width<16 || width>640 || height<16 || height>480 || hz<2 || hz>300) return;
+      a->crt_width=width; a->crt_height=height; a->val.lit=hz;
+      a->kind=CK_CRT_MODE; return;
+    }
+    uint8_t rooms[ENGINE_ROOM_RULE_LIMIT/8]={0};
+    const char *list=s+=10;
+    if(!parse_room_list(&s,rooms)) return;
+    size_t length=(size_t)(s-1-list);
+    int fps;
+    if(length+1u>=sizeof a->var || !parse_nonnegative_index(&s,&fps) || *s || fps<1 || fps>300)
+      return;
+    memcpy(a->var,list,length+1u);   /* retain the separator that closes a room list */
+    a->var[length+1u]=0;
+    a->val.lit=fps;
+    a->kind=CK_ROOM_SPEED; return;
+  }
   if(!strncmp(s,"monitorview|",12)){
     const char *height=s+12,*end=NULL;
     char *height_end=NULL;
@@ -850,7 +899,6 @@ static unsigned override_pad_button_bit(const char *name,size_t length){
 }
 
 enum { ROOM_RULE_NONE, ROOM_RULE_SKIP, ROOM_RULE_COUNTER, ROOM_RULE_ALARM };
-enum { ROOM_RULE_LIMIT=1024 };
 
 typedef struct {
   unsigned pads[ANYGM_MAX_GAMEPADS];
@@ -860,7 +908,7 @@ typedef struct {
 
 typedef struct {
   int kind,destination,alarm;
-  uint8_t rooms[ROOM_RULE_LIMIT/8];
+  uint8_t rooms[ENGINE_ROOM_RULE_LIMIT/8];
   RoomTrigger trigger;
   char object[64],guard[64],counter[64];
   int32_t expected,value;
@@ -874,29 +922,8 @@ static int room_rule_kind(const char *code){
 }
 
 static bool room_rule_contains(const RoomRule *rule,int room){
-  return room>=0 && room<ROOM_RULE_LIMIT &&
+  return room>=0 && room<ENGINE_ROOM_RULE_LIMIT &&
     (rule->rooms[room/8] & (1u<<(room%8)))!=0;
-}
-
-static bool room_rule_rooms(const char **cursor,RoomRule *rule){
-  const char *scan=*cursor;
-  for(;;){
-    int first,last;
-    if(!parse_nonnegative_index(&scan,&first) || first>=ROOM_RULE_LIMIT) return false;
-    last=first;
-    if(*scan=='-'){
-      scan++;
-      if(!parse_nonnegative_index(&scan,&last) || last<first || last>=ROOM_RULE_LIMIT)
-        return false;
-    }
-    for(int room=first;room<=last;room++) rule->rooms[room/8]|=(uint8_t)(1u<<(room%8));
-    if(*scan!=','){
-      if(*scan!='|') return false;
-      *cursor=scan+1;
-      return true;
-    }
-    scan++;
-  }
 }
 
 static int room_key_code(const char *name,size_t length){
@@ -983,7 +1010,7 @@ static bool room_rule_parse(const char *code,RoomRule *rule){
   memset(rule,0,sizeof *rule);
   rule->kind=kind;
   const char *scan=strchr(code,'|')+1;
-  if(!room_rule_rooms(&scan,rule) || !room_trigger_parse(&scan,&rule->trigger)) return false;
+  if(!parse_room_list(&scan,rule->rooms) || !room_trigger_parse(&scan,&rule->trigger)) return false;
   if(kind==ROOM_RULE_SKIP){
     if(!strcmp(scan,"next")){
       rule->destination=-1;
@@ -1616,12 +1643,55 @@ void apply_sticky_cheats(AnygmEngine *engine){
   cheat_sticky_pass(engine,engine->boot_cheats, engine->boot_cheat_count,
                     engine_boot_cheats_active(engine)>0, 0);
 }
+int engine_override_is_host_policy(const char *code){
+  if(strncmp(code,"?crt",4) || (code[4]!=' ' && code[4]!='\t')) return 0;
+  code+=4;
+  while(*code==' ' || *code=='\t') code++;
+  return !strncmp(code,"crtmode|",8) || !strncmp(code,"roomspeed|",10);
+}
+/* Resolve both declarations from live options and slots. Holding a room_speed global would
+ * enter states and outlive the option, so the runtime borrows a lookup table instead. Runtime
+ * slots are read last and therefore take precedence over boot declarations. */
+void engine_overrides_host_policy_refresh(AnygmEngine *engine){
+  engine->crt_mode_width=engine->crt_mode_height=0;
+  engine->crt_mode_hz=0;
+  engine->vm.room_speed_override=NULL;
+  engine->vm.room_speed_override_count=0;
+  if(!engine->config.present_logical_raster || !engine->config.adjust_crt_tv) return;
+  const CheatSlot *tables[]={engine->boot_cheats,engine->cheats};
+  const int counts[]={engine_boot_cheats_active(engine),engine->cheat_count};
+  int speeds=0;
+  for(int table=0;table<2;table++) for(int i=0;i<counts[table];i++){
+    const CheatSlot *slot=&tables[table][i];
+    if(!slot->enabled) continue;
+    if(slot->act.kind==CK_CRT_MODE){
+      engine->crt_mode_width=(unsigned)slot->act.crt_width;
+      engine->crt_mode_height=(unsigned)slot->act.crt_height;
+      engine->crt_mode_hz=(uint32_t)slot->act.val.lit;
+    } else if(slot->act.kind==CK_ROOM_SPEED){
+      uint8_t rooms[ENGINE_ROOM_RULE_LIMIT/8]={0};
+      const char *list=slot->act.var;
+      if(!parse_room_list(&list,rooms)) continue;
+      if(!speeds){
+        memset(engine->room_speed_overrides,0,sizeof engine->room_speed_overrides);
+        speeds=1;
+      }
+      for(int room=0;room<ENGINE_ROOM_RULE_LIMIT;room++)
+        if(rooms[room/8]&(1u<<(room%8)))
+          engine->room_speed_overrides[room]=(uint16_t)slot->act.val.lit;
+    }
+  }
+  if(!speeds) return;
+  engine->vm.room_speed_override=engine->room_speed_overrides;
+  engine->vm.room_speed_override_count=ENGINE_ROOM_RULE_LIMIT;
+}
 /* Presentation-scoped targets must settle before geometry is read. The ordinary sticky pass runs
  * after Step so simulation freezes observe the usual event boundary; using this narrow pass at
  * the start of a frame lets a live presentation switch affect that same frame without moving any
  * unscoped gameplay write earlier. */
 void engine_overrides_presentation_apply(AnygmEngine *engine){
   if(!engine) return;
+  engine_overrides_host_policy_refresh(engine);
   cheat_gameres_pass(engine,engine->cheats,engine->cheat_count,1);
   cheat_gameres_pass(engine,engine->boot_cheats,engine->boot_cheat_count,
                      engine_boot_cheats_active(engine)>0);

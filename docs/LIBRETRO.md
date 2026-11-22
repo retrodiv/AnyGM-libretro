@@ -63,6 +63,13 @@ change rather than in the middle of one. A restored state resumes its room and
 announces nothing. While the two cadences agree the clock yields exactly one
 step per tick.
 
+A [declared CRT mode](CONTENT_CONFIGURATION.md#declared-crt-mode) replaces the
+content's cadence as the one the frontend holds. Its refresh is in the startup
+answer and is announced again only when the mode is selected, changed or
+withdrawn. Room changes then move the step rate alone, on the same fractional
+clock, and relative pointer motion is accumulated over ticks that run no step.
+A content display request keeps precedence over the declared refresh.
+
 ## Rewind snapshots
 
 A rewind ring calls `retro_serialize` every Nth tick. The adapter counts ticks between saves, and

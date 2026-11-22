@@ -1555,7 +1555,7 @@ static void room_runtime_state_store(GmlVM *vm, int room){
                               gml_vm_global_array_number(vm,"view_surface_id",i));
   GmlVal *speed=gml_varmap_get(&vm->globals,"room_speed");
   room_state_store_number(vm,room,"room_speed",0,
-                          speed?gml_vm_value_as_number(*speed):gml_room_speed(vm));
+                          speed?gml_vm_value_as_number(*speed):gml_room_speed_authored(vm));
   GmlVal *view_current=gml_varmap_get(&vm->globals,"view_current");
   room_state_store_number(vm,room,"view_current",0,
                           view_current?gml_vm_value_as_number(*view_current):0);

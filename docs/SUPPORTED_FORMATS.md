@@ -242,6 +242,10 @@ crop origin into the compositor's coordinate system.
 ?gameres @present_crop_bottom=12
 ```
 
+`?crt crtmode|width|height|hz` and `?crt roomspeed|rooms|fps` declare a CRT mode and the cadence
+of chosen rooms under effective CRT adjustment. See
+[Content configuration](CONTENT_CONFIGURATION.md#declared-crt-mode).
+
 A scope prefix belongs to the directive that carries it, and a `;` chain fans out into one
 directive per slot, so each line in a chain that needs the scope has to state it.
 
