@@ -77,6 +77,18 @@ invent panel state. It is inactive with Content override directives disabled. Us
 named alarm is the measured authored transition between panels; `introskip|` remains the declaration
 for whole-room introductions.
 
+`introcount|4|obj_panel|phase|2|elapsed|120` handles a custom counter. On a new A, B,
+or Start press in room 4, before Step, AnyGM assigns 120 to the existing numeric instance
+variable `elapsed` on each active `obj_panel` instance (including descendants) whose
+numeric `phase` equals 2. The ordinary Step observes the new value and performs
+any transition authored by the content. Choose a value that satisfies that content's
+completion condition, for either an elapsed or a remaining counter. Both numeric fields
+are signed 32-bit decimal integers. A missing or nonnumeric variable leaves the instance
+unchanged. A press that enters the guarded phase cannot also advance its counter.
+Holding the button does not repeat the assignment. Content overrides Off
+disables the directive. Layered declarations for the same room, object, guard variable,
+guard value and counter use the last declared replacement value.
+
 `ostype|N` declares which operating system this content is told it is running on, using the same
 numbering used by `os_type` (0 Windows, 1 macOS, 6 Linux, and so on). Without it content is
 answered `os_windows`, which is the desktop path most content is written for. It is read once the

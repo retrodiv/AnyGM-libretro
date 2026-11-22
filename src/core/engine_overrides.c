@@ -841,6 +841,46 @@ static int introstep_parse(const char *code,int *room,char *object,size_t object
   return 1;
 }
 
+typedef struct {
+  int room;
+  char object[64],guard[64],counter[64];
+  int32_t expected,value;
+} IntroCounter;
+
+static int intro_field_name(const char **cursor,char *name,size_t capacity){
+  const char *start=*cursor,*scan=start;
+  while(CHEAT_NAMECH(*scan)) scan++;
+  size_t length=(size_t)(scan-start);
+  if(!length || length>=capacity || *scan!='|') return 0;
+  memcpy(name,start,length);
+  name[length]=0;
+  *cursor=scan+1;
+  return 1;
+}
+
+static int intro_field_integer(const char **cursor,int32_t *value,char separator){
+  const char *digits=**cursor=='-'?*cursor+1:*cursor;
+  if(*digits<'0' || *digits>'9') return 0;
+  char *end;
+  long long parsed=strtoll(*cursor,&end,10);
+  if(parsed<INT32_MIN || parsed>INT32_MAX || *end!=separator) return 0;
+  *value=(int32_t)parsed;
+  *cursor=end+(separator!=0);
+  return 1;
+}
+
+static int introcount_parse(const char *code,IntroCounter *rule){
+  if(strncmp(code,"introcount|",11)) return 0;
+  const char *scan=code+11;
+  return parse_nonnegative_index(&scan,&rule->room) && *scan++=='|' &&
+    intro_field_name(&scan,rule->object,sizeof rule->object) &&
+    intro_field_name(&scan,rule->guard,sizeof rule->guard) &&
+    intro_field_integer(&scan,&rule->expected,'|') &&
+    intro_field_name(&scan,rule->counter,sizeof rule->counter) &&
+    strcmp(rule->guard,rule->counter) &&
+    intro_field_integer(&scan,&rule->value,0);
+}
+
 static const char *keyboard_binding_keys(const char *code,unsigned *port){
   if(strncmp(code,"keybind|",8)) return NULL;
   const char *scan=code+8;
@@ -943,6 +983,11 @@ static int boot_same_target(const CheatSlot *left,const CheatSlot *right){
   if(keyboard_binding_parse(left->code,&left_key,NULL,NULL,NULL) &&
      keyboard_binding_parse(right->code,&right_key,NULL,NULL,NULL))
     return left_key==right_key;
+  IntroCounter lcounter,rcounter;
+  if(introcount_parse(left->code,&lcounter) && introcount_parse(right->code,&rcounter))
+    return lcounter.room==rcounter.room && lcounter.expected==rcounter.expected &&
+      !strcmp(lcounter.object,rcounter.object) && !strcmp(lcounter.guard,rcounter.guard) &&
+      !strcmp(lcounter.counter,rcounter.counter);
   if(boot_line_is_menu(left->code) && boot_line_is_menu(right->code)){
     char l[6][128],r[6][128];
     int ln=menu_split(left->code,l),rn=menu_split(right->code,r);
@@ -1099,6 +1144,14 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
           if(!introstep_parse(slot->code,&room,object,sizeof object,&alarm)){
             snprintf(error,error_capacity,
                      "directive %d: introstep| takes room|object|alarm",line_number);
+            return 0;
+          }
+        } else if(!strncmp(slot->code,"introcount|",11)){
+          IntroCounter rule;
+          if(!introcount_parse(slot->code,&rule)){
+            snprintf(error,error_capacity,
+                     "directive %d: introcount| takes room|object|guard|expected|counter|value",
+                     line_number);
             return 0;
           }
         } else if(!strncmp(slot->code,"introskip|",10) || !strncmp(slot->code,"introauto|",10)){
@@ -1980,17 +2033,50 @@ void introskip_hook(AnygmEngine *engine){
   }
 }
 
-/* A content-local intro may already own the exact event that advances one panel. An anchor can
- * expose that event to ordinary pad input without replacing its code or guessing a room order:
- * one button edge shortens the declared alarm to one step on matching live instances. */
-void introstep_hook(AnygmEngine *engine){
-  int pressed=(engine->pad_current[0][ANYGM_PAD_FACE_RIGHT] &&
+static void introcount_apply(GmlVM *vm,const IntroCounter *rule){
+  int target=gml_object_index_by_name(vm,rule->object);
+  if(target<0) return;
+  for(int i=0;i<vm->inst_count;i++){
+    GmlInstance *instance=&vm->inst[i];
+    if(!instance->active || instance->marked || !gml_object_is(vm,instance->obj,target)) continue;
+    GmlVal *guard=gml_varmap_get(&instance->vars,rule->guard);
+    if(!guard || guard->t!=V_REAL || guard->d!=rule->expected) continue;
+    GmlVal *counter=gml_varmap_get(&instance->vars,rule->counter);
+    if(!counter || counter->t!=V_REAL || !isfinite(counter->d)) continue;
+    /* Only replace an existing numeric slot. Keep the content's numeric kind. */
+    switch(gml_val_number_kind(*counter)){
+      case GML_NUM_INT32: *counter=vint32(rule->value);break;
+      case GML_NUM_INT64: *counter=vint64(rule->value);break;
+      default: *counter=vreal(rule->value);break;
+    }
+  }
+}
+
+static int intro_button_pressed(const AnygmEngine *engine){
+  return (engine->pad_current[0][ANYGM_PAD_FACE_RIGHT] &&
                !engine->pad_previous[0][ANYGM_PAD_FACE_RIGHT]) ||
               (engine->pad_current[0][ANYGM_PAD_FACE_BOTTOM] &&
                !engine->pad_previous[0][ANYGM_PAD_FACE_BOTTOM]) ||
               (engine->pad_current[0][ANYGM_PAD_START] &&
                !engine->pad_previous[0][ANYGM_PAD_START]);
-  if(!pressed || engine->vm.pending_room>=0) return;
+}
+
+/* Inspect the phase before Step so an input on the frame that enters the panel
+ * cannot also skip a panel the player has not yet seen. */
+void introcount_hook(AnygmEngine *engine){
+  if(!intro_button_pressed(engine) || engine->vm.pending_room>=0) return;
+  int active=engine_boot_cheats_active(engine);
+  for(int slot_index=0;slot_index<active;slot_index++){
+    const CheatSlot *slot=&engine->boot_cheats[slot_index];
+    IntroCounter rule;
+    if(slot->enabled && introcount_parse(slot->code,&rule) &&
+       rule.room==engine->vm.room_index) introcount_apply(&engine->vm,&rule);
+  }
+}
+
+/* Let the authored alarm advance an intro panel on the next Step. */
+void introstep_hook(AnygmEngine *engine){
+  if(!intro_button_pressed(engine) || engine->vm.pending_room>=0) return;
   int active=engine_boot_cheats_active(engine);
   for(int slot_index=0;slot_index<active;slot_index++){
     const CheatSlot *slot=&engine->boot_cheats[slot_index];

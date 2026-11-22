@@ -193,6 +193,69 @@ static void introstep_declaration(void){
   anygm_destroy(engine);assert(!remove(anchor));anygm_synthetic_content_destroy(&fixture);
 }
 
+static void introcount_declaration(void){
+  static const char rule[]="introcount|0|obj_fixture|phase|2|elapsed|120\n";
+  CheatSlot slots[GML_MAX_CHEATS];int count=0;char error[256];
+  assert(engine_boot_overrides_parse("introcount|0|obj_fixture|phase|2|elapsed|120\n"
+                                     "introcount|0|obj_fixture|phase|2|elapsed|-1\n"
+                                     "introcount|0|obj_fixture|phase|3|elapsed|120\n",
+                                     slots,&count,error,sizeof error));
+  assert(count==2 && strstr(slots[0].code,"|elapsed|-1"));
+  const char *invalid[]={
+    "introcount|0|obj_fixture||2|elapsed|120\n",
+    "introcount|0|obj_fixture|phase|nan|elapsed|120\n",
+    "introcount|0|obj_fixture|phase|2|phase|120\n",
+    "introcount|0|obj_fixture|phase|2|elapsed|2147483648\n",
+    "introcount|0|obj_fixture|phase|2|elapsed|120|extra\n",
+  };
+  for(size_t i=0;i<sizeof invalid/sizeof invalid[0];i++){
+    count=0;
+    assert(!engine_boot_overrides_parse(invalid[i],slots,&count,error,sizeof error));
+  }
+
+  AnygmSyntheticContent fixture;assert(anygm_synthetic_content_create(&fixture));
+  char anchor[256],text[512];
+  snprintf(anchor,sizeof anchor,"%s/counter.anygm",fixture.directory);
+  const char *name=strrchr(fixture.path,'/');name=name?name+1:fixture.path;
+  snprintf(text,sizeof text,"[anygm]\npayload=%s\n[overrides]\n%s",name,rule);
+  write_text(anchor,text);
+  AnygmHostServices services={0};services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL;assert(anygm_create(&services,&engine)==ANYGM_OK);
+  AnygmContentSource source={0};source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;source.path=anchor;
+  source.system_directory=fixture.directory;source.cache_directory=fixture.directory;
+  assert(anygm_load(engine,&source,NULL)==ANYGM_OK);frame(engine);
+  int object=gml_object_index_by_name(&engine->vm,"obj_fixture");assert(object>=0);
+  GmlInstance *instance=gml_find_instance(&engine->vm,object);assert(instance);
+  assert(gml_inst_var_set_val(&engine->vm,vreal(instance->id),"phase",vint32(1)));
+  assert(gml_inst_var_set_val(&engine->vm,vreal(instance->id),"elapsed",vint64(12)));
+  GmlVal *phase=gml_varmap_get(&instance->vars,"phase");
+  GmlVal *elapsed=gml_varmap_get(&instance->vars,"elapsed");
+  assert(phase && elapsed);
+  engine->pad_current[0][ANYGM_PAD_START]=1;
+  introcount_hook(engine);assert(elapsed->d==12);
+  *phase=vint32(2);
+  int room=engine->vm.room_index;
+  engine->vm.room_index=room+1;
+  introcount_hook(engine);assert(elapsed->d==12);
+  engine->vm.room_index=room;
+  *elapsed=vstr("not a counter");
+  introcount_hook(engine);assert(elapsed->t==V_STR);
+  *elapsed=vint64(12);
+  introcount_hook(engine);
+  assert(elapsed->d==120 && gml_val_number_kind(*elapsed)==GML_NUM_INT64);
+  engine->pad_previous[0][ANYGM_PAD_START]=1;
+  *elapsed=vint64(13);
+  introcount_hook(engine);assert(elapsed->d==13);
+  engine->pad_previous[0][ANYGM_PAD_START]=0;
+  AnygmConfigDelta delta={0};delta.struct_size=sizeof delta;
+  delta.values.struct_size=sizeof delta.values;delta.fields=ANYGM_CONFIG_CONTENT_OVERRIDES;
+  delta.values.content_overrides=0;assert(anygm_set_config(engine,&delta)==ANYGM_OK);
+  introcount_hook(engine);assert(elapsed->d==13);
+  anygm_destroy(engine);assert(!remove(anchor));anygm_synthetic_content_destroy(&fixture);
+}
+
 static void config_text(char *out,size_t capacity,int base){
   int length=snprintf(out,capacity,
     "[overrides]\nostype|0\n$anygm_probe=%d\n$retained=7\n",base);
@@ -797,6 +860,7 @@ int main(void){
   state_reserve_declarations();
   introskip_destination();
   introstep_declaration();
+  introcount_declaration();
   candidate_inputs();
   memory_pipeline();
   merge_destinations(); lifecycle(); replacement();

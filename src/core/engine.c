@@ -1387,6 +1387,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
                                           0.0,0.0);
       }
     }
+    introcount_hook(engine);       /* A/B/Start can advance a counter in the visible intro phase */
     gml_vm_step(&engine->vm);
     if(anygm_policy_uses_classic_runtime(&engine->win) && room_before_step>=0 && engine->vm.room_index!=room_before_step){
       int kind=(int)lround(gml_global_num(&engine->vm,"transition_kind"));

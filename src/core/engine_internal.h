@@ -513,6 +513,7 @@ void menu_run(AnygmEngine *engine);
 void room_skip_hook(AnygmEngine *engine);
 void introskip_hook(AnygmEngine *engine);
 void introstep_hook(AnygmEngine *engine);
+void introcount_hook(AnygmEngine *engine);
 int  engine_overrides_declared_os_type(AnygmEngine *engine);
 uint32_t engine_overrides_declared_renderer(AnygmEngine *engine);
 int  engine_overrides_keyboard_emulation(AnygmEngine *engine);
