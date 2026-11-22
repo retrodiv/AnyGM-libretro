@@ -2868,7 +2868,8 @@ AnygmResult anygm_create(const AnygmHostServices *services,AnygmEngine **out_eng
   if(services && (services->abi_version!=ANYGM_HOST_SERVICES_VERSION ||
                   services->struct_size<sizeof(AnygmHostServices)))
     return ANYGM_ERROR_INCOMPATIBLE_ABI;
-  if(services && ((!services->file_map)!=(!services->file_unmap)))
+  if(services && (((!services->file_map)!=(!services->file_unmap)) ||
+                  ((!services->reclaimable_copy)!=(!services->reclaimable_release))))
     return ANYGM_ERROR_INVALID_ARGUMENT;
   AnygmEngine *engine=calloc(1,sizeof *engine);
   if(!engine) return ANYGM_ERROR_OUT_OF_MEMORY;

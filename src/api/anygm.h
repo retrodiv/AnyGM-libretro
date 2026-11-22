@@ -15,9 +15,9 @@ extern "C" {
  * runtime library version, and every publishable metadata file declares the literal "Git" instead
  * of a number, so no copy can promise a value that has gone stale. CONTRIBUTING.md owns the single
  * increment step. */
-#define ANYGM_VERSION "0.1.967"
-#define ANYGM_API_VERSION 9u
-#define ANYGM_HOST_SERVICES_VERSION 2u
+#define ANYGM_VERSION "0.1.968"
+#define ANYGM_API_VERSION 10u
+#define ANYGM_HOST_SERVICES_VERSION 3u
 #define ANYGM_STATE_SCHEMA 70u
 #define ANYGM_MAX_GAMEPADS 4u
 #define ANYGM_MAX_GAMEPAD_BUTTONS 16u
@@ -218,6 +218,10 @@ typedef void *(*AnygmFileMapFn)(void *userdata,const char *path,
                                 const void **data,size_t *size);
 typedef void (*AnygmFileUnmapFn)(void *userdata,void *mapping,
                                  const void *data,size_t size);
+/* Optionally turn a decoded, reproducible buffer into privately writable storage
+ * backed by a reclaimable file. A refusal leaves ownership with the caller. */
+typedef void *(*AnygmReclaimableCopyFn)(void *userdata,const void *source,size_t size);
+typedef void (*AnygmReclaimableReleaseFn)(void *userdata,void *storage,size_t size);
 typedef AnygmResult (*AnygmFileStatFn)(void *userdata,const char *path,AnygmFileInfo *info);
 typedef AnygmResult (*AnygmPathFn)(void *userdata,const char *path);
 typedef AnygmResult (*AnygmRenameFn)(void *userdata,const char *from,const char *to);
@@ -300,6 +304,8 @@ typedef struct AnygmHostServices {
   AnygmRichTextRenderFn rich_text_render;
   AnygmDisplayFrequencyFn display_frequency;
   AnygmDisplayFrequencyRequestFn display_frequency_request;
+  AnygmReclaimableCopyFn reclaimable_copy;
+  AnygmReclaimableReleaseFn reclaimable_release;
 } AnygmHostServices;
 
 typedef uint32_t AnygmContentKind;

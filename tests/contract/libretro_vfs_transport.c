@@ -5,7 +5,44 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+#ifdef __linux__
+#include <linux/magic.h>
+#include <sys/statfs.h>
+#include <unistd.h>
+
+static int test_reclaimable_storage(void){
+  char directory[]="build/reclaimable-atlas-XXXXXX";
+  if(!mkdtemp(directory)) return 0;
+  struct statfs filesystem;
+  int disk=statfs(directory,&filesystem)==0 &&
+    filesystem.f_type!=TMPFS_MAGIC && filesystem.f_type!=RAMFS_MAGIC;
+  const size_t bytes=1024u*1024u;
+  uint8_t *source=malloc(bytes);
+  uint8_t *mapped=NULL;
+  int ok=source!=NULL;
+  if(ok){
+    memset(source,0x4b,bytes);
+    snprintf(g_libretro.cache_directory,sizeof g_libretro.cache_directory,"%s",directory);
+    mapped=libretro_reclaimable_copy(NULL,source,bytes);
+    if(disk){
+      ok=mapped && memcmp(mapped,source,bytes)==0;
+      if(ok){
+        mapped[bytes-1]=0x29;
+        ok=source[bytes-1]==0x4b && mapped[bytes-1]==0x29;
+      }
+    } else {
+      ok=mapped==NULL;
+    }
+    g_libretro.cache_directory[0]=0;
+  }
+  if(mapped) libretro_reclaimable_release(NULL,mapped,bytes);
+  free(source);
+  return rmdir(directory)==0 && ok;
+}
+#endif
 
 struct retro_vfs_file_handle {
   size_t position;
@@ -136,6 +173,12 @@ int main(void){
   }
   services.file_unmap(NULL,mapping,mapped_data,mapped_size);
   remove(mapped_path);
+#ifdef __linux__
+  if(!test_reclaimable_storage()){
+    fprintf(stderr,"reclaimable atlas transport failed\n");
+    return 1;
+  }
+#endif
   puts("libretro VFS transport: ok");
   return 0;
 }

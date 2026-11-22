@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include "libretro_internal.h"
 
 #include <errno.h>
@@ -21,6 +24,88 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#endif
+
+#ifdef __linux__
+#include <linux/magic.h>
+#include <sys/statfs.h>
+#include <sys/statvfs.h>
+
+static size_t reclaimable_bytes;
+
+static bool reclaimable_reserve(size_t size){
+  const size_t limit=256u*1024u*1024u;
+  size_t used=__atomic_load_n(&reclaimable_bytes,__ATOMIC_RELAXED);
+  do {
+    if(used>limit || size>limit-used) return false;
+  } while(!__atomic_compare_exchange_n(&reclaimable_bytes,&used,used+size,true,
+                                       __ATOMIC_RELAXED,__ATOMIC_RELAXED));
+  return true;
+}
+
+static int reclaimable_file(const char *directory,size_t size){
+  if(mkdir(directory,0700)!=0 && errno!=EEXIST) return -1;
+  int root=open(directory,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
+  if(root<0) return -1;
+  struct statfs storage;
+  struct statvfs space;
+  bool usable=!fstatfs(root,&storage) &&
+    storage.f_type!=TMPFS_MAGIC && storage.f_type!=RAMFS_MAGIC &&
+    !fstatvfs(root,&space) && space.f_frsize &&
+    space.f_bavail>=(size+32u*1024u*1024u+space.f_frsize-1)/space.f_frsize;
+  int fd=-1;
+  if(usable){
+#ifdef O_TMPFILE
+    fd=openat(root,".",O_TMPFILE|O_RDWR|O_CLOEXEC,0600);
+#endif
+    if(fd<0){
+      char path[sizeof g_libretro.cache_directory+32];
+      int length=snprintf(path,sizeof path,"%s/.atlas-XXXXXX",directory);
+      if(length>0 && (size_t)length<sizeof path){
+        fd=mkostemp(path,O_CLOEXEC);
+        if(fd>=0 && unlink(path)!=0){ close(fd); fd=-1; }
+      }
+    }
+  }
+  close(root);
+  return fd;
+}
+
+void *libretro_reclaimable_copy(void *userdata,const void *source,size_t size){
+  (void)userdata;
+  if(!source || !g_libretro.cache_directory[0] || size<1024u*1024u ||
+     size>64u*1024u*1024u || !reclaimable_reserve(size)) return NULL;
+  int fd=reclaimable_file(g_libretro.cache_directory,size);
+  void *mapping=MAP_FAILED;
+  if(fd>=0){
+    const uint8_t *next=source;
+    size_t remaining=size;
+    while(remaining){
+      ssize_t count=write(fd,next,remaining);
+      if(count<0 && errno==EINTR) continue;
+      if(count<=0) break;
+      next+=count;
+      remaining-=(size_t)count;
+    }
+    if(!remaining)
+      mapping=mmap(NULL,size,PROT_READ|PROT_WRITE,MAP_PRIVATE,fd,0);
+    close(fd);
+  }
+  if(mapping!=MAP_FAILED) return mapping;
+  __atomic_sub_fetch(&reclaimable_bytes,size,__ATOMIC_RELAXED);
+  return NULL;
+}
+
+void libretro_reclaimable_release(void *userdata,void *pixels,size_t size){
+  (void)userdata;
+  if(munmap(pixels,size)==0)
+    __atomic_sub_fetch(&reclaimable_bytes,size,__ATOMIC_RELAXED);
+}
+
+static bool libretro_small_memory_host(void){
+  long page=sysconf(_SC_PAGESIZE),count=sysconf(_SC_PHYS_PAGES);
+  return page>0 && count>0 && (uint64_t)count<=UINT64_C(2147483648)/(uint64_t)page;
+}
 #endif
 
 typedef struct LibretroFile {
@@ -554,6 +639,12 @@ bool libretro_vfs_clear_cache(const char *path,bool keep_root){
 }
 
 void libretro_vfs_services_init(AnygmHostServices *services){
+#ifdef __linux__
+  if(libretro_small_memory_host()){
+    services->reclaimable_copy=libretro_reclaimable_copy;
+    services->reclaimable_release=libretro_reclaimable_release;
+  }
+#endif
   services->file_open=host_file_open;
   services->file_read=host_file_read;
   services->file_write=host_file_write;

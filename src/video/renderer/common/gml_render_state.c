@@ -160,7 +160,7 @@ int gml_render_font_checkpoint_create(const GmlRender *render,GmlRenderFontCheck
        !state_bounded_product3((size_t)atlas->w,(size_t)atlas->h,4,128u*1024u*1024u,&bytes)){
       ok=0; break;
     }
-    *copy=*atlas; copy->px=NULL; copy->external_blob=NULL;
+    *copy=*atlas; copy->px=NULL; copy->external_blob=NULL; copy->mapped_pixels_size=0;
     copy->px=malloc(bytes);
     if(!copy->px){ ok=0; break; }
     memcpy(copy->px,atlas->px,bytes);
@@ -184,7 +184,7 @@ int gml_render_font_checkpoint_restore(GmlRender *render,GmlRenderFontCheckpoint
     gml_font_delete(render,i);
     render->fonts[i]=*font;
     int atlas=font->atlas;
-    free(render->atlas[atlas].px);
+    gml_render_atlas_pixels_release(render,&render->atlas[atlas]);
     render->atlas[atlas]=saved->atlas[atlas];
     memset(&saved->atlas[atlas],0,sizeof(saved->atlas[atlas]));
     memset(font,0,sizeof(*font));

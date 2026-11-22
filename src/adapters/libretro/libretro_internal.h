@@ -107,6 +107,10 @@ void libretro_log(enum retro_log_level level,const char *format,...);
 void libretro_host_services_init(AnygmHostServices *services);
 void libretro_vfs_request(void);
 void libretro_vfs_services_init(AnygmHostServices *services);
+#ifdef __linux__
+void *libretro_reclaimable_copy(void *userdata,const void *source,size_t size);
+void libretro_reclaimable_release(void *userdata,void *pixels,size_t size);
+#endif
 bool libretro_vfs_clear_cache(const char *path,bool keep_root);
 bool libretro_cache_begin(void);
 void libretro_cache_track(const char *path);

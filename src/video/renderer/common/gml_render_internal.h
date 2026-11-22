@@ -150,6 +150,7 @@ typedef struct GmlSprite { const char *name; int originx, originy, w, h, n_frame
                  int ns_enabled, ns_l, ns_t, ns_r, ns_b, ns_tile[5]; } GmlSprite;
 typedef struct GmlAtlas {
   uint8_t *px; int w, h;                                          /* RGBA8, decoded lazily */
+  size_t mapped_pixels_size;                                       /* zero on heap storage */
   uint32_t blob; size_t avail, chunk_end; int decode_attempted;    /* offsets into data.win, never addresses */
   uint8_t *external_blob; size_t external_size;                    /* encoded VFS sidecar, if any */
   int debug_dumped;                                                /* one-shot opt-in atlas diagnostic */
@@ -788,6 +789,7 @@ uint32_t be32(const uint8_t *data);
 
 void atlas_pool_free(GmlRender *r);
 uint8_t *atlas_pixels(GmlRender *r,int index);
+void gml_render_atlas_pixels_release(GmlRender *r,GmlAtlas *atlas);
 uint64_t gml_render_scene_incarnation_allocate(void);
 int gml_render_atlas_scene_source_view(GmlRender *r,int index,
                                        GmlRenderResourceSource *out_source);

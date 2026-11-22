@@ -486,7 +486,7 @@ static int font_add_file_checked(GmlRender *r,const char *path,double point_size
   /* second pass: rasterize each glyph into its cell */
   GmlGlyph *glyphs=calloc((size_t)ncp,sizeof(GmlGlyph));
   if(!glyphs){
-    free(A->px); memset(A,0,sizeof(*A)); A->runtime_font_page=1;
+    gml_render_atlas_pixels_release(r,A); memset(A,0,sizeof(*A)); A->runtime_font_page=1;
     if(appended) r->n_atlas--;
     free(cw); free(cps); gml_font_raster_face_close(face); return -1;
   }
@@ -498,7 +498,7 @@ static int font_add_file_checked(GmlRender *r,const char *path,double point_size
     GmlFontRasterGlyphMetrics metrics;
     if(!gml_font_raster_glyph_metrics(face,cp,scale,&metrics)){
       free(glyphs);
-      free(A->px); memset(A,0,sizeof(*A)); A->runtime_font_page=1;
+      gml_render_atlas_pixels_release(r,A); memset(A,0,sizeof(*A)); A->runtime_font_page=1;
       if(appended) r->n_atlas--;
       free(cw); free(cps); gml_font_raster_face_close(face); return -1;
     }
@@ -570,7 +570,7 @@ void gml_font_delete(GmlRender *r, int font){
     GmlAtlas *atlas=&r->atlas[f->atlas];
     if(atlas->scene_source_used && !gml_render_application_scene_flush(r)) return;
     gml_render_atlas_scene_retire_one(r,f->atlas);
-    free(atlas->px);
+    gml_render_atlas_pixels_release(r,atlas);
     memset(atlas,0,sizeof(*atlas));
     atlas->runtime_font_page=1;
   }

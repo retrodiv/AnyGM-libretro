@@ -179,6 +179,17 @@ static int atlas_has_source(const GmlRender *r,const GmlAtlas *a){
   return a && ((a->external_blob && a->external_size) ||
                (r && r->win && a->blob && a->blob<r->win->size));
 }
+void gml_render_atlas_pixels_release(GmlRender *r,GmlAtlas *atlas){
+  if(atlas->mapped_pixels_size){
+    const AnygmHostServices *host=r->win->host;
+    host->reclaimable_release(host->userdata,atlas->px,atlas->mapped_pixels_size);
+  } else {
+    free(atlas->px);
+  }
+  atlas->px=NULL;
+  atlas->mapped_pixels_size=0;
+}
+
 /* decode outside the lock, publish under it. Returns the published pixels (or NULL). */
 static uint8_t *atlas_decode_publish(GmlRender *r, int idx, int locked, GmlAtlasPool *pool){
   GmlAtlas *a=&r->atlas[idx];
@@ -190,6 +201,19 @@ static uint8_t *atlas_decode_publish(GmlRender *r, int idx, int locked, GmlAtlas
   else if(a->blob && a->blob<r->win->size)
     px=decode_texture_blob(r->win->data+a->blob,a->avail,
                            (size_t)r->win->data+a->chunk_end,&w,&h);
+  /* The encoded source remains authoritative. The mapping changes storage
+   * ownership only, and is made before another thread can borrow the pixels. */
+  size_t size=px?(size_t)w*(size_t)h*4u:0;
+  const AnygmHostServices *host=r->win?r->win->host:NULL;
+  size_t mapped_size=0;
+  if(size && host && host->reclaimable_copy && host->reclaimable_release){
+    void *mapped=host->reclaimable_copy(host->userdata,px,size);
+    if(mapped){
+      free(px);
+      px=mapped;
+      mapped_size=size;
+    }
+  }
   if(locked) gml_mutex_lock(&pool->mu);
   a->decode_attempted=1;
   /* Log an attempted decode that did not produce pixels; successful decodes
@@ -200,7 +224,8 @@ static uint8_t *atlas_decode_publish(GmlRender *r, int idx, int locked, GmlAtlas
       a->external_blob?"yes":"no");
   if(px){
     a->w=w; a->h=h;
-    r->atlas_decoded_bytes += (size_t)w*(size_t)h*4u;
+    r->atlas_decoded_bytes+=size;
+    a->mapped_pixels_size=mapped_size;
     __atomic_store_n(&a->px,px,__ATOMIC_RELEASE);
     if(log_atlas_on(r))
       anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[atlas] decoded %d %dx%d (%.1f MiB)\n",idx,w,h,(double)((uint64_t)w*(uint64_t)h*4ull)/(1024.0*1024.0));

@@ -1005,7 +1005,7 @@ void gml_render_free(GmlRender *r){
   }
   gml_render_interpolated_subrect_cache_clear(r);
   for(int i=0;i<r->n_atlas;i++){
-    free(r->atlas[i].px);
+    gml_render_atlas_pixels_release(r,&r->atlas[i]);
     free(r->atlas[i].external_blob);
   }
   for(int i=0;i<r->n_spr;i++) free(r->spr[i].frame);
