@@ -79,11 +79,8 @@ bool libretro_cache_begin(void){
   return true;
 }
 
-/* The caller has already unloaded the runtime, including its mappings and open assets.
- * Query the frontend now: changing this option in a paused menu must take effect on close. */
-void libretro_cache_end(void){
+static void finish_cache_tracking(bool clear){
   g_libretro.cache_tracking=false;
-  bool clear=cache_option_enabled("anygm_clear_game_cache");
   for(size_t i=0;i<g_libretro.cache_path_count;i++){
     char *path=g_libretro.cache_paths[i];
     if(clear){
@@ -98,4 +95,13 @@ void libretro_cache_end(void){
   g_libretro.cache_paths=NULL;
   g_libretro.cache_path_count=g_libretro.cache_path_capacity=0;
   g_libretro.cache_tracking_failed=false;
+}
+
+/* Changing this option in a paused menu takes effect on ordinary close. */
+void libretro_cache_end(void){
+  finish_cache_tracking(cache_option_enabled("anygm_clear_game_cache"));
+}
+
+void libretro_cache_abandon(void){
+  finish_cache_tracking(false);
 }

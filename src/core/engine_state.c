@@ -1121,6 +1121,7 @@ static uint8_t *state_create_rollback_snapshot(AnygmEngine *engine,size_t *writt
     size_t growth=hint/8u;
     if(growth<1024u) growth=1024u;
     if(growth<=SIZE_MAX-hint) hint+=growth;
+    if(!anygm_host_permits_allocation(&engine->host,hint)) return NULL;
     uint8_t *snapshot=malloc(hint);
     if(snapshot){
       CoreW writer={snapshot,hint,0,1};
@@ -1139,6 +1140,7 @@ static uint8_t *state_create_rollback_snapshot(AnygmEngine *engine,size_t *writt
   state_write(engine,&measure,NULL);
   if(!measure.ok || !measure.pos) return NULL;
   size_t snapshot_capacity=measure.pos;
+  if(!anygm_host_permits_allocation(&engine->host,snapshot_capacity)) return NULL;
   uint8_t *snapshot=malloc(snapshot_capacity);
   if(!snapshot) return NULL;
   CoreW snapshot_writer={snapshot,snapshot_capacity,0,1};

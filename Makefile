@@ -242,6 +242,7 @@ CONTRACT_TESTS := $(TEST_DIR)/dummy_host $(TEST_DIR)/test_builtin_file_io $(TEST
 	$(TEST_DIR)/test_libretro_content_cadence \
 	$(TEST_DIR)/test_libretro_crt_output \
 	$(TEST_DIR)/test_libretro_vfs_transport $(TEST_DIR)/test_libretro_option_defaults \
+	$(TEST_DIR)/test_libretro_memory_pressure \
 	$(TEST_DIR)/test_libretro_keyboard_source $(TEST_DIR)/test_libretro_gamepad_ports \
 	$(TEST_DIR)/test_libretro_locale_variables $(TEST_DIR)/test_libretro_wall_time \
 	$(TEST_DIR)/test_libretro_content_directories $(TEST_DIR)/test_libretro_cache_vfs
@@ -942,6 +943,7 @@ contract-check: $(CONTRACT_TESTS)
 	$(TEST_DIR)/test_libretro_content_cadence
 	$(TEST_DIR)/test_libretro_crt_output
 	$(TEST_DIR)/test_libretro_vfs_transport
+	$(TEST_DIR)/test_libretro_memory_pressure
 	$(TEST_DIR)/test_libretro_option_defaults
 	$(TEST_DIR)/test_libretro_keyboard_source
 	$(TEST_DIR)/test_libretro_gamepad_ports
@@ -1108,6 +1110,7 @@ $(TEST_DIR)/dummy_host: tests/contract/dummy_host.c tests/support/synthetic_cont
 
 $(TEST_DIR)/test_libretro_state_transport: tests/contract/libretro_state_transport.c \
 	src/adapters/libretro/libretro_entry.c src/adapters/libretro/libretro_context.c \
+	src/adapters/libretro/libretro_memory.c \
 	src/adapters/libretro/libretro_cache.c src/adapters/libretro/libretro_display.c \
 	Makefile Makefile.common $(COMPILE_CONFIG) $(LIBRETRO_CONTRACT_HEADERS)
 	mkdir -p $(dir $@)
@@ -1200,11 +1203,18 @@ $(TEST_DIR)/test_libretro_wall_time: tests/contract/libretro_wall_time.c \
 
 $(TEST_DIR)/test_libretro_content_directories: tests/contract/libretro_content_directories.c \
 	src/adapters/libretro/libretro_entry.c src/adapters/libretro/libretro_context.c \
+	src/adapters/libretro/libretro_memory.c \
 	src/adapters/libretro/libretro_cache.c src/adapters/libretro/libretro_vfs.c \
 	src/adapters/libretro/libretro_display.c \
 	Makefile Makefile.common $(COMPILE_CONFIG) $(LIBRETRO_CONTRACT_HEADERS)
 	mkdir -p $(dir $@)
 	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $(filter %.c,$^) -o $@ -lm
+
+$(TEST_DIR)/test_libretro_memory_pressure: tests/contract/libretro_memory_pressure.c \
+	src/adapters/libretro/libretro_memory.c \
+	Makefile Makefile.common $(COMPILE_CONFIG) $(LIBRETRO_CONTRACT_HEADERS)
+	mkdir -p $(dir $@)
+	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $(filter %.c,$^) -o $@
 
 $(TEST_DIR)/test_libretro_vfs_transport: tests/contract/libretro_vfs_transport.c \
 	src/adapters/libretro/libretro_vfs.c \

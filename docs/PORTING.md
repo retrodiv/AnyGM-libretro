@@ -35,7 +35,9 @@ cut: it neither compiles nor links the libretro adapter.
    headers from the adapter.
 2. Fill `AnygmHostServices`, including `struct_size`, ABI version, userdata,
    diagnostics, clocks, entropy, and the virtual-file operations required by
-   the selected content source.
+   the selected content source. A host may also offer reclaimable storage for
+   decoded buffers and check admission for known large allocations. Both
+   services are optional.
 3. Translate framework input into one `AnygmInputFrame` snapshot per frame.
 4. Call `anygm_run_frame`, present its borrowed XRGB8888 video view, and queue
    its interleaved signed PCM before the next call on that engine.
@@ -60,7 +62,9 @@ cut: it neither compiles nor links the libretro adapter.
    Movie references also report dynamic surface risk; later size changes or arbitrary content
    allocations still require the host's ordinary growth policy.
 7. Call `anygm_unload` before replacing content and destroy the engine before
-   destroying anything referenced by host userdata.
+   destroying anything referenced by host userdata. During a memory emergency,
+   use `anygm_unload_for_memory_pressure` to avoid measuring or writing the
+   state capacity cache while the engine releases content.
 
 ## Aspect proximity
 

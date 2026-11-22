@@ -13,6 +13,7 @@ extern "C" {
 const char *anygm_host_development_setting(const AnygmHostServices *host,const char *name);
 uint32_t anygm_host_capability(const AnygmHostServices *host,uint32_t capability);
 uint64_t anygm_host_monotonic_time_ns(const AnygmHostServices *host);
+int anygm_host_permits_allocation(const AnygmHostServices *host,size_t bytes);
 void anygm_host_logf(const AnygmHostServices *host,AnygmLogLevel level,const char *format,...);
 int anygm_calendar_from_unix_seconds(int64_t seconds,AnygmCalendarTime *calendar);
 

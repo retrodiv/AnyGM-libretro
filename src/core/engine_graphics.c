@@ -13,6 +13,20 @@
 #include "gml_render_shaders.h"
 
 
+uint32_t anygm_graphics_present_emergency_frame(AnygmEngine *engine,const uint32_t *pixels,
+                                                uint32_t width,uint32_t height){
+#if ANYGM_HARDWARE_RENDER
+  return engine && engine->guard==ANYGM_ENGINE_GUARD &&
+    gml_gpu_present_emergency_frame(engine->gpu,pixels,width,height);
+#else
+  (void)engine;
+  (void)pixels;
+  (void)width;
+  (void)height;
+  return 0;
+#endif
+}
+
 #if ANYGM_HARDWARE_RENDER
 
 static int engine_execute_graphics_plan(AnygmEngine *engine,GmlRenderPlan *plan){

@@ -11,6 +11,52 @@
 #include <stddef.h>
 #include <stdint.h>
 
+typedef struct LibretroMemorySample {
+  uint64_t available_kib;
+  uint64_t swap_free_kib;
+} LibretroMemorySample;
+
+typedef struct LibretroMemoryPressure {
+  uint64_t next_sample_ns;
+  uint64_t warning_since_ns;
+  uint64_t critical_since_ns;
+  unsigned emergency_samples;
+  bool warned;
+  bool stopping;
+  bool shutdown_sent;
+  bool screen_sent;
+  bool hardware_notice;
+  bool allocation_rejected;
+  bool expedite;
+  uint64_t stopped_at_ns;
+  uint32_t tick;
+  uint32_t test_after_tick;
+  uint64_t test_available_kib;
+  size_t last_state_size;
+} LibretroMemoryPressure;
+
+enum LibretroMemoryAction {
+  LIBRETRO_MEMORY_CONTINUE,
+  LIBRETRO_MEMORY_WARN,
+  LIBRETRO_MEMORY_STOP
+};
+
+bool libretro_memory_read(const char *path,LibretroMemorySample *sample);
+void libretro_memory_reset(void);
+void libretro_memory_load_notice(void);
+bool libretro_memory_can_load(void);
+uint32_t libretro_memory_permit(void *unused,size_t size);
+bool libretro_memory_check(void);
+bool libretro_memory_allocation_rejected(void);
+void libretro_memory_request_stop(void);
+bool libretro_memory_run(void);
+void libretro_memory_stop(void);
+bool libretro_memory_refuse_state(void *data,size_t size);
+uint64_t libretro_host_monotonic_time_ns(void *userdata);
+void libretro_abort_for_memory(void);
+enum LibretroMemoryAction libretro_memory_observe(LibretroMemoryPressure *pressure,
+  const LibretroMemorySample *sample,uint64_t now_ns);
+
 typedef struct LibretroAdapter {
   retro_environment_t environment;
   retro_video_refresh_t video;
@@ -22,6 +68,7 @@ typedef struct LibretroAdapter {
   struct retro_rumble_interface rumble;
   const struct retro_vfs_interface *vfs;
   AnygmEngine *engine;
+  LibretroMemoryPressure pressure;
   AnygmFrameOutput frame;
   AnygmAvInfo av;
   AnygmConfig config;
@@ -115,6 +162,7 @@ bool libretro_vfs_clear_cache(const char *path,bool keep_root);
 bool libretro_cache_begin(void);
 void libretro_cache_track(const char *path);
 void libretro_cache_end(void);
+void libretro_cache_abandon(void);
 void libretro_options_register(void);
 void libretro_options_apply(bool all_fields);
 void libretro_options_finalize_graphics(bool device_available);

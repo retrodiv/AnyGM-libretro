@@ -83,6 +83,28 @@ between the announcement and the save discards the prepared work, so a mispredic
 never state content. Sections are prepared for the form, complete or frame-free, of the previous
 save.
 
+## Memory pressure
+
+On Linux, the adapter watches physical headroom while content runs. It warns
+after two seconds below 96 MiB available and rearms the warning at 112 MiB.
+With swap headroom accounted for, two seconds below 48 MiB or two readings
+below 32 MiB stop the session. Known large allocations can be refused before
+their memory is touched. An explicit out-of-memory result also stops
+execution. Frontends on other systems can receive the same terminal notice
+for an explicit allocation failure.
+
+The core releases content and shows a preallocated notice before asking the
+frontend to shut it down. A hardware session draws the notice onto the borrowed
+framebuffer before releasing its graphics context. Buttons can acknowledge the notice after one second
+and it times out after eight seconds. An emergency may shorten this interval.
+For a frontend that continues to poll after the request, simulation stays
+stopped. The core does not produce a new saved state in this terminal phase.
+
+Linux hosts with up to 2 GiB of physical memory can place large decoded atlas
+pixels in reclaimable files in the ordinary AnyGM cache directory. Pixel data
+is private to the mapping, and unavailable backing storage leaves the heap
+path available.
+
 ## Optional call-boundary profiling
 
 `GML_PROFILE_LIBRETRO_FRAME=1` enables one `[libretro-frame]` log per loaded

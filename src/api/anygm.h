@@ -15,9 +15,9 @@ extern "C" {
  * runtime library version, and every publishable metadata file declares the literal "Git" instead
  * of a number, so no copy can promise a value that has gone stale. CONTRIBUTING.md owns the single
  * increment step. */
-#define ANYGM_VERSION "0.1.968"
-#define ANYGM_API_VERSION 10u
-#define ANYGM_HOST_SERVICES_VERSION 3u
+#define ANYGM_VERSION "0.1.969"
+#define ANYGM_API_VERSION 11u
+#define ANYGM_HOST_SERVICES_VERSION 4u
 #define ANYGM_STATE_SCHEMA 70u
 #define ANYGM_MAX_GAMEPADS 4u
 #define ANYGM_MAX_GAMEPAD_BUTTONS 16u
@@ -306,6 +306,8 @@ typedef struct AnygmHostServices {
   AnygmDisplayFrequencyRequestFn display_frequency_request;
   AnygmReclaimableCopyFn reclaimable_copy;
   AnygmReclaimableReleaseFn reclaimable_release;
+  /* Optional admission check at known large allocations. May run on a worker. */
+  uint32_t (*permit_large_allocation)(void *userdata,size_t bytes);
 } AnygmHostServices;
 
 typedef uint32_t AnygmContentKind;
@@ -593,6 +595,11 @@ AnygmResult anygm_graphics_context_reset(AnygmEngine *engine,const AnygmGraphics
  * images, and reports the failure instead of publishing reconstructed GPU pixels. */
 void anygm_graphics_context_destroy(AnygmEngine *engine,uint32_t context_is_current);
 
+/* Put a small top-origin XRGB8888 emergency raster on the current host target without new
+ * graphics resources. The host must immediately present the target on success. */
+uint32_t anygm_graphics_present_emergency_frame(AnygmEngine *engine,const uint32_t *pixels,
+                                                uint32_t width,uint32_t height);
+
 typedef struct AnygmAvInfo {
   uint32_t struct_size;
   uint32_t base_width;
@@ -623,6 +630,8 @@ AnygmResult anygm_load_start(AnygmEngine *engine);
 AnygmResult anygm_load(AnygmEngine *engine,const AnygmContentSource *source,
                        const AnygmLoadConfig *config);
 void anygm_unload(AnygmEngine *engine);
+/* Retire content without measuring or writing state capacity during a memory emergency. */
+void anygm_unload_for_memory_pressure(AnygmEngine *engine);
 AnygmResult anygm_reset(AnygmEngine *engine);
 AnygmResult anygm_get_av_info(const AnygmEngine *engine,AnygmAvInfo *info);
 /* Plan logical steps for one presentation tick without changing game FPS. The fractional phase

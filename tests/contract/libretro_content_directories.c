@@ -166,6 +166,7 @@ AnygmResult anygm_load(AnygmEngine *engine,const AnygmContentSource *source,
                        const AnygmLoadConfig *config){
   return anygm_load_prepare(engine,source,config,NULL);
 }
+void anygm_unload_for_memory_pressure(AnygmEngine *engine){ (void)engine; }
 void anygm_unload(AnygmEngine *engine){ (void)engine; release_content_files(); }
 AnygmResult anygm_reset(AnygmEngine *engine){ (void)engine; return ANYGM_OK; }
 AnygmResult anygm_get_av_info(const AnygmEngine *engine,AnygmAvInfo *info){
@@ -222,6 +223,15 @@ size_t anygm_get_last_error(const AnygmEngine *engine,char *message,size_t capac
 /* The rest of the adapter is out of frame; only the directories the loader receives are on test. */
 #if ANYGM_HARDWARE_RENDER
 bool libretro_hw_render_request(bool needed){ return needed && delay_start; }
+uint32_t anygm_graphics_present_emergency_frame(AnygmEngine *engine,const uint32_t *pixels,
+                                                uint32_t width,uint32_t height){
+  (void)engine;
+  (void)pixels;
+  (void)width;
+  (void)height;
+  return 0;
+}
+
 void libretro_hw_render_release(void){}
 bool libretro_hw_render_requested(void){ return false; }
 #endif

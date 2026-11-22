@@ -177,6 +177,9 @@ int resolve_host_frame(AnygmEngine *engine,const uint32_t **pixels,
     if(height) *height=host_height;
     return 1;
   }
+  if(!engine->host_screen &&
+     !anygm_host_permits_allocation(&engine->host,(size_t)host_width*host_height*sizeof(uint32_t)))
+    return 0;
   if(!ensure_scratch_buffer(engine,&engine->host_screen)) return 0;
   /* The scratch buffer is allocated black and the scaler rewrites every pixel of the canvas
    * rectangle each frame, so the margins around it only need clearing when the geometry that

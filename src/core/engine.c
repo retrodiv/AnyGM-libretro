@@ -3007,20 +3007,28 @@ AnygmResult anygm_load(AnygmEngine *engine,const AnygmContentSource *source,
   return result;
 }
 
-void anygm_unload(AnygmEngine *engine){
+static void unload_content(AnygmEngine *engine,bool update_cache){
   engine_state_prepared_discard(engine);
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle==ENGINE_EMPTY) return;
-  if(engine->lifecycle==ENGINE_LOADED){
+  if(update_cache && engine->lifecycle==ENGINE_LOADED){
     /* A session that never saved still teaches the cache: measure once at teardown. */
     engine_state_peak_note(engine,engine_state_size(engine));
     engine_state_resume_peak_note(engine,engine_state_resume_size(engine));
     engine_state_peak_flush(engine);
   }
-  engine_graphics_report(engine);
+  if(update_cache) engine_graphics_report(engine);
   engine_unload(engine);
-  engine_dispatch_report(engine);
+  if(update_cache) engine_dispatch_report(engine);
   engine_override_reset(engine);
   engine->lifecycle=ENGINE_EMPTY;
+}
+
+void anygm_unload(AnygmEngine *engine){
+  unload_content(engine,true);
+}
+
+void anygm_unload_for_memory_pressure(AnygmEngine *engine){
+  unload_content(engine,false);
 }
 
 AnygmResult anygm_reset(AnygmEngine *engine){

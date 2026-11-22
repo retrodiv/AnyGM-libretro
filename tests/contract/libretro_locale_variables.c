@@ -24,6 +24,11 @@ const char *libretro_options_value(const char *key){
 }
 
 /* The rest of the adapter is out of frame here; only the settings answer is under test. */
+uint32_t libretro_memory_permit(void *unused,size_t bytes){
+  (void)unused;
+  (void)bytes;
+  return 1;
+}
 void libretro_vfs_services_init(AnygmHostServices *services){ (void)services; }
 void libretro_log(enum retro_log_level level,const char *format,...){
   (void)level; (void)format;

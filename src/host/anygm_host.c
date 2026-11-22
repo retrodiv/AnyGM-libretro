@@ -20,6 +20,11 @@ uint64_t anygm_host_monotonic_time_ns(const AnygmHostServices *host){
   return host&&host->monotonic_time_ns?host->monotonic_time_ns(host->userdata):0;
 }
 
+int anygm_host_permits_allocation(const AnygmHostServices *host,size_t bytes){
+  return !host || !host->permit_large_allocation ||
+         host->permit_large_allocation(host->userdata,bytes)!=0;
+}
+
 void anygm_host_logf(const AnygmHostServices *host,AnygmLogLevel level,const char *format,...){
   if(!host || !host->log || !format) return;
   char message[2048];

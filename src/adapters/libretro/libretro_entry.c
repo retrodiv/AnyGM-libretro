@@ -229,6 +229,7 @@ void retro_deinit(void){
   g_libretro.loaded=false;
   g_libretro.provisional_av_exposed=false;
   g_libretro.startup_av_notification_pending=false;
+  memset(&g_libretro.pressure,0,sizeof g_libretro.pressure);
 }
 
 unsigned retro_api_version(void){ return RETRO_API_VERSION; }
@@ -377,9 +378,18 @@ static void update_directories(void){
 bool libretro_content_start(void){
   if(g_libretro.loaded) return true;
   if(!g_libretro.prepared || !g_libretro.engine) return false;
+  if(!libretro_memory_can_load()){
+    libretro_memory_request_stop();
+    libretro_memory_load_notice();
+    return false;
+  }
   bool provisional_av_exposed=g_libretro.provisional_av_exposed;
   AnygmResult result=anygm_load_start(g_libretro.engine);
   if(result!=ANYGM_OK){
+    if(result==ANYGM_ERROR_OUT_OF_MEMORY || libretro_memory_allocation_rejected()){
+      libretro_memory_request_stop();
+      libretro_memory_load_notice();
+    }
     char error[512];
     anygm_get_last_error(g_libretro.engine,error,sizeof error);
     libretro_log(RETRO_LOG_ERROR,"Prepared content startup failed (%d): %s\n",result,error);
@@ -439,14 +449,19 @@ bool libretro_content_start(void){
 }
 
 bool retro_load_game(const struct retro_game_info *info){
-  if(!info || !info->path || !create_engine()) return false;
+  if(!info || !info->path) return false;
+  if(g_libretro.loaded || g_libretro.prepared) retro_unload_game();
+  libretro_memory_reset();
   if(!g_libretro.pixel_format_accepted) g_libretro.pixel_format_accepted=request_pixel_format();
   if(!g_libretro.pixel_format_accepted){
     libretro_log(RETRO_LOG_ERROR,
                  "Refusing to load: this core renders XRGB8888 and the frontend will not take it\n");
     return false;
   }
-  if(g_libretro.loaded || g_libretro.prepared) retro_unload_game();
+  if(!libretro_memory_can_load() || !create_engine()){
+    libretro_memory_stop();
+    return true;
+  }
   g_libretro.keyboard_text_count=0;
   g_libretro.provisional_av_exposed=false;
   g_libretro.startup_av_notification_pending=false;
@@ -471,6 +486,10 @@ bool retro_load_game(const struct retro_game_info *info){
   content_info.struct_size=sizeof content_info;
   AnygmResult result=anygm_load_prepare(g_libretro.engine,&source,NULL,&content_info);
   if(result!=ANYGM_OK){
+    if(result==ANYGM_ERROR_OUT_OF_MEMORY || libretro_memory_allocation_rejected()){
+      libretro_memory_stop();
+      return true;
+    }
     char error[512];
     anygm_get_last_error(g_libretro.engine,error,sizeof error);
     libretro_log(RETRO_LOG_ERROR,"Content load failed (%d): %s\n",result,error);
@@ -513,7 +532,12 @@ bool retro_load_game(const struct retro_game_info *info){
     if(libretro_hw_render_request(true)) return true;
   }
   libretro_options_finalize_graphics(false);
-  return libretro_content_start();
+  if(libretro_content_start()) return true;
+  if(libretro_memory_allocation_rejected()){
+    libretro_memory_stop();
+    return true;
+  }
+  return false;
 }
 
 bool retro_load_game_special(unsigned type,const struct retro_game_info *info,size_t count){
@@ -521,8 +545,26 @@ bool retro_load_game_special(unsigned type,const struct retro_game_info *info,si
   return false;
 }
 
+void libretro_abort_for_memory(void){
+  libretro_hw_render_release();
+  if(g_libretro.engine){
+    anygm_unload_for_memory_pressure(g_libretro.engine);
+    anygm_destroy(g_libretro.engine);
+    g_libretro.engine=NULL;
+  }
+  libretro_display_release();
+  libretro_cache_abandon();
+  g_libretro.prepared=false;
+  g_libretro.loaded=false;
+  g_libretro.frame_completed=false;
+  memset(&g_libretro.frame,0,sizeof g_libretro.frame);
+}
+
 void retro_unload_game(void){
-  if(!g_libretro.loaded && !g_libretro.prepared) return;
+  if(!g_libretro.loaded && !g_libretro.prepared){
+    memset(&g_libretro.pressure,0,sizeof g_libretro.pressure);
+    return;
+  }
   if(g_libretro.frame_profile_enabled && !g_libretro.frame_profile_detailed &&
      g_libretro.frame_profile_summary_samples){
     libretro_log(RETRO_LOG_INFO,
@@ -575,6 +617,7 @@ void retro_unload_game(void){
   memset(g_libretro.keyboard_events,0,sizeof g_libretro.keyboard_events);
   g_libretro.keyboard_text_count=0;
   g_libretro.pointer_seen=0;
+  memset(&g_libretro.pressure,0,sizeof g_libretro.pressure);
 }
 
 unsigned retro_get_region(void){ return RETRO_REGION_NTSC; }
@@ -753,6 +796,7 @@ static void note_save_tick(void){
 }
 
 void retro_run(void){
+  if(libretro_memory_run()) return;
   if(!g_libretro.loaded){
     if(g_libretro.video) g_libretro.video(NULL,288,216,0);
     return;
@@ -817,6 +861,10 @@ void retro_run(void){
   if(g_libretro.frame.flags&ANYGM_FRAME_TEXT_INPUT_CONSUMED){
     libretro_input_text_acknowledge(input.text_event_count);
     input.text_event_count=0;
+  }
+  if(result==ANYGM_ERROR_OUT_OF_MEMORY || libretro_memory_allocation_rejected()){
+    libretro_memory_stop();
+    return;
   }
   if(result!=ANYGM_OK){
     /* Reported a bounded number of times: a frame that fails usually fails on every frame after
@@ -929,7 +977,7 @@ void retro_run(void){
   frame_profile_report(&timing,ANYGM_OK,completed_steps);
 }
 
-size_t retro_serialize_size(void){
+static size_t snapshot_capacity(void){
   LibretroFrameTiming timing=state_profile_begin();
   if(!g_libretro.loaded){
     state_profile_report(&timing,"size",0,0,false);
@@ -1017,7 +1065,15 @@ size_t retro_serialize_size(void){
   return g_libretro.fixed_state_capacity;
 }
 
+size_t retro_serialize_size(void){
+  if(g_libretro.pressure.stopping) return g_libretro.pressure.last_state_size;
+  size_t capacity=snapshot_capacity();
+  g_libretro.pressure.last_state_size=capacity;
+  return capacity;
+}
+
 bool retro_serialize(void *data,size_t size){
+  if(libretro_memory_refuse_state(data,size)) return false;
   LibretroFrameTiming timing=state_profile_begin();
   size_t written=0;
   if(!g_libretro.loaded){
@@ -1069,6 +1125,7 @@ bool retro_serialize(void *data,size_t size){
 }
 
 bool retro_unserialize(const void *data,size_t size){
+  if(g_libretro.loaded && !libretro_memory_check()) return false;
   LibretroFrameTiming timing=state_profile_begin();
   g_libretro.save_interval=0;
   g_libretro.save_interval_repeats=0;

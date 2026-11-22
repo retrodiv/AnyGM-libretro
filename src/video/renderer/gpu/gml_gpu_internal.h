@@ -35,6 +35,8 @@ int gml_gpu_opengl_reset(GmlGpuBackend *backend,const GmlGpuContext *context,
 /* Take the pipelined read-back: a pass reads what the previous pass of the same program left and
  * starts its own without waiting. The answer is one frame old, which is what removes the stall. */
 void gml_gpu_opengl_set_readback_pipelined(GmlGpuBackend *backend,int pipelined);
+int gml_gpu_opengl_present_emergency_frame(GmlGpuBackend *backend,const GmlGpuContext *context,
+                                          const uint32_t *pixels,uint32_t width,uint32_t height);
 int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
                        GmlRenderPlan *plan,GmlGpuCounters *counters,
                        char *error,size_t error_capacity);

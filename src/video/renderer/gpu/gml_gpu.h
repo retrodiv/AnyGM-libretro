@@ -115,6 +115,8 @@ void gml_gpu_device_services(GmlGpu *gpu,GmlRenderDeviceServices *out_services);
  * partial work when any part of the plan cannot be executed exactly, so the caller can replay the
  * whole pass in software. The plan's fallback reason names why. */
 int gml_gpu_execute_plan(GmlGpu *gpu,GmlRenderPlan *plan);
+int gml_gpu_present_emergency_frame(GmlGpu *gpu,const uint32_t *pixels,
+                                   uint32_t width,uint32_t height);
 
 /* Preserve a completed host target in a separate device image before the frontend reuses it.
  * Both calls require the host's owning-context proof. Capture performs no CPU read; observation

@@ -137,6 +137,58 @@ static void begin_plan_state(GmlGpuBackend *backend,uint32_t target_height){
   backend->gl.Uniform1i(backend->u_target_height,(GLint)target_height);
 }
 
+static void emergency_clear(GmlGlApi *gl,uint32_t color){
+  const GLfloat rgb[]={
+    (GLfloat)((color>>16)&255u)/255.0f,(GLfloat)((color>>8)&255u)/255.0f,
+    (GLfloat)(color&255u)/255.0f,1.0f
+  };
+  gl->ClearBufferfv(GL_COLOR,0,rgb);
+}
+
+int gml_gpu_opengl_present_emergency_frame(GmlGpuBackend *backend,const GmlGpuContext *context,
+                                          const uint32_t *pixels,uint32_t width,uint32_t height){
+  GmlGlApi *gl=&backend->gl;
+  if(!gl->ClearBufferfv || !gl->GetIntegerv || !gl->IsEnabled) return 0;
+  GLint previous_fbo,previous_scissor[4],previous_mask[4];
+  gl->GetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&previous_fbo);
+  gl->GetIntegerv(GL_SCISSOR_BOX,previous_scissor);
+  gl->GetIntegerv(GL_COLOR_WRITEMASK,previous_mask);
+  GLboolean scissor=gl->IsEnabled(GL_SCISSOR_TEST);
+  GLboolean dither=gl->IsEnabled(GL_DITHER);
+  GLboolean srgb=backend->api==GML_GPU_API_OPENGL_CORE && gl->IsEnabled(GL_FRAMEBUFFER_SRGB);
+
+  gl->BindFramebuffer(GL_DRAW_FRAMEBUFFER,(GLuint)context->get_current_framebuffer(context->userdata));
+  gl->Enable(GL_SCISSOR_TEST);
+  gl->Disable(GL_DITHER);
+  if(srgb) gl->Disable(GL_FRAMEBUFFER_SRGB);
+  gl->ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+  /* A terminal notice uses a few solid colours on a uniform background. Row runs use only the
+   * framebuffer already lent by the host: no new program, texture, scratch plane or readback. */
+  uint32_t background=pixels[0];
+  gl->Scissor(0,0,(GLsizei)width,(GLsizei)height);
+  emergency_clear(gl,background);
+  for(uint32_t y=0;y<height;y++){
+    const uint32_t *row=pixels+(size_t)y*width;
+    for(uint32_t x=0;x<width;){
+      uint32_t color=row[x],end=x+1;
+      while(end<width && row[end]==color) end++;
+      if(color!=background){
+        gl->Scissor((GLint)x,(GLint)(height-y-1),(GLsizei)(end-x),1);
+        emergency_clear(gl,color);
+      }
+      x=end;
+    }
+  }
+
+  gl->BindFramebuffer(GL_DRAW_FRAMEBUFFER,(GLuint)previous_fbo);
+  gl->Scissor(previous_scissor[0],previous_scissor[1],previous_scissor[2],previous_scissor[3]);
+  gl->ColorMask(previous_mask[0]!=0,previous_mask[1]!=0,previous_mask[2]!=0,previous_mask[3]!=0);
+  if(!scissor) gl->Disable(GL_SCISSOR_TEST);
+  if(dither) gl->Enable(GL_DITHER);
+  if(srgb) gl->Enable(GL_FRAMEBUFFER_SRGB);
+  return gl->GetError()==GL_NO_ERROR;
+}
+
 int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
                        GmlRenderPlan *plan,GmlGpuCounters *counters,
                        char *error,size_t error_capacity){

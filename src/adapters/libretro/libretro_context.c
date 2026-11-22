@@ -181,7 +181,7 @@ static void host_log(void *userdata,AnygmLogLevel level,const char *message){
   libretro_log(mapped,"%s",message?message:"");
 }
 
-static uint64_t host_monotonic_time_ns(void *userdata){
+uint64_t libretro_host_monotonic_time_ns(void *userdata){
   (void)userdata;
 #ifdef _WIN32
   LARGE_INTEGER frequency,now;
@@ -253,7 +253,7 @@ static uint64_t host_random_seed(void *userdata){
   AnygmWallTime wall={0};
   wall.struct_size=sizeof wall;
   host_wall_time(NULL,&wall);
-  uint64_t value=host_monotonic_time_ns(NULL)^(uint64_t)wall.unix_seconds;
+  uint64_t value=libretro_host_monotonic_time_ns(NULL)^(uint64_t)wall.unix_seconds;
   value^=++g_libretro.seed_counter*UINT64_C(0x9e3779b97f4a7c15);
   value=(value^(value>>30))*UINT64_C(0xbf58476d1ce4e5b9);
   value=(value^(value>>27))*UINT64_C(0x94d049bb133111eb);
@@ -352,7 +352,8 @@ void libretro_host_services_init(AnygmHostServices *services){
   services->struct_size=sizeof *services;
   services->abi_version=ANYGM_HOST_SERVICES_VERSION;
   services->log=host_log;
-  services->monotonic_time_ns=host_monotonic_time_ns;
+  services->permit_large_allocation=libretro_memory_permit;
+  services->monotonic_time_ns=libretro_host_monotonic_time_ns;
   services->wall_time=host_wall_time;
   services->random_seed=host_random_seed;
   services->development_setting=host_development_setting;
