@@ -1,6 +1,10 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 /* Canonical language-value, array, variable-map, and lifetime implementation. */
 #include "gml_value_internal.h"
 
@@ -12,6 +16,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if defined(__linux__)
+#include <sys/mman.h>
+#endif
 
 int64_t gml_val_as_integer(GmlVal value){
   GmlNumberKind kind=gml_val_number_kind(value);
@@ -150,9 +158,43 @@ static void array_heap_unlink(GmlArr *array){
   heap->count--;
   array->heap=NULL; array->heap_previous=array->heap_next=NULL;
 }
+static GmlVal *array_sparse_storage(int capacity,size_t *mapped_bytes){
+  size_t count=capacity?(size_t)capacity:1;
+  *mapped_bytes=0;
+  if(count>SIZE_MAX/sizeof(GmlVal)) return NULL;
+#if defined(__linux__)
+  size_t bytes=count*sizeof(GmlVal);
+  /* Large calloc calls may clear a reused allocator arena eagerly. A private
+   * anonymous mapping commits physical pages only when a sparse entry is written. */
+  if(bytes>=256u*1024u){
+    void *data=mmap(NULL,bytes,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+    if(data==MAP_FAILED) return NULL;
+    *mapped_bytes=bytes;
+    return data;
+  }
+#endif
+  return calloc(count,sizeof(GmlVal));
+}
+
+int gml_arr_allocate_sparse(GmlArr *array,int capacity){
+  if(capacity<0) return 0;
+  array->data=array_sparse_storage(capacity,&array->mapped_data_bytes);
+  return array->data!=NULL;
+}
+
+static void array_storage_release(GmlArr *array){
+#if defined(__linux__)
+  if(array->mapped_data_bytes){
+    munmap(array->data,array->mapped_data_bytes);
+    return;
+  }
+#endif
+  free(array->data);
+}
+
 static void array_heap_free_node(GmlArr *array){
   array_heap_unlink(array);
-  free(array->row_len); free(array->data); free(array);
+  free(array->row_len); array_storage_release(array); free(array);
 }
 size_t gml_array_heap_count(const GmlArrayHeap *heap){ return heap?heap->count+heap->text_count:0; }
 int gml_array_heap_collection_due(const GmlArrayHeap *heap){
@@ -378,10 +420,11 @@ void gml_arr_index_ensure(GmlArr *A, int idx){
     /* A zeroed GmlVal IS vreal(0) — V_REAL is 0, 0.0 is all-zero bits and both pointers are null —
      * so the grown region needs no initialising pass. That pass was the whole resident cost of a
      * legacy 2D array: those live flat at row*32000+col, so a large table reaches a huge index and
-     * writing a zero into every hole faulted in a great many pages that hold nothing. calloc
-     * hands back untouched zero pages instead, and only the rows that carry data get copied. */
+     * writing a zero into every hole faulted in many pages that hold nothing. Only the rows
+     * that carry data get copied, leaving the rest of the new storage untouched. */
     if(A->is_2d && A->row_len){
-      GmlVal *grown=(GmlVal*)calloc((size_t)nc,sizeof(GmlVal));
+      size_t mapped_bytes;
+      GmlVal *grown=array_sparse_storage(nc,&mapped_bytes);
       if(!grown) return;
       if(A->data){
         for(int r=0;r<A->height2d && r<A->row_cap;r++){
@@ -391,9 +434,20 @@ void gml_arr_index_ensure(GmlArr *A, int idx){
           if(base+span>A->cap) span=A->cap-base;
           memcpy(grown+base,A->data+base,(size_t)span*sizeof(GmlVal));
         }
-        free(A->data);
+        array_storage_release(A);
       }
       A->data=grown;
+      A->mapped_data_bytes=mapped_bytes;
+#if defined(__linux__)
+    } else if(A->mapped_data_bytes){
+      /* Sparse state encoding can also describe a one-dimensional array.
+       * Growing its mapping preserves occupied pages and leaves new slots at zero. */
+      size_t bytes=(size_t)nc*sizeof(GmlVal);
+      void *grown=mremap(A->data,A->mapped_data_bytes,bytes,MREMAP_MAYMOVE);
+      if(grown==MAP_FAILED) return;
+      A->data=grown;
+      A->mapped_data_bytes=bytes;
+#endif
     } else {
       /* A dense array has no holes to avoid: extend in place where the allocator can and write
        * the zeros, which is cheaper than allocating a second block and copying the whole of it. */
@@ -593,7 +647,11 @@ void gml_val_free(GmlValueFreeContext *context,GmlVal v){
   /* defend against a corrupt GmlArr (garbage len/cap/data from a bad savestate) — free only the
    * struct, never walk a garbage data pointer. */
   if(A->len<0 || A->cap<A->len || A->cap>GML_ARR_MAX_CAP || (A->len>0 && !A->data)){
-    free(A->row_len); if((uintptr_t)A->data>0x1000 && A->cap>=0 && A->cap<=GML_ARR_MAX_CAP) free(A->data); free(A); return;
+    free(A->row_len);
+    if((uintptr_t)A->data>0x1000 && A->cap>=0 && A->cap<=GML_ARR_MAX_CAP)
+      array_storage_release(A);
+    free(A);
+    return;
   }
   /* Walk occupied row spans in the flat row*32000+col array layout. */
   if(A->is_2d && A->row_len){
@@ -605,7 +663,7 @@ void gml_val_free(GmlValueFreeContext *context,GmlVal v){
     for(int i=0;i<A->len;i++) gml_val_free(context,A->data[i]);
   }
   free(A->row_len);
-  free(A->data);
+  array_storage_release(A);
   free(A);
 }
 /* GM arrays are value types (copied on assignment); our VM stores GmlArr POINTERS instead.

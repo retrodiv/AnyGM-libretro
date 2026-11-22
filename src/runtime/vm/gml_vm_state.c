@@ -804,15 +804,12 @@ static GmlVal sr_val(GmlVM *vm, StateR *s, int depth){
        (!s->vm || s->vm->diagnostics.big_array_log_count++<20))
       anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[vmload]   big array len=%u sparse=%d\n",len,sparse);
     A->len=A->cap=(int)len;
-    A->data=calloc(len?len:1,sizeof(GmlVal));
+    if(sparse) (void)gml_arr_allocate_sparse(A,(int)len);
+    else A->data=calloc(len?len:1,sizeof(GmlVal));
     if(!A->data){ free(A); s->ok=0; return vreal(0); }
     A->escaped=1;
     s->arrays[s->array_count++]=A;
-    /* calloc IS the fill: vreal(0) = {V_REAL=0, 0.0, NULL, NULL} = all-zero bytes. sparse 2D
-     * arrays have logical lengths in the hundreds of thousands (row*32000 stride); explicitly
-     * storing vreal(0) into every slot touched a large amount of fresh pages per state load, which made
-     * state load slow and the host's rewind a slideshow. Only the sparse entries below
-     * touch memory now. */
+    /* The unwritten entries have the all-zero representation of vreal(0). */
     if(s->array_meta){
       uint32_t h=sr_u32(s);
       if(h>100000){ state_debug(s->vm,"array meta too large",s->pos,h); s->ok=0; h=0; }

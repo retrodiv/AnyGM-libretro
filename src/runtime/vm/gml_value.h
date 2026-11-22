@@ -38,6 +38,7 @@ static inline int gml_val_is_number_or_object(GmlVal v){
 typedef struct GmlArrayHeap GmlArrayHeap;
 typedef struct GmlArr {
   GmlVal *data; int len, cap;
+  size_t mapped_data_bytes; /* zero for allocator-owned storage */
   int is_2d, height2d, row_cap;
   int nested_2d;
   int *row_len;

@@ -55,4 +55,7 @@ void gml_arr_store_value(GmlArr *array, int index, GmlVal value);
 
 /* ---- arrays ---- */
 #define GML_2D_STRIDE 32000
+/* Initialise empty backing storage for a sparse state or legacy array. */
+int gml_arr_allocate_sparse(GmlArr *array,int capacity);
+
 #endif

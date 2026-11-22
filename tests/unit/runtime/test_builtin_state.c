@@ -1247,7 +1247,72 @@ static int broadcast_wait_state_roundtrip(int async_payload){
   return ok;
 }
 
+static int sparse_array_storage_roundtrips(void){
+  GmlWin win={0};
+  GmlVM source={0},restored={0};
+  if(gml_vm_init(&source,&win,NULL)) return 0;
+  if(gml_vm_init(&restored,&win,NULL)){
+    gml_vm_free(&source);
+    return 0;
+  }
+  GmlVal root=gml_arr_new(0,vreal(0));
+  GmlVal flat=gml_arr_new(0,vreal(0));
+  GmlVal *slot=gml_varmap_put(&source.globals,"sparse");
+  int ok=slot && root.arr && flat.arr;
+  if(ok){
+    *slot=root;
+    ((GmlArr *)root.arr)->is_2d=1;
+    gml_arr_set_2d(root,0,0,vreal(17));
+    gml_arr_set_2d(root,12,2,vreal(31));
+    slot=gml_varmap_put(&source.globals,"flat");
+    ok=slot!=NULL;
+    if(ok){
+      *slot=flat;
+      gml_arr_set(flat,64000,vreal(47));
+    }
+  }
+  size_t size=ok?gml_vm_state_size(&source):0,written=0,used=0,repeated=0;
+  uint8_t *original=malloc(size?size:1);
+  uint8_t *copy=malloc(size?size:1);
+  ok=ok && size && original && copy &&
+    gml_vm_state_save(&source,original,size,&written) && written==size &&
+    gml_vm_state_load(&restored,original,written,&used) && used==written &&
+    gml_vm_state_save(&restored,copy,size,&repeated) && repeated==written &&
+    memcmp(original,copy,size)==0;
+  slot=ok?gml_varmap_get(&restored.globals,"sparse"):NULL;
+  ok=slot && slot->arr && gml_arr_get_2d(*slot,12,2).d==31;
+  if(ok){
+#if defined(__linux__)
+    GmlArr *array=slot->arr;
+    ok=array->mapped_data_bytes==(size_t)array->cap*sizeof(GmlVal);
+#endif
+    gml_arr_set_2d(*slot,30,0,vreal(23));
+    ok=ok && gml_arr_get_2d(*slot,0,0).d==17 &&
+             gml_arr_get_2d(*slot,12,2).d==31 &&
+             gml_arr_get_2d(*slot,30,0).d==23 &&
+             gml_arr_get(*slot,12*GML_2D_STRIDE+3).d==0;
+  }
+  slot=ok?gml_varmap_get(&restored.globals,"flat"):NULL;
+  ok=slot && slot->arr && gml_arr_get(*slot,64000).d==47;
+  if(ok){
+#if defined(__linux__)
+    GmlArr *array=slot->arr;
+    ok=array->mapped_data_bytes==(size_t)array->cap*sizeof(GmlVal);
+#endif
+    gml_arr_set(*slot,131072,vreal(19));
+    ok=ok && gml_arr_get(*slot,64000).d==47 &&
+             gml_arr_get(*slot,102400).d==0 && gml_arr_get(*slot,131072).d==19;
+  }
+  free(original);
+  free(copy);
+  gml_vm_free(&restored);
+  gml_vm_free(&source);
+  if(!ok) fprintf(stderr,"sparse array storage or roundtrip differs\n");
+  return ok;
+}
+
 int main(void){
+  if(!sparse_array_storage_roundtrips()) return 1;
   if(!literal_values_lifetime() || !retained_ds_values_lifetime()) return 1;
   if(!broadcast_wait_state_roundtrip(0) || !broadcast_wait_state_roundtrip(1)) return 1;
 #ifdef ANYGM_TEST_STATE_ALLOC_FAILURE
