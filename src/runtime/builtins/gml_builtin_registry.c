@@ -394,7 +394,7 @@ static GmlVal gml_builtin_call_fast_id_impl(GmlVM *vm, int id, const char *nm, G
     case BID_IS_STRING:
       return vreal(n>0 && a[0].t==V_STR);
     case BID_IS_REAL:
-      return vreal(n>0 && a[0].t==V_REAL);
+      return vreal(n>0 && gml_builtin_value_is_numeric(vm,a[0]));
     case BID_STRING_ORD_AT:
     case BID_STRING_CHAR_AT:
     case BID_STRING_LENGTH:

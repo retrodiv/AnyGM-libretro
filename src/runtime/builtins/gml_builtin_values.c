@@ -941,6 +941,16 @@ static int gml_value_is_method(GmlVM *vm, GmlVal value){
   return st->method_bound || (fn && fn->t==V_REAL && GML_IS_FUNCVAL((int)fn->d));
 }
 
+int gml_builtin_value_is_numeric(GmlVM *vm,GmlVal value){
+  if(value.t!=V_REAL) return 0;
+  /* Bound methods use real-tagged handles internally. Only an integral real in
+   * the handle range can refer to one. Explicit integers keep their type. */
+  if(gml_val_number_kind(value)==GML_NUM_REAL && GML_IS_STRUCT_ID(value.d) &&
+     value.d==(double)(unsigned)value.d)
+    return !gml_value_is_method(vm,value);
+  return 1;
+}
+
 typedef struct { GmlArr *source, *clone; } VariableCloneArray;
 typedef struct { unsigned source, clone; } VariableCloneStruct;
 typedef struct {
@@ -1176,7 +1186,8 @@ GmlVal gml_builtin_try_values_variables(GmlVM *vm, const char *nm, GmlVal *a, in
   if(!strcmp(nm,"is_string")) return vreal(n>0 && a[0].t==V_STR);
   if(!strcmp(nm,"is_int32")) return vreal(n>0 && gml_val_number_kind(a[0])==GML_NUM_INT32);
   if(!strcmp(nm,"is_int64")) return vreal(n>0 && gml_val_number_kind(a[0])==GML_NUM_INT64);
-  if(!strcmp(nm,"is_real")||!strcmp(nm,"is_numeric")) return vreal(n>0 && a[0].t==V_REAL);
+  if(!strcmp(nm,"is_real")||!strcmp(nm,"is_numeric"))
+    return vreal(n>0 && gml_builtin_value_is_numeric(vm,a[0]));
   if(!strcmp(nm,"is_array")) return vreal(n>0 && a[0].t==V_ARR);
   /* Only a real can be either: a string or an undefined is neither NaN nor infinite, and
    * answering from a coerced number would call is_nan("") true. */

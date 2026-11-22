@@ -375,6 +375,7 @@ GmlVal gml_builtin_try_particles(GmlVM *vm, const char *name,
 GmlVal gml_builtin_try_draw(GmlVM *vm, const char *name,
                             GmlVal *args, int count);
 GmlVal gml_builtin_draw_primitive(GmlVM *vm,const char *name,GmlVal *args,int count);
+int gml_builtin_value_is_numeric(GmlVM *vm,GmlVal value);
 GmlVal gml_builtin_try_values_variables(GmlVM *vm, const char *name,
                                         GmlVal *args, int count);
 GmlVal gml_builtin_try_draw_3d(GmlVM *vm, const char *name,

@@ -321,6 +321,35 @@ static int script_resolution_order(GmlVM *vm,LogFixture *log_fixture){
   return ok;
 }
 
+static int bound_method_numeric_predicates(GmlVM *vm){
+  GmlVal args[]={vreal(IT_GLOBAL),vreal(GML_FUNCVAL_TAG | 4)};
+  GmlVal method=gml_builtin_call(vm,"method",args,2);
+  int ok=expect_real("bound method fixture",gml_builtin_call(vm,"is_method",&method,1),1);
+  ok=expect_real("bound method remains callable",gml_vm_call_callable(vm,method,NULL,0),77) && ok;
+  const char *predicates[]={"is_numeric","is_real"};
+  const struct {
+    const char *label;
+    GmlVal value;
+    double expected;
+  } cases[]={
+    {"bound method is not numeric",method,0},
+    {"fractional real in the handle range remains numeric",vreal(method.d+0.5),1},
+    {"explicit integer in the handle range remains numeric",vint32((int32_t)method.d),1},
+    {"ordinary real remains numeric",vreal(23.5),1},
+    {"numeric text is not numeric",vstr("23"),0}
+  };
+  for(size_t p=0;p<sizeof predicates/sizeof *predicates;p++){
+    for(size_t i=0;i<sizeof cases/sizeof *cases;i++){
+      GmlVal value=cases[i].value;
+      ok=expect_real(cases[i].label,gml_builtin_call(vm,predicates[p],&value,1),
+                     cases[i].expected) && ok;
+      GmlVal cached=call_fast(vm,predicates[p],&value,1,&ok);
+      ok=expect_real(cases[i].label,cached,cases[i].expected) && ok;
+    }
+  }
+  return ok;
+}
+
 static int function_value_and_alias_resolution(GmlVM *vm){
   GmlVal callable=vreal((double)(GML_FUNCVAL_TAG|4));
   GmlVal function_result=gml_builtin_call(vm,"script_execute",&callable,1);
@@ -1902,6 +1931,7 @@ int main(int argc,char **argv){
          payload_script_precedes_exact_builtin(&vm) &&
          script_resolution_order(&vm,&log_fixture) &&
          show_error_contract(&vm,&log_fixture) &&
+         bound_method_numeric_predicates(&vm) &&
          function_value_and_alias_resolution(&vm) &&
          texture_interpolation_ext_alias(&vm,&log_fixture) &&
          internal_instance_receiver_conversion(&vm,&log_fixture) &&
