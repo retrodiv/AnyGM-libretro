@@ -53,6 +53,7 @@ int main(int argc,char **argv){
     {"event_boundary_room_transition",expect_event_boundary_room_transition},
     {"initial_create_redirect_begin_step",expect_initial_create_redirect_begin_step},
     {"room_start_creation",expect_room_start_creation},
+    {"room_start_self_creation",expect_room_start_self_creation},
     {"room_transition_animation_phase",expect_room_transition_animation_phase},
     {"animation_end_room_transition_slot",
      expect_animation_end_room_transition_reuses_step_slot},

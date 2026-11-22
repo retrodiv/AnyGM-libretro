@@ -1909,10 +1909,14 @@ int expect_initial_create_redirect_begin_step(void){
   return ok;
 }
 
-/* Room Start reaches a creation only under second-generation Studio's resource-major dispatch,
- * and only for an object later in resource order than the instance whose handler created it.
- * Earlier generations keep the dispatch to the instances present when it began. */
-static int expect_room_start_creation_revision(int revision){
+/* One room holding one placed instance of object 1 among three objects, entered once. Each
+ * object's Room Start is the given source. Reports each object's hit global and live count, and
+ * whether the resolved profile keeps Room Start to the instances present when it begins. The
+ * fixture compiler emits only the revision-15 code format, so an earlier revision resolves its
+ * profile and policy without running. */
+typedef struct { double hits[3]; int alive[3]; int snapshot; int ran; } RoomStartOutcome;
+
+static int room_start_fixture(int revision,const char *const sources[3],RoomStartOutcome *outcome){
   GmlcProject project={0};
   GmlcObject objects[3]={{0}};
   GmlcObjectEvent events[3]={{0}};
@@ -1926,17 +1930,9 @@ static int expect_room_start_creation_revision(int revision){
     "/tmp/gml-room-start-later-XXXXXX",
     "/tmp/gml-room-start-package-XXXXXX"
   };
-  const char *sources[3]={
-    "global.earlier_hits+=1;\n",
-    "global.creator_hits+=1;\n"
-    "if(global.creator_hits==1){\n"
-    "  instance_create_depth(0,0,0,obj_earlier);\n"
-    "  instance_create_depth(0,0,0,obj_creator);\n"
-    "  instance_create_depth(0,0,0,obj_later);\n"
-    "}\n",
-    "global.later_hits+=1;\n"
-  };
+  static const char *const hit_names[3]={"earlier_hits","creator_hits","later_hits"};
   int created=0,ok=0;
+  memset(outcome,0,sizeof *outcome);
   for(int index=0;index<4;index++){
     int fd=mkstemp(paths[index]);
     if(fd<0) goto cleanup;
@@ -1993,27 +1989,32 @@ static int expect_room_start_creation_revision(int revision){
       goto cleanup;
     }
     win.compatibility=&profile;
+    outcome->snapshot=anygm_policy_uses_classic_runtime(&win) ||
+                      !anygm_policy_resource_major_normal_step(&win);
+    if(revision<15){
+      ok=1;
+      win.compatibility=NULL;
+      gml_win_free(&win);
+      goto cleanup;
+    }
     GmlVM vm;
     if(gml_vm_init(&vm,&win,&services)){
       win.compatibility=NULL;
       gml_win_free(&win);
       goto cleanup;
     }
-    *gml_varmap_put(&vm.globals,"earlier_hits")=vreal(0);
-    *gml_varmap_put(&vm.globals,"creator_hits")=vreal(0);
-    *gml_varmap_put(&vm.globals,"later_hits")=vreal(0);
+    outcome->ran=1;
+    for(int index=0;index<3;index++) *gml_varmap_put(&vm.globals,hit_names[index])=vreal(0);
     gml_room_enter(&vm,0);
-    GmlVal *earlier=gml_varmap_get(&vm.globals,"earlier_hits");
-    GmlVal *creator=gml_varmap_get(&vm.globals,"creator_hits");
-    GmlVal *later=gml_varmap_get(&vm.globals,"later_hits");
-    double expected_later=revision>=17?1:0;
-    ok=earlier && earlier->t==V_REAL && earlier->d==0 &&
-       creator && creator->t==V_REAL && creator->d==1 &&
-       later && later->t==V_REAL && later->d==expected_later;
-    if(!ok)
-      fprintf(stderr,"revision %d Room Start creation mismatch: earlier=%.0f creator=%.0f later=%.0f\n",
-        revision,earlier&&earlier->t==V_REAL?earlier->d:-1.0,
-        creator&&creator->t==V_REAL?creator->d:-1.0,later&&later->t==V_REAL?later->d:-1.0);
+    ok=1;
+    for(int index=0;index<3;index++){
+      GmlVal *hits=gml_varmap_get(&vm.globals,hit_names[index]);
+      if(!hits || hits->t!=V_REAL) ok=0;
+      else outcome->hits[index]=hits->d;
+    }
+    for(int i=0;i<vm.inst_count;i++)
+      if(vm.inst[i].active && !vm.inst[i].marked && vm.inst[i].obj>=0 && vm.inst[i].obj<3)
+        outcome->alive[vm.inst[i].obj]++;
     gml_vm_free(&vm);
     win.compatibility=NULL;
     gml_win_free(&win);
@@ -2023,10 +2024,66 @@ cleanup:
   return ok;
 }
 
+/* Room Start reaches a creation only under second-generation Studio's resource-major dispatch,
+ * and only for an object later in resource order than the instance whose handler created it.
+ * Earlier generations keep the dispatch to the instances present when it began. */
+static int expect_room_start_creation_revision(int revision){
+  static const char *const sources[3]={
+    "global.earlier_hits+=1;\n",
+    "global.creator_hits+=1;\n"
+    "if(global.creator_hits==1){\n"
+    "  instance_create_depth(0,0,0,obj_earlier);\n"
+    "  instance_create_depth(0,0,0,obj_creator);\n"
+    "  instance_create_depth(0,0,0,obj_later);\n"
+    "}\n",
+    "global.later_hits+=1;\n"
+  };
+  RoomStartOutcome outcome;
+  if(!room_start_fixture(revision,sources,&outcome)) return 0;
+  double expected_later=revision>=17?1:0;
+  int ok=outcome.ran && outcome.snapshot==(revision<17) &&
+         outcome.hits[0]==0 && outcome.hits[1]==1 && outcome.hits[2]==expected_later;
+  if(!ok)
+    fprintf(stderr,"revision %d Room Start creation mismatch: earlier=%.0f creator=%.0f later=%.0f\n",
+      revision,outcome.hits[0],outcome.hits[1],outcome.hits[2]);
+  return ok;
+}
+
 int expect_room_start_creation(void){
   int ok=1;
   for(int revision=16;revision<=17;revision++)
     if(!expect_room_start_creation_revision(revision)) ok=0;
+  return ok;
+}
+
+/* A Room Start that unconditionally creates another instance of its own object, the idiom
+ * of a symmetric pair built from one placed half. The creation must wait for the next room in
+ * every generation: delivering the event to it would make the dispatch feed itself. The cap
+ * only turns such a regression into a failure instead of an endless room entry. Revisions 14 to
+ * 16 must also keep the snapshot policy; revision 14 is checked at that level only. */
+int expect_room_start_self_creation(void){
+  static const char *const sources[3]={
+    "global.earlier_hits+=1;\n",
+    "global.creator_hits+=1;\n"
+    "if(global.creator_hits<64){\n"
+    "  var other_half=instance_create(x,y,object_index);\n"
+    "  other_half.direction=180;\n"
+    "}\n",
+    "global.later_hits+=1;\n"
+  };
+  static const int revisions[]={14,15,16,17};
+  int ok=1;
+  for(size_t i=0;i<sizeof revisions/sizeof revisions[0];i++){
+    RoomStartOutcome outcome;
+    int revision=revisions[i];
+    if(!room_start_fixture(revision,sources,&outcome) || outcome.snapshot!=(revision<17) ||
+       (revision>=15 && (!outcome.ran || outcome.hits[1]!=1 || outcome.alive[1]!=2 ||
+                         outcome.hits[0]!=0 || outcome.hits[2]!=0))){
+      fprintf(stderr,"revision %d Room Start self-creation mismatch: snapshot=%d hits=%.0f instances=%d\n",
+        revision,outcome.snapshot,outcome.hits[1],outcome.alive[1]);
+      ok=0;
+    }
+  }
   return ok;
 }
 
