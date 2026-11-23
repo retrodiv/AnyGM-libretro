@@ -63,6 +63,10 @@ int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUploa
                                 int *did_upload);
 int gml_gpu_opengl_scene_upload_source_region(GmlGpuBackend *backend,
   const GmlRenderImageUpload *full,GmlRenderRect region,uint64_t *uploaded_bytes);
+/* Grants the next offered frame its completion band and returns the completion uploads and
+ * bytes defined since the previous call. */
+void gml_gpu_opengl_scene_begin_frame(GmlGpuBackend *backend,uint64_t *completion_uploads,
+                                      uint64_t *completion_bytes);
 int gml_gpu_opengl_scene_readback(GmlGpuBackend *backend,const GmlRenderImageReadback *transfer);
 int gml_gpu_opengl_scene_has_rgb(GmlGpuBackend *backend,GmlRenderImageRef image,int *has_rgb);
 int gml_gpu_opengl_scene_clear_depth(GmlGpuBackend *backend,

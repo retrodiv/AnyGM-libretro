@@ -225,6 +225,7 @@ static void scene_delete_image(GmlGpuBackend *backend,GlSceneImage *image){
   if(image->content_source_texture) backend->gl.DeleteTextures(1,&image->content_source_texture);
   if(image->framebuffer) backend->gl.DeleteFramebuffers(1,&image->framebuffer);
   if(image->texture) backend->gl.DeleteTextures(1,&image->texture);
+  if(image->completion_texture) backend->gl.DeleteTextures(1,&image->completion_texture);
   memset(image,0,sizeof *image);
 }
 
@@ -755,6 +756,80 @@ restore:
   }
 }
 
+/* A partial atlas page is completed in bands of about this many bytes, one band per offered
+ * frame, so a page that keeps growing never needs one whole-page transfer in a single frame. */
+enum { GL_SCENE_COMPLETION_BAND_BYTES=1u<<20 };
+
+static void scene_completion_drop(GmlGpuBackend *backend,GlSceneImage *image){
+  if(image->completion_texture) backend->gl.DeleteTextures(1,&image->completion_texture);
+  image->completion_texture=0;
+  image->completion_rows=0;
+}
+
+/* Defines up to row_limit further rows of the complete page from client bytes. The storage is
+ * fresh and unreferenced by draws, so the write does not wait on queued readers; a staged first
+ * partial definition is avoided as in scene_upload_image. Returns the rows defined, and
+ * publishes the complete storage in place of the partial texture after its last row. */
+static uint32_t scene_completion_advance(GmlGpuBackend *backend,GlSceneImage *image,
+                                         const GmlRenderImageUpload *full,uint32_t row_limit){
+  size_t row_bytes=(size_t)full->storage_width*4u;
+  uint32_t rows;
+  if(full->stride_bytes!=row_bytes || !row_limit || image->rendered_origin ||
+     full->image.resource_class!=GML_RENDER_RESOURCE_ATLAS || image->target ||
+     image->framebuffer || image->content_source_texture ||
+     image->content_source_framebuffer) return 0;
+  if(!image->completion_texture){
+    backend->gl.GenTextures(1,&image->completion_texture);
+    if(!image->completion_texture) return 0;
+    image->completion_rows=0;
+    backend->gl.ActiveTexture(GL_TEXTURE0);
+    backend->gl.BindTexture(GL_TEXTURE_2D,image->completion_texture);
+    backend->gl.TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,(GLsizei)full->storage_width,
+                           (GLsizei)full->storage_height,0,GL_RGBA,GL_UNSIGNED_BYTE,NULL);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+  } else {
+    backend->gl.ActiveTexture(GL_TEXTURE0);
+    backend->gl.BindTexture(GL_TEXTURE_2D,image->completion_texture);
+  }
+  rows=full->storage_height-image->completion_rows;
+  if(rows>row_limit) rows=row_limit;
+  backend->gl.PixelStorei(GL_UNPACK_ALIGNMENT,1);
+  backend->gl.PixelStorei(GL_UNPACK_ROW_LENGTH,0);
+  backend->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
+  backend->gl.TexSubImage2D(GL_TEXTURE_2D,0,0,(GLint)image->completion_rows,
+                            (GLsizei)full->storage_width,(GLsizei)rows,GL_RGBA,GL_UNSIGNED_BYTE,
+                            (const uint8_t*)full->bytes+(size_t)image->completion_rows*row_bytes);
+  backend->gl.PixelStorei(GL_UNPACK_ALIGNMENT,4);
+  backend->gl.BindTexture(GL_TEXTURE_2D,0);
+  if(backend->gl.GetError()!=GL_NO_ERROR){ scene_completion_drop(backend,image); return 0; }
+  image->completion_rows+=rows;
+  if(image->completion_rows<full->storage_height) return rows;
+  backend->gl.DeleteTextures(1,&image->texture);
+  image->texture=image->completion_texture;
+  image->completion_texture=0;
+  image->completion_rows=0;
+  image->source_partial=0;
+  image->source_region=(GmlRenderRect){0,0,full->storage_width,full->storage_height};
+  image->content_source_version=0;
+  image->alpha_opaque=0;
+  image->alpha_bounds_known=0;
+  return rows;
+}
+
+void gml_gpu_opengl_scene_begin_frame(GmlGpuBackend *backend,uint64_t *completion_uploads,
+                                      uint64_t *completion_bytes){
+  if(completion_uploads) *completion_uploads=0;
+  if(completion_bytes) *completion_bytes=0;
+  if(!backend) return;
+  backend->scene.completion_budget=1;
+  if(completion_uploads) *completion_uploads=backend->scene.completion_uploads;
+  if(completion_bytes) *completion_bytes=backend->scene.completion_bytes;
+  backend->scene.completion_uploads=backend->scene.completion_bytes=0;
+}
+
 static int scene_upload_image(GmlGpuBackend *backend,const GmlRenderImageUpload *transfer,
                                 int *did_upload,int source_region){
   GlScene *scene;
@@ -919,6 +994,7 @@ static int scene_upload_image(GmlGpuBackend *backend,const GmlRenderImageUpload 
   slot->valid=1;
   slot->rendered_origin=rendered_origin;
   if(!source_region){
+    scene_completion_drop(backend,slot);
     slot->source_partial=0;
     slot->source_region=(GmlRenderRect){0,0,slot->width,slot->height};
     slot->source_upload_bytes=(uint64_t)slot->width*slot->height*4u;
@@ -986,7 +1062,21 @@ int gml_gpu_opengl_scene_upload_source_region(GmlGpuBackend *backend,
     image->width==full->storage_width && image->height==full->storage_height &&
     image->pixel_format==full->pixel_format && !image->rendered_origin;
   if(current){
-    if(!image->source_partial || scene_contains_region(image->source_region,required)){
+    if(!image->source_partial){
+      scene_completion_drop(backend,image);
+      image->last_used=++backend->scene.use_clock;return 1;
+    }
+    if(scene_contains_region(image->source_region,required)){
+      /* A resident page spends the frame's band on its complete storage. */
+      if(backend->scene.completion_budget){
+        uint32_t band=(uint32_t)(GL_SCENE_COMPLETION_BAND_BYTES/((size_t)full->storage_width*4u));
+        uint32_t rows=scene_completion_advance(backend,image,full,band?band:1u);
+        if(rows){
+          backend->scene.completion_budget=0;
+          backend->scene.completion_uploads++;
+          backend->scene.completion_bytes+=(uint64_t)rows*full->storage_width*4u;
+        }
+      }
       image->last_used=++backend->scene.use_clock;return 1;
     }
     GmlRenderRect old=image->source_region;
@@ -998,9 +1088,25 @@ int gml_gpu_opengl_scene_upload_source_region(GmlGpuBackend *backend,
     if((uint32_t)required.y+required.height>end_y) end_y=(uint32_t)required.y+required.height;
     selected=(GmlRenderRect){(int32_t)x,(int32_t)y,end_x-x,end_y-y};
     previous=image->source_upload_bytes;
-  }
+  } else if(image->completion_texture) scene_completion_drop(backend,image);
   total=(uint64_t)full->storage_width*full->storage_height*4u;
   bytes=(uint64_t)selected.width*selected.height*4u;
+  /* Growth finishes the complete storage instead when its remaining rows cost no more than the
+   * grown region, or when the region would otherwise become a whole-image transfer. */
+  if(current && image->completion_texture){
+    uint64_t remaining=(uint64_t)(full->storage_height-image->completion_rows)*
+                       full->storage_width*4u;
+    if(remaining<=bytes || bytes>=total || previous>=total-bytes){
+      uint32_t rows=scene_completion_advance(backend,image,full,
+                                             full->storage_height-image->completion_rows);
+      if(rows && !image->source_partial){
+        image->source_upload_bytes=previous+remaining;
+        image->last_used=++backend->scene.use_clock;
+        if(uploaded_bytes) *uploaded_bytes=remaining;
+        return 1;
+      }
+    }
+  }
   /* Stop growing the bounding region before cumulative partial copies cost a whole image.
    * This amortisation bound depends only on the resource, not on content or device identity. */
   if(bytes>=total || previous>=total-bytes){

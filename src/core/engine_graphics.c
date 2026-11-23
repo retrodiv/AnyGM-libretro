@@ -271,6 +271,7 @@ void engine_graphics_report(AnygmEngine *engine){
     "refused=%llu partial_prefix=%llu "
     "texture=%llu primitive=%llu surface=%llu effect=%llu presentation=%llu "
     "shader=%llu software3d=%llu uploads=%llu upload_bytes=%llu "
+    "completion_uploads=%llu completion_bytes=%llu "
     "readbacks=%llu readback_bytes=%llu rgb_queries=%llu rgb_query_bytes=%llu "
     "checkpoint_masks=%llu checkpoint_mask_bytes=%llu "
     "rgb_query_refusals=%llu screen_cpu_reads=%llu screen_cpu_materializations=%llu "
@@ -297,6 +298,8 @@ void engine_graphics_report(AnygmEngine *engine){
     (unsigned long long)counters.scene_operations[GML_RENDER_OP_SOFTWARE3D_PASS],
     (unsigned long long)counters.scene_uploads,
     (unsigned long long)counters.scene_uploaded_bytes,
+    (unsigned long long)counters.scene_completion_uploads,
+    (unsigned long long)counters.scene_completion_bytes,
     (unsigned long long)counters.scene_readbacks,
     (unsigned long long)counters.scene_readback_bytes,
     (unsigned long long)counters.scene_rgb_queries,

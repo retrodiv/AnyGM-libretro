@@ -324,6 +324,12 @@ int gml_gpu_execute_plan(GmlGpu *gpu,GmlRenderPlan *plan){
     return 0;
   }
   plan->fallback_reason=GML_PLAN_FALLBACK_NONE;
+  {
+    uint64_t completion_uploads=0,completion_bytes=0;
+    gml_gpu_opengl_scene_begin_frame(gpu->backend,&completion_uploads,&completion_bytes);
+    gpu->counters.scene_completion_uploads+=completion_uploads;
+    gpu->counters.scene_completion_bytes+=completion_bytes;
+  }
   if(!gml_gpu_opengl_execute(gpu->backend,&gpu->context,plan,&gpu->counters,
                          gpu->error,sizeof gpu->error)){
     if(plan->fallback_reason!=GML_PLAN_FALLBACK_SHADER_FAILURE)

@@ -1311,6 +1311,93 @@ static int scene_source_region_case(void){
   return 1;
 }
 
+/* A partial atlas page is completed one band per offered frame in separate storage, then
+ * published; growth may finish the remaining rows instead of re-sending its union. */
+static int scene_source_completion_case(void){
+  enum { WIDTH=2048, HEIGHT=256, BYTES=WIDTH*HEIGHT*4, BAND_ROWS=(1u<<20)/(WIDTH*4),
+    /* the fake driver retains a bounded prefix; rows past it are proved by counts */
+    RETAINED=(1u<<16)*4u };
+  uint8_t *pixels=malloc(BYTES);
+  REQUIRE(pixels,"completion source allocated");
+  for(size_t index=0;index<BYTES;index++) pixels[index]=(uint8_t)(index*29u+index/11u);
+  GmlRenderImageRef ref={GML_RENDER_RESOURCE_ATLAS,93u,1u,1u};
+  GmlRenderImageUpload full={.image=ref,.storage_width=WIDTH,.storage_height=HEIGHT,
+    .region={0,0,WIDTH,HEIGHT},.pixel_format=GML_RENDER_PIXEL_RGBA8888,
+    .stride_bytes=WIDTH*4u,.byte_capacity=BYTES,.bytes=pixels};
+  for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++){
+    anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();GmlGpuContext context=fake_context(api);
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context) && gml_gpu_prepare_scene(gpu,32u,32u),
+            "completion context prepared");
+    GmlRenderDeviceServices service;gml_gpu_device_services(gpu,&service);
+    uint64_t uploads=0,bytes=0;
+    REQUIRE(service.upload_source_region(service.context,&full,(GmlRenderRect){0,0,8u,8u}),
+            "first demand prepares its rectangle");
+    GlSceneImage *image=gml_gpu_opengl_scene_image(gpu->backend,ref);
+    REQUIRE(image && image->source_partial && !image->completion_texture,
+            "no completion work happens before a frame grants its band");
+    gml_gpu_opengl_scene_begin_frame(gpu->backend,&uploads,&bytes);
+    GmlGpuCounters before={0},after={0};gml_gpu_counters(gpu,&before);
+    REQUIRE(service.upload_source_region(service.context,&full,(GmlRenderRect){1,1,2u,2u}) &&
+      service.upload_source_region(service.context,&full,(GmlRenderRect){2,2,2u,2u}),
+      "contained demands are served");
+    gml_gpu_counters(gpu,&after);
+    REQUIRE(image->source_partial && image->completion_texture &&
+      image->completion_rows==BAND_ROWS && image->texture!=image->completion_texture,
+      "one band per frame is defined in storage that draws do not sample");
+    REQUIRE(before.scene_uploads==after.scene_uploads &&
+      before.scene_uploaded_bytes==after.scene_uploaded_bytes,
+      "completion bands are not counted as demand uploads");
+    size_t count=0;
+    const uint8_t *actual=anygm_test_graphics_texture_bytes(image->completion_texture,&count);
+    REQUIRE(actual && count==RETAINED && !memcmp(actual,pixels,RETAINED),
+            "the band holds the source rows");
+    gml_gpu_opengl_scene_begin_frame(gpu->backend,&uploads,&bytes);
+    REQUIRE(uploads==1u && bytes==(uint64_t)BAND_ROWS*WIDTH*4u,"the frame reports its band");
+    REQUIRE(service.upload_source_region(service.context,&full,(GmlRenderRect){1,1,2u,2u}),
+            "the last band is defined");
+    REQUIRE(!image->source_partial && !image->completion_texture &&
+      image->source_region.width==WIDTH && image->source_region.height==HEIGHT,
+      "complete storage replaces the partial texture");
+    actual=anygm_test_graphics_texture_bytes(image->texture,&count);
+    REQUIRE(actual && count==RETAINED && !memcmp(actual,pixels,RETAINED),
+            "published storage holds every source byte");
+
+    full.image.content_version++;ref=full.image;
+    REQUIRE(service.upload_source_region(service.context,&full,(GmlRenderRect){0,0,8u,8u}),
+            "a new version starts partial");
+    image=gml_gpu_opengl_scene_image(gpu->backend,ref);
+    gml_gpu_opengl_scene_begin_frame(gpu->backend,NULL,NULL);
+    REQUIRE(service.upload_source_region(service.context,&full,(GmlRenderRect){1,1,2u,2u}) &&
+      image->completion_rows==BAND_ROWS,"the new version defines its first band");
+    gml_gpu_counters(gpu,&before);
+    REQUIRE(service.upload_source_region(service.context,&full,(GmlRenderRect){2000,200,8u,8u}),
+            "growth beyond the resident rectangle is served");
+    gml_gpu_counters(gpu,&after);
+    REQUIRE(!image->source_partial && !image->completion_texture &&
+      after.scene_uploaded_bytes-before.scene_uploaded_bytes==
+        (uint64_t)(HEIGHT-BAND_ROWS)*WIDTH*4u,
+      "growth finishes the remaining rows when they cost less than the grown union");
+    actual=anygm_test_graphics_texture_bytes(image->texture,&count);
+    REQUIRE(actual && count==RETAINED && !memcmp(actual,pixels,RETAINED),
+            "finished storage holds every source byte");
+
+    full.image.content_version++;ref=full.image;
+    REQUIRE(service.upload_source_region(service.context,&full,(GmlRenderRect){0,0,8u,8u}),
+            "a third version starts partial");
+    image=gml_gpu_opengl_scene_image(gpu->backend,ref);
+    gml_gpu_opengl_scene_begin_frame(gpu->backend,NULL,NULL);
+    REQUIRE(service.upload_source_region(service.context,&full,(GmlRenderRect){1,1,2u,2u}) &&
+      image->completion_texture,"the third version defines a band");
+    REQUIRE(service.upload(service.context,&full) && !image->source_partial &&
+      !image->completion_texture,"a complete upload discards unfinished completion storage");
+    service.retire(service.context,ref);
+    gml_gpu_destroy(gpu,1);
+  }
+  free(pixels);
+  return 1;
+}
+
 static int scene_initial_partial_transfer_case(void){
   enum { SIDE=256, BYTES=SIDE*SIDE*4 };
   uint8_t *pixels=malloc(BYTES);
@@ -8909,6 +8996,7 @@ int main(int argc,char **argv){
     {"scene_upload_policy",scene_upload_policy_case},
     {"scene_source_region",scene_source_region_case},
     {"scene_initial_partial_transfer",scene_initial_partial_transfer_case},
+    {"scene_source_completion",scene_source_completion_case},
     {"scene_optional_entry_refusal",scene_optional_entry_refusal_case},
     {"scene_content_source_orientation",scene_content_source_orientation_case},
     {"scene_resident_batch",scene_resident_batch_case},

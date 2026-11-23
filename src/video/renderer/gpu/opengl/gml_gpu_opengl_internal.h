@@ -160,6 +160,10 @@ typedef struct GlSceneImage {
   int source_partial;
   GmlRenderRect source_region;
   uint64_t source_upload_bytes;
+  /* Complete storage for a partial atlas page, defined a band of rows at a time while the
+   * partial texture serves draws. It replaces texture once every row is defined. */
+  GLuint completion_texture;
+  uint32_t completion_rows;
 } GlSceneImage;
 
 void gml_gpu_opengl_alpha_cover(GlSceneImage *image,double left,double top,
@@ -232,6 +236,9 @@ typedef struct GlScene {
   GmlGpuTimeFn upload_clock;
   void *upload_clock_userdata;
   uint64_t upload_client_ns,upload_staged_ns;
+  /* One completion band per offered frame; completed bytes await the counters. */
+  int completion_budget;
+  uint64_t completion_uploads,completion_bytes;
   size_t instance_bytes_used;
   int instance_storage_ready;
   /* Byte-identical instance ranges share only their immutable stream storage, not draw state. */
@@ -385,6 +392,10 @@ void gml_gpu_opengl_scene_prepare_uploads(GmlGpuBackend *backend);
 int gml_gpu_opengl_scene_capabilities(const GmlGpuBackend *backend,GmlRenderDeviceCaps *caps);
 int gml_gpu_opengl_scene_upload_source_region(GmlGpuBackend *backend,
   const GmlRenderImageUpload *full,GmlRenderRect region,uint64_t *uploaded_bytes);
+/* Grants the next offered frame its completion band and returns the completion uploads and
+ * bytes defined since the previous call. */
+void gml_gpu_opengl_scene_begin_frame(GmlGpuBackend *backend,uint64_t *completion_uploads,
+                                      uint64_t *completion_bytes);
 int gml_gpu_opengl_scene_source_region_ready(const GlSceneImage *image,
   const GmlRenderDrawOp *operation);
 int gml_gpu_opengl_scene_upload(GmlGpuBackend *backend,const GmlRenderImageUpload *transfer,

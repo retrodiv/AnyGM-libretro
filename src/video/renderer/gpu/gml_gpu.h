@@ -67,6 +67,8 @@ typedef struct GmlGpuCounters {
   uint64_t scene_operations[GML_RENDER_OPERATION_COUNT];
   uint64_t scene_families[GML_RENDER_SCENE_FAMILY_COUNT];
   uint64_t scene_uploads,scene_uploaded_bytes,scene_readbacks,scene_readback_bytes;
+  /* Bands that complete partial atlas pages ahead of demand, outside scene_uploads. */
+  uint64_t scene_completion_uploads,scene_completion_bytes;
   uint64_t scene_readback_masks,scene_readback_mask_bytes;
   /* Raw depth transport never counts as colour drawing or colour observation. */
   uint64_t scene_depth_uploads,scene_depth_uploaded_bytes;
