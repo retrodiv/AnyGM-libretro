@@ -730,6 +730,8 @@ double gml_sprite_animation_delta(GmlRender *r, int sprite, double image_speed, 
 /* queue background decodes (worker threads; safe no-ops when disabled or already decoded) */
 void gml_render_prefetch_atlas(GmlRender *r, int idx);
 void gml_render_prefetch_sprite(GmlRender *r, int sprite);
+/* After room warming: let idle atlas workers decode unreferenced pages within the speculative budget. */
+void gml_render_atlas_fill(GmlRender *r);
 void gml_render_prefetch_bg(GmlRender *r, int bg);
 /* synchronously decode directly referenced pages; used at room boundaries to avoid first-draw hitches */
 void gml_render_warm_sprite(GmlRender *r, int sprite);

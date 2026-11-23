@@ -167,6 +167,8 @@ typedef struct {
   gml_thread_t th[8]; int nth, shutdown;
   unsigned qhead, qtail; int *queue; unsigned qcap;
   uint8_t *state;                     /* per-atlas: 0 idle, 1 queued, 2 decoding */
+  int fill_next, fill_enabled, fill_busy;  /* idle decode of pages nothing has referenced yet */
+  size_t fill_budget;
   GmlRender *r;
 } GmlAtlasPool;
 static int log_atlas_on(const GmlRender *render){
@@ -245,12 +247,37 @@ static uint8_t *atlas_decode_publish(GmlRender *r, int idx, int locked, GmlAtlas
   }
   return px;
 }
+/* With the queue empty, one idle worker at a time decodes the next page no one has asked for yet,
+ * in page order, while the decoded total stays within the fill budget. Called with the lock held. */
+static int atlas_fill_take(GmlAtlasPool *pool,GmlRender *r){
+  if(pool->fill_busy) return -1;
+  while(pool->fill_enabled && pool->fill_next<r->n_atlas){
+    int idx=pool->fill_next++;
+    GmlAtlas *a=&r->atlas[idx];
+    if(a->px || a->decode_attempted || pool->state[idx] || !atlas_has_source(r,a)) continue;
+    if(r->atlas_decoded_bytes+(size_t)a->w*(size_t)a->h*4u>pool->fill_budget){
+      pool->fill_enabled=0;
+      break;
+    }
+    pool->state[idx]=2;
+    pool->fill_busy=1;
+    return idx;
+  }
+  return -1;
+}
 static void *atlas_worker(void *arg){
   GmlAtlasPool *pool=(GmlAtlasPool*)arg;
   GmlRender *r=pool->r;
   gml_mutex_lock(&pool->mu);
   while(!pool->shutdown){
-    if(pool->qhead==pool->qtail){ gml_cond_wait(&pool->work,&pool->mu); continue; }
+    if(pool->qhead==pool->qtail){
+      int idx=atlas_fill_take(pool,r);
+      if(idx<0){ gml_cond_wait(&pool->work,&pool->mu); continue; }
+      gml_mutex_unlock(&pool->mu);
+      atlas_decode_publish(r,idx,1,pool);             /* relocks to publish */
+      pool->fill_busy=0;
+      continue;
+    }
     int idx=pool->queue[pool->qhead % pool->qcap]; pool->qhead++;
     GmlAtlas *a=&r->atlas[idx];
     if(pool->state[idx]!=1){ continue; }              /* claimed by a sync decode meanwhile */
@@ -317,6 +344,29 @@ void gml_render_prefetch_atlas(GmlRender *r, int idx){
   if(!a->px && !a->decode_attempted && pool->state[idx]==0 && pool->qtail-pool->qhead<pool->qcap){
     pool->state[idx]=1;
     pool->queue[pool->qtail % pool->qcap]=idx; pool->qtail++;
+    gml_cond_broadcast(&pool->work);
+  }
+  gml_mutex_unlock(&pool->mu);
+}
+void gml_render_atlas_fill(GmlRender *r){
+  const AnygmHostServices *host;
+  GmlAtlasPool *pool;
+  if(!r || !r->atlas || r->n_atlas<=0) return;
+  /* A host offering reclaimable copies has declared memory scarce: no speculative fill. */
+  host=r->win?r->win->host:NULL;
+  if(host && host->reclaimable_copy) return;
+  pool=atlas_pool_get(r);
+  if(!pool) return;
+  /* Decoded pages stay resident for the session, so this only brings first-use decodes forward,
+   * while the decoded total fits the speculative budget or a quarter of physical memory, whichever
+   * is larger. */
+  unsigned long long quarter=gml_physical_memory()/4u;
+  size_t budget=atlas_spec_budget(r);
+  if(quarter>budget) budget=quarter>(unsigned long long)SIZE_MAX?SIZE_MAX:(size_t)quarter;
+  gml_mutex_lock(&pool->mu);
+  pool->fill_budget=budget;
+  if(!pool->fill_enabled && pool->fill_next<r->n_atlas){
+    pool->fill_enabled=1;
     gml_cond_broadcast(&pool->work);
   }
   gml_mutex_unlock(&pool->mu);

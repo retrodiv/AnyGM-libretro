@@ -2272,7 +2272,10 @@ void gml_vm_prefetch_room_assets(GmlVM *vm){
       }
     }
   }
-  if(warm) gml_render_prepare_scene_fonts(R);
+  if(warm){
+    gml_render_prepare_scene_fonts(R);
+    gml_render_atlas_fill(R);
+  }
 }
 static int vm_audio_room_warm_disabled(GmlVM *vm){
   if(vm->diagnostics.audio_room_warm_disabled<0){

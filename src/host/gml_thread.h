@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
-/* gml_thread.h — minimal portable thread/mutex/condvar wrapper.
+/* gml_thread.h — minimal portable thread/mutex/condvar wrapper, with the processor count and the
+ * physical memory size that size its users' work.
  * POSIX: pthreads. Windows: KERNEL32 primitives only (CreateThread,
  * CRITICAL_SECTION, CONDITION_VARIABLE) so the self-contained DLL constraint
  * (KERNEL32 + msvcrt) holds. Exactly one .c must place GML_THREAD_BRIDGE_IMPL
@@ -41,6 +42,11 @@ static inline int gml_thread_create(gml_thread_t *t, void *(*fn)(void*), void *a
 }
 static inline void gml_thread_join(gml_thread_t t){ WaitForSingleObject(t,INFINITE); CloseHandle(t); }
 static inline int gml_ncpu(void){ SYSTEM_INFO si; GetSystemInfo(&si); return (int)si.dwNumberOfProcessors; }
+/* Zero when unknown. */
+static inline unsigned long long gml_physical_memory(void){
+  MEMORYSTATUSEX status; status.dwLength=sizeof status;
+  return GlobalMemoryStatusEx(&status)?(unsigned long long)status.ullTotalPhys:0u;
+}
 #define GML_THREAD_BRIDGE_IMPL \
   DWORD WINAPI gml_thread_bridge_(LPVOID p){ \
     GmlThreadBridge *b=(GmlThreadBridge*)p; \
@@ -66,6 +72,15 @@ static inline void gml_thread_join(gml_thread_t t){ pthread_join(t,NULL); }
 static inline int gml_ncpu(void){
   long n=sysconf(_SC_NPROCESSORS_ONLN);
   return n>0 ? (int)n : 1;
+}
+/* Zero when unknown. */
+static inline unsigned long long gml_physical_memory(void){
+#if defined(_SC_PHYS_PAGES) && defined(_SC_PAGESIZE)
+  long pages=sysconf(_SC_PHYS_PAGES),size=sysconf(_SC_PAGESIZE);
+  return pages>0 && size>0 ? (unsigned long long)pages*(unsigned long long)size : 0u;
+#else
+  return 0u;
+#endif
 }
 #define GML_THREAD_BRIDGE_IMPL
 #endif
