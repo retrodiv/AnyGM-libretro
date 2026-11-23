@@ -3260,6 +3260,11 @@ void gml_vm_wait_cancel(GmlVM *vm){
   vm->wait_requested=0;
 }
 
+static int vm_decoded_prev_conv_v_i32(const GmlWin *w,const uint8_t *d,uint32_t pc,uint32_t start){
+  GmlInsn prev;
+  if(pc<start+4 || gml_decode_bc_bounded(d,w->size,pc-4,w->bytecode,&prev)!=4) return 0;
+  return prev.kind==OP_CONV && prev.type1==DT_VAR && prev.type2==DT_INT32;
+}
 static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
                                GmlVal *args, int n_args,
                                GmlWaitFrame *resume_frames, int resume_index);
@@ -3498,17 +3503,12 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
       int sz=gml_decode_bc_bounded(d,w->size,pc,w->bytecode,&in); if(!sz) break;
       nextpc=pc+(uint32_t)sz;
     }
-    int prev_conv_v_i32=0;
-    if(use_cache){
-      if(ip>0){
-        GmlInsn *prev=&cached_ins[ip-1];
-        prev_conv_v_i32 = prev->kind==OP_CONV && prev->type1==DT_VAR && prev->type2==DT_INT32;
-      }
-    } else if(pc>=start+4){
-      GmlInsn prev;
-      if(gml_decode_bc_bounded(d,w->size,pc-4,w->bytecode,&prev)==4)
-        prev_conv_v_i32 = prev.kind==OP_CONV && prev.type1==DT_VAR && prev.type2==DT_INT32;
-    }
+    /* Whether the previous instruction is conv.v.i32; only two pop forms ask, so it is
+     * derived where they need it rather than for every instruction. */
+    #define VM_PREV_CONV_V_I32() \
+      (use_cache ? (ip>0 && cached_ins[ip-1].kind==OP_CONV && cached_ins[ip-1].type1==DT_VAR && \
+                    cached_ins[ip-1].type2==DT_INT32) \
+                 : vm_decoded_prev_conv_v_i32(w,d,pc,start))
     /* Include the numeric top-of-stack value in the optional opcode trace. */
     GML_VM_DIAGNOSTIC_OPCODE(vm,w->code[ci].name,pc-start,
                              gml_op_mnemonic(in.kind),sp,
@@ -3554,7 +3554,10 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
         anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"\n");
         vm->diagnostics.pc_log_count++;
       } }
-    if(use_cache && !hp_builtin && sp==0 && !vm->diagnostics.pc_name[0] &&
+    /* The fused draw loop opens with push, push, cmp, bf; test that shape before the call. */
+    if(use_cache && !hp_builtin && sp==0 && ip+3u<cached_n &&
+       cached_ins[ip+2].kind==OP_CMP && cached_ins[ip+3].kind==OP_BF &&
+       !vm->diagnostics.pc_name[0] &&
        !GML_VM_DIAGNOSTIC_OPCODE_ENABLED(vm,w->code[ci].name) &&
        !vm_trace_call_filter(vm)){
       uint32_t loop_exit=0;
@@ -3697,7 +3700,7 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
               v=var_get_h(vm,(int)iv.d,nm,nh); scope_read=1;
             }
             else v=vreal(0);
-          } else if(in.inst==0 && in.reftype==0xA0 && prev_conv_v_i32){
+          } else if(in.inst==0 && in.reftype==0xA0 && VM_PREV_CONV_V_I32()){
             GmlVal iv=sp>0?stk[--sp]:vreal(0);
             int it=(int)asnum(iv);
             if(iv.t==V_REAL && !GML_IS_STRUCT_ID(iv.d) && it<100000){
@@ -3780,7 +3783,7 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
              GmlInstance *t=vm_inst_from_ref(vm,iv); if(t) inst_set_any_h(vm,t,nm,nh,val);
            }
         } else {
-          if(in.inst==0 && in.reftype==0xA0 && prev_conv_v_i32){
+          if(in.inst==0 && in.reftype==0xA0 && VM_PREV_CONV_V_I32()){
             GmlVal iv=sp>0?stk[--sp]:vreal(0);
             GmlVal v=sp>0?stk[--sp]:vreal(0);
             v=vm_box_stored_value(v,in.type2);
