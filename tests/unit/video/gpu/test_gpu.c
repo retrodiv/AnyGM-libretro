@@ -5032,6 +5032,8 @@ static int linear_readback_case(void){
     if(failure==0u){
       REQUIRE(anygm_test_graphics_read_pixels()==0u && linear.begins==1u && linear.maps==1u,
               "a large region is captured instead of read directly");
+      REQUIRE(linear.finished_begins==1u,
+              "the capture begins only after the device has finished what it samples");
       REQUIRE(linear.region[0]==(int)X && linear.region[1]==(int)Y &&
               linear.region[2]==(int)W && linear.region[3]==(int)H,
               "the capture covers exactly the region");

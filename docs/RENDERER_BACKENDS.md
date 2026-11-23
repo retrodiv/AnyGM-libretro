@@ -1339,7 +1339,10 @@ Every OpenGL pixel read of at least 256 KiB, full or banded, first tries a
 linear capture: a vertex program fetches the region by exact texel fetches,
 packs four words per point in the requested host format top-down, and transform
 feedback writes them into a reusable linear buffer that the host maps and copies
-by rows, split among up to four threads. Tiled devices otherwise untile a direct
+by rows, split among up to four threads. The capture is submitted only after the
+device has finished all earlier work: a tiled device given a capture while the
+rendering it samples was still in flight hung until the kernel reset it, and the
+map waits for the device anyway. Tiled devices otherwise untile a direct
 read on the host from uncached memory. The words are the existing converter's
 output, so bytes are identical. Missing entry points, a refused program, start,
 map or a buffer lost while mapped leave the direct read to serve and rewrite the

@@ -1356,6 +1356,10 @@ static int scene_readback_linear(GmlGpuBackend *backend,GlSceneImage *image,
     format[0]=(GLint)image->height;
     format[1]=transfer->pixel_format==GML_RENDER_PIXEL_RGBA8888?2:
               transfer->pixel_format==GML_RENDER_PIXEL_XRGB8888?1:0;
+    /* The capture waits for the device to finish rendering what it samples. On a tiled device a
+     * capture submitted while that rendering was still in flight hung the device until the kernel
+     * reset it; the map below waits for the device anyway, so this costs no overlap worth having. */
+    if(backend->gl.Finish) backend->gl.Finish();
     backend->gl.Enable(GL_RASTERIZER_DISCARD);
     backend->gl.UseProgram(scene->linear_program);
     backend->gl.Uniform1i(scene->linear_u_image,0);

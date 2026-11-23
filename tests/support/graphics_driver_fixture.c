@@ -109,7 +109,7 @@ typedef struct FakeDriver {
   unsigned char *buffer_store[FAKE_MAX_CALLS];
   /* Transform feedback is offered only when a test asks for it. */
   unsigned linear_enabled,linear_failure,linear_bound,linear_indexed,linear_active;
-  unsigned linear_begins,linear_draws,linear_maps;
+  unsigned linear_begins,linear_draws,linear_maps,linear_finished_begins,linear_finish_mark;
   int last_uniform4[4];
   GLuint instance_buffer;
   size_t instance_offset,instance_size;
@@ -1079,6 +1079,10 @@ static void fake_TransformFeedbackVaryings(GLuint program,GLsizei count,
 }
 static void fake_BeginTransformFeedback(GLenum mode){
   note_call(); g_fake.linear_begins++;
+  /* A capture counts as finished-first when glFinish was the device call just before it,
+   * apart from the capture's own state setup. */
+  if(g_fake.finish_calls>g_fake.linear_finish_mark) g_fake.linear_finished_begins++;
+  g_fake.linear_finish_mark=g_fake.finish_calls;
   if(mode!=GL_POINTS || g_fake.linear_active || !g_fake.linear_indexed){
     g_fake.pending_error=0x0502u;return;
   }
@@ -1227,7 +1231,7 @@ void anygm_test_graphics_linear_capture(unsigned enabled,unsigned failure){
 }
 AnygmTestGraphicsLinear anygm_test_graphics_linear(void){
   AnygmTestGraphicsLinear out={g_fake.linear_begins,g_fake.linear_draws,g_fake.linear_maps,
-                               g_fake.linear_active,{0}};
+                               g_fake.linear_active,{0},g_fake.linear_finished_begins};
   memcpy(out.region,g_fake.last_uniform4,sizeof out.region);
   return out;
 }

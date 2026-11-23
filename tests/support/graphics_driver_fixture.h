@@ -53,6 +53,7 @@ void anygm_test_graphics_linear_capture(unsigned enabled,unsigned failure);
 typedef struct AnygmTestGraphicsLinear {
   unsigned begins,draws,maps,active;
   int region[4];
+  unsigned finished_begins; /* captures begun after a glFinish since the previous capture */
 } AnygmTestGraphicsLinear;
 AnygmTestGraphicsLinear anygm_test_graphics_linear(void);
 void anygm_test_graphics_version(unsigned major,unsigned minor);
