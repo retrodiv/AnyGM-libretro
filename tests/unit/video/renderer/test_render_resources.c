@@ -427,7 +427,7 @@ static int source_region_batch_contract(void){
       }
       operations[i].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
     }
-    if(variant==1u) operations[1].payload.quad.shape=GML_RENDER_QUAD_GENERAL;
+    if(variant==1u) operations[1].payload.quad.shape=GML_RENDER_QUAD_WARPED;
     if(variant==3u) source.borrowed_immutable=0;
     GmlRenderResource *resource=gml_render_resource_create(target_ref(1u,1u),4u,4u,
       GML_RENDER_PIXEL_XRGB8888,pixels,(GmlRenderResourceLimits){0});

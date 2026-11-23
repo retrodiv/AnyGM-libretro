@@ -1251,9 +1251,17 @@ static int scene_source_region_case(void){
     quad->sampling.source_region=(GmlRenderRect){9,9,1u,1u};
     REQUIRE(!gml_gpu_opengl_scene_source_region_ready(image,&operation),
             "unprepared source texels cannot be sampled");
+    quad->sampling.source_region=(GmlRenderRect){4,4,2u,2u};
     quad->shape=GML_RENDER_QUAD_GENERAL;
+    quad->u[0]=5.0/16.0;quad->v[0]=4.0/16.0;quad->u[1]=6.0/16.0;quad->v[1]=5.0/16.0;
+    quad->u[2]=5.0/16.0;quad->v[2]=6.0/16.0;quad->u[3]=4.0/16.0;quad->v[3]=5.0/16.0;
+    REQUIRE(gml_render_operation_source_region(&operation,16u,16u,&needed) &&
+      needed.x==3 && needed.y==3 && needed.width==4u && needed.height==4u,
+      "rotated sampling demand is its corners' hull with neighbouring texels");
+    quad->shape=GML_RENDER_QUAD_WARPED;
     REQUIRE(!gml_render_operation_source_region(&operation,16u,16u,&needed),
             "unproved sampling retains complete source preparation");
+    quad->sampling.source_region=(GmlRenderRect){9,9,1u,1u};
     REQUIRE(service.upload(service.context,&full),"ordinary complete upload upgrades the same version");
     image=gml_gpu_opengl_scene_image(gpu->backend,ref);
     actual=anygm_test_graphics_texture_bytes(image->texture,&count);

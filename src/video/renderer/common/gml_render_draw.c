@@ -870,7 +870,10 @@ int gml_render_operation_source_region(const GmlRenderDrawOp *operation,
       operation->scene_family!=GML_RENDER_SCENE_TEXT)) return 0;
   const GmlRenderQuad *quad=&operation->payload.quad;
   const GmlRenderRect *source=&quad->sampling.source_region;
-  if(quad->shape!=GML_RENDER_QUAD_AXIS_ALIGNED || quad->span_active ||
+  /* Rotated quads interpolate their corner coordinates affinely, so every sample lies in the
+   * corners' hull; scene programs further clamp taps to boxes inside the source region. */
+  if((quad->shape!=GML_RENDER_QUAD_AXIS_ALIGNED && quad->shape!=GML_RENDER_QUAD_CARDINAL &&
+      quad->shape!=GML_RENDER_QUAD_GENERAL) || quad->span_active ||
      (quad->sampling.filter!=GML_RENDER_FILTER_NEAREST &&
       quad->sampling.filter!=GML_RENDER_FILTER_BILINEAR &&
       quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR) ||
