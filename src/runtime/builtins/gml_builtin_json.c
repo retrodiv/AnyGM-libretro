@@ -12,6 +12,20 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* "%.17g" of a whole number below 1e15 is its plain decimal digits; a save of many integers
+ * formats them directly rather than through the floating-point printer. */
+static void json_number_text(double d,char num[64]){
+  if(d>-1e15 && d<1e15 && d==(double)(int64_t)d && !(d==0 && signbit(d))){
+    int64_t k=(int64_t)d; uint64_t u=k<0?(uint64_t)0-(uint64_t)k:(uint64_t)k;
+    char digits[24]; int n=0, p=0;
+    do{ digits[n++]=(char)('0'+u%10); u/=10; }while(u);
+    if(k<0) num[p++]='-';
+    while(n) num[p++]=digits[--n];
+    num[p]=0;
+    return;
+  }
+  snprintf(num,64,"%.17g",d);
+}
 
 static int json_writer_reserve(GmlBuiltinJsonWriter *b, size_t add){
   if(b->length+add+1<=b->capacity) return 1;
@@ -99,7 +113,7 @@ static int json_encode_map(GmlVM *vm, GmlBuiltinJsonWriter *b, int id, int depth
     if(i && !gml_builtin_json_writer_putc(b,',')) return 0;
     char keybuf[64]; const char *key=NULL;
     if(item.key.t==V_STR) key=item.key.s?item.key.s:"";
-    else { snprintf(keybuf,sizeof(keybuf),"%.17g",item.key.t==V_REAL?item.key.d:0.0); key=keybuf; }
+    else { json_number_text(item.key.t==V_REAL?item.key.d:0.0,keybuf); key=keybuf; }
     if(!jb_put_json_string(b,key) || !gml_builtin_json_writer_putc(b,':')) return 0;
     if(!gml_builtin_json_writer_put_value(
          vm,b,item.value,depth+1,
@@ -149,7 +163,7 @@ int gml_builtin_json_writer_put_value(GmlVM *vm, GmlBuiltinJsonWriter *b,
         return json_encode_list(vm,b,id,depth);
     }
     if(!isfinite(v.d)) return gml_builtin_json_writer_puts(b,"null");
-    char num[64]; snprintf(num,sizeof(num),"%.17g",v.d); return gml_builtin_json_writer_puts(b,num);
+    char num[64]; json_number_text(v.d,num); return gml_builtin_json_writer_puts(b,num);
   }
   return gml_builtin_json_writer_puts(b,"null");
 }

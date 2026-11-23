@@ -605,6 +605,23 @@ void gml_arr_insert(GmlVal arr, int index, GmlVal *values, int count){
  * state or coupling separate VM instances. */
 static int freeset_seen(GmlValueFreeContext *context,void *p){
   if(!context || !context->active) return 0;
+  if(!context->set){
+    for(size_t i=0;i<context->inline_count;i++) if(context->inline_set[i]==p) return 1;
+    if(context->inline_count<GML_VALUE_FREE_INLINE){
+      context->inline_set[context->inline_count++]=p;
+      return 0;
+    }
+    size_t nc=256;
+    void **ns=calloc(nc,sizeof(void*));
+    if(!ns) return 0;
+    for(size_t i=0;i<context->inline_count;i++){
+      size_t h=((uintptr_t)context->inline_set[i]>>4)&(nc-1);
+      while(ns[h]) h=(h+1)&(nc-1);
+      ns[h]=context->inline_set[i];
+    }
+    context->set=ns; context->capacity=nc; context->count=context->inline_count;
+    context->inline_count=0;
+  }
   if(context->count*4 >= context->capacity*3){
     size_t nc=context->capacity?context->capacity*2:256;
     void **ns=calloc(nc,sizeof(void*));
@@ -625,6 +642,7 @@ void gml_value_free_context_begin(GmlValueFreeContext *context){
   if(!context) return;
   context->active=1;
   context->count=0;
+  context->inline_count=0;
   if(context->set) memset(context->set,0,context->capacity*sizeof(void*));
 }
 void gml_value_free_context_end(GmlValueFreeContext *context){

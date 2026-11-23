@@ -912,7 +912,9 @@ void gml_instance_change(GmlVM *vm, GmlInstance *in, int obj, int perform_events
   gml_obj_alive_adjust(vm,in->obj,-1); gml_vm_instances_unlink(vm,in,in->obj);
   gml_obj_alive_adjust(vm,obj,1);       /* relinked with the new type after defaults land */
   if(perform_events){
+    vm->instance_change_unlinked++;
     gml_run_event(vm,in,"Destroy_0");
+    vm->instance_change_unlinked--;
     if(!in->active || in->marked){ gml_vm_instances_link(vm,in); return; }   /* died mid-change: keep lists sane until gml_vm_instances_reap */
   }
   apply_object_defaults(vm,in,obj);

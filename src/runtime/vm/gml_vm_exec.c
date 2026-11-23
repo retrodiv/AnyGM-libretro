@@ -3227,6 +3227,11 @@ static void vm_stack_reverse(GmlVal *values, uint8_t *types, int first, int last
  * its high bits and the CODE-entry index in the low 24. OP_CALLV recovers the index and runs it.
  * The tag (0x40000000, ~1.07e9) is far above any real script/asset id or gameplay number, and code
  * indices are < ~1000, so the encoding is unambiguous. */
+static int with_slot_order_cmp(const void *aa, const void *bb){
+  const GmlInstance *a=*(GmlInstance *const *)aa;
+  const GmlInstance *b=*(GmlInstance *const *)bb;
+  return a<b ? -1 : a>b ? 1 : 0;
+}
 static int with_newest_first_cmp(const void *aa, const void *bb){
   const GmlInstance *a=*(GmlInstance *const *)aa;
   const GmlInstance *b=*(GmlInstance *const *)bb;
@@ -3945,9 +3950,11 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
         exception_context.with_n=withsp;
         exception_context.array_reference_n=aref_n;
         int sci = pin ? pin->funcval_ci : -1;
-        if(sci<0){
+        if(sci==-1){
+          /* The packaged-script answer depends only on the name and the payload: -2 records
+           * that this site has none, so a builtin call does not repeat the name test. */
           sci=payload_compatibility_script_code(vm,nm);
-          if(pin && sci>=0) pin->funcval_ci=sci;
+          if(pin) pin->funcval_ci=sci>=0?sci:-2;
         }
         int bid = pin ? pin->builtin_id : -1;
         if(pin && bid==0){
@@ -4182,7 +4189,23 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
         else if(T==IT_OTHER){ if(vm->cur_other) WADD(vm->cur_other); }
         else if(T==IT_SELF){ if(vm->cur_self) WADD(vm->cur_self); }
         else if(T==IT_ALL){ family_target=1; for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active&&!vm->inst[i].marked) WADD(&vm->inst[i]); }
-        else if(T>=0){ family_target=1; for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active&&!vm->inst[i].marked&&gml_object_is(vm,vm->inst[i].obj,T)) WADD(&vm->inst[i]); }
+        else if(T>=0){
+          family_target=1;
+          /* The family's per-type lists hold exactly the instances the pool scan would match, so
+           * a with() over a small family costs its population rather than the whole pool. An
+           * instance changing type is in neither list while its Destroy event runs. */
+          int fc=0;
+          const int *family=T<vm->n_objects && !vm->instance_change_unlinked?gml_vm_object_family(vm,T,&fc):NULL;
+          if(family){
+            for(int m=0;m<fc;m++)
+              for(int i=vm->obj_head[family[m]];i>=0;i=vm->inst_next[i])
+                if(i<vm->inst_count && vm->inst[i].active && !vm->inst[i].marked) WADD(&vm->inst[i]);
+            /* Classic visits the pool in slot order; modern sorts by creation below. */
+            if(nn>1 && anygm_policy_uses_classic_runtime(w)) qsort(list,(size_t)nn,sizeof(*list),with_slot_order_cmp);
+          } else {
+            for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active&&!vm->inst[i].marked&&gml_object_is(vm,vm->inst[i].obj,T)) WADD(&vm->inst[i]);
+          }
+        }
         #undef WADD
         /* The modern instance-family chain is newest-first. This is observable when a parent target
          * includes both room-placed descendants and instances created by room code: the dynamic

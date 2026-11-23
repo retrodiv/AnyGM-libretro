@@ -387,6 +387,7 @@ typedef struct GmlVM {
    * that still carries the id is the one a scan would find; anything else is ignored. */
   int instance_id_hint;
   long obj_list_gen; /* bumped on any create/destroy/change — invalidates per-frame candidate caches */
+  int instance_change_unlinked; /* instances changing type, out of every type list during their Destroy */
   GmlPath *paths; int n_paths;
   int n_authored_paths;      /* paths parsed from PATH; anything above came from path_add */
   GmlSequence *sequences; int n_sequences;

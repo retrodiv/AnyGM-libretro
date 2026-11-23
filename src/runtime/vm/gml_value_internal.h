@@ -10,9 +10,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* The few values one local scope frees are deduplicated in place; only a larger teardown
+ * allocates the hashed set. */
+#define GML_VALUE_FREE_INLINE 16
 typedef struct {
   void **set;
   size_t capacity, count;
+  void *inline_set[GML_VALUE_FREE_INLINE];
+  size_t inline_count;
   int active, skip_escaped, owned_strings;
 } GmlValueFreeContext;
 
