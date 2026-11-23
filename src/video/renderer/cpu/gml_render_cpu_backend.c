@@ -204,6 +204,7 @@ int gml_render_cpu_backend_draw_view(GmlRender *r,GmlRenderCpuBackendDrawView *v
   view->blend_equation=r->blend_equation; view->blend_equation_alpha=r->blend_equation_alpha;
   view->circle_precision=r->circle_precision;
   view->zero_alpha_writes=destination_colour_blend_active(r);
+  view->colour_triangle_integer_centres=anygm_policy_colour_triangle_integer_centres(r->win);
   if(r->dispatch_cpu_depth) view->dispatch_written=&r->dispatch_cpu_written;
   return 1;
 }

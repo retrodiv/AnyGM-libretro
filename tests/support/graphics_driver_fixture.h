@@ -147,6 +147,8 @@ void anygm_test_graphics_fail_readback_at(unsigned ordinal);
 /* Persistent driver failure distinguishes a bounded retry from an endless destructor loop. */
 void anygm_test_graphics_fail_all_readbacks(int failing);
 void anygm_test_graphics_fail_copy_at(unsigned ordinal);
+/* Independent ordinal for device-only staging/publication blit failures. */
+void anygm_test_graphics_fail_blit_at(unsigned ordinal);
 unsigned anygm_test_graphics_last_read_framebuffer(void);
 unsigned anygm_test_graphics_last_copy_framebuffer(void);
 /* Exact source and destination framebuffer-blit bounds, in device coordinates. */

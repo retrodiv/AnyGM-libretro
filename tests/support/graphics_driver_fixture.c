@@ -56,7 +56,7 @@ typedef struct FakeDriver {
   GLuint bound_vertex_array;
   int blend_enabled;
   unsigned blend_configurations;
-  unsigned scene_copies;
+  unsigned scene_copies,blit_calls,blit_error_at;
   GLint last_blit[8];
   unsigned copy_error_at,last_copy_framebuffer,last_read_framebuffer;
   uint64_t scene_copied_pixels;
@@ -189,6 +189,7 @@ void anygm_test_graphics_fail_all_readbacks(int failing){
   g_fake.readback_error_at=failing?UINT32_MAX:0u;
 }
 void anygm_test_graphics_fail_copy_at(unsigned ordinal){ g_fake.copy_error_at=ordinal; }
+void anygm_test_graphics_fail_blit_at(unsigned ordinal){ g_fake.blit_error_at=ordinal; }
 unsigned anygm_test_graphics_last_read_framebuffer(void){ return g_fake.last_read_framebuffer; }
 unsigned anygm_test_graphics_last_copy_framebuffer(void){ return g_fake.last_copy_framebuffer; }
 void anygm_test_graphics_fail_scene_draw_at(unsigned ordinal){ g_fake.scene_draw_error_at=ordinal; }
@@ -266,6 +267,7 @@ static void fake_BlitFramebuffer(GLint sx0,GLint sy0,GLint sx1,GLint sy1,
   GLint rectangle[8]={sx0,sy0,sx1,sy1,dx0,dy0,dx1,dy1};
   memcpy(g_fake.last_blit,rectangle,sizeof rectangle);
   g_fake.scene_copies++;
+  if(++g_fake.blit_calls==g_fake.blit_error_at) g_fake.pending_error=0x0502u;
   g_fake.scene_copied_pixels+=(uint64_t)(unsigned)abs(dx1-dx0)*(unsigned)abs(dy1-dy0);
 }
 static void fake_Enable(GLenum cap){

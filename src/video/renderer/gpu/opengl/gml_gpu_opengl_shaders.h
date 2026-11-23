@@ -415,6 +415,7 @@
   "flat out float v_span_active;\n" \
   "void main(){\n" \
   "  gl_Position=vec4(2.0*in_Position.x/u_extent.x-1.0,1.0-2.0*in_Position.y/u_extent.y,0.0,1.0);\n" \
+  "  if(u_extent.y<0.0) gl_Position.y=-(1.0-2.0*in_Position.y/(-u_extent.y));\n" \
   "  v_texcoord=in_TextureCoord;\n" \
   "  // R03_SHADER_VERTEX_COLOUR: interpolate authored corner colours.\n" \
   "  v_colour=in_Colour;\n" \
@@ -459,6 +460,7 @@
   "  vec2 texcoord=corner==0?in_TextureCoord01.xy:(corner==1?in_TextureCoord01.zw:(corner==2?in_TextureCoord23.xy:in_TextureCoord23.zw));\n" \
   "  vec4 colour=corner==0?in_Colour0:(corner==1?in_Colour1:(corner==2?in_Colour2:in_Colour3));\n" \
   "  gl_Position=vec4(2.0*position.x/u_extent.x-1.0,1.0-2.0*position.y/u_extent.y,0.0,1.0);\n" \
+  "  if(u_extent.y<0.0) gl_Position.y=-(1.0-2.0*position.y/(-u_extent.y));\n" \
   "  v_texcoord=texcoord;\n" \
   "  v_colour=colour;\n" \
   "  v_clamp=in_Clamp;\n" \

@@ -61,6 +61,7 @@ typedef struct {
   int interpolate, alpha_blend, blend_mode, circle_precision;
   int blend_equation,blend_equation_alpha;
   int zero_alpha_writes;
+  int colour_triangle_integer_centres;
   atomic_int *dispatch_written;
 } GmlRenderCpuBackendDrawView;
 
@@ -118,7 +119,7 @@ int gml_render_cpu_backend_native_textured_triangles(GmlRender *render,int textu
   int full_atlas,const GmlRenderCpuBackendTexturedTriangle *triangles,uint32_t count);
 /* Resolved native 2D geometry, not per-row CPU coverage. A null zero-count call probes state. */
 int gml_render_cpu_backend_native_triangles(GmlRender *render,
-  const GmlRenderCpuBackendTriangle *triangles,uint32_t count);
+  const GmlRenderCpuBackendTriangle *triangles,uint32_t count,uint32_t top_left_fill);
 /* Active fixed-function triangles. A NULL triangle probes metadata admission.
  * Host depth bytes are supplied only when their version needs uploading.
  * Texture -1 selects no source; full_atlas preserves vertex-buffer page UVs. */

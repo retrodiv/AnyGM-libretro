@@ -1750,6 +1750,8 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       continue;
     }
     if(op->opcode==GML_RENDER_OP_COLOURED_PRIMITIVE){
+      if((op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_TOP_LEFT_FILL) &&
+         !backend->gl.BlitFramebuffer) return 0;
       if(op->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_LINE ||
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_PARTICLE_DISC ||
          op->payload.primitive.kind==GML_RENDER_PRIMITIVE_CLASSIC_ALPHA_RECT ||
@@ -2850,12 +2852,12 @@ unsigned gml_gpu_opengl_alpha_regions(const GlSceneImage *source,GmlRenderRect r
   return count;
 }
 
-static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage *source,
+static int flush_quads_target(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage *source,
                        uint32_t filter,int blend,uint32_t count,uint32_t write_mask,int alpha_test,
-                       uint32_t source_alpha_key,const GmlRenderSourcePalette *palette){
+                       uint32_t source_alpha_key,const GmlRenderSourcePalette *palette,int reflected){
   GlScene *scene=&backend->scene;
   GlSceneProgram *program=&scene->main_program;
-  GLfloat extent[2]={(GLfloat)target->width,(GLfloat)target->height};
+  GLfloat extent[2]={(GLfloat)target->width,(reflected?-1.0f:1.0f)*(GLfloat)target->height};
   int native_texture=filter>=GL_SCENE_NATIVE_TEXTURE_NEAREST_FILTER &&
                      filter<=GL_SCENE_NATIVE_TEXTURE_SURFACE_LINEAR_FILTER;
   int native_texture_stamp=native_texture && filter<=GL_SCENE_NATIVE_TEXTURE_LINEAR_FILTER;
@@ -3193,20 +3195,55 @@ restore_stream_state:
   /* Constant RGB programs cannot change selector for the separate alpha stamp.
    * Submit that existing kernel through the same stream with complete state. */
   if(rectangle_alpha_stamp && !skip_alpha && (write_mask&8u) &&
-     !flush_quads(backend,target,source,36u,0,count,8u,alpha_test,
-                  source_alpha_key,palette)) return 0;
+     !flush_quads_target(backend,target,source,36u,0,count,8u,alpha_test,
+                  source_alpha_key,palette,reflected)) return 0;
   if(surface_alpha_stamp && !skip_alpha && (write_mask&8u) &&
-     !flush_quads(backend,target,source,55u,0,count,8u,alpha_test,
-                  source_alpha_key,palette)) return 0;
+     !flush_quads_target(backend,target,source,55u,0,count,8u,alpha_test,
+                  source_alpha_key,palette,reflected)) return 0;
   if(atlas_alpha_stamp && !skip_alpha && (write_mask&8u) &&
-     !flush_quads(backend,target,source,48u,0,count,8u,alpha_test,
-                  source_alpha_key,palette)) return 0;
+     !flush_quads_target(backend,target,source,48u,0,count,8u,alpha_test,
+                  source_alpha_key,palette,reflected)) return 0;
   if(!skip_alpha && (filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==23u || filter==35u || filter==39u || filter==40u || filter==53u || filter==66u || filter==21u || filter==25u || (filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER) || filter==80u) && (write_mask&8u))
-    if(!flush_quads(backend,target,source,filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER?GL_SCENE_NATIVE_POINT_STAMP_FILTER:filter==23u?24u:filter==35u?36u:(filter==39u || filter==40u)?41u:filter==53u?55u:filter==21u?22u:filter==25u?26u:(filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER)?33u:filter==80u?82u:72u,0,count,8u,alpha_test,
-                    source_alpha_key,palette)) return 0;
+    if(!flush_quads_target(backend,target,source,filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER?GL_SCENE_NATIVE_POINT_STAMP_FILTER:filter==23u?24u:filter==35u?36u:(filter==39u || filter==40u)?41u:filter==53u?55u:filter==21u?22u:filter==25u?26u:(filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER)?33u:filter==80u?82u:72u,0,count,8u,alpha_test,
+                    source_alpha_key,palette,reflected)) return 0;
   if(surface_bounded && program->identity_surface_body && filter!=55u) backend->bounded_surface_draws++;
   if(native_flags&GL_SCENE_NATIVE_WHITE_TINT) backend->white_tint_quads+=count;
   if(native_flags&GL_SCENE_NATIVE_ZERO_ALPHA_BLEND) backend->zero_alpha_blend_quads+=count;
+  return 1;
+}
+
+/* Preserve the logical placed stream while changing the device raster origin.
+ * The existing versioned upright image is submission staging: mirror the
+ * predecessor once, execute a compatible native batch, then publish by GPU blit.
+ * No target pixel or coverage row crosses the CPU boundary. */
+#define GL_SCENE_TOP_LEFT_NATIVE_FILTER UINT32_C(0x80000000)
+static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage *source,
+                       uint32_t filter,int blend,uint32_t count,uint32_t write_mask,int alpha_test,
+                       uint32_t source_alpha_key,const GmlRenderSourcePalette *palette){
+  if(!(filter&GL_SCENE_TOP_LEFT_NATIVE_FILTER))
+    return flush_quads_target(backend,target,source,filter,blend,count,write_mask,
+                              alpha_test,source_alpha_key,palette,0);
+  if(!count) return 1;
+  filter&=~GL_SCENE_TOP_LEFT_NATIVE_FILTER;
+  if(source || (filter!=31u && filter!=32u &&
+     filter!=GL_SCENE_NATIVE_TRIANGLE_SOURCE_ALPHA_FILTER) ||
+     !backend->gl.BlitFramebuffer ||
+     !gml_gpu_opengl_scene_content_source(backend,target)) return 0;
+  GlSceneImage mirrored=*target;
+  GLuint texture=target->texture,framebuffer=target->framebuffer;
+  mirrored.texture=target->content_source_texture;
+  mirrored.framebuffer=target->content_source_framebuffer;
+  target->content_source_version=mirrored.content_source_version=0u;
+  if(!flush_quads_target(backend,&mirrored,NULL,filter,blend,count,write_mask,
+                         alpha_test,source_alpha_key,palette,1)) return 0;
+  backend->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,mirrored.framebuffer);
+  backend->gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER,framebuffer);
+  backend->gl.Scissor(0,0,(GLsizei)target->width,(GLsizei)target->height);
+  backend->gl.BlitFramebuffer(0,(GLint)target->height,(GLint)target->width,0,
+    0,0,(GLint)target->width,(GLint)target->height,GL_COLOR_BUFFER_BIT,GL_NEAREST);
+  if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
+  mirrored.texture=texture;mirrored.framebuffer=framebuffer;
+  *target=mirrored;
   return 1;
 }
 
@@ -3891,6 +3928,9 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       primitive_blend=qualified_blend(&batch->states[op->state_index]);primitive_filter=34u;
       primitive_write_mask=batch->states[op->state_index].write_mask;
     }
+    if(native_triangle &&
+       (op->payload.primitive.rectangle_flags&GML_RENDER_RECTANGLE_TOP_LEFT_FILL))
+      primitive_filter|=GL_SCENE_TOP_LEFT_NATIVE_FILTER;
     if(pending_count && (particle || alpha_rect || rectangle || native_triangle
        ? pending_palette.enabled || !active_target || !same_logical(active_target->ref,op->target.image) ||
          pending_count==GL_SCENE_MAX_QUADS || pending_filter!=primitive_filter ||

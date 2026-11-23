@@ -246,6 +246,11 @@ static inline int anygm_policy_classic_modern_presentation(const GmlWin *content
 static inline int anygm_policy_runtime_sprite_local_phase(const GmlWin *content){
   return content && content->classic_version==800;
 }
+/* Ordinary source-free triangles use integer-centred device pixels in this
+ * measured revision. Other generations keep their established policy. */
+static inline int anygm_policy_colour_triangle_integer_centres(const GmlWin *content){
+  return content && content->classic_version==800;
+}
 static inline int anygm_policy_round_collision_bounds(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);
   return p?(int)p->round_transformed_collision_bounds:

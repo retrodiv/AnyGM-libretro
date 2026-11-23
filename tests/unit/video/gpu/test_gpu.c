@@ -3355,10 +3355,13 @@ static int scene_native_textured_triangle_case(void){
 
 static int scene_native_triangle_batch_case(void){
   for(unsigned owner=0;owner<2u;owner++)
-  for(unsigned api=0;api<2u;api++) for(unsigned variant=0;variant<10u;variant++){
+  for(unsigned api=0;api<2u;api++) for(unsigned origin=0;origin<2u;origin++)
+  for(unsigned variant=0;variant<13u;variant++){
+    if(!origin && variant>=11u) continue;
     GmlRenderDrawOp ops[3]={0};
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
     GmlRenderDeviceServices device={0};anygm_test_graphics_reset();
+    if(variant==10u)anygm_test_graphics_withhold("glBlitFramebuffer");
     if(variant==6u)anygm_test_graphics_withhold("glBlendFuncSeparate");
     GmlGpu *gpu=gml_gpu_create();REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"native triangle context");
     gml_gpu_device_services(gpu,&device);
@@ -3390,9 +3393,22 @@ static int scene_native_triangle_batch_case(void){
     if(variant==8u)anygm_test_graphics_fail_compile_containing("#define GML_SCENE_CONSTANT_FILTER 33");
     if(variant==9u)for(unsigned i=1;i<3u;i++)
       ops[i].payload.primitive.rectangle_flags=1u<<GML_RENDER_RECTANGLE_BLEND_SHIFT;
+    if(origin)for(unsigned i=1;i<3u;i++)
+      ops[i].payload.primitive.rectangle_flags|=GML_RENDER_RECTANGLE_TOP_LEFT_FILL;
     GmlRenderDrawBatch batch={ops,3u,NULL,0u};
+    if(variant>=11u)anygm_test_graphics_fail_blit_at(variant-10u);
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
-    if(variant && variant!=8u && variant!=9u)
+    if(variant>=11u){
+      REQUIRE(result.status==GML_RENDER_EXEC_RECOVERABLE_ERROR && result.accepted_prefix==1u &&
+        result.uncertain_target_count==1u && !result.all_destinations_uncertain &&
+        !anygm_test_graphics_read_pixels() &&
+        anygm_test_graphics_scene_draw_calls()==(variant==11u?0:2),
+        "failed native origin stage never publishes drawing success");
+      for(unsigned i=0;i<3u;i++)ops[i].target.image.content_version+=3u;
+      result=device.submit(device.context,&batch);
+      REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
+        !result.uncertain_target_count,"native origin cache recovers after failed staging/publication");
+    }else if(variant && variant!=8u && variant!=9u && !(variant==10u && !origin))
       REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
       !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls(),
       "malformed native triangle batch refuses before all writes");
@@ -3412,8 +3428,15 @@ static int scene_native_triangle_batch_case(void){
         for(unsigned c=0;c<4u;c++)REQUIRE(instances[16u+v*4u+c]==(float)p->triangle[source][2u+c],
           "continuous vertex RGBA reaches device unchanged");
       }
-      REQUIRE(!anygm_test_graphics_scene_copies() && !anygm_test_graphics_read_pixels(),
-        "native triangle needs no image snapshot or ordinary readback");
+      REQUIRE(anygm_test_graphics_scene_copies()==(origin?2u:0u) &&
+        !anygm_test_graphics_read_pixels(),
+        "native top-left batch uses two GPU origin copies and no ordinary readback");
+      if(origin){
+        int rectangle[8];anygm_test_graphics_last_blit(rectangle);
+        const int expected[8]={0,24,32,0,0,0,32,24};
+        REQUIRE(!memcmp(rectangle,expected,sizeof rectangle),
+          "native target publication reverses only storage orientation");
+      }
       if(variant==9u){
         REQUIRE(anygm_test_graphics_additive_blend_configurations()==1u,
           "selected-view additive triangles use fixed device blending");
@@ -3426,7 +3449,7 @@ static int scene_native_triangle_batch_case(void){
 
 static int scene_source_alpha_triangle_case(void){
   for(unsigned api=0;api<2u;api++) for(unsigned owner=0;owner<2u;owner++)
-  for(unsigned variant=0;variant<5u;variant++){
+  for(unsigned origin=0;origin<2u;origin++) for(unsigned variant=0;variant<5u;variant++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
     GmlRenderDeviceServices device={0};anygm_test_graphics_reset();
     GmlGpu *gpu=gml_gpu_create();REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),
@@ -3454,13 +3477,14 @@ static int scene_source_alpha_triangle_case(void){
     if(variant==2u)p->rectangle_flags&=~GML_RENDER_RECTANGLE_TARGET_ALPHA;
     if(variant==3u)ops[1].target.image.resource_class=GML_RENDER_RESOURCE_SCREEN;
     if(variant==4u)p->triangle[1][5]=NAN;
+    if(origin)p->rectangle_flags|=GML_RENDER_RECTANGLE_TOP_LEFT_FILL;
     GmlRenderDrawBatch batch={ops,2u,NULL,0u};
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
     if(variant)REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
       !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls(),
       "untyped or malformed preserving triangle rejects before any prefix writes");
     else REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==2u &&
-      anygm_test_graphics_scene_draw_calls()==1u && !anygm_test_graphics_scene_copies() &&
+      anygm_test_graphics_scene_draw_calls()==1u && anygm_test_graphics_scene_copies()==(origin?2u:0u) &&
       !anygm_test_graphics_read_pixels(),"source-alpha triangle uses one colour pass without an opaque stamp");
     gml_gpu_destroy(gpu,1);
   }

@@ -366,6 +366,7 @@ int gml_render_native_triangle_valid(const GmlRenderDrawOp *operation){
     (t->image.resource_class==GML_RENDER_RESOURCE_APPLICATION && source_over);
   int coloured=p->kind==GML_RENDER_PRIMITIVE_NATIVE_COLOURED_TRIANGLE;
   int bilinear=p->kind==GML_RENDER_PRIMITIVE_NATIVE_BILINEAR_TRIANGLE;
+  uint32_t top_left=p->rectangle_flags&GML_RENDER_RECTANGLE_TOP_LEFT_FILL;
   if((p->kind!=GML_RENDER_PRIMITIVE_NATIVE_TRIANGLE && !coloured && !bilinear) ||
      (t->image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
       t->image.resource_class!=GML_RENDER_RESOURCE_APPLICATION && !surface) ||
@@ -374,11 +375,11 @@ int gml_render_native_triangle_valid(const GmlRenderDrawOp *operation){
      t->region.width!=t->width || t->region.height!=t->height ||
      p->region.x || p->region.y || p->region.width!=t->width || p->region.height!=t->height ||
      p->alpha!=1.0 || p->alpha_blend!=1u || p->interpolate ||
-     (source_over && !alpha_target) ||
+     (top_left && bilinear) || (source_over && !alpha_target) ||
      (blend>1u || (blend && (surface || source_over))) ||
      p->rectangle_flags!=((alpha_target?GML_RENDER_RECTANGLE_TARGET_ALPHA:0u)|
                          (source_over?GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA:0u)|
-                         (blend<<GML_RENDER_RECTANGLE_BLEND_SHIFT)) ||
+                         (blend<<GML_RENDER_RECTANGLE_BLEND_SHIFT)|top_left) ||
      p->pixel_write_mask!=15u) return 0;
   for(unsigned v=0;v<3u;v++) for(unsigned c=0;c<6u;c++){
     double value=p->triangle[v][c];

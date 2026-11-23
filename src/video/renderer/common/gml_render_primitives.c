@@ -515,8 +515,15 @@ static int resident_rectangle_state_eligible(GmlRender *r,int cpu_passthrough){
 
 static int resident_native_triangles(GmlRender *r,
   const GmlRenderCpuBackendTriangle *triangles,uint32_t count,int view_rotation,
-  const uint32_t bilinear_colour[4],const double bilinear_size[2]){
-  if((bilinear_colour!=NULL)!=(bilinear_size!=NULL)) return 0;
+  const uint32_t bilinear_colour[4],const double bilinear_size[2],uint32_t top_left_fill){
+  if((bilinear_colour!=NULL)!=(bilinear_size!=NULL) || top_left_fill>1u ||
+     (top_left_fill && bilinear_colour)) return 0;
+  if(top_left_fill){
+    const GmlRenderDeviceServices *device=gml_render_device(r);
+    GmlRenderDeviceCaps caps={0};
+    if(!device || !device->capabilities || !device->capabilities(device->context,&caps) ||
+       !(caps.supported_operations&(UINT64_C(1)<<GML_RENDER_OP_COPY_IMAGE))) return 0;
+  }
   if(bilinear_size && (!view_rotation || count!=2u ||
      !isfinite(bilinear_size[0]) || !isfinite(bilinear_size[1]) ||
      bilinear_size[0]<1 || bilinear_size[0]>65536 ||
@@ -528,8 +535,8 @@ static int resident_native_triangles(GmlRender *r,
     r->blend_equation==GML_RENDER_BLEND_ADD &&
     r->blend_equation_alpha==GML_RENDER_BLEND_ADD && !surface && !preserving_application;
   if(!resident_primitive_state_eligible_rule(r,1) ||
-     (!view_rotation && (r->classic || !anygm_policy_has_modern_layer_semantics(r->win) ||
-       r->target_sp || r->target_id!=-1 || gml_render_target_preserves_alpha(r))) ||
+     (!view_rotation && (r->target_sp || r->target_id!=-1 ||
+       gml_render_target_preserves_alpha(r))) ||
      gml_d3_is_active(r) ||
      r->classic_phase_scene_target || r->fog_flat || r->alpha_test_enable ||
      !r->alphablend || (r->blendmode && !additive) || r->color_write_mask!=15u ||
@@ -539,9 +546,10 @@ static int resident_native_triangles(GmlRender *r,
   GmlRenderDrawOp *operations=calloc(count,sizeof *operations);
   if(!operations) return 0;
   int result=0;
-  int fractional_surface=0;
+  int fractional_surface=0;uint32_t used=0u;
   for(uint32_t i=0;i<count;i++){
-    GmlRenderDrawOp *op=&operations[i];
+    GmlRenderDrawOp *op=&operations[used];
+    memset(op,0,sizeof *op);
     op->opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;op->scene_family=GML_RENDER_SCENE_PRIMITIVE;
     op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
     op->target=(GmlRenderTargetRef){.image={.resource_class=surface?
@@ -557,9 +565,10 @@ static int resident_native_triangles(GmlRender *r,
       p->rectangle_flags=GML_RENDER_RECTANGLE_TARGET_ALPHA;
     if(preserving_application)
       p->rectangle_flags=GML_RENDER_RECTANGLE_TARGET_ALPHA|GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA;
+    if(top_left_fill) p->rectangle_flags|=GML_RENDER_RECTANGLE_TOP_LEFT_FILL;
     p->alpha=1.0;p->alpha_blend=1u;p->pixel_write_mask=15u;
     memcpy(p->triangle,triangles[i].vertex,sizeof p->triangle);
-    if(view_rotation) for(unsigned v=1;v<3u;v++) for(unsigned c=2;c<5u;c++)
+    for(unsigned v=1;v<3u;v++) for(unsigned c=2;c<5u;c++)
       if(p->triangle[v][c]!=p->triangle[0][c])
         p->kind=GML_RENDER_PRIMITIVE_NATIVE_COLOURED_TRIANGLE;
     if(bilinear_size){
@@ -570,12 +579,39 @@ static int resident_native_triangles(GmlRender *r,
       for(unsigned c=0;c<4u;c++)
         p->corner_colour[c]=gml_render_cpu_backend_color_to_xrgb(bilinear_colour[c]);
     }
+    int fractional=0;
     if(surface || preserving_application) for(unsigned v=0;v<3u;v++) if(p->triangle[v][5]<1.0){
       p->rectangle_flags|=GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA;
-      fractional_surface=1;
+      fractional=1;
     }
     if(!gml_render_native_triangle_valid(op)) goto native_done;
+    /* Reject only geometric emptiness, before publishing an image version.
+     * Sampling and subpixel edge coverage remain the device's decision. */
+    const double (*v)[6]=p->triangle;
+    double area=(v[1][0]-v[0][0])*(v[2][1]-v[0][1])-
+                (v[1][1]-v[0][1])*(v[2][0]-v[0][0]);
+    if(area==0.0 ||
+       (v[0][0]<=0 && v[1][0]<=0 && v[2][0]<=0) ||
+       (v[0][1]<=0 && v[1][1]<=0 && v[2][1]<=0) ||
+       (v[0][0]>=r->fbw && v[1][0]>=r->fbw && v[2][0]>=r->fbw) ||
+       (v[0][1]>=r->fbh && v[1][1]>=r->fbh && v[2][1]>=r->fbh)) continue;
+    /* Axis bounds alone retain triangles outside a viewport corner. Test
+     * each triangle edge against the rectangle's furthest inward corner;
+     * this is convex clipping, independent of device sample coverage. */
+    int separated=0;
+    for(unsigned edge=0;edge<3u && !separated;edge++){
+      unsigned next=(edge+1u)%3u;
+      double dx=v[next][0]-v[edge][0],dy=v[next][1]-v[edge][1];
+      if(area<0.0){dx=-dx;dy=-dy;}
+      double x=dy<0.0?r->fbw:0.0,y=dx>0.0?r->fbh:0.0;
+      separated=dx*(y-v[edge][1])-dy*(x-v[edge][0])<=0.0;
+    }
+    if(separated) continue;
+    if(fractional) fractional_surface=1;
+    used++;
   }
+  if(!used){result=1;goto native_done;}
+  count=used;
   if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) goto native_done;
   gml_render_flush_pending_fill(r);
   GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
@@ -734,16 +770,17 @@ int gml_render_cpu_backend_depth_triangle(GmlRender *r,GmlRenderDepthPrimitive *
 }
 
 int gml_render_cpu_backend_native_triangles(GmlRender *r,
-  const GmlRenderCpuBackendTriangle *triangles,uint32_t count){
+  const GmlRenderCpuBackendTriangle *triangles,uint32_t count,uint32_t top_left_fill){
   /* A selected modern view's identity pose shares its rotated colour/alpha
-   * contract. Unbound ordinary draws and GUI keep their existing admission. */
+   * contract. Ordinary SCREEN uses the same packet executor with its own
+   * target admission; GUI retains its existing coordinate mapper. */
   int placed=gml_render_view_rotation_active(r) ||
     (r && !r->classic && !r->gui_pass_active &&
      anygm_policy_has_modern_layer_semantics(r->win) &&
      r->view_centre_x>0.0 && r->view_centre_y>0.0 &&
      r->target_id==r->view_target_id && r->target_sp==r->view_target_depth);
   return resident_native_triangles(r,triangles,count,
-    placed,NULL,NULL);
+    placed,NULL,NULL,top_left_fill);
 }
 
 int gml_render_cpu_backend_vertex_spans(GmlRender *r,
@@ -1744,7 +1781,7 @@ static int world_view_line(GmlRender *r,double x1,double y1,double x2,double y2,
     vertex[2]=(colours[c]&255u)/255.0;vertex[3]=((colours[c]>>8)&255u)/255.0;
     vertex[4]=((colours[c]>>16)&255u)/255.0;vertex[5]=r->alpha;
   }
-  if(!resident_native_triangles(r,triangles,2,1,NULL,NULL))
+  if(!resident_native_triangles(r,triangles,2,1,NULL,NULL,0u))
     gml_render_cpu_primitive_quad(r,x,y,colours,r->alpha,NULL);
   return 1;
 }
@@ -1798,7 +1835,7 @@ static int world_view_opaque_rectangle(GmlRender *r,int x1,int y1,int x2,int y2,
     vertex[2]=(colour&255u)/255.0;vertex[3]=((colour>>8)&255u)/255.0;
     vertex[4]=((colour>>16)&255u)/255.0;vertex[5]=1.0;
   }
-  if(resident_native_triangles(r,triangles,2,1,NULL,NULL)) return 1;
+  if(resident_native_triangles(r,triangles,2,1,NULL,NULL,0u)) return 1;
   for(unsigned i=0;i<2;i++){
     const unsigned *c=corners[i];
     gml_render_cpu_triangle_pixel_centres(r,x[c[0]],y[c[0]],x[c[1]],y[c[1]],
@@ -1852,7 +1889,7 @@ static int world_view_rectangle(GmlRender *r,int x1,int y1,int x2,int y2,
       vertex[4]=((rgb>>16)&255u)/255.0;vertex[5]=r->alpha;
     }
   }
-  if(resident_native_triangles(r,triangles,count*2u,1,gradient?corners:NULL,gradient?size:NULL)) return 1;
+  if(resident_native_triangles(r,triangles,count*2u,1,gradient?corners:NULL,gradient?size:NULL,0u)) return 1;
   for(unsigned q=0;q<count;q++)
     gml_render_cpu_primitive_quad(r,quads[q].x,quads[q].y,corners,r->alpha,gradient?size:NULL);
   return 1;
@@ -1933,7 +1970,7 @@ static int world_view_circle(GmlRender *r,double cx,double cy,double rx,double r
     vertex[2]=(colour&255u)/255.0;vertex[3]=((colour>>8)&255u)/255.0;
     vertex[4]=((colour>>16)&255u)/255.0;vertex[5]=r->alpha;
   }
-  if(!resident_native_triangles(r,triangles,(uint32_t)n,1,NULL,NULL)){
+  if(!resident_native_triangles(r,triangles,(uint32_t)n,1,NULL,NULL,0u)){
     if(inner==outer) gml_render_cpu_circle(r,cx,cy,rx,ry,inner,0);
     else gml_render_cpu_circle_color(r,cx,cy,rx,ry,inner,outer,0);
   }
@@ -2029,7 +2066,7 @@ static int world_view_triangle(GmlRender *r,double x1,double y1,double x2,double
       vertex[4]=((colour>>16)&255u)/255.0;vertex[5]=alpha;
     }
   }
-  if(!resident_native_triangles(r,triangles,count,1,NULL,NULL))
+  if(!resident_native_triangles(r,triangles,count,1,NULL,NULL,0u))
     gml_render_cpu_triangle_alpha(r,x[0],y[0],x[1],y[1],x[2],y[2],colour,alpha,outline);
   return 1;
 }

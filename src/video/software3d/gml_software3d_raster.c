@@ -483,7 +483,7 @@ typedef struct {
 } GmlD3Projection;
 
 static int d3_project_triangle(GmlRender *R,const GmlRenderCpuBackendDrawView *draw,
-  const GmlD3Vertex in[3],GmlD3Projection *p){
+  const GmlD3Vertex in[3],int source_free,GmlD3Projection *p){
   GmlD3State *d3=&g_d3;
   const char *fov_text=anygm_host_development_setting(draw->host,"GML_D3D_FOV");
   double fov=fov_text?atof(fov_text):d3->fov;
@@ -501,7 +501,8 @@ static int d3_project_triangle(GmlRender *R,const GmlRenderCpuBackendDrawView *d
   p->flat_color=flat_color;
   /* The fixed-function viewport uses a half-pixel anchor represented just below 0.5.
    * Keeping the 11-bit phase avoids pushing boundary samples into the next texel. */
-  double pixel_offset=d3->classic?0.5-1.0/2048.0:0.0;
+  double pixel_offset=source_free && GML_GRAPHICS->view_projection_2d &&
+    draw->colour_triangle_integer_centres?0.5:d3->classic?0.5-1.0/2048.0:0.0;
   /* Bias the vertices once: perspective interpolation preserves a constant phase exactly, while
    * keeping this work out of the per-pixel inner loop. */
   double u_phase=(d3->classic&&!draw->interpolate)?1.0/65536.0:0.0;
@@ -546,7 +547,9 @@ static void d3_raster_triangle_impl(GmlRender *R, const GmlD3Vertex in[3], const
   /* Renderer leaf calls cannot replace this context during a raster operation. */
   GmlD3State *d3=&gml_render_cpu_backend_software3d(R)->d3;
   GmlD3Projection projected;
-  if(!d3_project_triangle(R,&draw,in,&projected)) return;
+  if(!d3_project_triangle(R,&draw,in,!texture || !texture->kind,&projected)) return;
+  if(GML_GRAPHICS->view_projection_2d && draw.colour_triangle_integer_centres &&
+     (!texture || !texture->kind)) joined=1;
   double *sx=projected.sx,*sy=projected.sy,*iz=projected.iz,*uz=projected.uz,*vz=projected.vz;
   double *riz=projected.riz,*giz=projected.giz,*biz=projected.biz,*aiz=projected.aiz;
   double *depth_value=projected.depth_value,*view_distance=projected.view_distance;
@@ -715,7 +718,7 @@ static int d3_native_triangle(GmlRender *R,const GmlD3Vertex in[3],const GmlD3Te
   GmlRenderCpuBackendDrawView draw;GmlD3Projection projected;
   if(!gml_render_cpu_backend_draw_view(R,&draw)) return 0;
   GmlD3DepthTarget *target=d3_depth_metadata(R,&draw);
-  if(!target || !target->epoch || !d3_project_triangle(R,&draw,in,&projected)) return 0;
+  if(!target || !target->epoch || !d3_project_triangle(R,&draw,in,0,&projected)) return 0;
   double area=d3_edge(projected.sx[0],projected.sy[0],projected.sx[1],projected.sy[1],
                        projected.sx[2],projected.sy[2]);
   if(!isfinite(area) || fabs(area)<1e-9 || (g_d3.culling && area>=0)) return 1;
@@ -1796,9 +1799,8 @@ static int vertex_scene_period_rows(GmlVertexSceneCoverage *coverage){
 }
 
 static int vertex_scene_triangle(GmlVertexSceneCoverage *coverage,
-                                  const GmlD3Vertex in[3],int classic){
+                                  const GmlD3Vertex in[3],double phase){
   double sx[3],sy[3];
-  double phase=classic?0.5-1.0/2048.0:0.0;
   for(unsigned i=0;i<3u;i++){sx[i]=in[i].x+phase;sy[i]=in[i].y+phase;}
   double area=d3_edge(sx[0],sy[0],sx[1],sy[1],sx[2],sy[2]);
   if(!isfinite(area) || fabs(area)<1e-9) return 1;
@@ -1901,8 +1903,8 @@ static int vertex_scene_flat_inverse_alpha(const GmlD3Vertex *vertex,int count,i
 }
 
 static int vertex_native_colour_triangles(GmlRender *R,const GmlD3Vertex *vertex,
-                                               int count,int primitive){
-  if(!gml_render_cpu_backend_native_triangles(R,NULL,0u) || !d3_depth_prepare(R)) return 0;
+                                               int count,int primitive,double phase,uint32_t top_left_fill){
+  if(!gml_render_cpu_backend_native_triangles(R,NULL,0u,top_left_fill) || !d3_depth_prepare(R)) return 0;
   uint32_t triangles=(uint32_t)(primitive==4?count/3:count-2);
   GmlRenderCpuBackendTriangle *placed=calloc(triangles,sizeof *placed);
   if(!placed) return 0;
@@ -1914,12 +1916,12 @@ static int vertex_native_colour_triangles(GmlRender *R,const GmlD3Vertex *vertex
     else {at[0]=0;at[1]=(int)i+1;at[2]=(int)i+2;}
     for(unsigned v=0;v<3u;v++){
       const GmlD3Vertex *source=&vertex[at[v]];double *target=placed[i].vertex[v];
-      target[0]=source->x;target[1]=source->y;
+      target[0]=source->x+phase;target[1]=source->y+phase;
       target[2]=source->r/255.0;target[3]=source->g/255.0;target[4]=source->b/255.0;
       target[5]=source->alpha;
     }
   }
-  int result=gml_render_cpu_backend_native_triangles(R,placed,triangles);
+  int result=gml_render_cpu_backend_native_triangles(R,placed,triangles,top_left_fill);
   free(placed);return result;
 }
 
@@ -1932,7 +1934,7 @@ static void vertex_native_attributes(double target[6],const GmlD3Vertex *source,
 
 static int vertex_native_selected_points_lines(GmlRender *R,const GmlD3Vertex *vertex,
                                                  int count,int primitive){
-  if(!gml_render_cpu_backend_native_triangles(R,NULL,0u) || !d3_depth_prepare(R)) return 0;
+  if(!gml_render_cpu_backend_native_triangles(R,NULL,0u,0u) || !d3_depth_prepare(R)) return 0;
   uint32_t segments=(uint32_t)(primitive==1?count:primitive==2?count/2:count-1);
   if(segments>16384u) return 0;
   GmlRenderCpuBackendTriangle *placed=calloc((size_t)segments*4u,sizeof *placed);
@@ -1972,7 +1974,7 @@ static int vertex_native_selected_points_lines(GmlRender *R,const GmlD3Vertex *v
       }
     }
   }
-  int result=gml_render_cpu_backend_native_triangles(R,placed,used);
+  int result=gml_render_cpu_backend_native_triangles(R,placed,used,0u);
   free(placed);return result;
 }
 
@@ -2038,6 +2040,9 @@ static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
     .nearest=textured && !draw.interpolate,.texture_width=texture_width,.texture_height=texture_height,
     .classic_filter=textured && draw.interpolate && g_d3.classic,
     .capacity=textured?65536u:8192u};
+  double triangle_phase=!textured && draw.colour_triangle_integer_centres?
+    0.5:g_d3.classic?0.5-1.0/2048.0:0.0;
+  if(!textured && draw.colour_triangle_integer_centres) coverage.joined=1;
   int result=0,opaque=1,rgb_gradient=0;double minimum_alpha=1.0,maximum_alpha=0.0;
   int view=gml_render_cpu_backend_view_rotation_active(R);
   if(!projected) goto vertex_scene_done;
@@ -2067,12 +2072,14 @@ static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
     if(v->r!=vertex[0].r || v->g!=vertex[0].g || v->b!=vertex[0].b) rgb_gradient=1;
   }
   /* Placed colour triangles retain their vertices and alpha on the device.
-   * Varying RGB is admitted for selected views, including modern identity poses.
-   * The device interpolates and fills them; other material policies retain
+   * Ordinary SCREEN and qualified selected-view batches share the same native
+   * colour executor across container generations. The device interpolates and
+   * fills them; other material policies retain
    * their existing admission instead of preparing CPU coverage rows here. */
   if(!textured && primitive>=4 && maximum_alpha>0.0 &&
      (minimum_alpha==0.0 || minimum_alpha>=1.0/65536.0) &&
-     vertex_native_colour_triangles(R,projected,count,primitive)){
+     vertex_native_colour_triangles(R,projected,count,primitive,triangle_phase,
+       draw.colour_triangle_integer_centres?1u:0u)){
     result=1;goto vertex_scene_done;
   }
   if(textured && primitive>=4 && !rgb_gradient && maximum_alpha>0.0 &&
@@ -2127,16 +2134,16 @@ static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
       if(!vertex_scene_line(&coverage,projected[i],projected[i+1],g_d3.classic)) goto vertex_scene_done;
   }else if(primitive==4){
     for(int i=0;i+2<count;i+=3)
-      if(!vertex_scene_triangle(&coverage,projected+i,g_d3.classic)) goto vertex_scene_done;
+      if(!vertex_scene_triangle(&coverage,projected+i,triangle_phase)) goto vertex_scene_done;
   }else if(primitive==5){
     for(int i=2;i<count;i++){
       GmlD3Vertex triangle[3]={projected[i&1?i-1:i-2],projected[i&1?i-2:i-1],projected[i]};
-      if(!vertex_scene_triangle(&coverage,triangle,g_d3.classic)) goto vertex_scene_done;
+      if(!vertex_scene_triangle(&coverage,triangle,triangle_phase)) goto vertex_scene_done;
     }
   }else{
     for(int i=1;i+1<count;i++){
       GmlD3Vertex triangle[3]={projected[0],projected[i],projected[i+1]};
-      if(!vertex_scene_triangle(&coverage,triangle,g_d3.classic)) goto vertex_scene_done;
+      if(!vertex_scene_triangle(&coverage,triangle,triangle_phase)) goto vertex_scene_done;
     }
   }
   /* Inverse-source endpoint RGB is an exact destination identity or zero.
