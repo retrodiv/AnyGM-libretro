@@ -17961,6 +17961,59 @@ static int resident_numbered_rotated_native_quad(void){
   return 1;
 }
 
+/* An additive rotated nearest draw onto a screen known to be opaque is one native quad with the
+ * additive factors, not one quad per covered texel. A screen whose opacity is unknown keeps the
+ * coverage rows, which leave out alpha-zero texels. */
+static int resident_additive_rotated_native_quad(void){
+  enum { W=256,H=192,SW=64,SH=48 };
+  for(unsigned opaque=0;opaque<2u;opaque++){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={.bytecode=17};
+    FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+    uint32_t *screen=calloc(W*H,sizeof *screen),*shadow=calloc(W*H,sizeof *shadow);
+    CHECK(r && screen && shadow && !gml_render_init(r,NULL));r->win=&content;
+    free(r->atlas[0].px);r->atlas[0].px=malloc(SW*SH*4u);
+    r->atlas[0].w=SW;r->atlas[0].h=SH;
+    r->tpag=calloc(1,sizeof *r->tpag);r->spr=calloc(1,sizeof *r->spr);
+    CHECK(r->atlas[0].px && r->tpag && r->spr);
+    for(unsigned p=0;p<SW*SH;p++){
+      r->atlas[0].px[p*4u]=(uint8_t)(p*7u);
+      r->atlas[0].px[p*4u+1u]=(uint8_t)(p*13u);
+      r->atlas[0].px[p*4u+2u]=(uint8_t)(p*23u);
+      r->atlas[0].px[p*4u+3u]=(p%5u)==2u?0u:(uint8_t)(64u+p%191u);
+    }
+    r->n_tpag=r->n_spr=1;
+    r->tpag[0]=(GmlTpag){.sw=SW,.sh=SH,.tw=SW,.th=SH,.bw=SW,.bh=SH};
+    r->spr[0]=(GmlSprite){.w=SW,.h=SH,.originx=SW/2,.originy=SH/2,.n_frames=1};
+    r->spr[0].frame=calloc(1,sizeof(int));CHECK(r->spr[0].frame);
+    device.observe_on_demand=fake_observe_on_demand;gml_render_bind_device(r,&device);
+    CHECK(gml_render_begin_resident_base(r,screen,W,H,0,0));
+    gml_render_set_pending_fill(r,0xFF403050u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));
+    if(!opaque) r->fb_opaque_known=0;
+    memcpy(shadow,r->fb,W*H*sizeof *shadow);
+    uint64_t before=fake.textured_families[GML_RENDER_SCENE_SPRITE];
+    r->interp=0;r->color_write_mask=15u;r->blendmode=1;
+    r->alpha_test_enable=1;r->alpha_test_ref=0;
+    gml_draw_sprite_ext(r,0,0,128,96,1,1,31,0xFF0000u,.75);
+    CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r));
+    CHECK(!fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,W*H*sizeof *shadow));
+    CHECK(r->blendmode==1 && r->alpha_test_enable && !r->alpha_test_ref);
+    if(opaque){
+      CHECK(fake.textured_families[GML_RENDER_SCENE_SPRITE]==before+1u);
+      CHECK(fake.last_quad.shape==GML_RENDER_QUAD_GENERAL && !fake.last_quad.span_active &&
+        fake.last_filter==GML_RENDER_FILTER_NEAREST);
+      CHECK(fake.last_quad_state.rgb_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
+        fake.last_quad_state.rgb_destination_factor==GML_RENDER_BLEND_ONE &&
+        fake.last_quad_state.alpha_source_factor==GML_RENDER_BLEND_ONE &&
+        fake.last_quad_state.alpha_destination_factor==GML_RENDER_BLEND_ONE &&
+        fake.last_quad_state.coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA);
+      CHECK(r->fb_opaque_known && r->fb_all_opaque);
+    }else CHECK(fake.textured_families[GML_RENDER_SCENE_SPRITE]>before+1u);
+    gml_render_abandon_device(r);gml_render_free(r);free(r);free(screen);free(shadow);
+  }
+  return 1;
+}
+
 static int resident_sprite_function(int geometry){
   enum { W=24,H=20 };
   const int legacy_generations[]={700,800,15,17},nearest_generations[]={700,530,800,13,15,17};
@@ -22026,6 +22079,7 @@ int main(void){
     else if(!strcmp(selected,"wide-nearest-rows")) passed=resident_large_screen_axis_row_metadata();
     else if(!strcmp(selected,"large-rotated-rows")) passed=resident_large_rotated_sample_row_metadata();
     else if(!strcmp(selected,"numbered-rotated-native-quad")) passed=resident_numbered_rotated_native_quad();
+    else if(!strcmp(selected,"additive-rotated-native-quad")) passed=resident_additive_rotated_native_quad();
     else if(!strcmp(selected,"view-surface-quads")) passed=resident_view_surface_quads();
     else if(!strcmp(selected,"lazy-native-atlas")) passed=resident_lazy_native_atlas();
     else if(!strcmp(selected,"flat-fog-sprite")) passed=resident_flat_fog_sprite_function();
@@ -22399,11 +22453,12 @@ int main(void){
   passed+=resident_rectangle_cpu_passthrough_programs();
   passed+=skip_cpu_draw_policy_preserves_observers();
   passed+=resident_numbered_rotated_native_quad();
+  passed+=resident_additive_rotated_native_quad();
   passed+=resident_view_surface_quads();
   passed+=resident_lazy_native_atlas();
   passed+=resident_unit_texel_magnification();
   passed+=opaque_rectangle_clear_complement();
-  enum { total=353 };
+  enum { total=354 };
   printf("render resource cases: passed=%d failed=%d\n",passed,total-passed);
   return passed==total?EXIT_SUCCESS:EXIT_FAILURE;
 }

@@ -3984,7 +3984,8 @@ static int scene_nearest_surface_function_case(void){
 static int scene_native_masked_rotation_case(void){
   const uint8_t pixels[16]={32,64,128,64,128,64,32,128,16,192,48,255,192,48,16,0};
   const uint8_t binary_pixels[16]={32,64,128,255,128,64,32,0,16,192,48,255,192,48,16,0};
-  for(unsigned owner=0;owner<6u;owner++)
+  /* Owner 6 is an additive screen draw: the same native quad, with fixed ONE/ONE blending. */
+  for(unsigned owner=0;owner<7u;owner++)
   for(unsigned api=0;api<2u;api++) for(unsigned geometry=0;geometry<4u;geometry++)
   for(unsigned invalid=0;invalid<(owner==5u?17u:10u);invalid++){
     anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
@@ -4012,6 +4013,13 @@ static int scene_native_masked_rotation_case(void){
       states[1].alpha_test_enabled=owner==2u || owner==4u;
       states[1].alpha_test_reference=states[1].alpha_test_enabled?127u:0u;
     }
+    if(owner==6u){
+      states[1].write_mask=15u;
+      states[1].rgb_destination_factor=GML_RENDER_BLEND_ONE;
+      states[1].alpha_source_factor=states[1].alpha_destination_factor=GML_RENDER_BLEND_ONE;
+      states[1].coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+      states[1].alpha_test_enabled=1u;
+    }
     if(owner==5u){
       states[1].write_mask=15u;
       states[1].samplers[0].quantisation=GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION;
@@ -4019,7 +4027,7 @@ static int scene_native_masked_rotation_case(void){
     GmlRenderDrawOp ops[3]={0};
     for(unsigned index=0;index<3u;index++){
       GmlRenderDrawOp *op=&ops[index];op->sequence=index+1u;
-      op->target=(GmlRenderTargetRef){.image={owner>=3u && owner<5u?GML_RENDER_RESOURCE_APPLICATION:owner && owner<5u?GML_RENDER_RESOURCE_SCREEN:GML_RENDER_RESOURCE_SURFACE,182u,1u,index+1u},
+      op->target=(GmlRenderTargetRef){.image={owner>=3u && owner<5u?GML_RENDER_RESOURCE_APPLICATION:(owner && owner<5u) || owner==6u?GML_RENDER_RESOURCE_SCREEN:GML_RENDER_RESOURCE_SURFACE,182u,1u,index+1u},
         .storage_version=1u,.width=8u,.height=8u,.pixel_format=GML_RENDER_PIXEL_ARGB8888,
         .region={0,0,8u,8u}};
       if(!index){op->opcode=GML_RENDER_OP_CLEAR;op->payload.clear_colour=0xA5403050u;continue;}
@@ -4051,6 +4059,7 @@ static int scene_native_masked_rotation_case(void){
       }
     }
     if(invalid==1u) states[1].write_mask=owner?7u:15u;
+    if(owner==6u && invalid==10u) states[1].rgb_source_factor=GML_RENDER_BLEND_ONE;
     if(invalid==2u) q->x[2]+=1.0;
     if(invalid==3u) q->u[0]=.25;
     if(invalid==4u) q->sampling.filter=states[1].samplers[0].filter=GML_RENDER_FILTER_HARDWARE_BILINEAR;
@@ -4072,9 +4081,14 @@ static int scene_native_masked_rotation_case(void){
       !anygm_test_graphics_clear_calls() && !anygm_test_graphics_scene_draw_calls(),
       "unqualified native suffix refuses before its clear prefix");
     else REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==3u &&
-      anygm_test_graphics_scene_draw_calls()==(owner && owner<5u?2:1) && !anygm_test_graphics_scene_copies() &&
+      anygm_test_graphics_scene_draw_calls()==((owner && owner<5u) || owner==6u?2:1) && !anygm_test_graphics_scene_copies() &&
       !anygm_test_graphics_read_pixels() && anygm_test_graphics_scene_filter()==GL_NEAREST,
       "native nearest rotations group without destination snapshots or linear filtering");
+    if(owner==6u && !invalid){
+      unsigned factors[4];anygm_test_graphics_blend_factors(factors);
+      REQUIRE(factors[0]==GL_ONE && factors[1]==GL_ONE && factors[2]==GL_ONE && factors[3]==GL_ONE,
+        "an additive native rotation keeps fixed additive blending");
+    }
     gml_gpu_destroy(gpu,1);
   }
   return 1;
@@ -4975,7 +4989,7 @@ static int uniform_clear_checkpoint_case(void){
       REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,"surface redrawn");
       readback.image=ops[batch.operation_count-1u].target.image;
       readback.checkpoint_baseline_version=baseline;
-      int reads=anygm_test_graphics_read_pixels();
+      unsigned reads=anygm_test_graphics_read_pixels();
       REQUIRE(device.readback(device.context,&readback) && result.checkpoint_retained,
               "the checkpoint keeps its baseline");
       if(step==0u){

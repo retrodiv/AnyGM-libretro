@@ -1678,7 +1678,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   }
   int native_opaque=native_geometry && r->target_id<0 && !r->target_sp &&
     r->fb_opaque_known && r->fb_all_opaque;
-  if(native_geometry && r->target_id<0 && !r->target_sp){
+  if(native_geometry && r->target_id<0 && !r->target_sp && !(r->alphablend && r->blendmode==1)){
     state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.alpha_source_factor=GML_RENDER_BLEND_ONE;
@@ -4424,11 +4424,17 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     fabs((double)page->sw*xs*(double)page->sh*ys)>=131072.0;
   if((phase>=0.001 && fabs(phase-360.0)>=0.001) || native_axis){
     /* A qualified nearest draw keeps its CPU placement while the device owns
-     * rasterization and sampling. Do not tessellate it into CPU coverage rows. */
+     * rasterization and sampling. Do not tessellate it into CPU coverage rows.
+     * An additive draw onto a screen already known to be opaque qualifies too:
+     * the coverage rows only leave out alpha-zero texels, which add no colour
+     * there and cannot change an alpha that is already opaque. */
+    int additive_opaque_screen=r->alphablend && r->blendmode==1 && !r->fog_flat &&
+      r->color_write_mask==15u && r->target_id<0 && !r->target_sp &&
+      r->fb_opaque_known && r->fb_all_opaque;
     if(family==GML_RENDER_SCENE_SPRITE && !r->classic && !r->interp &&
        anygm_policy_has_modern_layer_semantics(r->win) && (!r->fog_flat || fog_rotated_alias) &&
        !r->gui_pass_active && r->active_shader<0 &&
-       r->alphablend && (!r->blendmode || fog_rotated_alias) &&
+       r->alphablend && (!r->blendmode || fog_rotated_alias || additive_opaque_screen) &&
        ((r->color_write_mask==7u && !r->alpha_test_enable &&
          r->target_id>0 && gml_render_target_preserves_alpha(r)) ||
         (r->color_write_mask==15u && r->target_id<0 && !r->target_sp &&

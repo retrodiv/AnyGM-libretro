@@ -1307,7 +1307,8 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
     (op->target.image.resource_class==GML_RENDER_RESOURCE_SCREEN ||
               op->target.image.resource_class==GML_RENDER_RESOURCE_APPLICATION) &&
     state->write_mask==15u && state->alpha_test_enabled<=1u && state->alpha_test_reference<=255u &&
-    state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA && qualified_blend(state)==1;
+    state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
+    (qualified_blend(state)==1 || qualified_blend(state)==14);
   if(!source || !source->width || !source->height || source->rendered_origin ||
      source->width>16384u || source->height>16384u ||
      source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
