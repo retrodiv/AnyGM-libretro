@@ -479,6 +479,69 @@ int expect_legacy_sprite_assign_builtin(void){
   return ok;
 }
 
+/* A large surface is encoded by bands that start where the value changes. The cached bytes must
+ * be the sequential encoding whatever the pixels: runs across the nominal band edges, one value
+ * throughout, or a different value at every pixel. */
+int expect_large_surface_state_encoding_is_sequential(void){
+  GmlRender render={0};
+  render.alpha=1;
+  render.font=-1;
+  render.alphablend=1;
+  render.circle_precision=24;
+  render.app_draw_enable=1;
+  render.next_surface_id=1;
+  const int width=1024,height=512;
+  const size_t n=(size_t)width*height;
+  int id=gml_surface_create(&render,width,height);
+  int ok=id>0;
+  uint8_t *expected=malloc(4u+n*8u),*state=NULL;
+  uint32_t *kept=malloc(n*4u);
+  ok=ok && expected && kept;
+  uint32_t seed=0x9E3779B9u;
+  for(int pattern=0;ok && pattern<3;pattern++){
+    GmlSurface *sf=&render.surface[id-1];
+    for(size_t k=0;k<n;k++){
+      seed=seed*1664525u+1013904223u;
+      if(pattern==0)
+        sf->px[k]=k>=100000u && k<300000u?0x11223344u:(uint32_t)(k/(1u+k%7u))^0xFF000000u;
+      else if(pattern==1) sf->px[k]=0x80402010u;
+      else sf->px[k]=seed;
+    }
+    sf->dirty=1;
+    size_t at=4,runs=0;
+    for(size_t k=0;k<n;){
+      size_t j=k+1;
+      while(j<n && sf->px[j]==sf->px[k]) j++;
+      uint32_t run=(uint32_t)(j-k),value=sf->px[k];
+      for(int byte=0;byte<4;byte++){
+        expected[at+byte]=(uint8_t)(run>>(byte*8));
+        expected[at+4+byte]=(uint8_t)(value>>(byte*8));
+      }
+      at+=8; runs++; k=j;
+    }
+    for(int byte=0;byte<4;byte++) expected[byte]=(uint8_t)(runs>>(byte*8));
+    size_t size=gml_render_state_size(&render,0),written=0,used=0;
+    free(state);
+    state=malloc(size?size:1u);
+    ok=state && gml_render_state_save(&render,0,state,size,&written) && written==size;
+    sf=&render.surface[id-1];
+    ok=ok && sf->rle && sf->rle_len==at && !memcmp(sf->rle,expected,at);
+    if(!ok){
+      fprintf(stderr,"surface encoding pattern %d: %zu bytes, sequential %zu\n",pattern,
+              sf->rle?sf->rle_len:0u,at);
+      break;
+    }
+    memcpy(kept,sf->px,n*4u);
+    memset(sf->px,0,n*4u);
+    ok=gml_render_state_load(&render,state,written,&used) && used==written &&
+       render.surface[id-1].px && !memcmp(render.surface[id-1].px,kept,n*4u);
+    if(!ok) fprintf(stderr,"surface encoding pattern %d did not restore its pixels\n",pattern);
+  }
+  free(expected); free(kept); free(state);
+  gml_render_free(&render);
+  return ok;
+}
+
 int expect_runtime_sprite_state_preserves_collision_extent(void){
   GmlRender render={0};
   render.alpha=1;

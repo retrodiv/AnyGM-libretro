@@ -131,6 +131,7 @@ int main(int argc,char **argv){
     {"font_kerning_pair",expect_a_font_kerning_pair_moves_the_pen},
     {"legacy_sprite_assign_builtin",expect_legacy_sprite_assign_builtin},
     {"runtime_sprite_state_collision_extent",expect_runtime_sprite_state_preserves_collision_extent},
+    {"large_surface_state_encoding",expect_large_surface_state_encoding_is_sequential},
     {"runtime_sprite_state_large_inline_dimension",
      expect_runtime_sprite_state_accepts_large_inline_dimension},
     {"runtime_sprite_state_compression_cache",expect_runtime_sprite_state_compression_cache},

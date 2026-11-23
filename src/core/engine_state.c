@@ -42,6 +42,27 @@ static void *frame_encode_worker(void *opaque){
   task->ok=writer.ok && writer.pos<=writer.cap;
   return NULL;
 }
+/* The renderer section of a prepared save, written on a worker once the surfaces it reads have
+ * been brought to the processor; retry_capacity is its metadata-only ceiling. */
+typedef struct {
+  GmlRender *render;
+  uint8_t *data;
+  size_t capacity,retry_capacity,written;
+  int ok;
+} RenderSaveTask;
+static void *render_save_worker(void *opaque){
+  RenderSaveTask *task=(RenderSaveTask*)opaque;
+  task->ok=gml_render_state_save(task->render,0,task->data,task->capacity,&task->written);
+  if(!task->ok && task->retry_capacity>task->capacity){
+    uint8_t *next=realloc(task->data,task->retry_capacity);
+    if(next){
+      task->data=next;
+      task->capacity=task->retry_capacity;
+      task->ok=gml_render_state_save(task->render,0,task->data,task->capacity,&task->written);
+    }
+  }
+  return NULL;
+}
 static size_t vm_state_task_capacity(const AnygmEngine *engine){
   size_t growth=engine->state_vm_size_hint/2u;
   if(growth<65536u) growth=65536u;
@@ -67,19 +88,25 @@ struct EngineStatePrepared {
   uint8_t *prefix;
   size_t prefix_size,prefix_capacity,prefix_core,prefix_render;
   int prefix_ready,prefix_omit_frame,last_omit_frame;
-  /* The completed frame's encoding, which follows its dimensions at frame_offset of the prefix,
-   * is written on a second worker from pixels nothing changes before the save joins it. */
+  /* The completed frame's encoding, which follows its dimensions at the end of the prefix, and
+   * the renderer section after it are written on two more workers from pixels and renderer
+   * state that nothing changes before the save joins them. */
   FrameEncodeTask frame;
-  gml_thread_t frame_thread;
-  int frame_running,frame_deferred;
-  size_t frame_offset;
+  RenderSaveTask renderer_section;
+  gml_thread_t frame_thread,render_thread;
+  int frame_running,frame_deferred,render_running,render_deferred;
   size_t last_size;   /* the size of the last state written, which sizes the stash */
 };
 static void state_prepare_prefix(AnygmEngine *engine,struct EngineStatePrepared *prepared);
 static void state_prepared_frame_join(struct EngineStatePrepared *prepared){
-  if(!prepared->frame_running) return;
-  gml_thread_join(prepared->frame_thread);
-  prepared->frame_running=0;
+  if(prepared->frame_running){
+    gml_thread_join(prepared->frame_thread);
+    prepared->frame_running=0;
+  }
+  if(prepared->render_running){
+    gml_thread_join(prepared->render_thread);
+    prepared->render_running=0;
+  }
 }
 int engine_state_prepared_pending(const AnygmEngine *engine){
   const struct EngineStatePrepared *prepared=engine?engine->state_prepared:NULL;
@@ -125,6 +152,7 @@ void engine_state_prepared_free(AnygmEngine *engine){
   engine_state_prepared_discard(engine);
   free(engine->state_prepared->prefix);
   free(engine->state_prepared->frame.data);
+  free(engine->state_prepared->renderer_section.data);
   free(engine->state_prepared);
   engine->state_prepared=NULL;
 }
@@ -137,6 +165,7 @@ void engine_state_prepared_discard(AnygmEngine *engine){
   prepared->ready=0;
   prepared->prefix_ready=0;
   prepared->frame_deferred=0;
+  prepared->render_deferred=0;
 }
 static void cw_raw(CoreW *s, const void *p, size_t n){
   if(n>SIZE_MAX-s->pos){ s->ok=0; s->pos=SIZE_MAX; return; }
@@ -331,32 +360,40 @@ static void state_write_completed_frame(AnygmEngine *engine,CoreW *state,
   state_encode_frame(state,frame_pixels,width,height,frame_exceeds_capacity);
 }
 
-/* Runs over a band of rows, counted, or written as little-endian (length, value) pairs. */
+/* Runs over a band of rows, written as little-endian (length, value) pairs into the band's own
+ * growing buffer in one pass. A band stops once its runs alone make row-RLE larger than raw. */
 typedef struct {
   const uint32_t *pixels,*rows;
   unsigned width;
   uint32_t first,end;
+  uint64_t limit;
   uint8_t *out;
+  size_t capacity;
   uint64_t runs;
+  int failed,exceeded;
 } FrameRunBand;
 
 static void *frame_run_band(void *opaque){
   FrameRunBand *band=(FrameRunBand*)opaque;
-  uint8_t *out=band->out;
   uint64_t runs=0;
-  for(uint32_t y=band->first;y<band->end;y++){
+  for(uint32_t y=band->first;y<band->end && !band->failed && !band->exceeded;y++){
     if(band->rows[y]!=y) continue;
     const uint32_t *row=band->pixels+(size_t)y*band->width;
     for(unsigned at=0;at<band->width;){
       uint32_t value=row[at]; unsigned rend=at+1;
       while(rend<band->width && row[rend]==value) rend++;
-      if(out){
-        uint32_t length=(uint32_t)(rend-at);
-        for(unsigned byte=0;byte<4u;byte++){
-          out[byte]=(uint8_t)(length>>(byte*8u));
-          out[4u+byte]=(uint8_t)(value>>(byte*8u));
-        }
-        out+=8;
+      if(runs>=band->limit){ band->exceeded=1; break; }
+      if((size_t)(runs+1u)*8u>band->capacity){
+        size_t capacity=band->capacity?band->capacity*2u:65536u;
+        uint8_t *next=realloc(band->out,capacity);
+        if(!next){ band->failed=1; break; }
+        band->out=next; band->capacity=capacity;
+      }
+      uint8_t *out=band->out+(size_t)runs*8u;
+      uint32_t length=(uint32_t)(rend-at);
+      for(unsigned byte=0;byte<4u;byte++){
+        out[byte]=(uint8_t)(length>>(byte*8u));
+        out[4u+byte]=(uint8_t)(value>>(byte*8u));
       }
       runs++; at=rend;
     }
@@ -365,9 +402,26 @@ static void *frame_run_band(void *opaque){
   return NULL;
 }
 
-static void frame_run_bands(FrameRunBand *bands,int count){
+/* A large frame writing straight into its state is encoded by up to four bands of rows at once;
+ * runs never cross a row, so the bands join in order. Their total decides the encoding exactly as
+ * the sequential count does. Returns 0 when the frame is left to the sequential writer. */
+static int state_encode_frame_bands(CoreW *state,const uint32_t *frame_pixels,unsigned width,
+                                    unsigned height,const uint32_t *rows,uint32_t literal_rows){
+  FrameRunBand bands[ANYGM_FRAME_RUN_BANDS];
   gml_thread_t threads[ANYGM_FRAME_RUN_BANDS];
   int started[ANYGM_FRAME_RUN_BANDS]={0};
+  size_t pixels=(size_t)width*height;
+  size_t raw_bytes=pixels*4u,rle_base=(size_t)height*4u+8u;
+  int count=gml_ncpu();
+  if(count>ANYGM_FRAME_RUN_BANDS) count=ANYGM_FRAME_RUN_BANDS;
+  if(count<2 || pixels<ANYGM_FRAME_RUN_BAND_PIXELS || height<(unsigned)count ||
+     !state->data || !state->ok) return 0;
+  /* Past this many runs raw is no larger, whatever the other bands hold. */
+  uint64_t limit=raw_bytes>rle_base?(uint64_t)(raw_bytes-rle_base)/8u+1u:0u;
+  for(int band=0;band<count;band++)
+    bands[band]=(FrameRunBand){frame_pixels,rows,width,
+                               (uint32_t)((uint64_t)height*band/count),
+                               (uint32_t)((uint64_t)height*(band+1)/count),limit,NULL,0,0,0,0};
   for(int band=1;band<count;band++)
     started[band]=gml_thread_create(&threads[band],frame_run_band,&bands[band])==0;
   frame_run_band(&bands[0]);
@@ -375,53 +429,28 @@ static void frame_run_bands(FrameRunBand *bands,int count){
     if(started[band]) gml_thread_join(threads[band]);
     else frame_run_band(&bands[band]);
   }
-}
-
-/* A large frame writing straight into its state is encoded by up to four bands of rows: one pass
- * counts every band's runs, which decides the encoding exactly as the sequential count does and
- * places each band, and a second writes them. Returns 0 when the frame is left to the sequential
- * writer. */
-static int state_encode_frame_bands(CoreW *state,const uint32_t *frame_pixels,unsigned width,
-                                    unsigned height,const uint32_t *rows,uint32_t literal_rows){
-  FrameRunBand bands[ANYGM_FRAME_RUN_BANDS];
-  size_t pixels=(size_t)width*height;
-  int count=gml_ncpu();
-  if(count>ANYGM_FRAME_RUN_BANDS) count=ANYGM_FRAME_RUN_BANDS;
-  if(count<2 || pixels<ANYGM_FRAME_RUN_BAND_PIXELS || height<(unsigned)count ||
-     !state->data || !state->ok) return 0;
-  for(int band=0;band<count;band++)
-    bands[band]=(FrameRunBand){frame_pixels,rows,width,
-                               (uint32_t)((uint64_t)height*band/count),
-                               (uint32_t)((uint64_t)height*(band+1)/count),NULL,0};
-  frame_run_bands(bands,count);
+  int result=1,exceeded=0;
   uint64_t runs=0;
-  for(int band=0;band<count;band++) runs+=bands[band].runs;
-  size_t raw_bytes=pixels*4u,rle_base=(size_t)height*4u+8u;
-  if(runs>UINT32_MAX){ state->ok=0; return 1; }
-  if(raw_bytes<=rle_base || raw_bytes<=rle_base+(size_t)runs*8u){
-    cw_u32(state,ANYGM_FRAME_ENCODING_RAW);
-    cw_u32_array(state,frame_pixels,pixels);
-    return 1;
-  }
-  cw_u32(state,ANYGM_FRAME_ENCODING_ROW_RLE);
-  for(uint32_t y=0;y<height;y++)
-    cw_u32(state,rows[y]==y?ANYGM_FRAME_ROW_LITERAL:rows[y]);
-  cw_u32(state,literal_rows);
-  cw_u32(state,(uint32_t)runs);
-  size_t bytes=(size_t)runs*8u;
-  if(!state->ok || state->pos>state->cap || bytes>state->cap-state->pos){
-    cw_raw(state,NULL,bytes);
-    state->ok=0;
-    return 1;
-  }
-  uint8_t *out=state->data+state->pos;
   for(int band=0;band<count;band++){
-    bands[band].out=out;
-    out+=(size_t)bands[band].runs*8u;
+    if(bands[band].failed) result=0;
+    if(bands[band].exceeded) exceeded=1;
+    runs+=bands[band].runs;
   }
-  frame_run_bands(bands,count);
-  state->pos+=bytes;
-  return 1;
+  if(result){
+    if(exceeded || raw_bytes<=rle_base || raw_bytes<=rle_base+(size_t)runs*8u){
+      cw_u32(state,ANYGM_FRAME_ENCODING_RAW);
+      cw_u32_array(state,frame_pixels,pixels);
+    } else {
+      cw_u32(state,ANYGM_FRAME_ENCODING_ROW_RLE);
+      for(uint32_t y=0;y<height;y++)
+        cw_u32(state,rows[y]==y?ANYGM_FRAME_ROW_LITERAL:rows[y]);
+      cw_u32(state,literal_rows);
+      cw_u32(state,(uint32_t)runs);
+      for(int band=0;band<count;band++) cw_raw(state,bands[band].out,(size_t)bands[band].runs*8u);
+    }
+  }
+  for(int band=0;band<count;band++) free(bands[band].out);
+  return result;
 }
 
 /* The encoding and pixels of a frame of nonzero dimensions, as the state writes them after those
@@ -794,11 +823,12 @@ static int state_launch_matches_engine(const AnygmEngine *engine,
 /* Writes the header space and the core, completed-frame and renderer sections, starting the
  * runtime-section worker when asked. Returns 1 when written, 0 when the completed frame exceeds
  * the capacity (the caller retries without it), and -1 when the state cannot be written. With
- * defer, a frame encoding is left out and named there; it belongs at *defer_offset. */
+ * defer, a frame encoding is left out and named there, and so is the renderer section: both
+ * follow the written bytes, in that order. */
 static int state_write_prefix(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity,
                               int start_vm,VmStateWriteTask *vm_task,gml_thread_t *vm_thread,
                               int *vm_thread_started,size_t *coren,size_t *rendern,
-                              FrameEncodeTask *defer,size_t *defer_offset){
+                              FrameEncodeTask *defer){
   /* A proven current context lets a writer preserve the actual resident pixels,
    * rather than substituting their CPU recipe. Metadata queries do neither, and
    * hosts without this proof retain the established context-free state path. */
@@ -847,9 +877,12 @@ static int state_write_prefix(AnygmEngine *engine,CoreW *s,int *frame_exceeds_ca
   }
   state_write_completed_frame(engine,s,frame_exceeds_capacity,defer);
   if(frame_exceeds_capacity && *frame_exceeds_capacity) return 0;
-  if(defer) *defer_offset=s->pos;
   *coren=s->pos-core_start;
   size_t render_start=s->pos;
+  if(defer){
+    *rendern=0;
+    return 1;
+  }
   /* Assigning a view does not make a game-owned surface disposable. A later
    * view draw may retain transparent pixels or the room may stop drawing it.
    * Preserve its current bytes before any restored Step or pixel read. */
@@ -888,11 +921,13 @@ static void state_write(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity
       prepared->task=(VmStateWriteTask){0};
       prepared->ready=0;
       prepared->consumed=1;
+      size_t frame_bytes=prepared->frame_deferred?prepared->frame.written:0u;
+      size_t render_bytes=prepared->render_deferred?prepared->renderer_section.written:0u;
       use_prefix=prepared->prefix_ready && prepared->prefix_omit_frame==engine->state_omit_frame &&
                  (!prepared->frame_deferred || prepared->frame.ok) &&
-                 prepared->prefix_size<=s->cap &&
-                 (!prepared->frame_deferred ||
-                  prepared->frame.written<=s->cap-prepared->prefix_size);
+                 (!prepared->render_deferred || prepared->renderer_section.ok) &&
+                 prepared->prefix_size<=s->cap && frame_bytes<=s->cap-prepared->prefix_size &&
+                 render_bytes<=s->cap-prepared->prefix_size-frame_bytes;
       if(use_prefix) prepared->consumed=2;
     }
     prepared->prefix_ready=0;
@@ -901,18 +936,20 @@ static void state_write(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity
   uint32_t save_frame_authority=engine->frame_authority;
   size_t coren=0,rendern=0;
   if(use_prefix){
-    size_t head=prepared->frame_deferred?prepared->frame_offset:prepared->prefix_size;
-    memcpy(s->data,prepared->prefix,head);
-    s->pos=head;
+    memcpy(s->data,prepared->prefix,prepared->prefix_size);
+    s->pos=prepared->prefix_size;
     coren=prepared->prefix_core;
+    rendern=prepared->prefix_render;
     if(prepared->frame_deferred){
       memcpy(s->data+s->pos,prepared->frame.data,prepared->frame.written);
       s->pos+=prepared->frame.written;
       coren+=prepared->frame.written;
-      memcpy(s->data+s->pos,prepared->prefix+head,prepared->prefix_size-head);
-      s->pos+=prepared->prefix_size-head;
     }
-    rendern=prepared->prefix_render;
+    if(prepared->render_deferred){
+      memcpy(s->data+s->pos,prepared->renderer_section.data,prepared->renderer_section.written);
+      s->pos+=prepared->renderer_section.written;
+      rendern=prepared->renderer_section.written;
+    }
   }
   VmStateWriteTask vm_task={0};
   gml_thread_t vm_thread;
@@ -924,7 +961,7 @@ static void state_write(AnygmEngine *engine,CoreW *s,int *frame_exceeds_capacity
   }
   if(!use_prefix){
     int result=state_write_prefix(engine,s,frame_exceeds_capacity,!vm_task_done,&vm_task,
-                                  &vm_thread,&vm_thread_started,&coren,&rendern,NULL,NULL);
+                                  &vm_thread,&vm_thread_started,&coren,&rendern,NULL);
     if(result<0){
       free(vm_task.data);
       return;
@@ -1034,12 +1071,25 @@ static void state_prepare_prefix(AnygmEngine *engine,struct EngineStatePrepared 
   size_t coren=0,rendern=0;
   int started=0;
   FrameEncodeTask frame={0};
-  size_t frame_offset=0;
-  prepared->frame_deferred=0;
+  prepared->frame_deferred=prepared->render_deferred=0;
   int result=state_write_prefix(engine,&stash,&frame_exceeds,0,NULL,NULL,&started,&coren,
-                                &rendern,&frame,&frame_offset);
+                                &rendern,&frame);
   engine->state_omit_frame=previous;
   if(result!=1 || !stash.ok || stash.pos>stash.cap) return;
+  /* Whatever the renderer section needs from the device is read here, on this thread. */
+  if(!gml_render_state_acquire_surfaces(&engine->render)) return;
+  size_t render_capacity=prepared->renderer_section.written<=(SIZE_MAX-65536u)/2u?
+    prepared->renderer_section.written*2u+65536u:SIZE_MAX;
+  if(prepared->renderer_section.capacity<render_capacity){
+    uint8_t *next=realloc(prepared->renderer_section.data,render_capacity);
+    if(!next) return;
+    prepared->renderer_section.data=next;
+    prepared->renderer_section.capacity=render_capacity;
+  }
+  prepared->renderer_section.render=&engine->render;
+  prepared->renderer_section.retry_capacity=gml_render_state_capacity(&engine->render,0);
+  prepared->renderer_section.written=0;
+  prepared->renderer_section.ok=0;
   if(frame.pixels){
     /* Row-RLE is chosen only when smaller than raw, so the raw bound holds either encoding. */
     size_t capacity=4u+(size_t)frame.width*frame.height*4u;
@@ -1056,8 +1106,11 @@ static void state_prepare_prefix(AnygmEngine *engine,struct EngineStatePrepared 
       frame_encode_worker(&prepared->frame);
     else prepared->frame_running=1;
     prepared->frame_deferred=1;
-    prepared->frame_offset=frame_offset;
   }
+  if(gml_thread_create(&prepared->render_thread,render_save_worker,&prepared->renderer_section)!=0)
+    render_save_worker(&prepared->renderer_section);
+  else prepared->render_running=1;
+  prepared->render_deferred=1;
   prepared->prefix_size=stash.pos;
   prepared->prefix_core=coren;
   prepared->prefix_render=rendern;

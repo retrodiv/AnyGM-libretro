@@ -30,6 +30,11 @@ size_t gml_render_state_capacity(GmlRender *render,int derived_view_surface);
 size_t gml_render_surface_state_capacity(int width,int height);
 int gml_render_state_save(GmlRender *render,int derived_view_surface,
                           void *data,size_t length,size_t *written);
+/* Brings every live surface's pixels to the processor, as a save would, on the thread that owns
+ * the device. A save that follows with no draw in between then needs no device: it may run on
+ * another thread while the owner does not use the renderer. Returns 0 when a surface cannot be
+ * read. */
+int gml_render_state_acquire_surfaces(GmlRender *render);
 int gml_render_state_load(GmlRender *render,const void *data,size_t length,size_t *used);
 int gml_render_state_profile_metrics(const GmlRender *render,
                                      GmlRenderStateProfileMetrics *metrics);

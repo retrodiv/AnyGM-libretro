@@ -777,10 +777,12 @@ static bool paced_cadence_active(void){
 
 /* A rewind ring records every Nth tick, so retro_serialize arrives at a fixed interval of ticks.
  * Once the same interval has been seen twice, the tick that completes the next one tells the
- * engine a save is coming once its frame and audio are handed over: the frame is presented on
- * time, the device has finished drawing it by the time the save reads it back, and the runtime
- * section is written on a worker until retro_serialize. A restored state (rewinding) or any other
- * departure forgets the interval; the engine discards unused work, so a miss costs only time. */
+ * engine a save is coming before the frame is handed over. The engine reads what the save needs
+ * from the device and leaves the runtime section, the frame's encoding and the renderer section
+ * to workers, which run while the frontend presents and waits for the display; retro_serialize,
+ * which follows at once, only joins them. Announcing after the frame would leave the workers no
+ * such wait to fill. A restored state (rewinding) or any other departure forgets the interval;
+ * the engine discards unused work, so a miss costs only time. */
 static void prepare_expected_save(void){
   if(g_libretro.save_interval_repeats && g_libretro.save_interval &&
      g_libretro.run_ticks-g_libretro.save_tick==g_libretro.save_interval &&
@@ -944,6 +946,7 @@ void retro_run(void){
     else if(geometry_changed)
       g_libretro.environment(RETRO_ENVIRONMENT_SET_GEOMETRY,&av.geometry);
   }
+  if(step+1==calls) prepare_expected_save();
   uint64_t video_started=timing.active && step+1==calls?frame_profile_now(&timing):0;
   if(step+1==calls && g_libretro.video && g_libretro.video_enabled){
     /* The engine reports which target it rendered into. The hardware sentinel says the frame is
@@ -967,7 +970,6 @@ void retro_run(void){
     if(timing.active && (g_libretro.audio_batch || g_libretro.audio_sample))
       frame_profile_callback(&timing,audio_started,&timing.audio_ns);
   }
-  if(step+1==calls) prepare_expected_save();
   if((g_libretro.frame.flags&ANYGM_FRAME_SHUTDOWN_REQUESTED) && g_libretro.environment)
     g_libretro.environment(RETRO_ENVIRONMENT_SHUTDOWN,NULL);
   }

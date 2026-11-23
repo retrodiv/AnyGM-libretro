@@ -6,6 +6,7 @@
  * the runtime in between abandons the background work rather than saving a stale runtime. */
 #include "anygm.h"
 #include "engine_internal.h"
+#include "gml_render.h"
 #include "stdio_vfs.h"
 #include "synthetic_content.h"
 
@@ -151,6 +152,12 @@ int main(void){
    * frame buffer. */
   {
     REQUIRE(run_frames(engine,1) && engine->have_presented_frame,"presented frame");
+    /* A large surface gives the renderer section, written on its own worker, banded pixels. */
+    int surface=gml_surface_create(&engine->render,1024,512);
+    REQUIRE(surface>0,"large surface");
+    for(size_t k=0;k<1024u*512u;k++)
+      engine->render.surface[surface-1].px[k]=k<200000u?0x01020304u:(uint32_t)(k/5u)*2654435761u;
+    engine->render.surface[surface-1].dirty=1;
     engine->output_width=1920u;engine->output_height=1080u;
     uint32_t width=engine->output_width,height=engine->output_height;
     REQUIRE((size_t)width*height>=262144u && height>=4u,"the frame is large enough for bands");

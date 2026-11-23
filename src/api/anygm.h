@@ -15,7 +15,7 @@ extern "C" {
  * runtime library version, and every publishable metadata file declares the literal "Git" instead
  * of a number, so no copy can promise a value that has gone stale. CONTRIBUTING.md owns the single
  * increment step. */
-#define ANYGM_VERSION "0.1.983"
+#define ANYGM_VERSION "0.1.984"
 #define ANYGM_API_VERSION 11u
 #define ANYGM_HOST_SERVICES_VERSION 4u
 #define ANYGM_STATE_SCHEMA 70u
@@ -689,11 +689,10 @@ uint32_t anygm_state_capacity_flags(const AnygmEngine *engine);
 size_t anygm_state_capacity_hint(const AnygmEngine *engine);
 /* Optional: declares that the next call on this engine is expected to be anygm_state_save or
  * anygm_state_save_for_resume, with the runtime unchanged, as when a frame has finished and a
- * rewind ring records this one. Calling it after the frame has been handed to the display lets a
- * device finish drawing before the engine reads the picture back. The engine writes the state's
- * sections then and may continue the runtime section and the picture's encoding in the
- * background; the save then completes from them and writes the same bytes it would have written
- * alone. Any other call that can change the runtime first waits
+ * rewind ring records this one, before the host presents the frame. The engine reads what the
+ * save needs from the device and may write the runtime section, the picture's encoding and the
+ * renderer section in the background while the host presents; the save then completes from them
+ * and writes the same bytes it would have written alone. Any other call that can change the runtime first waits
  * for and discards that work, so a wrong expectation costs time, never correctness. The host must
  * not call the engine concurrently, as with every other function. */
 void anygm_state_prepare(AnygmEngine *engine);

@@ -810,11 +810,15 @@ row-RLE and adjacent-row repetition at exact, near-fit, compact and failed capac
 the ordinary complete and explicit resume bytes, with canaries and unchanged live-state checks.
 
 A picture of at least 262144 pixels written straight into its state, without that capacity
-proof, counts and writes its runs by up to four bands of rows: the counts select the encoding
-exactly as the sequential count does and place each band's runs. A prepared save encodes its
-picture on a worker into a separate buffer that the save splices in after the dimensions. Both
-write the sequential bytes; `tests/integration/test_engine_state_prepare.c` compares them with an
-independent encoder for run, magnified and raw pictures.
+proof, writes its runs by up to four bands of rows at once into separate buffers joined in row
+order; their total selects the encoding exactly as the sequential count does. A surface of at
+least 262144 pixels is encoded the same way by bands of pixels, a band continuing the previous
+value lengthening the last joined run. A prepared save encodes its picture and writes its renderer
+section on workers into separate buffers that the save appends after the core prefix. All of
+these write the sequential bytes: `tests/integration/test_engine_state_prepare.c` compares the
+picture with an independent encoder for run, magnified and raw pictures and announced saves with
+plain ones, and `tests/unit/runtime/persistent/test_persistent_renderer.c` compares surface
+encodings across band edges, uniform and noisy pixels.
 
 A frontend that explicitly acknowledges variable sizes starts from the same measured capacity when
 it queries before the first frame. If its first query occurs after gameplay has completed a frame,

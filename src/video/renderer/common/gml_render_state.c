@@ -8,6 +8,7 @@
 #include "gml_font_raster.h"
 #include "gml_image_codec.h"
 #include "anygm_vfs.h"
+#include "gml_thread.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -255,6 +256,95 @@ size_t gml_render_surface_state_capacity(int width,int height){
   return 4u+bytes;
 }
 
+/* A surface's run-length bytes: a run count, then (run, value) pairs over its pixels in order. A
+ * band writes the runs inside its own pixels into its own growing buffer, in one pass. */
+typedef struct {
+  const uint32_t *pixels;
+  size_t first,end;
+  uint8_t *out;
+  size_t runs,capacity;
+  int failed;
+} SurfaceRunBand;
+
+static void *surface_run_band(void *opaque){
+  SurfaceRunBand *band=(SurfaceRunBand*)opaque;
+  size_t runs=0;
+  for(size_t k=band->first;k<band->end;){
+    uint32_t v=band->pixels[k]; size_t j=k+1;
+    while(j<band->end && band->pixels[j]==v) j++;
+    if((runs+1u)*8u>band->capacity){
+      size_t capacity=band->capacity?band->capacity*2u:65536u;
+      uint8_t *next=realloc(band->out,capacity);
+      if(!next){ band->failed=1; break; }
+      band->out=next; band->capacity=capacity;
+    }
+    state_store_u32(band->out+runs*8u,(uint32_t)(j-k));
+    state_store_u32(band->out+runs*8u+4u,v);
+    runs++; k=j;
+  }
+  band->runs=runs;
+  return NULL;
+}
+
+enum { SURFACE_RUN_BANDS=4, SURFACE_RUN_BAND_PIXELS=262144 };
+
+static uint32_t surface_load_u32(const uint8_t *bytes){
+  return (uint32_t)bytes[0]|(uint32_t)bytes[1]<<8|(uint32_t)bytes[2]<<16|(uint32_t)bytes[3]<<24;
+}
+
+/* A large surface is encoded by up to four bands of pixels at once. Joining them in order, a band
+ * whose first pixel continues the previous value lengthens the last joined run with its first
+ * run instead of repeating it, so the bytes are the sequential encoding's. Returns 0 to leave the
+ * surface to the sequential encoder. */
+static int surface_rle_bands(GmlSurface *sf,size_t n){
+  SurfaceRunBand bands[SURFACE_RUN_BANDS];
+  gml_thread_t threads[SURFACE_RUN_BANDS];
+  int started[SURFACE_RUN_BANDS]={0};
+  int count=gml_ncpu();
+  if(count>SURFACE_RUN_BANDS) count=SURFACE_RUN_BANDS;
+  if(count<2 || n<SURFACE_RUN_BAND_PIXELS || n>=0xFFFFFFFFu) return 0;
+  for(int band=0;band<count;band++)
+    bands[band]=(SurfaceRunBand){sf->px,n*(size_t)band/(size_t)count,
+                                 n*(size_t)(band+1)/(size_t)count,NULL,0,0,0};
+  for(int band=1;band<count;band++)
+    started[band]=gml_thread_create(&threads[band],surface_run_band,&bands[band])==0;
+  surface_run_band(&bands[0]);
+  for(int band=1;band<count;band++){
+    if(started[band]) gml_thread_join(threads[band]);
+    else surface_run_band(&bands[band]);
+  }
+  int ok=1;
+  size_t runs=0;
+  for(int band=0;band<count;band++){
+    if(bands[band].failed || !bands[band].runs) ok=0;
+    runs+=bands[band].runs;
+  }
+  size_t need=ok && runs<=(SIZE_MAX-4u)/8u?4u+runs*8u:0u;
+  if(ok && sf->rle_cap<need){
+    size_t capacity=need<4096u?4096u:need;
+    uint8_t *next=realloc(sf->rle,capacity);
+    if(next){ sf->rle=next; sf->rle_cap=capacity; }
+    else ok=0;
+  }
+  if(ok){
+    size_t pos=4,joined=0;
+    for(int band=0;band<count;band++){
+      const uint8_t *from=bands[band].out;
+      size_t band_runs=bands[band].runs;
+      if(band && sf->px[bands[band].first]==sf->px[bands[band].first-1]){
+        state_store_u32(sf->rle+pos-8,surface_load_u32(sf->rle+pos-8)+surface_load_u32(from));
+        from+=8; band_runs--;
+      }
+      memcpy(sf->rle+pos,from,band_runs*8u);
+      pos+=band_runs*8u; joined+=band_runs;
+    }
+    state_store_u32(sf->rle,(uint32_t)joined);
+    sf->rle_len=pos; sf->dirty=0;
+  }
+  for(int band=0;band<count;band++) free(bands[band].out);
+  return ok;
+}
+
 static void render_state_write(GmlRender *render,int view_surface,CoreW *s,
                                int metadata_only){
   if(render->n_fonts<0 || render->n_fonts>GML_MAX_FONTS){ s->ok=0; return; }
@@ -322,7 +412,7 @@ static void render_state_write(GmlRender *render,int view_surface,CoreW *s,
       /* RLE stores (run,value) pairs because mostly uniform surfaces otherwise dominate state
        * size and rewind deltas. Encoded bytes are cached per surface and rebuilt only after a draw
        * marks the surface dirty, avoiding a scan of every unchanged pixel on each snapshot. */
-      if(sf->dirty || !sf->rle){
+      if((sf->dirty || !sf->rle) && !surface_rle_bands(sf,n)){
         size_t need=8;   /* worst grows below */
         size_t nr=0, pos=4;
         if(sf->rle_cap<16){ uint8_t *np=realloc(sf->rle,4096); if(!np){ s->ok=0; continue; } sf->rle=np; sf->rle_cap=4096; }
@@ -860,6 +950,20 @@ int gml_render_state_save(GmlRender *render,int derived_view_surface,
   render_state_write(render,derived_view_surface,&state,0);
   if(written) *written=state.pos;
   return state.ok && state.pos<=length;
+}
+
+int gml_render_state_acquire_surfaces(GmlRender *render){
+  if(!render) return 0;
+  for(int i=0;i<GML_MAX_SURFACES;i++){
+    GmlSurface *sf=&render->surface[i];
+    if(!sf->live || !sf->px || sf->w<=0 || sf->h<=0 || !sf->resource) continue;
+    GmlRenderJournalMetrics metrics;
+    gml_render_resource_journal_metrics(sf->resource,&metrics);
+    if(!gml_render_resource_acquire_cpu_read(sf->resource,NULL)) return 0;
+    /* The writer re-encodes a surface whose journal was replayed; that replay happens here. */
+    if(metrics.journal_operations) sf->dirty=1;
+  }
+  return 1;
 }
 
 int gml_render_state_load(GmlRender *render,const void *data,size_t length,size_t *used){

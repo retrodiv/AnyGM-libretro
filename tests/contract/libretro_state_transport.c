@@ -350,9 +350,9 @@ static int stable_transport(int negotiation_result){
 }
 
 /* A rewind ring saves every Nth tick. Once one interval has repeated, the tick that completes the
- * next announces the save to the engine once its frame is handed over, so the frame is presented
- * on time while the save is prepared; a restored state forgets the interval, and only an interval
- * seen twice predicts. */
+ * next announces the save to the engine before its frame is handed over, so the save's workers run
+ * while the frontend presents; a restored state forgets the interval, and only an interval seen
+ * twice predicts. */
 static int repeated_save_interval_announces_the_next_save(void){
   stub_state_bytes=113u;
   if(!begin_frontend(0)) return 0;
@@ -376,9 +376,9 @@ static int repeated_save_interval_announces_the_next_save(void){
     fprintf(stderr,"save announcements: %u %u %u %u\n",announced[0],announced[1],announced[2],
             announced[3]);
   if(ok) ok=!announced[0] && !announced[1] && announced[2]==1 && announced[3]==1;
-  /* The announcing tick hands its frame over first: the last announcement saw every frame. */
-  if(ok && stub_prepare_after_video!=stub_video_calls){
-    fprintf(stderr,"save announced before its frame: %u of %u frames\n",stub_prepare_after_video,
+  /* The announcing tick hands its frame over afterwards: the last announcement precedes one. */
+  if(ok && stub_prepare_after_video+1u!=stub_video_calls){
+    fprintf(stderr,"save announced after its frame: %u of %u frames\n",stub_prepare_after_video,
             stub_video_calls);
     ok=0;
   }
