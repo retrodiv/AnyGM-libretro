@@ -3911,6 +3911,13 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       }
       target->valid=1;
       target->rendered_origin=1;
+      /* A complete clear stores one colour everywhere until the next write to this image. */
+      if(full_region(op->target.region,target->width,target->height)){
+        target->uniform_known=1;
+        target->uniform_ref=target->ref;
+        target->uniform_colour=target->pixel_format==GML_RENDER_PIXEL_XRGB8888
+          ?op->payload.clear_colour|0xFF000000u:op->payload.clear_colour;
+      }
       result.accepted_prefix=index+1u;
       continue;
     }

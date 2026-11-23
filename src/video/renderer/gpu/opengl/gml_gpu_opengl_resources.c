@@ -1606,12 +1606,17 @@ static int scene_checkpoint_region(GmlGpuBackend *backend,GlSceneImage *image,
   return 1;
 }
 
+static int scene_image_uniform(const GlSceneImage *image){
+  return image->uniform_known && scene_same_version(image->uniform_ref,image->ref);
+}
+
 static void scene_checkpoint_remember(GmlGpuBackend *backend,GlSceneImage *image,
                                        GlSceneCheckpoint *checkpoint,uint32_t format,
                                        int changed){
   int resize=checkpoint->width!=image->width || checkpoint->height!=image->height;
   if(!changed && checkpoint->image.content_version){ checkpoint->image=image->ref;return; }
   checkpoint->image.content_version=0;
+  checkpoint->uniform_known=0;
   if(!backend->gl.CopyTexSubImage2D) return;
   if(!checkpoint->texture) backend->gl.GenTextures(1,&checkpoint->texture);
   if(!checkpoint->texture) return;
@@ -1632,6 +1637,8 @@ static void scene_checkpoint_remember(GmlGpuBackend *backend,GlSceneImage *image
   backend->gl.BindTexture(GL_TEXTURE_2D,0);
   if(backend->gl.GetError()!=GL_NO_ERROR) return;
   checkpoint->image=image->ref;checkpoint->pixel_format=format;
+  checkpoint->uniform_known=scene_image_uniform(image);
+  checkpoint->uniform_colour=image->uniform_colour;
 }
 
 int gml_gpu_opengl_scene_readback(GmlGpuBackend *backend,const GmlRenderImageReadback *transfer){
@@ -1667,8 +1674,13 @@ int gml_gpu_opengl_scene_readback(GmlGpuBackend *backend,const GmlRenderImageRea
      checkpoint->width==image->width && checkpoint->height==image->height &&
      checkpoint->pixel_format==transfer->pixel_format){
     bands=(GmlRenderRect*)malloc(((size_t)image->height+31u)/32u*sizeof *bands);
-    if(!scene_checkpoint_region(backend,image,checkpoint,transfer->pixel_format,&result,
-                                bands,&band_count)){
+    /* A baseline and an image proved uniform in the same colour hold the same pixels: nothing
+     * changed, and no device comparison is needed to know it. */
+    if(checkpoint->uniform_known && scene_image_uniform(image) &&
+       checkpoint->uniform_colour==image->uniform_colour){
+      result.updated_region=(GmlRenderRect){0};
+    } else if(!scene_checkpoint_region(backend,image,checkpoint,transfer->pixel_format,&result,
+                                       bands,&band_count)){
       /* Optional detection failure cannot weaken an otherwise available exact full read. */
       backend->gl.GetError();
       result.updated_region=transfer->region;

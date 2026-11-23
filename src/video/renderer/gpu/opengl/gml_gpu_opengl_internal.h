@@ -155,6 +155,11 @@ typedef struct GlSceneImage {
   int valid,target,rendered_origin,retired;
   int framebuffer_complete;
   int alpha_opaque; /* derived proof that every stored alpha byte is 255 */
+  /* Derived proof that every stored pixel holds uniform_colour (host ARGB words), valid only
+   * while the image still carries uniform_ref: any later write advances the reference. */
+  int uniform_known;
+  uint32_t uniform_colour;
+  GmlRenderImageRef uniform_ref;
   /* Conservative top-origin bounds of every possibly nonzero alpha byte.
    * This context-local certificate is discarded by untracked image writers. */
   int alpha_bounds_known;
@@ -184,6 +189,9 @@ typedef struct GlSceneCheckpoint {
   GLuint texture;
   uint32_t width,height,pixel_format;
   uint64_t last_used;
+  /* The baseline was copied from an image proved uniform in this colour. */
+  int uniform_known;
+  uint32_t uniform_colour;
 } GlSceneCheckpoint;
 
 /* Uniform locations belong to their program, not to the current draw. GLES normally shares

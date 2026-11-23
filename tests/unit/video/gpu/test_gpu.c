@@ -4773,7 +4773,8 @@ static int incremental_checkpoint_contract_case(void){
     REQUIRE(device.readback(device.context,&readback) && result.pixel_reads==1u &&
             result.pixel_bytes==sizeof pixels && !result.mask_reads,"cold checkpoint reads all bytes");
     memcpy(before,pixels,sizeof before);
-    clear.target.image.content_version++;
+    /* Each version clears to its own colour, so only the device comparison can tell. */
+    clear.target.image.content_version++;clear.payload.clear_colour=0xFF000003u;
     REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,"next checkpoint version drawn");
     readback.image=clear.target.image;readback.checkpoint_baseline_version=2u;
     anygm_test_graphics_checkpoint_mask(0u);
@@ -4806,7 +4807,7 @@ static int incremental_checkpoint_contract_case(void){
       }
     }
     if(variant==0u){
-      clear.target.image.content_version++;
+      clear.target.image.content_version++;clear.payload.clear_colour=0xFF000004u;
       REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,"sparse version drawn");
       readback.image=clear.target.image;readback.checkpoint_baseline_version=3u;
       anygm_test_graphics_checkpoint_mask(32u);
@@ -4875,7 +4876,7 @@ static int surface_checkpoint_case(void){
   };
   for(unsigned index=0;index<2u;index++){
     memcpy(before,pixels,sizeof before);
-    clear.target.image.content_version++;
+    clear.target.image.content_version++;clear.payload.clear_colour=0xFF000010u+index;
     REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,"surface redrawn");
     readback.checkpoint_baseline_version=readback.image.content_version;
     readback.image=clear.target.image;
@@ -4915,6 +4916,7 @@ static int surface_checkpoint_case(void){
       unsigned surface=order<3u?order:(order==3u?0u:2u);
       clear.target.image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SURFACE,400u+surface,1u,
                                              versions[surface]+1u};
+      clear.payload.clear_colour=0xFF000020u+order;
       REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,
               "budget surface drawn");
       readback.image=clear.target.image;
@@ -4926,6 +4928,66 @@ static int surface_checkpoint_case(void){
       versions[surface]=clear.target.image.content_version;
     }
     gml_gpu_destroy(gpu,1);free(large);
+  }
+  return 1;
+}
+
+/* A surface cleared to the colour its baseline was cleared to holds the same pixels: the
+ * checkpoint needs no device comparison. A different colour or any later write compares. */
+static int uniform_clear_checkpoint_case(void){
+  for(unsigned api=0;api<2u;api++){
+    uint32_t pixels[65u*33u],before[65u*33u];
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    GmlRenderDeviceServices device={0};
+    GmlRenderDrawOp ops[2]={0};
+    GmlRenderDrawBatch batch={ops,1u,NULL,0u};
+    GmlRenderImageReadback readback={0};
+    GmlRenderImageReadbackResult result={0};
+    anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"uniform checkpoint context adopted");
+    gml_gpu_device_services(gpu,&device);
+    ops[0].opcode=GML_RENDER_OP_CLEAR;
+    ops[0].target.image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SURFACE,303u,1u,2u};
+    ops[0].target.storage_version=1u;ops[0].target.width=65u;ops[0].target.height=33u;
+    ops[0].target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    ops[0].target.region=(GmlRenderRect){0,0,65u,33u};
+    ops[0].payload.clear_colour=0x00102030u;
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,"surface cleared");
+    readback.image=ops[0].target.image;readback.storage_width=65u;readback.storage_height=33u;
+    readback.region=ops[0].target.region;readback.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    readback.stride_bytes=65u*4u;readback.byte_capacity=sizeof pixels;readback.bytes=pixels;
+    readback.checkpoint=1u;readback.result=&result;
+    REQUIRE(device.readback(device.context,&readback) && result.pixel_reads==1u &&
+            !result.mask_reads && result.checkpoint_retained,"a cold checkpoint reads everything");
+    /* step 0: same colour; 1: another colour; 2: same colour again, then a partial clear */
+    for(unsigned step=0;step<3u;step++){
+      memcpy(before,pixels,sizeof before);
+      uint64_t baseline=ops[0].target.image.content_version;
+      ops[0].target.image.content_version++;
+      if(step==1u) ops[0].payload.clear_colour=0x00405060u;
+      batch.operation_count=1u;
+      if(step==2u){
+        ops[1]=ops[0];ops[1].target.image.content_version++;
+        ops[1].target.region=(GmlRenderRect){0,0,64u,33u};
+        batch.operation_count=2u;
+      }
+      REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,"surface redrawn");
+      readback.image=ops[batch.operation_count-1u].target.image;
+      readback.checkpoint_baseline_version=baseline;
+      int reads=anygm_test_graphics_read_pixels();
+      REQUIRE(device.readback(device.context,&readback) && result.checkpoint_retained,
+              "the checkpoint keeps its baseline");
+      if(step==0u){
+        REQUIRE(!result.mask_reads && !result.pixel_reads && !result.updated_region.width &&
+                anygm_test_graphics_read_pixels()==reads && !memcmp(before,pixels,sizeof before),
+                "an unchanged uniform colour needs no comparison and keeps every byte");
+      } else {
+        REQUIRE(result.mask_reads==1u,"another colour or a later write is compared on the device");
+      }
+      if(step==2u) ops[0]=ops[1];
+    }
+    gml_gpu_destroy(gpu,1);
   }
   return 1;
 }
@@ -9217,6 +9279,7 @@ int main(int argc,char **argv){
     {"scene_alpha_mask_rectangle",scene_alpha_mask_rectangle_case},
     {"scene_full_opaque_rectangle_clear",scene_full_opaque_rectangle_clear_case},
     {"scene_partial_opaque_rectangle_keeps_opacity",scene_partial_opaque_rectangle_keeps_opacity_case},
+    {"uniform_clear_checkpoint",uniform_clear_checkpoint_case},
     {"scene_classic_inverse_rect_batch",scene_classic_inverse_rect_batch_case},
     {"scene_hardware_additive_batch",scene_hardware_additive_batch_case},
     {"scene_hardware_background_batch",scene_hardware_background_batch_case},
