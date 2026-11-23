@@ -3681,6 +3681,47 @@ static int scene_full_opaque_rectangle_clear_case(void){
   return 1;
 }
 
+/* A partial opaque rectangle writes unit alpha unblended. On a target whose every alpha byte is
+ * already 255 it keeps that proof, so later opaque-coverage draws need no separate alpha stamp;
+ * it never creates the proof on a target that lacked it. */
+static int scene_partial_opaque_rectangle_keeps_opacity_case(void){
+  for(unsigned embedded=0;embedded<2u;embedded++)
+  for(unsigned initial_opaque=0;initial_opaque<2u;initial_opaque++){
+    anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();
+    GmlGpuContext context=fake_context(embedded?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    GmlRenderDeviceServices device={0};
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"partial opaque rectangle context");
+    gml_gpu_device_services(gpu,&device);
+    GmlRenderDrawOp ops[2]={0};
+    ops[0].opcode=GML_RENDER_OP_CLEAR;
+    ops[0].target=(GmlRenderTargetRef){
+      .image={GML_RENDER_RESOURCE_SURFACE,3u,1u,1u},
+      .storage_version=1u,.width=12u,.height=8u,
+      .pixel_format=GML_RENDER_PIXEL_ARGB8888,.region={0,0,12u,8u}};
+    ops[0].payload.clear_colour=initial_opaque?0xFF112233u:0x80112233u;
+    ops[1]=ops[0];ops[1].target.image.content_version++;
+    ops[1].opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;
+    ops[1].scene_family=GML_RENDER_SCENE_PRIMITIVE;
+    ops[1].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    GmlRenderPrimitiveRect *p=&ops[1].payload.primitive;
+    *p=(GmlRenderPrimitiveRect){.kind=GML_RENDER_PRIMITIVE_RECTANGLE,
+      .region={1,0,11u,8u},.authored_region={-2,-3,16u,14u},
+      .colour=0xFF4D739Bu,.alpha=1.0,.alpha_blend=1u,
+      .corner_colour={0xFF4D739Bu,0xFF4D739Bu,0xFF4D739Bu,0xFF4D739Bu}};
+    GmlRenderDrawBatch batch={ops,2u,NULL,0u};
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==2u &&
+      anygm_test_graphics_scene_sampler()==31,
+      "a partial opaque rectangle uses the direct-colour overwrite");
+    GlSceneImage *image=gml_gpu_opengl_scene_image(gpu->backend,ops[1].target.image);
+    REQUIRE(image && image->alpha_opaque==(int)initial_opaque,
+      "a unit-alpha overwrite keeps an opaque target opaque and proves nothing new");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_rectangle_function_batch_case(void){
   enum { QUADS=2049 };
   static const unsigned expected_factors[13][4]={
@@ -9175,6 +9216,7 @@ int main(int argc,char **argv){
     {"scene_rectangle_function_batch",scene_rectangle_function_batch_case},
     {"scene_alpha_mask_rectangle",scene_alpha_mask_rectangle_case},
     {"scene_full_opaque_rectangle_clear",scene_full_opaque_rectangle_clear_case},
+    {"scene_partial_opaque_rectangle_keeps_opacity",scene_partial_opaque_rectangle_keeps_opacity_case},
     {"scene_classic_inverse_rect_batch",scene_classic_inverse_rect_batch_case},
     {"scene_hardware_additive_batch",scene_hardware_additive_batch_case},
     {"scene_hardware_background_batch",scene_hardware_background_batch_case},

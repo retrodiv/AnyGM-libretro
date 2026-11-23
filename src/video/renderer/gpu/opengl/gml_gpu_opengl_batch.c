@@ -3144,9 +3144,14 @@ restore_stream_state:
   }
   target->valid=1;
   target->rendered_origin=1;
+  /* The source-free overwrite stores each corner's colour unblended, so corners that all carry
+   * unit alpha leave every written alpha byte at 255, as the existing ones already were. */
+  int unit_alpha_overwrite=filter==31u && blend==0;
+  for(size_t vertex=0;unit_alpha_overwrite && vertex<(size_t)count*6u;vertex++)
+    if(scene->vertices[vertex*GL_SCENE_VERTEX_FLOATS+7u]!=1.0f) unit_alpha_overwrite=0;
   target->alpha_opaque=opaque && filter!=110u &&
     (!(write_mask&8u) || stamp_alpha || filter==149u || filter==153u || blend==22 || blend==24 ||
-     (blend==1 && filter!=15u && filter!=17u));
+     (blend==1 && filter!=15u && filter!=17u) || unit_alpha_overwrite);
   /* Constant RGB programs cannot change selector for the separate alpha stamp.
    * Submit that existing kernel through the same stream with complete state. */
   if(rectangle_alpha_stamp && !skip_alpha && (write_mask&8u) &&

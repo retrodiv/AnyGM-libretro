@@ -1238,12 +1238,13 @@ Native linear colour kernels and ordinary point-sampled source-over omit their s
 opaque-alpha pass only when the destination
 has a context-local proof that every stored alpha byte is already 255. A full opaque clear or
 complete raw copy from a proved source can establish it. Partial nonopaque clears, CPU uploads,
-storage replacement, unknown writers and errors retire it. Ordinary source-over and disabled
-alpha writes preserve existing opaque bytes; vector-alpha recipes remain conservative. The
+storage replacement, unknown writers and errors retire it. Ordinary source-over, disabled
+alpha writes and unblended direct-colour overwrites whose corners all carry unit alpha preserve
+existing opaque bytes; vector-alpha recipes remain conservative. The
 proof is derived, never serialized, and changes no sampled colour or actual destination byte.
 Unknown and partial-alpha destinations retain their original coverage pass. Neutral controls
 cover both APIs, native filtered glyphs and point-sampled surfaces, repeat submissions,
-partial clears, CPU replacement and full/partial raw copies.
+partial clears, partial opaque rectangles, CPU replacement and full/partial raw copies.
 Three further bounded programs compile the existing ordinary sampler with selector0 or14
 constant, or selector77/78 restricted to the fixed-stretch pair. Their sampler, phase,
 blend and predecessor arithmetic is retained verbatim; no CPU-shaped geometry is added.
