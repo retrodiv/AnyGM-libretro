@@ -4177,16 +4177,19 @@ static int scene_nearest_surface_function_case(void){
 static int scene_native_masked_rotation_case(void){
   const uint8_t pixels[16]={32,64,128,64,128,64,32,128,16,192,48,255,192,48,16,0};
   const uint8_t binary_pixels[16]={32,64,128,255,128,64,32,0,16,192,48,255,192,48,16,0};
-  /* Owner 6 is an additive screen draw: the same native quad, with fixed ONE/ONE blending. */
-  for(unsigned owner=0;owner<7u;owner++)
+  /* Owner 6 is an additive screen draw: the same native quad, with fixed ONE/ONE blending.
+   * Owner 7 is the binary numbered draw under a cutoff below 255, which removes only the
+   * alpha-zero texels that its source-over rule leaves without effect. */
+  for(unsigned owner=0;owner<8u;owner++)
   for(unsigned api=0;api<2u;api++) for(unsigned geometry=0;geometry<4u;geometry++)
   for(unsigned invalid=0;invalid<(owner==5u?17u:10u);invalid++){
+    int binary=owner==5u || owner==7u;
     anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
     GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,181u,1u,1u};
     GmlRenderImageUpload upload={.image=source,.storage_width=2u,.storage_height=2u,
       .region={0,0,2u,2u},.pixel_format=GML_RENDER_PIXEL_RGBA8888,
-      .stride_bytes=8u,.byte_capacity=sizeof pixels,.bytes=owner==5u?binary_pixels:pixels};
+      .stride_bytes=8u,.byte_capacity=sizeof pixels,.bytes=binary?binary_pixels:pixels};
     REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"native masked rotation context");
     gml_gpu_device_services(gpu,&device);
     REQUIRE(device.upload(device.context,&upload),"native masked rotation source");
@@ -4213,10 +4216,11 @@ static int scene_native_masked_rotation_case(void){
       states[1].coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
       states[1].alpha_test_enabled=1u;
     }
-    if(owner==5u){
+    if(binary){
       states[1].write_mask=15u;
       states[1].samplers[0].quantisation=GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION;
     }
+    if(owner==7u){states[1].alpha_test_enabled=1u;states[1].alpha_test_reference=127u;}
     GmlRenderDrawOp ops[3]={0};
     for(unsigned index=0;index<3u;index++){
       GmlRenderDrawOp *op=&ops[index];op->sequence=index+1u;
@@ -4228,13 +4232,13 @@ static int scene_native_masked_rotation_case(void){
       op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;op->sources=&source;
       op->source_count=1u;op->state_index=1u;
       GmlRenderQuad *q=&op->payload.quad;q->shape=GML_RENDER_QUAD_GENERAL;
-      q->sampling=states[1].samplers[0];q->filtered_draw_alpha=owner==5u?1.0:.55;
+      q->sampling=states[1].samplers[0];q->filtered_draw_alpha=binary?1.0:.55;
       const double x[4]={1.25,4.25,3.25,.25},y[4]={1.5,2.5,5.5,4.5};
       for(unsigned corner=0;corner<4u;corner++){
         q->x[corner]=geometry==3u?(corner==1u || corner==2u?7.25:1.25):geometry==1u?(corner<2u?2.0:6.0):geometry==2u?8.0-x[corner]:x[corner];
         q->y[corner]=geometry==3u?(corner>=2u?7.5:1.5):geometry==1u?(corner==0u || corner==3u?6.0:2.0):y[corner];
         q->u[corner]=corner==1u || corner==2u?1.0:0.0;q->v[corner]=corner>=2u?1.0:0.0;
-        q->corner_colour[corner]=owner==5u?0xFF70A0D0u:0x8C70A0D0u;
+        q->corner_colour[corner]=binary?0xFF70A0D0u:0x8C70A0D0u;
       }
     }
     GmlRenderQuad *q=&ops[2].payload.quad;
@@ -4266,7 +4270,7 @@ static int scene_native_masked_rotation_case(void){
     if(invalid==12u) states[1].samplers[0].filter=GML_RENDER_FILTER_HARDWARE_BILINEAR;
     if(invalid==13u) states[1].samplers[0].logical_margin_mask=1u;
     if(invalid==14u) states[1].samplers[0].source_region.x=1;
-    if(invalid==15u) states[1].alpha_test_enabled=1u;
+    if(invalid==15u){states[1].alpha_test_enabled=1u;if(binary) states[1].alpha_test_reference=255u;}
     if(invalid==16u) for(unsigned corner=0;corner<4u;corner++)q->corner_colour[corner]=0x8070A0D0u;
     GmlRenderDrawBatch batch={ops,3u,states,2u};
     GmlRenderExecutionResult result=device.submit(device.context,&batch);

@@ -4096,7 +4096,7 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
      (!screen_axis && !anygm_policy_has_modern_layer_semantics(r->win)) ||
      (!screen_axis && !gml_render_target_preserves_alpha(r)) ||
      r->fog_flat || (!screen_axis && r->gui_pass_active) || resident_sprite_program_blocks(r) ||
-     (!screen_axis && r->alpha_test_enable) ||
+     (!screen_axis && r->alpha_test_enable && r->alpha_test_ref>=255u) ||
      !r->alphablend || r->blendmode || r->blend_equation!=1 || r->blend_equation_alpha!=1 ||
      fabs(rotation)>1000000.0 ||
      (screen_axis?r->color_write_mask>15u:r->color_write_mask!=15u) ||
@@ -4114,8 +4114,10 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
      (uint64_t)(uint32_t)page->sy+(uint32_t)page->sh>source.height) return 0;
   if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
   /* Reuse native placement for full-channel numbered source-over draws.
-   * Device sampling and blending own the filled quad; no CPU rows are emitted. */
-  int native_binary_numbered=!screen_axis && r->target_id>0 && !r->alpha_test_enable &&
+   * Device sampling and blending own the filled quad; no CPU rows are emitted.
+   * A cutoff below 255 over a binary page removes only alpha-zero texels, which
+   * the source-over surface rule leaves without effect on every channel. */
+  int native_binary_numbered=!screen_axis && r->target_id>0 &&
     r->active_shader<0 && !gml_d3_is_active(r) &&
      alpha==1.0 &&
      fabs(fmod(rotation,360.0))>=0.001 &&
@@ -4132,6 +4134,7 @@ static int resident_modern_nearest_rotation(GmlRender *r,GmlSprite *sprite,GmlTp
       0,0,page->sw,page->sh,0,0,1,1,GML_RENDER_SCENE_SPRITE,colour,alpha,
       16,NULL,NULL,0u,0,NULL,&placement);
   }
+  if(!screen_axis && r->alpha_test_enable) return 0;
 
   unsigned empty_cutoff=0u;
   if(screen_axis){

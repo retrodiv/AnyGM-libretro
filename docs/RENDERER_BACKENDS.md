@@ -3021,8 +3021,15 @@ numbered-target variant remains qualified separately. Source axes are bounded by
 4096, atlas axes by 16384 and placed coordinates by 65536; GUI, shader, fog and
 other blend/mask variants retain their existing owner.
 
-`resident_numbered_rotated_native_quad` covers both owners, signs and large-axis
-placement with one packet and unchanged host shadows. The GL/GLES native rotation
+A full-channel source-over rotation onto a numbered surface from a binary page
+(every alpha byte 0 or 255) at full draw alpha uses the same one quad, with or
+without a cutoff below 255: such a cutoff removes only alpha-zero texels, which
+the first-generation surface rule leaves without effect on every channel. A
+cutoff of 255 keeps the CPU coverage owner.
+
+`resident_numbered_rotated_native_quad` covers both owners, signs, large-axis
+placement and the binary cutoffs 127 and 255 with one packet and unchanged host
+shadows. The GL/GLES native rotation
 controls retain the numbered variant's refusals and add base-target cutout and
 whole-batch invalid-state controls. The manual single-view scene includes both
 sprite variants and an application-surface triangle strip. Its identity-GUI,

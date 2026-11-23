@@ -17900,7 +17900,9 @@ static int resident_view_surface_quads(void){
 
 static int resident_numbered_rotated_native_quad(void){
   enum { W=256,H=192,SW=128,SH=96 };
-  for(unsigned owner=0;owner<3u;owner++) for(unsigned angle=0;angle<(owner==1u?2u:1u);angle++)
+  /* Owners 3 and 4 repeat the binary numbered draw under cutoffs 127 and 255: below 255 the
+   * cutoff removes only alpha-zero texels and the native quad remains; at 255 it does not. */
+  for(unsigned owner=0;owner<5u;owner++) for(unsigned angle=0;angle<(owner==1u?2u:1u);angle++)
   for(unsigned signs=0;signs<4u;signs++)
   for(unsigned fog=0;fog<(owner==1u && !angle?2u:1u);fog++){
     GmlRender *r=calloc(1,sizeof *r);GmlWin content={.bytecode=17};
@@ -17915,7 +17917,7 @@ static int resident_numbered_rotated_native_quad(void){
       r->atlas[0].px[p*4u]=(uint8_t)(p*7u);
       r->atlas[0].px[p*4u+1u]=(uint8_t)(p*13u);
       r->atlas[0].px[p*4u+2u]=(uint8_t)(p*23u);
-      r->atlas[0].px[p*4u+3u]=owner==2u?((p&3u)==1u?0u:255u):128u;
+      r->atlas[0].px[p*4u+3u]=owner>=2u?((p&3u)==1u?0u:255u):128u;
     }
     r->n_tpag=r->n_spr=1;
     r->tpag[0]=(GmlTpag){.sw=SW,.sh=SH,.tw=SW,.th=SH,.bw=SW,.bh=SH};
@@ -17935,19 +17937,27 @@ static int resident_numbered_rotated_native_quad(void){
     /* The preserved rotated scalar owner ignores flat fog and treats this
      * preset as source-over. Its public state must survive native admission. */
     r->fog_flat=(int)fog;r->fog_flat_rgb=0x315A9Cu;
-    r->blendmode=fog?3:0;r->alpha_test_enable=(int)fog;r->alpha_test_ref=0;
+    unsigned cutoff=owner==3u?127u:owner==4u?255u:0u;
+    r->blendmode=fog?3:0;r->alpha_test_enable=(int)fog || owner>=3u;r->alpha_test_ref=(uint8_t)cutoff;
     double xs=angle?4.0:1.75,ys=angle?4.0:1.25;
     gml_draw_sprite_ext(r,0,0,128,96,signs&1u?-xs:xs,
-                       signs&2u?-ys:ys,angle?0:31,0xD0A070u,owner==2u?1.0:.55);
+                       signs&2u?-ys:ys,angle?0:31,0xD0A070u,owner>=2u?1.0:.55);
     CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r));
+    if(owner==4u){
+      CHECK(fake.textured_families[GML_RENDER_SCENE_SPRITE]==before ||
+        fake.last_quad.sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION);
+      gml_render_abandon_device(r);gml_render_free(r);free(r);free(screen);free(shadow);
+      continue;
+    }
     CHECK(fake.textured_families[GML_RENDER_SCENE_SPRITE]==before+1u);
-    if(owner==2u) CHECK(fake.last_quad.sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION);
+    if(owner>=2u) CHECK(fake.last_quad.sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION);
     CHECK(fake.last_quad.shape==GML_RENDER_QUAD_GENERAL && !fake.last_quad.span_active &&
       fake.last_filter==GML_RENDER_FILTER_NEAREST && fake.last_write_mask==(owner?15u:7u));
     CHECK(!fake.readbacks && !fake.rgb_queries && !memcmp(shadow,r->fb,W*H*sizeof *shadow));
     if(owner==1u) CHECK(r->fb_opaque_known && r->fb_all_opaque);
     CHECK(r->fog_flat==(int)fog && r->fog_flat_rgb==0x315A9Cu &&
-      r->blendmode==(fog?3:0) && r->alpha_test_enable==(int)fog && !r->alpha_test_ref);
+      r->blendmode==(fog?3:0) && r->alpha_test_enable==((int)fog || owner>=3u) &&
+      r->alpha_test_ref==cutoff);
     CHECK(fake.last_target_image.identity==previous.identity &&
       fake.last_target_image.content_version==previous.content_version+1u);
     if(!signs && !angle){

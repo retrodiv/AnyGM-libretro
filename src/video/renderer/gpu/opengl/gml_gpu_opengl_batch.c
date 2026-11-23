@@ -1291,7 +1291,8 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
   GmlRenderRect crop=quad->sampling.source_region;
   int binary_numbered=op->target.image.resource_class==GML_RENDER_RESOURCE_SURFACE &&
     quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION &&
-    state->write_mask==15u && !state->alpha_test_enabled && !state->alpha_test_reference &&
+    state->write_mask==15u && state->alpha_test_enabled<=1u &&
+    state->alpha_test_reference<(state->alpha_test_enabled?255u:1u) &&
     !state->coverage_policy && qualified_blend(state)==3 &&
     quad->filtered_draw_alpha==1.0 && (quad->corner_colour[0]>>24)==255u &&
     state->sampler_count==1u &&
