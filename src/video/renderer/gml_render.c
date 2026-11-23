@@ -61,6 +61,16 @@ void render_modern_cardinal_anchor(const GmlRender *r,double degrees,
   if(xs*cosine < -1e-12 || ys*sine < -1e-12) *x-=1.0;
   if(-xs*sine < -1e-12 || ys*cosine < -1e-12) *y-=1.0;
 }
+void render_runtime_sprite_anchor(const GmlRender *r,double degrees,
+                                  double xs,double ys,double cosine,double sine,
+                                  double *x,double *y){
+  if(r && r->classic && anygm_policy_runtime_sprite_local_phase(r->win)){
+    /* The original local half-pixel follows scale and precedes rotation.
+     * Express that placement at this renderer's destination pixel centres. */
+    *x+=.5-.5*(cosine+sine);
+    *y+=.5+.5*(sine-cosine);
+  }else render_modern_cardinal_anchor(r,degrees,xs,ys,cosine,sine,x,y);
+}
 double rprof_now(void){
   return 0.0;
 }

@@ -4659,7 +4659,41 @@ static int resident_runtime_nearest_packets(GmlRender *r,GmlTpag *page,
   double c=1.0,sn=0.0,ax=geometry->x-r->cam_x,ay=geometry->y-r->cam_y;
   if(!axis){
     render_rotation_sincos(angle,&c,&sn);
-    render_modern_cardinal_anchor(r,angle,xs,ys,c,sn,&ax,&ay);
+    render_runtime_sprite_anchor(r,angle,xs,ys,c,sn,&ax,&ay);
+  }
+  /* The immutable opaque runtime frame needs one placed draw, not one
+   * constant-source packet per coverage row. Keep its normal screen state
+   * and let the device rasterize and sample the complete source rectangle. */
+  if(r->classic && anygm_policy_runtime_sprite_local_phase(r->win) &&
+     angle>=.001 && fabs(angle-360.0)>=.001 && sprite->runtime_opaque &&
+     sprite->w<=4096 && sprite->h<=4096 &&
+     !r->gui_pass_active && r->target_id<0 && !r->target_sp &&
+     r->alphablend && !r->blendmode && !r->alpha_test_enable &&
+     r->color_write_mask==15u && operation->payload.quad.filtered_draw_alpha==1.0){
+    GmlRenderDrawOp native=*operation;
+    GmlRenderDrawStateSnapshot native_state=*state;
+    GmlRenderQuad *quad=&native.payload.quad;
+    int placed=1;
+    quad->shape=GML_RENDER_QUAD_GENERAL;
+    quad->sampling.quantisation=GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN;
+    for(unsigned corner=0;corner<4u;corner++){
+      double px=((corner==1u || corner==2u)?sprite->w:0)-sprite->originx;
+      double py=(corner>=2u?sprite->h:0)-sprite->originy;
+      quad->x[corner]=ax+px*xs*c+py*ys*sn;
+      quad->y[corner]=ay-px*xs*sn+py*ys*c;
+      if(!isfinite(quad->x[corner]) || !isfinite(quad->y[corner]) ||
+         fabs(quad->x[corner])>65536.0 || fabs(quad->y[corner])>65536.0) placed=0;
+    }
+    if(placed){
+      native_state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
+      native_state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+      native_state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+      native_state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+      native_state.rgb_equation=native_state.alpha_equation=GML_RENDER_BLEND_ADD;
+      native_state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+      native_state.samplers[0]=quad->sampling;
+      return gml_render_application_scene_enqueue(r,&native,&native_state,source);
+    }
   }
   double minx=1e30,miny=1e30,maxx=-1e30,maxy=-1e30;
   const int corners[4][2]={{0,0},{1,0},{0,1},{1,1}};

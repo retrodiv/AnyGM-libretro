@@ -884,6 +884,9 @@ void render_rotation_sincos(double degrees,double *cosine,double *sine);
 void render_modern_cardinal_anchor(const GmlRender *r,double degrees,
                                    double xs,double ys,double cosine,double sine,
                                    double *x,double *y);
+void render_runtime_sprite_anchor(const GmlRender *r,double degrees,
+                                  double xs,double ys,double cosine,double sine,
+                                  double *x,double *y);
 const uint8_t *runtime_frame_rgba(GmlSprite *sprite,int frame);
 int gml_render_runtime_sprite_scene_source_view(GmlRender *r,GmlSprite *sprite,int frame,
                                                 GmlRenderResourceSource *source);

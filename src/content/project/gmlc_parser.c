@@ -253,6 +253,12 @@ static int resolve_const(Compiler *c, const char *name, double *out){
   };
   for(int i=0;i<(int)(sizeof(mouse_buttons)/sizeof(*mouse_buttons));i++)
     if(!strcmp(name,mouse_buttons[i].name)){ *out=mouse_buttons[i].value; return 1; }
+  static const struct { const char *name; int value; } primitive_kinds[]={
+    {"pr_pointlist",1}, {"pr_linelist",2}, {"pr_linestrip",3},
+    {"pr_trianglelist",4}, {"pr_trianglestrip",5}, {"pr_trianglefan",6}
+  };
+  for(int i=0;i<(int)(sizeof(primitive_kinds)/sizeof(*primitive_kinds));i++)
+    if(!strcmp(name,primitive_kinds[i].name)){ *out=primitive_kinds[i].value; return 1; }
   /* Blend modes and extended blend factors are distinct bm_ constant families.
    * Resolve both here so an unknown name cannot silently read as zero. */
   static const struct { const char *name; int value; } blend_constants[]={

@@ -2256,8 +2256,14 @@ static int GML_HOT_RENDER blit_rgba_sprite_axis(GmlRender *r, GmlSprite *owner, 
   int bR=blend&0xFF, bG=(blend>>8)&0xFF, bB=(blend>>16)&0xFF;
   int white=((blend & 0xFFFFFF)==0xFFFFFF);
   unsigned long long vispix=(unsigned long long)(x1-x0)*(unsigned long long)(y1-y0);
-  if(opaque && alpha>=1.0 && r->blendmode==0) gml_render_maybe_prepare_opaque_rect(r,x0,y0,x1,y1);
-  else gml_render_maybe_prepare_draw(r);
+  /* The padded sampling box is not an opaque overwrite: the source checks
+   * below leave its fringe untouched. The unit leaf has exact unscaled
+   * sample bounds; other scales first preserve the complete pending clear. */
+  if(opaque && alpha>=1.0 && fabs(xs-1.0)<0.001 && fabs(ys-1.0)<0.001){
+    int covered_x0=(int)ceil(ax-originx-.5),covered_x1=(int)ceil(ax-originx+sw-.5);
+    int covered_y0=(int)ceil(ay-originy-.5),covered_y1=(int)ceil(ay-originy+sh-.5);
+    gml_render_maybe_prepare_opaque_rect(r,covered_x0,covered_y0,covered_x1,covered_y1);
+  }else gml_render_maybe_prepare_draw(r);
   if((alpha<1.0 || r->blendmode==2 || r->blendmode==8 || !opaque) && r->alphablend)
     gml_sprite_target_may_change_alpha(r);
   /* The global texture filter reaches runtime RGBA sprites as well as atlas sprites.
@@ -2539,7 +2545,9 @@ static void blit_rgba_sprite_impl(GmlRender *r, GmlSprite *owner, const uint8_t 
                            world_space,row_min,row_max,opaque)) return;
   double c,sn; render_rotation_sincos(rr,&c,&sn);
   double ax=x-(world_space?r->cam_x:0), ay=y-(world_space?r->cam_y:0);
-  render_modern_cardinal_anchor(r,rr,xs,ys,c,sn,&ax,&ay);
+  if(owner && owner->runtime_rgba)
+    render_runtime_sprite_anchor(r,rr,xs,ys,c,sn,&ax,&ay);
+  else render_modern_cardinal_anchor(r,rr,xs,ys,c,sn,&ax,&ay);
   double minx=1e30,miny=1e30,maxx=-1e30,maxy=-1e30;
   double corners[4][2]={{0,0},{sw,0},{0,sh},{sw,sh}};
   for(int i=0;i<4;i++){

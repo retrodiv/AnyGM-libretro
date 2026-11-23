@@ -241,6 +241,11 @@ static inline int anygm_policy_classic_modern_presentation(const GmlWin *content
   const AnygmCompatibilityProfile *p=anygm_profile(content);
   return p?(int)p->classic_modern_presentation:(content&&content->classic_version>=800);
 }
+/* This local sprite phase is measured only for classic revision 800. Keep
+ * other revisions on their established placement until separately qualified. */
+static inline int anygm_policy_runtime_sprite_local_phase(const GmlWin *content){
+  return content && content->classic_version==800;
+}
 static inline int anygm_policy_round_collision_bounds(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);
   return p?(int)p->round_transformed_collision_bounds:

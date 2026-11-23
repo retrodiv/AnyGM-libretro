@@ -363,6 +363,12 @@ int main(int argc, char **argv){
   ok &= compile_fixture_named_constant(&project,"mb_left",1);
   ok &= compile_fixture_named_constant(&project,"mb_right",2);
   ok &= compile_fixture_named_constant(&project,"mb_middle",3);
+  ok &= compile_fixture_named_constant(&project,"pr_pointlist",1);
+  ok &= compile_fixture_named_constant(&project,"pr_linelist",2);
+  ok &= compile_fixture_named_constant(&project,"pr_linestrip",3);
+  ok &= compile_fixture_named_constant(&project,"pr_trianglelist",4);
+  ok &= compile_fixture_named_constant(&project,"pr_trianglestrip",5);
+  ok &= compile_fixture_named_constant(&project,"pr_trianglefan",6);
   ok &= compile_fixture_named_constant(&project,"vk_numpad0",96);
   ok &= compile_fixture_named_constant(&project,"vk_numpad9",105);
   ok &= compile_fixture_named_constant(&project,"vk_f12",123);

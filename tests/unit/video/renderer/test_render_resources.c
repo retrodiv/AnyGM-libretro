@@ -15228,6 +15228,102 @@ static int resident_classic_unit_tiles(void){
   return 1;
 }
 
+static int resident_runtime_native_rotations(void){
+  const double poses[6][3]={{1,1,0},{2.3,1.7,204},{.5,.75,-.5},
+    {-2.3,1.7,17},{2,-1,90},{-.75,-1.5,270}};
+  for(unsigned pose=0;pose<6u;pose++){
+    GmlRender *render=calloc(1,sizeof *render);
+    GmlWin content={.classic_version=800};
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t *base=malloc(320u*160u*sizeof *base);
+    uint8_t *rgba=malloc(32u*24u*4u);
+    CHECK(render && base && rgba && gml_render_init(render,NULL)==0);
+    for(unsigned i=0;i<320u*160u;i++) base[i]=0xFF273859u;
+    for(unsigned i=0;i<32u*24u;i++){
+      rgba[i*4u]=(uint8_t)(32u+i*3u);
+      rgba[i*4u+1u]=(uint8_t)(16u+i*5u);
+      rgba[i*4u+2u]=(uint8_t)(208u-i*2u);
+      rgba[i*4u+3u]=255u;
+    }
+    render->classic=1;render->win=&content;
+    int sprite=gml_sprite_append_from_rgba(render,rgba,32,24,16,12,NULL);
+    CHECK(sprite>=0 && render->spr[sprite].runtime_opaque);
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_application_surface_bind(render,base,320,160,1);
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_base(render,base,320,160,0,0));
+    gml_draw_sprite_ext(render,sprite,0,160,80,poses[pose][0],poses[pose][1],
+                        poses[pose][2],0xFFFFFFu,1);
+    CHECK(render->resident_application_pass && !fake.readbacks);
+    CHECK(gml_render_scene_submit_pending(render));
+    printf("runtime native rotation: pose=%u submissions=%d quads=%u reads=%d\n",
+           pose,fake.submits,fake.last_batch_operations,fake.readbacks);
+    CHECK(fake.submits==1 && fake.last_batch_operations==1u && !fake.readbacks);
+    CHECK((fake.last_quad.shape==GML_RENDER_QUAD_GENERAL ||
+           (pose==0u && fake.last_quad.shape==GML_RENDER_QUAD_AXIS_ALIGNED)) &&
+          fake.last_quad.sampling.filter==GML_RENDER_FILTER_NEAREST);
+    double cosine,sine;
+    render_rotation_sincos(poses[pose][2],&cosine,&sine);
+    for(unsigned corner=0;corner<4u;corner++){
+      double local_x=((corner==1u || corner==2u)?16.0:-16.0)*poses[pose][0]-.5;
+      double local_y=(corner>=2u?12.0:-12.0)*poses[pose][1]-.5;
+      CHECK(fabs(fake.last_quad.x[corner]-(160.5+local_x*cosine+local_y*sine))<1e-10 &&
+            fabs(fake.last_quad.y[corner]-(80.5-local_x*sine+local_y*cosine))<1e-10);
+    }
+    for(unsigned i=0;i<320u*160u;i++) CHECK(base[i]==0xFF273859u);
+    GmlRenderJournalMetrics metrics={0};
+    GmlRenderResource *target=gml_render_scene_target_resource_ensure(render);
+    CHECK(target);gml_render_resource_journal_metrics(target,&metrics);
+    CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT &&
+          metrics.cpu_version<metrics.logical_version && !metrics.cpu_replays);
+    gml_render_abandon_device(render);gml_render_free(render);free(render);free(base);
+  }
+  return 1;
+}
+
+static int resident_runtime_native_boundaries(void){
+  for(unsigned boundary=0;boundary<8u;boundary++){
+    GmlRender *render=calloc(1,sizeof *render);
+    GmlWin content={.classic_version=boundary==5u?810:800};
+    FakeDevice fake={.on_demand=1};
+    GmlRenderDeviceServices device=service(&fake);
+    int width=boundary==7u?2048:12,height=boundary==7u?2:8;
+    uint32_t base[64*64],shadow[64*64];uint8_t *rgba=malloc((size_t)width*height*4u);
+    CHECK(render && rgba && !gml_render_init(render,NULL));
+    memset(rgba,255,(size_t)width*height*4u);
+    if(boundary==0u) rgba[3]=128u;
+    render->classic=1;render->win=&content;
+    int sprite=gml_sprite_append_from_rgba(render,rgba,width,height,width/2,height/2,NULL);
+    CHECK(sprite>=0);
+    for(unsigned i=0;i<64u*64u;i++) base[i]=0xFF273859u;
+    int surface=boundary==4u?gml_surface_create(render,64,64):0;
+    CHECK(boundary!=4u || surface>0);
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_application_surface_bind(render,base,64,64,1);
+    gml_render_bind_device(render,&device);
+    CHECK(gml_render_begin_resident_base(render,base,64,64,0,0));
+    if(surface) CHECK(gml_surface_set_target(render,surface));
+    if(boundary==2u) render->color_write_mask=7u;
+    if(boundary==3u){render->alpha_test_enable=1;render->alpha_test_ref=1u;}
+    if(boundary==6u) render->blendmode=1;
+    memcpy(shadow,render->fb,sizeof shadow);
+    gml_draw_sprite_ext(render,sprite,0,32,boundary==7u?65536:32,
+                        boundary==7u?64:2.3,boundary==7u?1:1.7,
+                        boundary==7u?90:17,0xFFFFFFu,
+                        boundary==1u?.5:1.0);
+    printf("runtime native boundary: case=%u resident=%d reads=%d\n",
+           boundary,render->resident_application_pass,fake.readbacks);
+    CHECK(render->resident_application_pass && !fake.readbacks &&
+          !memcmp(shadow,render->fb,sizeof shadow));
+    CHECK(gml_render_scene_submit_pending(render) && fake.submits==1 &&
+          fake.last_batch_operations>1u && !fake.readbacks &&
+          fake.last_quantisation!=GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN);
+    gml_render_abandon_device(render);gml_render_free(render);free(render);
+  }
+  return 1;
+}
+
 static int resident_runtime_binary_unit_sprites(void){
   const double positions[4][2]={{2,3},{-1,2},{7,7},{8,2}};
   for(unsigned generation=0;generation<2u;generation++)
@@ -21929,6 +22025,38 @@ static int skip_cpu_draw_policy_preserves_observers(void){
 }
 
 /* Opaque preparation need not clear pixels that the following writer replaces. */
+static int runtime_sprite_deferred_clear(void){
+  const int revisions[4]={0,600,800,810};
+  const double placements[3][3]={{2,1,1},{-1,2,2},{.25,.75,1.2}};
+  for(unsigned policy=0;policy<4u;policy++)
+  for(unsigned placement=0;placement<3u;placement++){
+    uint32_t reference[48];
+    for(unsigned deferred=0;deferred<2u;deferred++){
+      GmlRender *render=calloc(1,sizeof *render);
+      GmlWin content={.classic_version=revisions[policy],.bytecode=17};
+      uint32_t pixels[48];uint8_t *rgba=malloc(3u*2u*4u);
+      CHECK(render && rgba && !gml_render_init(render,NULL));
+      for(unsigned i=0;i<6u;i++){
+        rgba[i*4u]=25u;rgba[i*4u+1u]=59u;rgba[i*4u+2u]=93u;rgba[i*4u+3u]=255u;
+      }
+      render->win=&content;render->classic=policy!=0u;
+      int sprite=gml_sprite_append_from_rgba(render,rgba,3,2,0,0,NULL);
+      CHECK(sprite>=0 && render->spr[sprite].runtime_opaque);
+      for(unsigned i=0;i<48u;i++) pixels[i]=0xFFA15273u;
+      gml_render_begin(render,pixels,8,6,0,0);
+      gml_render_set_pending_fill(render,0xFF273859u);
+      if(!deferred) gml_render_flush_pending_fill(render);
+      const double *pose=placements[placement];
+      gml_draw_sprite_ext(render,sprite,0,pose[0],pose[1],pose[2],pose[2],0,0xFFFFFFu,1);
+      gml_render_maybe_prepare_draw(render);
+      if(!deferred) memcpy(reference,pixels,sizeof reference);
+      else CHECK(!memcmp(reference,pixels,sizeof reference));
+      gml_render_free(render);free(render);
+    }
+  }
+  return 1;
+}
+
 static int opaque_rectangle_clear_complement(void){
   static const int rectangles[][4]={{2,1,7,5},{-2,1,6,5},{2,-2,7,4},
     {2,1,12,5},{2,1,7,10},{0,0,8,6},{-2,-2,10,8},{2,2,2,5},{10,1,12,5}};
@@ -22032,7 +22160,10 @@ int main(void){
   const char *selected=getenv("GML_RENDER_RESOURCE_CASE");
   if(selected){
     int passed;
-    if(!strcmp(selected,"target-pixel-pending-scene")) passed=target_pixel_observes_pending_scene();
+    if(!strcmp(selected,"runtime-native-boundaries")) passed=resident_runtime_native_boundaries();
+    else if(!strcmp(selected,"runtime-deferred-clear")) passed=runtime_sprite_deferred_clear();
+    else if(!strcmp(selected,"runtime-native-rotations")) passed=resident_runtime_native_rotations();
+    else if(!strcmp(selected,"target-pixel-pending-scene")) passed=target_pixel_observes_pending_scene();
     else if(!strcmp(selected,"preserved-device-failure")) passed=preserved_device_failure_keeps_authority();
     else if(!strcmp(selected,"depth-pixel-policy")) passed=resident_depth_pixel_policy();
     else if(!strcmp(selected,"depth-alpha-policy")) passed=resident_depth_alpha_policy();
@@ -22468,7 +22599,10 @@ int main(void){
   passed+=resident_lazy_native_atlas();
   passed+=resident_unit_texel_magnification();
   passed+=opaque_rectangle_clear_complement();
-  enum { total=354 };
+  passed+=resident_runtime_native_rotations();
+  passed+=runtime_sprite_deferred_clear();
+  passed+=resident_runtime_native_boundaries();
+  enum { total=357 };
   printf("render resource cases: passed=%d failed=%d\n",passed,total-passed);
   return passed==total?EXIT_SUCCESS:EXIT_FAILURE;
 }
