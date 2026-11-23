@@ -74,11 +74,12 @@ A content display request keeps precedence over the declared refresh.
 
 A rewind ring calls `retro_serialize` every Nth tick. The adapter counts ticks between saves, and
 once the same interval has been seen twice it announces the expected save with
-`anygm_state_prepare` on the tick that completes the next interval, after the frame has run and
-before the picture is handed to `video_cb`. The engine then writes the runtime section on a worker
-thread and the core, completed-frame and renderer sections on the calling thread, while the
-frontend presents and waits for the display; `retro_serialize` joins the worker and assembles the
-same bytes an unannounced save writes. A restored state forgets the interval, and any engine call
+`anygm_state_prepare` on the tick that completes the next interval, after the picture has been
+handed to `video_cb` and the audio delivered. The frame is therefore presented on time, and a GPU
+has finished drawing it before the save reads it back. The engine writes the runtime section and
+the completed frame's encoding on workers, and the core, frame capture and renderer sections on
+the calling thread; `retro_serialize` joins the workers and assembles the same bytes an
+unannounced save writes. A restored state forgets the interval, and any engine call
 between the announcement and the save discards the prepared work, so a misprediction costs time,
 never state content. Sections are prepared for the form, complete or frame-free, of the previous
 save.

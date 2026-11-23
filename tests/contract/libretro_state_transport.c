@@ -136,8 +136,14 @@ AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size
   complete_saves++;
   return ANYGM_OK;
 }
-static unsigned stub_prepare_calls;
-void anygm_state_prepare(AnygmEngine *engine){ (void)engine; stub_prepare_calls++; }
+static unsigned stub_prepare_calls,stub_video_calls,stub_prepare_after_video;
+void anygm_state_prepare(AnygmEngine *engine){
+  (void)engine; stub_prepare_calls++;
+  stub_prepare_after_video=stub_video_calls;
+}
+static void stub_video(const void *data,unsigned width,unsigned height,size_t pitch){
+  (void)data;(void)width;(void)height;(void)pitch; stub_video_calls++;
+}
 AnygmResult anygm_state_save_for_resume(AnygmEngine *engine,void *data,size_t capacity,
                                         size_t *written){
   (void)engine;
@@ -344,11 +350,15 @@ static int stable_transport(int negotiation_result){
 }
 
 /* A rewind ring saves every Nth tick. Once one interval has repeated, the tick that completes the
- * next announces the save to the engine, so the runtime section can be written while the frontend
- * presents; a restored state forgets the interval, and only an interval seen twice predicts. */
+ * next announces the save to the engine once its frame is handed over, so the frame is presented
+ * on time while the save is prepared; a restored state forgets the interval, and only an interval
+ * seen twice predicts. */
 static int repeated_save_interval_announces_the_next_save(void){
   stub_state_bytes=113u;
   if(!begin_frontend(0)) return 0;
+  g_libretro.video=stub_video;
+  g_libretro.video_enabled=true;
+  stub_video_calls=stub_prepare_after_video=0;
   stub_capacity_reserve=4u*1024u*1024u;
   const size_t capacity=retro_serialize_size();
   uint8_t *state=(uint8_t *)malloc(capacity);
@@ -366,6 +376,12 @@ static int repeated_save_interval_announces_the_next_save(void){
     fprintf(stderr,"save announcements: %u %u %u %u\n",announced[0],announced[1],announced[2],
             announced[3]);
   if(ok) ok=!announced[0] && !announced[1] && announced[2]==1 && announced[3]==1;
+  /* The announcing tick hands its frame over first: the last announcement saw every frame. */
+  if(ok && stub_prepare_after_video!=stub_video_calls){
+    fprintf(stderr,"save announced before its frame: %u of %u frames\n",stub_prepare_after_video,
+            stub_video_calls);
+    ok=0;
+  }
   if(ok) ok=retro_unserialize(state,capacity);
   unsigned before=stub_prepare_calls;
   for(int tick=0;ok && tick<3;tick++) retro_run();

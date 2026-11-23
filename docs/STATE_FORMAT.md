@@ -809,6 +809,13 @@ semantics. `tests/integration/test_graphics_state.c::completed_frame_capacity_ca
 row-RLE and adjacent-row repetition at exact, near-fit, compact and failed capacities against
 the ordinary complete and explicit resume bytes, with canaries and unchanged live-state checks.
 
+A picture of at least 262144 pixels written straight into its state, without that capacity
+proof, counts and writes its runs by up to four bands of rows: the counts select the encoding
+exactly as the sequential count does and place each band's runs. A prepared save encodes its
+picture on a worker into a separate buffer that the save splices in after the dimensions. Both
+write the sequential bytes; `tests/integration/test_engine_state_prepare.c` compares them with an
+independent encoder for run, magnified and raw pictures.
+
 A frontend that explicitly acknowledges variable sizes starts from the same measured capacity when
 it queries before the first frame. If its first query occurs after gameplay has completed a frame,
 that answer includes the established complete-state headroom, as a subsequent variable query
