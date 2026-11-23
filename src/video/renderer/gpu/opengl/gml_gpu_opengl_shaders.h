@@ -1429,8 +1429,8 @@
   "  }\n" \
   "}\n"
 
-/* Keep the ordinary source bytes stable; only the two surface programs select the
- * bounded identity mapper. Both forms share the same point-phase expressions. */
+/* Keep the ordinary source bytes stable; only the surface colour, stamp and
+ * replacement programs select the bounded identity mapper. Both forms share the same point-phase expressions. */
 #define GML_GPU_OPENGL_SCENE_FRAGMENT_BODY \
   GML_GPU_OPENGL_SCENE_FRAGMENT_PREFIX \
   GML_GPU_OPENGL_SCENE_POINT_MAPPING \

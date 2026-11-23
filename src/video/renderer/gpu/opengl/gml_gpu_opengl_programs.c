@@ -178,6 +178,7 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
   GLuint vertex,fragment;
   GLint status=GL_FALSE;
   if(scene->program) return 1;
+  scene->identity_surface_body=description->surface_body;
   int vertex_length=snprintf(vertex_source,sizeof vertex_source,"%s%s",prefix,
                              GML_GPU_OPENGL_SCENE_INSTANCED_VERTEX_BODY);
   int fragment_length=snprintf(fragment_source,sizeof fragment_source,"%s%s%s",prefix,

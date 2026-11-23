@@ -2769,13 +2769,15 @@ static int recovery_indirect_prepare(GmlGpuBackend *backend){
 
 /* The identity surface sampler discards zero-alpha source texels. A certificate
  * from transparent clears and placed draws can therefore bound its fragment work
- * without changing the quad, sample coordinates, blending or alpha stamp. */
+ * without changing the quad, sample coordinates, blending or alpha stamp.
+ * A replacement copy keeps that discard with stamped or copied alpha; its other
+ * coverage recipes can write at zero alpha and retain the complete scissor. */
 int gml_gpu_opengl_surface_alpha_scissor(GmlGpuBackend *backend,GlSceneImage *target,
                                   const GlSceneImage *source,uint32_t filter,
                                   uint32_t count,uint32_t source_alpha_key,
                                   const GmlRenderSourcePalette *palette){
   const float *v=backend->scene.vertices;
-  if((filter!=53u && filter!=55u) || count!=1u || !source || source==target ||
+  if((filter!=53u && filter!=55u && filter!=56u) || count!=1u || !source || source==target ||
      !source->valid || !source->rendered_origin || !source->alpha_bounds_known ||
      source_alpha_key || (palette && palette->enabled) ||
      v[14]!=(float)source->width || v[15]!=(float)source->height ||
@@ -2788,7 +2790,7 @@ int gml_gpu_opengl_surface_alpha_scissor(GmlGpuBackend *backend,GlSceneImage *ta
     if(!isfinite(at[0]) || !isfinite(at[1]) ||
        at[0]<v[12] || at[0]>v[12]+v[14] ||
        at[1]<v[13] || at[1]>v[13]+v[15] ||
-       at[23]!=0.0f || at[26]!=0.0f) return 0;
+       (at[23]!=0.0f && (filter!=56u || at[23]!=2.0f)) || at[26]!=0.0f) return 0;
   }
   int left=(int)v[12]+source->alpha_bounds[0];
   int top=(int)v[13]+source->alpha_bounds[1];
@@ -2918,7 +2920,9 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
   backend->gl.Scissor(0,0,(GLsizei)target->width,(GLsizei)target->height);
   GmlRenderRect alpha_regions[32];
   unsigned alpha_region_count=0;
-  if(gml_gpu_opengl_surface_alpha_scissor(backend,target,source,filter,count,source_alpha_key,palette))
+  int surface_bounded=gml_gpu_opengl_surface_alpha_scissor(backend,target,source,filter,count,
+                                                          source_alpha_key,palette);
+  if(surface_bounded)
     alpha_region_count=gml_gpu_opengl_alpha_regions(source,alpha_regions);
   backend->gl.ActiveTexture(GL_TEXTURE0);
   backend->gl.BindTexture(GL_TEXTURE_2D,source?source->texture:0u);
@@ -3157,6 +3161,7 @@ restore_stream_state:
   if(!skip_alpha && (filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==23u || filter==35u || filter==39u || filter==40u || filter==53u || filter==66u || filter==21u || filter==25u || (filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER) || filter==80u) && (write_mask&8u))
     if(!flush_quads(backend,target,source,filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER?GL_SCENE_NATIVE_POINT_STAMP_FILTER:filter==23u?24u:filter==35u?36u:(filter==39u || filter==40u)?41u:filter==53u?55u:filter==21u?22u:filter==25u?26u:(filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER)?33u:filter==80u?82u:72u,0,count,8u,alpha_test,
                     source_alpha_key,palette)) return 0;
+  if(surface_bounded && program->identity_surface_body && filter!=55u) backend->bounded_surface_draws++;
   if(native_flags&GL_SCENE_NATIVE_WHITE_TINT) backend->white_tint_quads+=count;
   if(native_flags&GL_SCENE_NATIVE_ZERO_ALPHA_BLEND) backend->zero_alpha_blend_quads+=count;
   return 1;

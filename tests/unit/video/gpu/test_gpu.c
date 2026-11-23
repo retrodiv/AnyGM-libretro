@@ -2714,7 +2714,7 @@ static int scene_hot_constant_programs_case(void){
       REQUIRE(program && fragment && strstr(fragment,prefix),
         "hot native and filtered samplers compile their existing constant branch");
       REQUIRE((strstr(fragment,"// Equal extents make every in-bounds point-phase rule the identity.")!=NULL)==
-        (filters[selected]==53u || filters[selected]==55u),
+        (filters[selected]==53u || filters[selected]==55u || filters[selected]==56u),
         "only qualified surface programs receive the identity mapper source");
       if(filters[selected]==55u)
         REQUIRE(!gml_gpu_opengl_scene_draw_program(gpu->backend,53u,0,error,sizeof error),
@@ -6401,6 +6401,24 @@ static int scene_transparent_surface_bounds_case(void){
       int x,y,w,h;anygm_test_graphics_scissor(&x,&y,&w,&h);
       REQUIRE(x==3 && y==4 && w==3 && h==3,"RGB and alpha stamp share the placed source bounds");
     }
+    /* A replacement copy drops the same zero-alpha texels, whether it stamps
+     * opaque alpha or copies the source's. Recipes that can write at zero alpha,
+     * or select another source rectangle, own the complete scissor. */
+    static const struct { float coverage,selection; int bounded; } copies[]={
+      {0,0,1},{2,0,1},{1,0,0},{3,0,0},{4,0,0},{0,1,0},{2,2,0}};
+    for(unsigned copy=0;copy<sizeof copies/sizeof copies[0];copy++){
+      for(unsigned c=0;c<6u;c++){
+        vertices[c*GL_SCENE_VERTEX_FLOATS+23u]=copies[copy].coverage;
+        vertices[c*GL_SCENE_VERTEX_FLOATS+26u]=copies[copy].selection;
+      }
+      gpu->backend->gl.Scissor(0,0,12,10);
+      gml_gpu_opengl_surface_alpha_scissor(gpu->backend,&target,source,56u,1u,0u,NULL);
+      int x,y,w,h;anygm_test_graphics_scissor(&x,&y,&w,&h);
+      REQUIRE(copies[copy].bounded?(x==3 && y==4 && w==3 && h==3):(!x && !y && w==12 && h==10),
+        "replacement copies bound exactly the recipes that discard zero alpha");
+    }
+    for(unsigned c=0;c<6u;c++)
+      vertices[c*GL_SCENE_VERTEX_FLOATS+23u]=vertices[c*GL_SCENE_VERTEX_FLOATS+26u]=0;
     for(unsigned bad=0;bad<10u;bad++){
       float saved[6u*GL_SCENE_VERTEX_FLOATS];memcpy(saved,vertices,sizeof saved);
       GlSceneImage changed=*source;GmlRenderSourcePalette palette={0};

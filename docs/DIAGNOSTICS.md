@@ -440,6 +440,11 @@ and hybrid presentation policies:
              scene_uploads=N scene_upload_bytes=N screen_cpu_reads=N screen_cpu_materializations=N
 ```
 
+Its `bounded_surface_draws` counts full-source surface composites, ordinary or with blending
+disabled, that use the identity mapper and whose fragment work a transparent-coverage certificate
+bounds; a separate alpha stamp is not counted again. It records that both applied, not a speed or
+picture.
+
 The scene line counts the resident scene service separately from hybrid plan transport.
 The release line records only persistence-and-detach deltas before device destruction, not a
 frame or object-deletion time. Add its observations to the preceding render report for whole-context

@@ -230,6 +230,7 @@ void gml_gpu_opengl_scene_work_counters(const GmlGpuBackend *backend,GmlGpuCount
   counters->scene_white_tint_quads=backend?backend->white_tint_quads:0;
   counters->scene_zero_alpha_blend_quads=backend?backend->zero_alpha_blend_quads:0;
   counters->identity_map_draws=backend?backend->identity_map_draws:0;
+  counters->bounded_surface_draws=backend?backend->bounded_surface_draws:0;
   counters->host_extent_passes=backend?backend->host_extent_passes:0;
   counters->scene_upload_policy=backend?
     (backend->scene.upload_policy<0?2u:backend->scene.upload_policy>0?1u:0u):0u;

@@ -79,6 +79,7 @@ typedef struct GmlGpuCounters {
   uint64_t scene_white_tint_quads;
   uint64_t scene_zero_alpha_blend_quads;
   uint64_t identity_map_draws;
+  uint64_t bounded_surface_draws;
   uint64_t host_extent_passes;
   /* Current context's preparation decision: zero unmeasured, one staged, two client. */
   uint32_t scene_upload_policy;
