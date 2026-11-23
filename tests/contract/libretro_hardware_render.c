@@ -303,6 +303,15 @@ AnygmResult anygm_load(AnygmEngine *engine,const AnygmContentSource *source,
   return ANYGM_OK;
 }
 void anygm_unload(AnygmEngine *engine){ (void)engine; }
+void anygm_unload_for_memory_pressure(AnygmEngine *engine){ (void)engine; }
+uint32_t anygm_graphics_present_emergency_frame(AnygmEngine *engine,const uint32_t *pixels,
+                                                uint32_t width,uint32_t height){
+  (void)engine;
+  (void)pixels;
+  (void)width;
+  (void)height;
+  return ANYGM_OK;
+}
 AnygmResult anygm_reset(AnygmEngine *engine){ (void)engine; return ANYGM_OK; }
 AnygmResult anygm_get_av_info(const AnygmEngine *engine,AnygmAvInfo *info){
   (void)engine;
