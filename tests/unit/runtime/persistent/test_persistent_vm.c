@@ -131,6 +131,32 @@ int expect_classic_timeline_index_activation(void){
   }
   return 1;
 }
+int expect_component_direction_range(void){
+  GmlWin win={0}; GmlVM vm={0}; GmlInstance instance={0};
+  win.bytecode=17; vm.win=&win;
+  static const struct { double h,v,direction; } cases[]={
+    {0,8,270},{-0.0,8,270},{-8,0,180},{-8,-0.0,180},{8,8,315},{0,-8,90},{8,0,0}};
+  for(size_t i=0;i<sizeof cases/sizeof *cases;i++){
+    instance.hspeed=cases[i].h; instance.vspeed=0;
+    (void)gml_vm_instance_builtin_set(&vm,&instance,"vspeed",vreal(cases[i].v));
+    if(fabs(instance.direction-cases[i].direction)>1e-9 || instance.direction<0 ||
+       instance.direction>=360.0 || fabs(instance.speed-hypot(cases[i].h,cases[i].v))>1e-12){
+      fprintf(stderr,"component direction h=%g v=%g: direction=%.17g speed=%.17g\n",
+              cases[i].h,cases[i].v,instance.direction,instance.speed);
+      return 0;
+    }
+  }
+  /* Assigning a speed keeps the normalized direction and recomputes the components from it. */
+  (void)gml_vm_instance_builtin_set(&vm,&instance,"hspeed",vreal(0));
+  (void)gml_vm_instance_builtin_set(&vm,&instance,"vspeed",vreal(8));
+  (void)gml_vm_instance_builtin_set(&vm,&instance,"speed",vreal(5));
+  if(instance.direction!=270 || fabs(instance.hspeed)>1e-12 || fabs(instance.vspeed-5)>1e-12){
+    fprintf(stderr,"speed after a downward component: direction=%.17g h=%.17g v=%.17g\n",
+            instance.direction,instance.hspeed,instance.vspeed);
+    return 0;
+  }
+  return 1;
+}
 #include <sys/stat.h>
 #include <unistd.h>
 

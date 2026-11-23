@@ -67,6 +67,7 @@ int expect_event_perform_dispatches_mouse_event(void);
 int expect_stopped_mover_restored_from_solid(void);
 int expect_stationary_embed_nudge_reverted(void);
 int expect_classic_timeline_index_activation(void);
+int expect_component_direction_range(void);
 int expect_frame_clock_ignores_host_time(void);
 int expect_frame_clock_long_wait_continues(void);
 int expect_sequence_asset_keys_and_parameters(void);

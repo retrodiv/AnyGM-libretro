@@ -63,6 +63,7 @@ int main(int argc,char **argv){
     {"stopped_mover_solid_restore",expect_stopped_mover_restored_from_solid},
     {"stationary_embed_nudge_reverted",expect_stationary_embed_nudge_reverted},
     {"classic_timeline_index_activation",expect_classic_timeline_index_activation},
+    {"component_direction_range",expect_component_direction_range},
     {"frame_clock_ignores_host_time",expect_frame_clock_ignores_host_time},
     {"frame_clock_long_wait_continues",expect_frame_clock_long_wait_continues},
     {"sequence_asset_keys_and_parameters",expect_sequence_asset_keys_and_parameters},

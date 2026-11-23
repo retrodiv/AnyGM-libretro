@@ -173,6 +173,9 @@ static void log_val_simple(GmlVM *vm,GmlVal v){
   else if(v.t==V_UNDEF) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"undefined");
   else anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"%.17g",v.t==V_REAL?v.d:0.0);
 }
+/* A direction derived from the components is reported in [0,360) by every generation, as the
+ * builtin motion actions already do: downward motion reads 270, not -90. Classic additionally
+ * snaps a near-integral angle. */
 static void motion_from_components(GmlVM *vm, GmlInstance *in){
   in->speed=hypot(in->hspeed,in->vspeed);
   in->direction=atan2(-in->vspeed,in->hspeed)*180.0/M_PI;
@@ -182,7 +185,7 @@ static void motion_from_components(GmlVM *vm, GmlInstance *in){
     double rounded=round(in->direction);
     if(fabs(rounded-in->direction)<0.0001) in->direction=rounded;
     if(in->direction>=360.0) in->direction-=360.0;
-  }
+  } else if(in->direction<0) in->direction+=360.0;
 }
 static void motion_from_speed_dir(GmlVM *vm, GmlInstance *in){
   if(vm && vm->win && anygm_policy_uses_classic_runtime(vm->win)){
