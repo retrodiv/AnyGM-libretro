@@ -4,6 +4,7 @@
 /* Existing OpenGL source mirrors and exact integer axis maps. */
 #include "gml_gpu_opengl_internal.h"
 #include "gml_render_sample_setup.h"
+#include "gml_thread.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -238,6 +239,9 @@ void gml_gpu_opengl_scene_forget(GmlGpuBackend *backend){
   scene->checkpoint_rows=scene->checkpoint_rows_framebuffer=0;
   scene->checkpoint_rows_width=scene->checkpoint_rows_height=0;
   scene->checkpoint_program_failed=0;
+  scene->linear_program=scene->linear_buffer=0;
+  scene->linear_capacity=0;
+  scene->linear_failed=0;
   memset(&scene->main_program,0,sizeof scene->main_program);
   memset(&scene->filtered_program,0,sizeof scene->filtered_program);
   memset(scene->compact_programs,0,sizeof scene->compact_programs);
@@ -285,6 +289,8 @@ void gml_gpu_opengl_scene_destroy(GmlGpuBackend *backend,int context_is_current)
     if(scene->checkpoint_framebuffer)
       backend->gl.DeleteFramebuffers(1,&scene->checkpoint_framebuffer);
     if(scene->checkpoint_rows) backend->gl.DeleteTextures(1,&scene->checkpoint_rows);
+    if(scene->linear_program) backend->gl.DeleteProgram(scene->linear_program);
+    if(scene->linear_buffer) backend->gl.DeleteBuffers(1,&scene->linear_buffer);
     if(scene->checkpoint_rows_framebuffer)
       backend->gl.DeleteFramebuffers(1,&scene->checkpoint_rows_framebuffer);
     if(scene->main_program.program) backend->gl.DeleteProgram(scene->main_program.program);
@@ -351,6 +357,9 @@ void gml_gpu_opengl_scene_reset(GmlGpuBackend *backend,const GmlGpuContext *cont
   memcpy(&backend->gl.field,&proc,sizeof proc); \
 } while(0)
   GL_SCENE_LOAD(GetIntegerv,"glGetIntegerv");
+  GL_SCENE_LOAD(TransformFeedbackVaryings,"glTransformFeedbackVaryings");
+  GL_SCENE_LOAD(BeginTransformFeedback,"glBeginTransformFeedback");
+  GL_SCENE_LOAD(EndTransformFeedback,"glEndTransformFeedback");
   GL_SCENE_LOAD(IsEnabled,"glIsEnabled");
   GL_SCENE_LOAD(GetFloatv,"glGetFloatv");
   GL_SCENE_LOAD(LineWidth,"glLineWidth");
@@ -1274,6 +1283,115 @@ GLuint gml_gpu_opengl_scene_content_source(GmlGpuBackend *backend,GlSceneImage *
   return source->content_source_texture;
 }
 
+typedef struct LinearRows {
+  uint8_t *destination;
+  const uint8_t *source;
+  size_t stride,row_bytes;
+  uint32_t first,end;
+} LinearRows;
+
+static void *linear_copy_rows(void *argument){
+  const LinearRows *rows=(const LinearRows*)argument;
+  for(uint32_t row=rows->first;row<rows->end;row++)
+    memcpy(rows->destination+(size_t)row*rows->stride,rows->source+(size_t)row*rows->row_bytes,
+           rows->row_bytes);
+  return NULL;
+}
+
+/* Reading uncached device memory is bound by each core's latency, not by the bus: a large copy
+ * is shared among up to four cores by bands of rows. */
+static void linear_copy(uint8_t *destination,size_t stride,const uint8_t *source,
+                        size_t row_bytes,uint32_t height){
+  enum { MAX_PARTS=4 };
+  LinearRows parts[MAX_PARTS];
+  gml_thread_t threads[MAX_PARTS];
+  int started[MAX_PARTS]={0};
+  int count=gml_ncpu();
+  if(count>MAX_PARTS) count=MAX_PARTS;
+  if(count<1 || (size_t)height*row_bytes<GL_SCENE_LINEAR_READ_MIN_BYTES || height<(uint32_t)count)
+    count=1;
+  for(int part=0;part<count;part++)
+    parts[part]=(LinearRows){destination,source,stride,row_bytes,
+                             (uint32_t)((uint64_t)height*part/count),
+                             (uint32_t)((uint64_t)height*(part+1)/count)};
+  for(int part=1;part<count;part++)
+    started[part]=gml_thread_create(&threads[part],linear_copy_rows,&parts[part])==0;
+  linear_copy_rows(&parts[0]);
+  for(int part=1;part<count;part++){
+    if(started[part]) gml_thread_join(threads[part]);
+    else linear_copy_rows(&parts[part]);
+  }
+}
+
+/* A tiled device makes the host untile a direct pixel read from uncached memory, the most
+ * expensive part of a large read. Here the device writes the region's words, already packed in
+ * the host format and top-down, into a linear buffer by transform feedback; the host only copies
+ * rows out of the mapped buffer. Returns 0 when the path is unavailable or refused, leaving the
+ * direct read to serve and to rewrite every destination row. */
+static int scene_readback_linear(GmlGpuBackend *backend,GlSceneImage *image,
+                                  const GmlRenderImageReadback *transfer){
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__==__ORDER_LITTLE_ENDIAN__
+  GlScene *scene=&backend->scene;
+  const uint32_t width=transfer->region.width,height=transfer->region.height;
+  size_t vertices=((size_t)width*height+3u)/4u,bytes=vertices*16u;
+  GLint region[4],format[2];
+  const uint8_t *mapped;
+  int success;
+  if(scene->linear_failed ||
+     (size_t)width*height*4u<GL_SCENE_LINEAR_READ_MIN_BYTES || vertices>(size_t)INT32_MAX ||
+     !backend->gl.MapBufferRange || !backend->gl.UnmapBuffer ||
+     backend->gl.GetError()!=GL_NO_ERROR || !gml_gpu_opengl_linear_read_program(backend))
+    return 0;
+  if(!scene->linear_buffer) backend->gl.GenBuffers(1,&scene->linear_buffer);
+  if(!scene->linear_buffer){ scene->linear_failed=1;return 0; }
+  backend->gl.BindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER,scene->linear_buffer);
+  if(scene->linear_capacity<bytes){
+    backend->gl.BufferData(GL_TRANSFORM_FEEDBACK_BUFFER,(GLsizeiptr)bytes,NULL,GL_STREAM_READ);
+    scene->linear_capacity=backend->gl.GetError()==GL_NO_ERROR?bytes:0u;
+  }
+  success=scene->linear_capacity>=bytes;
+  if(success){
+    region[0]=transfer->region.x;region[1]=transfer->region.y;
+    region[2]=(GLint)width;region[3]=(GLint)height;
+    format[0]=(GLint)image->height;
+    format[1]=transfer->pixel_format==GML_RENDER_PIXEL_RGBA8888?2:
+              transfer->pixel_format==GML_RENDER_PIXEL_XRGB8888?1:0;
+    backend->gl.Enable(GL_RASTERIZER_DISCARD);
+    backend->gl.UseProgram(scene->linear_program);
+    backend->gl.Uniform1i(scene->linear_u_image,0);
+    backend->gl.Uniform4iv(scene->linear_u_region,1,region);
+    backend->gl.Uniform2iv(scene->linear_u_format,1,format);
+    backend->gl.ActiveTexture(GL_TEXTURE0);
+    backend->gl.BindTexture(GL_TEXTURE_2D,image->texture);
+    backend->gl.BindVertexArray(backend->vertex_array);
+    backend->gl.BindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER,0,scene->linear_buffer);
+    backend->gl.BeginTransformFeedback(GL_POINTS);
+    backend->gl.DrawArrays(GL_POINTS,0,(GLsizei)vertices);
+    backend->gl.EndTransformFeedback();
+    backend->gl.Disable(GL_RASTERIZER_DISCARD);
+    success=backend->gl.GetError()==GL_NO_ERROR;
+  }
+  mapped=success?(const uint8_t*)backend->gl.MapBufferRange(GL_TRANSFORM_FEEDBACK_BUFFER,0,
+                                                             (GLsizeiptr)bytes,GL_MAP_READ_BIT):NULL;
+  if(mapped){
+    linear_copy((uint8_t*)transfer->bytes,transfer->stride_bytes,mapped,(size_t)width*4u,height);
+    /* A buffer lost while mapped leaves the destination for the direct read to rewrite. */
+    success=backend->gl.UnmapBuffer(GL_TRANSFORM_FEEDBACK_BUFFER)==GL_TRUE;
+  } else success=0;
+  backend->gl.BindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER,0,0);
+  backend->gl.BindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER,0);
+  backend->gl.UseProgram(0);
+  backend->gl.BindVertexArray(0);
+  backend->gl.BindTexture(GL_TEXTURE_2D,0);
+  if(backend->gl.GetError()!=GL_NO_ERROR) success=0;
+  if(!success) scene->linear_failed=1;
+  return success;
+#else
+  (void)backend;(void)image;(void)transfer;
+  return 0;
+#endif
+}
+
 /* The established row/channel packing body serves both full and bounded reads. */
 static int scene_readback_pixels(GmlGpuBackend *backend,GlSceneImage *image,
                                   const GmlRenderImageReadback *transfer,
@@ -1281,6 +1399,12 @@ static int scene_readback_pixels(GmlGpuBackend *backend,GlSceneImage *image,
   GlScene *scene=&backend->scene;
   size_t row_bytes=(size_t)transfer->region.width*4u;
   size_t bytes=row_bytes*transfer->region.height;
+  if(scene_readback_linear(backend,image,transfer)){
+    backend->gl.BindFramebuffer(GL_FRAMEBUFFER,image->framebuffer);
+    result->pixel_reads++;
+    result->pixel_bytes+=bytes;
+    return 1;
+  }
   if(!scene_scratch_ready(scene,bytes)) return 0;
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,image->framebuffer);
   backend->gl.PixelStorei(GL_PACK_ALIGNMENT,1);

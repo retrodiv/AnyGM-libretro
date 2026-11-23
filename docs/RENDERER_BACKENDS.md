@@ -1331,6 +1331,15 @@ within one 32-MiB budget, the least recently checkpointed surface leaving first.
 A surface's host staging lives exactly as long as the device reports its
 baseline (`checkpoint_retained`). Baselines, the two pass targets and the mask are
 context-local, bounded, disposable and never state bytes.
+Every OpenGL pixel read of at least 256 KiB, full or banded, first tries a
+linear capture: a vertex program fetches the region by exact texel fetches,
+packs four words per point in the requested host format top-down, and transform
+feedback writes them into a reusable linear buffer that the host maps and copies
+by rows, split among up to four threads. Tiled devices otherwise untile a direct
+read on the host from uncached memory. The words are the existing converter's
+output, so bytes are identical. Missing entry points, a refused program, start,
+map or a buffer lost while mapped leave the direct read to serve and rewrite the
+region, and the refusal is cached until context replacement.
 `readbacks`/`readback_bytes` count actual attempted pixel reads, including failed
 ones; `checkpoint_masks`/`checkpoint_mask_bytes` separately count actual mask
 reads. Logical checkpoint success is still resource-owned. Correctness controls

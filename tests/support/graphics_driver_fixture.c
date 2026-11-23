@@ -107,6 +107,10 @@ typedef struct FakeDriver {
   size_t buffer_bytes;
   size_t buffer_capacity[FAKE_MAX_CALLS],buffer_high_water[FAKE_MAX_CALLS];
   unsigned char *buffer_store[FAKE_MAX_CALLS];
+  /* Transform feedback is offered only when a test asks for it. */
+  unsigned linear_enabled,linear_failure,linear_bound,linear_indexed,linear_active;
+  unsigned linear_begins,linear_draws,linear_maps;
+  int last_uniform4[4];
   GLuint instance_buffer;
   size_t instance_offset,instance_size;
   size_t attribute_offset[16];
@@ -615,6 +619,14 @@ static void *fake_MapBufferRange(GLenum target,GLintptr offset,GLsizeiptr length
     g_fake.unpack_mapped=1;
     return g_fake.unpack_store;
   }
+  if(target==GL_TRANSFORM_FEEDBACK_BUFFER){
+    unsigned buffer=g_fake.linear_bound;
+    g_fake.linear_maps++;
+    if(g_fake.linear_failure==2u || access!=GL_MAP_READ_BIT || !buffer ||
+       buffer>=FAKE_MAX_CALLS || offset<0 || length<=0 ||
+       (size_t)offset+(size_t)length>g_fake.buffer_capacity[buffer]) return NULL;
+    return g_fake.buffer_store[buffer]+offset;
+  }
   if(target==GL_PIXEL_PACK_BUFFER){
     unsigned buffer=g_fake.bound_pack_buffer;
     if(!buffer || buffer>=FAKE_MAX_CALLS || offset<0 || length<=0 ||
@@ -626,6 +638,7 @@ static void *fake_MapBufferRange(GLenum target,GLintptr offset,GLsizeiptr length
 }
 static GLboolean fake_UnmapBuffer(GLenum target){
   note_call();
+  if(target==GL_TRANSFORM_FEEDBACK_BUFFER) return g_fake.linear_failure==3u?GL_FALSE:GL_TRUE;
   if(target==GL_ARRAY_BUFFER){
     g_fake.stream.unmaps++;
     if(!g_fake.stream_mapped){g_fake.stream.errors++;return GL_FALSE;}
@@ -737,6 +750,18 @@ static void fake_DeleteVertexArrays(GLsizei n,const GLuint *names){
 }
 static void fake_DrawArrays(GLenum mode,GLint first,GLsizei count){
   note_call();
+  if(mode==GL_POINTS && g_fake.linear_active){
+    unsigned buffer=g_fake.linear_indexed;
+    size_t words=(size_t)count*4u;
+    g_fake.linear_draws++;
+    if(first || buffer>=FAKE_MAX_CALLS || words*4u>g_fake.buffer_capacity[buffer] ||
+       !g_fake.buffer_store[buffer]){ g_fake.pending_error=0x0502u;return; }
+    for(size_t index=0;index<words;index++){
+      uint32_t word=0xA5000000u|(uint32_t)(index&0xFFFFFFu);
+      memcpy(g_fake.buffer_store[buffer]+index*4u,&word,4u);
+    }
+    return;
+  }
   g_fake.last_draw_framebuffer=g_fake.framebuffer;
   if(mode==GL_TRIANGLES && first==0 && count==3){
     g_fake.draw_calls++;
@@ -850,6 +875,11 @@ static void fake_GetIntegeri_v(GLenum target,GLuint index,GLint *value){
 }
 static void fake_BindBufferBase(GLenum target,GLuint index,GLuint buffer){
   note_call();
+  if(target==GL_TRANSFORM_FEEDBACK_BUFFER){
+    if(index || g_fake.linear_active) g_fake.pending_error=0x0502u;
+    else g_fake.linear_indexed=buffer;
+    return;
+  }
   if(target!=GL_SHADER_STORAGE_BUFFER || index){g_fake.indirect.errors++;return;}
   g_fake.indirect.generic=g_fake.indirect.indexed=buffer;
 }
@@ -887,6 +917,7 @@ static void fake_BindBuffer(GLenum target,GLuint name){
   if(target==GL_SHADER_STORAGE_BUFFER){ g_fake.indirect.generic=name; return; }
   if(target==GL_DRAW_INDIRECT_BUFFER){ g_fake.indirect.indirect=name; return; }
   if(target==GL_PIXEL_PACK_BUFFER){ g_fake.bound_pack_buffer=name; return; }
+  if(target==GL_TRANSFORM_FEEDBACK_BUFFER){ g_fake.linear_bound=name; return; }
   if(target==GL_PIXEL_UNPACK_BUFFER){ g_fake.unpack.bound=name; return; }
   g_fake.bound_buffer=name;
 }
@@ -917,6 +948,18 @@ static void fake_BufferData(GLenum target,GLsizeiptr size,const void *data,GLenu
     g_fake.unpack.buffer=g_fake.unpack.bound;
     g_fake.unpack_needs_sync=0;
     memset(grown,0xCD,(size_t)size);
+    return;
+  }
+  if(target==GL_TRANSFORM_FEEDBACK_BUFFER){
+    unsigned buffer=g_fake.linear_bound;
+    if(!buffer || buffer>=FAKE_MAX_CALLS || size<=0 || data || usage!=GL_STREAM_READ){
+      g_fake.pending_error=0x0502u;return;
+    }
+    unsigned char *store=(unsigned char*)realloc(g_fake.buffer_store[buffer],(size_t)size);
+    if(!store){ g_fake.pending_error=0x0505u;return; }
+    memset(store,0xEE,(size_t)size);
+    g_fake.buffer_store[buffer]=store;
+    g_fake.buffer_capacity[buffer]=(size_t)size;
     return;
   }
   g_fake.buffer_bytes=(size_t)size;
@@ -1023,7 +1066,30 @@ static void fake_Uniform2iv(GLint l,GLsizei n,const GLint *v){
   }
 }
 static void fake_Uniform3iv(GLint l,GLsizei n,const GLint *v){ (void)l;(void)n;(void)v; note_call(); }
-static void fake_Uniform4iv(GLint l,GLsizei n,const GLint *v){ (void)l;(void)n;(void)v; note_call(); }
+static void fake_Uniform4iv(GLint l,GLsizei n,const GLint *v){
+  (void)l; note_call();
+  if(v && n==1) memcpy(g_fake.last_uniform4,v,sizeof g_fake.last_uniform4);
+}
+/* The fixture never evaluates the capture program: four captured words per point carry their
+ * own index, so a test sees where the host puts each one. */
+static void fake_TransformFeedbackVaryings(GLuint program,GLsizei count,
+                                           const GLchar *const *varyings,GLenum mode){
+  (void)program;(void)varyings; note_call();
+  if(count!=1 || mode!=GL_INTERLEAVED_ATTRIBS) g_fake.pending_error=0x0500u;
+}
+static void fake_BeginTransformFeedback(GLenum mode){
+  note_call(); g_fake.linear_begins++;
+  if(mode!=GL_POINTS || g_fake.linear_active || !g_fake.linear_indexed){
+    g_fake.pending_error=0x0502u;return;
+  }
+  if(g_fake.linear_failure==1u){ g_fake.pending_error=0x0505u;return; }
+  g_fake.linear_active=1u;
+}
+static void fake_EndTransformFeedback(void){
+  note_call();
+  if(!g_fake.linear_active) g_fake.pending_error=0x0502u;
+  g_fake.linear_active=0u;
+}
 static void fake_UniformMatrix4fv(GLint l,GLsizei n,GLboolean t,const GLfloat *v){
   (void)l;(void)t; note_call(); g_fake.matrix_uniforms+=(unsigned)n;
   if(n==5 && v){
@@ -1131,10 +1197,14 @@ void (*anygm_test_graphics_proc(void *userdata,const char *name))(void){
     {"glReadPixels",(void*)fake_ReadPixels},
     {"glMapBufferRange",(void*)fake_MapBufferRange},
     {"glUnmapBuffer",(void*)fake_UnmapBuffer},
+    {"glTransformFeedbackVaryings",(void*)fake_TransformFeedbackVaryings},
+    {"glBeginTransformFeedback",(void*)fake_BeginTransformFeedback},
+    {"glEndTransformFeedback",(void*)fake_EndTransformFeedback},
     {NULL,NULL}
   };
   (void)userdata;
   if(g_fake.withhold && !strcmp(g_fake.withhold,name)) return NULL;
+  if(!g_fake.linear_enabled && strstr(name,"TransformFeedback")) return NULL;
   for(size_t index=0;table[index].name;index++)
     if(!strcmp(table[index].name,name)){
       void (*proc)(void)=NULL;
@@ -1152,6 +1222,15 @@ uintptr_t anygm_test_graphics_framebuffer(void *userdata){
 
 
 void anygm_test_graphics_withhold(const char *name){ g_fake.withhold=name; }
+void anygm_test_graphics_linear_capture(unsigned enabled,unsigned failure){
+  g_fake.linear_enabled=enabled;g_fake.linear_failure=failure;
+}
+AnygmTestGraphicsLinear anygm_test_graphics_linear(void){
+  AnygmTestGraphicsLinear out={g_fake.linear_begins,g_fake.linear_draws,g_fake.linear_maps,
+                               g_fake.linear_active,{0}};
+  memcpy(out.region,g_fake.last_uniform4,sizeof out.region);
+  return out;
+}
 void anygm_test_graphics_host_extent(unsigned width,unsigned height,unsigned failure){
   g_fake.host_extent.width=width;g_fake.host_extent.height=height;g_fake.host_extent.failure=failure;
 }

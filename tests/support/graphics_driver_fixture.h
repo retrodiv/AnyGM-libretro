@@ -48,6 +48,13 @@ int anygm_test_graphics_reuse_name(unsigned name);
 /* Refuse to resolve this entry point, so a missing one can be tested by name rather than by
  * deleting code. */
 void anygm_test_graphics_withhold(const char *name);
+/* Offers transform feedback; failure 1 refuses its start, 2 its map, 3 loses the mapping. */
+void anygm_test_graphics_linear_capture(unsigned enabled,unsigned failure);
+typedef struct AnygmTestGraphicsLinear {
+  unsigned begins,draws,maps,active;
+  int region[4];
+} AnygmTestGraphicsLinear;
+AnygmTestGraphicsLinear anygm_test_graphics_linear(void);
 void anygm_test_graphics_version(unsigned major,unsigned minor);
 typedef struct AnygmTestGraphicsIndirect {
   unsigned dispatches,draws,barriers,errors,allocations;

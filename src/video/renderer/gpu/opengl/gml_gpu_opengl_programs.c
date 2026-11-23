@@ -629,6 +629,53 @@ refused:
   return 0;
 }
 
+/* The linear read captures one varying; its program never rasterizes. */
+int gml_gpu_opengl_linear_read_program(GmlGpuBackend *backend){
+  GlScene *scene=&backend->scene;
+  const char *prefix=backend->api==GML_GPU_API_OPENGLES3
+    ?GML_GPU_OPENGL_PREFIX_ES:GML_GPU_OPENGL_PREFIX_DESKTOP;
+  static const GLchar *const varyings[]={"v_words"};
+  char vertex_source[2048],fragment_source[512];
+  GLuint vertex,fragment;
+  GLint status=GL_FALSE;
+  if(scene->linear_program) return 1;
+  if(scene->linear_failed || !backend->gl.TransformFeedbackVaryings ||
+     !backend->gl.BeginTransformFeedback || !backend->gl.EndTransformFeedback ||
+     !backend->gl.BindBufferBase) return 0;
+  scene->linear_failed=1;
+  snprintf(vertex_source,sizeof vertex_source,"%s%s",prefix,
+           GML_GPU_OPENGL_LINEAR_READ_VERTEX_BODY);
+  snprintf(fragment_source,sizeof fragment_source,"%s%s",prefix,
+           GML_GPU_OPENGL_LINEAR_READ_FRAGMENT_BODY);
+  vertex=compile_stage(backend,GL_VERTEX_SHADER,vertex_source,NULL,0u);
+  if(!vertex) return 0;
+  fragment=compile_stage(backend,GL_FRAGMENT_SHADER,fragment_source,NULL,0u);
+  if(!fragment){ backend->gl.DeleteShader(vertex); return 0; }
+  scene->linear_program=backend->gl.CreateProgram();
+  if(scene->linear_program){
+    backend->gl.AttachShader(scene->linear_program,vertex);
+    backend->gl.AttachShader(scene->linear_program,fragment);
+    backend->gl.TransformFeedbackVaryings(scene->linear_program,1,varyings,
+                                          GL_INTERLEAVED_ATTRIBS);
+    backend->gl.LinkProgram(scene->linear_program);
+    backend->gl.GetProgramiv(scene->linear_program,GL_LINK_STATUS,&status);
+  }
+  backend->gl.DeleteShader(vertex);
+  backend->gl.DeleteShader(fragment);
+  if(status!=GL_TRUE) goto refused;
+  scene->linear_u_image=backend->gl.GetUniformLocation(scene->linear_program,"u_image");
+  scene->linear_u_region=backend->gl.GetUniformLocation(scene->linear_program,"u_region");
+  scene->linear_u_format=backend->gl.GetUniformLocation(scene->linear_program,"u_format");
+  if(scene->linear_u_image<0 || scene->linear_u_region<0 || scene->linear_u_format<0)
+    goto refused;
+  scene->linear_failed=0;
+  return 1;
+refused:
+  if(scene->linear_program) backend->gl.DeleteProgram(scene->linear_program);
+  scene->linear_program=0;
+  return 0;
+}
+
 /* ---- The content's own programs ----
  *
  * A Studio payload ships its shaders as GLSL ES 1.00 text, with a desktop GLSL 1.20 rendering

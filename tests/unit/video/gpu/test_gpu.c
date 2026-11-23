@@ -4889,6 +4889,77 @@ static int surface_checkpoint_case(void){
   return 1;
 }
 
+static int linear_readback_case(void){
+  enum { EXTENT=300u, X=5u, Y=7u, W=290u, H=250u, STRIDE=EXTENT };
+  uint32_t *pixels=(uint32_t*)malloc((size_t)EXTENT*EXTENT*4u);
+  GmlGpuContext context=fake_context(GML_GPU_API_OPENGLES3);
+  REQUIRE(pixels,"linear destination allocated");
+  /* failure: 0 serves, 1 refuses the start, 2 the map, 3 loses the mapping, 4 fails the compile */
+  for(unsigned failure=0;failure<5u;failure++){
+    GmlGpu *gpu;
+    GmlRenderDeviceServices device={0};
+    GmlRenderDrawOp clear={0};
+    GmlRenderDrawBatch batch={&clear,1u,NULL,0u};
+    GmlRenderImageReadback readback={0};
+    GmlRenderImageReadbackResult result={0};
+    AnygmTestGraphicsLinear linear;
+    anygm_test_graphics_reset();
+    anygm_test_graphics_linear_capture(1u,failure<4u?failure:0u);
+    /* The capture's fragment stage is the only one that writes nothing but zero. */
+    if(failure==4u) anygm_test_graphics_fail_compile_containing("fragment_colour=vec4(0.0); }");
+    gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"linear context adopted");
+    gml_gpu_device_services(gpu,&device);
+    clear.opcode=GML_RENDER_OP_CLEAR;
+    clear.target.image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SURFACE,501u,1u,2u};
+    clear.target.storage_version=1u;clear.target.width=clear.target.height=EXTENT;
+    clear.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    clear.target.region=(GmlRenderRect){0,0,EXTENT,EXTENT};
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,
+            "linear surface drawn");
+    memset(pixels,0x5A,(size_t)EXTENT*EXTENT*4u);
+    readback.image=clear.target.image;readback.storage_width=readback.storage_height=EXTENT;
+    readback.region=(GmlRenderRect){X,Y,W,H};readback.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    readback.stride_bytes=STRIDE*4u;readback.byte_capacity=(size_t)EXTENT*EXTENT*4u;
+    readback.bytes=pixels;readback.result=&result;
+    REQUIRE(device.readback(device.context,&readback) && result.pixel_reads==1u &&
+            result.pixel_bytes==(uint64_t)W*H*4u,"a large region is read once");
+    linear=anygm_test_graphics_linear();
+    REQUIRE(!linear.active,"no capture is left running");
+    if(failure==0u){
+      REQUIRE(anygm_test_graphics_read_pixels()==0u && linear.begins==1u && linear.maps==1u,
+              "a large region is captured instead of read directly");
+      REQUIRE(linear.region[0]==(int)X && linear.region[1]==(int)Y &&
+              linear.region[2]==(int)W && linear.region[3]==(int)H,
+              "the capture covers exactly the region");
+      /* The destination starts at the region's first pixel; its stride is wider. */
+      for(uint32_t y=0;y<EXTENT;y++) for(uint32_t x=0;x<STRIDE;x++){
+        uint32_t value=pixels[(size_t)y*STRIDE+x];
+        if(x<W && y<H)
+          REQUIRE(value==(0xA5000000u|(y*W+x)),"captured words land row by row");
+        else REQUIRE(value==0x5A5A5A5Au,"bytes outside the region keep their value");
+      }
+      /* Below the threshold the direct read stays cheaper. */
+      readback.region=(GmlRenderRect){0,0,200u,200u};
+      REQUIRE(device.readback(device.context,&readback) &&
+              anygm_test_graphics_read_pixels()==1u && anygm_test_graphics_linear().begins==1u,
+              "a small region is read directly");
+    } else {
+      REQUIRE(anygm_test_graphics_read_pixels()==1u,"a refused capture falls back to the direct read");
+      REQUIRE(pixels[1]!=(0xA5000000u|1u) && pixels[1]!=0x5A5A5A5Au,
+              "the direct read rewrites the region");
+      REQUIRE(failure==4u?linear.begins==0u:linear.begins==1u,"a capture is attempted at most once");
+      REQUIRE(device.readback(device.context,&readback) &&
+              anygm_test_graphics_read_pixels()==2u &&
+              anygm_test_graphics_linear().begins==linear.begins,
+              "a refusal is remembered for the context");
+    }
+    gml_gpu_destroy(gpu,1);
+  }
+  free(pixels);
+  return 1;
+}
+
 static int incremental_checkpoint_budget_case(void){
   const uint32_t width=4096u,height=2049u;
   size_t bytes=(size_t)width*height*4u;
@@ -9122,6 +9193,7 @@ int main(int argc,char **argv){
     {"incremental_checkpoint_contract",incremental_checkpoint_contract_case},
     {"incremental_checkpoint_budget",incremental_checkpoint_budget_case},
     {"surface_checkpoint",surface_checkpoint_case},
+    {"linear_readback",linear_readback_case},
     {"scene_atlas_retire_advanced_version",scene_atlas_retire_advanced_version_case},
     {"scene_alpha_composition",scene_alpha_composition_case},
     {"scene_opaque_target_sourceover",scene_opaque_target_sourceover_case},

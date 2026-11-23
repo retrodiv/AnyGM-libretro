@@ -94,6 +94,8 @@ typedef void GLvoid;
 #define GL_PACK_SKIP_ROWS 0x0D03
 #define GL_PACK_SKIP_PIXELS 0x0D04
 #define GL_STREAM_READ 0x88E1
+#define GL_TRANSFORM_FEEDBACK_BUFFER 0x8C8E
+#define GL_INTERLEAVED_ATTRIBS 0x8C8C
 #define GL_MAP_READ_BIT 0x0001
 #define GL_MAP_WRITE_BIT 0x0002
 #define GL_MAP_UNSYNCHRONIZED_BIT 0x0020
@@ -254,6 +256,10 @@ typedef struct GmlGlApi {
   /* Optional device-generated recovery commands; baseline contexts retain fragment predicates. */
   void     (*GetIntegeri_v)(GLenum target,GLuint index,GLint *value);
   void     (*BindBufferBase)(GLenum target,GLuint index,GLuint buffer);
+  void     (*TransformFeedbackVaryings)(GLuint program,GLsizei count,
+                                        const GLchar *const *varyings,GLenum mode);
+  void     (*BeginTransformFeedback)(GLenum mode);
+  void     (*EndTransformFeedback)(void);
   void     (*DispatchCompute)(GLuint x,GLuint y,GLuint z);
   void     (*MemoryBarrier)(GLbitfield barriers);
   void     (*DrawArraysIndirect)(GLenum mode,const void *indirect);

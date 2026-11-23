@@ -20,6 +20,8 @@ enum {
   GL_SCENE_FRAME_CHECKPOINTS=2,
   GL_SCENE_CHECKPOINTS=8,
   GL_SCENE_SURFACE_CHECKPOINT_BYTES=32*1024*1024,
+  /* Below this a direct pixel read costs less than a device copy and a buffer map. */
+  GL_SCENE_LINEAR_READ_MIN_BYTES=256*1024,
   GL_SCENE_MAX_QUADS=2048,
   GL_SCENE_WHITE_TEXELS=16384,
   GL_SCENE_STAGING_MIN_BYTES=64*1024,
@@ -235,6 +237,12 @@ typedef struct GlScene {
   uint32_t checkpoint_mask_width,checkpoint_mask_height;
   uint32_t checkpoint_rows_width,checkpoint_rows_height;
   int checkpoint_program_failed;
+  /* Device-written linear pixel words, for reads a tiled device would otherwise untile on the
+   * host. Refused once, it stays refused until the context is replaced. */
+  GLuint linear_program,linear_buffer;
+  GLint linear_u_image,linear_u_region,linear_u_format;
+  size_t linear_capacity;
+  int linear_failed;
   GlSceneProgram main_program,filtered_program,compact_programs[GL_SCENE_COMPACT_PROGRAM_COUNT];
   GLuint vertex_buffer,vertex_array,instance_buffer,instance_array;
   GlDepthTriangleProgram depth_triangle_program[2];
@@ -369,6 +377,7 @@ int gml_gpu_opengl_prepare_automatic_draw(GmlGpuBackend *backend,GLuint source_t
 GlSceneExactProgram *gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,int font_mode,
                                                        char *error,size_t error_capacity);
 int gml_gpu_opengl_checkpoint_program(GmlGpuBackend *backend);
+int gml_gpu_opengl_linear_read_program(GmlGpuBackend *backend);
 int gml_gpu_opengl_rgb_reduce_program(GmlGpuBackend *backend);
 int gml_gpu_opengl_recovery_indirect_program(GmlGpuBackend *backend);
 int gml_gpu_opengl_scene_reduce_rgb(GmlGpuBackend *backend,GlSceneImage *source,

@@ -531,6 +531,31 @@
   "  fragment_colour=vec4(changed,0.0,0.0,1.0);\n" \
   "}\n"
 
+/* Linear pixel words for a host read: each vertex captures four consecutive destination pixels
+ * of a top-down region, packed as the host format's words (u_format.y: 0 ARGB, 1 XRGB with
+ * opaque alpha, 2 RGBA bytes) from storage rows counted from the bottom (u_format.x rows). */
+#define GML_GPU_OPENGL_LINEAR_READ_VERTEX_BODY \
+  "uniform sampler2D u_image;\n" \
+  "uniform ivec4 u_region;\n" \
+  "uniform ivec2 u_format;\n" \
+  "flat out uvec4 v_words;\n" \
+  "uint linear_word(int index){\n" \
+  "  if(index>=u_region.z*u_region.w) return 0u;\n" \
+  "  int row=index/u_region.z,column=index-row*u_region.z;\n" \
+  "  uvec4 c=uvec4(texelFetch(u_image,ivec2(u_region.x+column,u_format.x-1-(u_region.y+row)),0)*255.0+0.5);\n" \
+  "  if(u_format.y==2) return (c.a<<24)|(c.b<<16)|(c.g<<8)|c.r;\n" \
+  "  return ((u_format.y==1?255u:c.a)<<24)|(c.r<<16)|(c.g<<8)|c.b;\n" \
+  "}\n" \
+  "void main(){\n" \
+  "  int base=gl_VertexID*4;\n" \
+  "  v_words=uvec4(linear_word(base),linear_word(base+1),linear_word(base+2),linear_word(base+3));\n" \
+  "  gl_Position=vec4(0.0,0.0,0.0,1.0);\n" \
+  "}\n"
+
+#define GML_GPU_OPENGL_LINEAR_READ_FRAGMENT_BODY \
+  "out vec4 fragment_colour;\n" \
+  "void main(){ fragment_colour=vec4(0.0); }\n"
+
 #define GML_GPU_OPENGL_SCENE_POINT_MAP_RULES(indent) \
   indent "if(v_span_y.w==2.0) at=ivec2(v_span_x.zw)+p*ivec2(v_span_y.yz)/dest;\n" \
   indent "else if(v_span_y.w==1.0) at=ivec2(floor(v_span_x.zw+vec2(p)*v_span_y.yz/vec2(dest)));\n" \
