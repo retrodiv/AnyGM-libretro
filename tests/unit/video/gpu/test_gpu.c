@@ -2782,7 +2782,7 @@ static int scene_general_program_demand_case(void){
 }
 
 static int scene_hot_constant_programs_case(void){
-  const unsigned filters[]={32u,33u,153u,21u,22u,25u,26u,53u,55u,147u,149u,30u,23u,24u,34u,35u,36u,39u,41u,40u,37u,42u,84u,31u,
+  const unsigned filters[]={32u,33u,153u,21u,22u,25u,26u,51u,53u,55u,147u,149u,30u,23u,24u,34u,35u,36u,39u,41u,40u,37u,42u,84u,31u,
     GL_SCENE_NATIVE_TEXTURE_NEAREST_FILTER,GL_SCENE_NATIVE_TEXTURE_LINEAR_FILTER,
     GL_SCENE_NATIVE_TEXTURE_STAMP_NEAREST_FILTER,GL_SCENE_NATIVE_TEXTURE_STAMP_LINEAR_FILTER,
     GL_SCENE_NATIVE_TEXTURE_SURFACE_NEAREST_FILTER,GL_SCENE_NATIVE_TEXTURE_SURFACE_LINEAR_FILTER,49u,56u,8u};
@@ -2809,7 +2809,8 @@ static int scene_hot_constant_programs_case(void){
       REQUIRE(program && fragment && strstr(fragment,prefix),
         "hot native and filtered samplers compile their existing constant branch");
       REQUIRE((strstr(fragment,"// Equal extents make every in-bounds point-phase rule the identity.")!=NULL)==
-        (filters[selected]==53u || filters[selected]==55u || filters[selected]==56u),
+        (filters[selected]==51u || filters[selected]==53u || filters[selected]==55u ||
+         filters[selected]==56u),
         "only qualified surface programs receive the identity mapper source");
       if(filters[selected]==55u)
         REQUIRE(!gml_gpu_opengl_scene_draw_program(gpu->backend,53u,0,error,sizeof error),
@@ -3104,6 +3105,185 @@ static int scene_opaque_unit_surface_copy_case(void){
       REQUIRE(!memcmp(actual,expected,sizeof actual),
         "physical-point copy preserves the full source and inset destination bounds");
     }
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
+/* An opaque surface source drawn whole with a white unit tint stores its own bytes under
+ * either source-over alpha rule and under the unblended replacement, whether it writes one or
+ * the sampled alpha, onto a surface as onto the screen; additive blending, a translucent source or a cutoff above every byte keeps
+ * the shader. */
+static int scene_opaque_surface_replacement_copy_case(void){
+  enum { W=16,H=12 };
+  for(unsigned api=0;api<2u;api++) for(unsigned variant=0;variant<7u;variant++){
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    GmlRenderDeviceServices device={0};
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"opaque replacement context");
+    gml_gpu_device_services(gpu,&device);
+    uint32_t pixels[W*H];for(unsigned i=0;i<W*H;i++) pixels[i]=0xFF13579Bu;
+    GmlRenderImageRef source={GML_RENDER_RESOURCE_SURFACE,231u,1u,1u};
+    GmlRenderImageUpload upload={.image=source,.storage_width=W,.storage_height=H,
+      .region={0,0,W,H},.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+      .bytes=pixels,.byte_capacity=sizeof pixels,.stride_bytes=W*4u};
+    REQUIRE(device.upload(device.context,&upload),"opaque replacement source");
+    unsigned source_factor=GML_RENDER_BLEND_SOURCE_ALPHA,destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    GmlRenderDrawStateSnapshot states[2]={{.colour=0xFFFFFFFFu,.alpha=255u,.write_mask=15u},
+      {.colour=0xFFFFFFFFu,.alpha=255u,.write_mask=15u,.sampler_count=1u,
+       .rgb_source_factor=source_factor,.rgb_destination_factor=destination_factor,
+       .alpha_source_factor=variant==2u?GML_RENDER_BLEND_ONE:source_factor,
+       .alpha_destination_factor=destination_factor,
+       .rgb_equation=GML_RENDER_BLEND_ADD,.alpha_equation=GML_RENDER_BLEND_ADD}};
+    if(variant==1u || variant==6u) states[1]=(GmlRenderDrawStateSnapshot){.colour=0xFFFFFFFFu,.alpha=255u,
+      .write_mask=15u,.sampler_count=1u};
+    if(variant==3u){
+      states[1].rgb_destination_factor=GML_RENDER_BLEND_ONE;
+      states[1].alpha_source_factor=GML_RENDER_BLEND_ONE;
+      states[1].alpha_destination_factor=GML_RENDER_BLEND_ONE;
+    }
+    if(variant==5u){states[1].alpha_test_enabled=1u;states[1].alpha_test_reference=255u;}
+    {
+      GmlRenderDrawOp clear={.opcode=GML_RENDER_OP_CLEAR,
+        .target={.image=source,.storage_version=1u,.width=W,.height=H,
+          .pixel_format=GML_RENDER_PIXEL_ARGB8888,.region={0,0,W,H}}};
+      clear.target.image.content_version++;
+      clear.payload.clear_colour=variant==4u?0x8013579Bu:0xFF13579Bu;
+      GmlRenderDrawBatch batch={&clear,1u,states,2u};
+      REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,
+        "opaque replacement source clear");
+      source=clear.target.image;
+    }
+    GmlRenderDrawOp ops[2]={0};
+    ops[0].opcode=GML_RENDER_OP_CLEAR;
+    ops[0].target=(GmlRenderTargetRef){.image={variant==1u || variant==6u?GML_RENDER_RESOURCE_SCREEN:GML_RENDER_RESOURCE_SURFACE,232u,1u,1u},
+      .storage_version=1u,.width=W,.height=H,.pixel_format=GML_RENDER_PIXEL_ARGB8888,.region={0,0,W,H}};
+    ops[0].payload.clear_colour=0u;
+    ops[1]=ops[0];ops[1].opcode=GML_RENDER_OP_TEXTURED_QUAD;
+    ops[1].target.image.content_version++;ops[1].scene_family=GML_RENDER_SCENE_SURFACE;
+    ops[1].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    ops[1].source_count=1u;ops[1].sources=&source;ops[1].state_index=1u;
+    GmlRenderQuad *q=&ops[1].payload.quad;
+    q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;q->filtered_draw_alpha=1.0;
+    q->sampling=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_NEAREST,GML_RENDER_EDGE_CLAMP_SUBIMAGE,
+      {0,0,W,H},GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION,0u};
+    q->inverse_x[0]=W;q->inverse_y[1]=H;
+    for(unsigned c=0;c<4u;c++){
+      unsigned right=c==1u || c==2u,bottom=c>=2u;
+      q->x[c]=right?W:0;q->y[c]=bottom?H:0;q->u[c]=right;q->v[c]=bottom;
+      q->corner_colour[c]=0xFFFFFFFFu;
+    }
+    if(variant==6u) q->span_y[0]=2.0;
+    states[1].samplers[0]=q->sampling;
+    unsigned copies_before=anygm_test_graphics_scene_copies();
+    GmlRenderDrawBatch batch={ops,2u,states,2u};
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    if(result.status!=GML_RENDER_EXEC_ACCEPTED || result.accepted_prefix!=batch.operation_count)
+      fprintf(stderr,"opaque replacement copy: api=%u variant=%u status=%u prefix=%u\n",
+        api,variant,result.status,result.accepted_prefix);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==batch.operation_count,
+      "opaque replacement variants keep their ordinary executor");
+    unsigned expected=variant<=2u || variant==6u?1u:0u;
+    if(anygm_test_graphics_scene_copies()!=copies_before+expected)
+      fprintf(stderr,"opaque replacement copy: api=%u variant=%u copies=%u expected=%u\n",
+        api,variant,anygm_test_graphics_scene_copies()-copies_before,expected);
+    REQUIRE(anygm_test_graphics_scene_copies()==copies_before+expected &&
+      !anygm_test_graphics_read_pixels(),
+      "only whole opaque sources under a byte-preserving rule use raw copies");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
+/* An equal-extent white surface copy selects the reduced identity program; a tint, a
+ * reduced extent keeps the complete program. A refused compile of
+ * the reduced program reveals which draws select it. */
+static int scene_equal_extent_surface_copy_case(void){
+  enum { W=16,H=12 };
+  for(unsigned api=0;api<2u;api++) for(unsigned variant=0;variant<5u;variant++)
+  for(unsigned refuse=0;refuse<2u;refuse++){
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    GmlRenderDeviceServices device={0};
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"equal-extent surface context");
+    gml_gpu_device_services(gpu,&device);
+    uint32_t pixels[W*H];for(unsigned i=0;i<W*H;i++) pixels[i]=0x8013579Bu;
+    GmlRenderImageRef source={GML_RENDER_RESOURCE_SURFACE,231u,1u,1u};
+    GmlRenderImageUpload upload={.image=source,.storage_width=W,.storage_height=H,
+      .region={0,0,W,H},.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+      .bytes=pixels,.byte_capacity=sizeof pixels,.stride_bytes=W*4u};
+    REQUIRE(device.upload(device.context,&upload),"equal-extent surface source");
+    GmlRenderDrawStateSnapshot states[2]={{.colour=0xFFFFFFFFu,.alpha=255u,.write_mask=15u},
+      {.colour=0xFFFFFFFFu,.alpha=255u,.write_mask=15u,.sampler_count=1u,
+       .coverage_policy=variant==3u?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA,
+       .rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA,
+       .rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
+       .alpha_source_factor=variant==3u?GML_RENDER_BLEND_SOURCE_ALPHA:GML_RENDER_BLEND_ONE,
+       .alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
+       .rgb_equation=GML_RENDER_BLEND_ADD,.alpha_equation=GML_RENDER_BLEND_ADD}};
+    {
+      GmlRenderDrawOp clear={.opcode=GML_RENDER_OP_CLEAR,
+        .target={.image=source,.storage_version=1u,.width=W,.height=H,
+          .pixel_format=GML_RENDER_PIXEL_ARGB8888,.region={0,0,W,H}}};
+      clear.target.image.content_version++;clear.payload.clear_colour=0x8013579Bu;
+      GmlRenderDrawBatch batch={&clear,1u,states,2u};
+      REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,
+        "equal-extent source clear");
+      source=clear.target.image;
+    }
+    GmlRenderDrawOp ops[2]={0};
+    ops[0].opcode=GML_RENDER_OP_CLEAR;
+    ops[0].target=(GmlRenderTargetRef){.image={GML_RENDER_RESOURCE_SCREEN,232u,1u,1u},
+      .storage_version=1u,.width=W,.height=H,.pixel_format=GML_RENDER_PIXEL_ARGB8888,.region={0,0,W,H}};
+    ops[0].payload.clear_colour=0x40504030u;
+    ops[1]=ops[0];ops[1].opcode=GML_RENDER_OP_TEXTURED_QUAD;
+    ops[1].target.image.content_version++;ops[1].scene_family=GML_RENDER_SCENE_SURFACE;
+    ops[1].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    ops[1].source_count=1u;ops[1].sources=&source;ops[1].state_index=1u;
+    GmlRenderQuad *q=&ops[1].payload.quad;
+    q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;q->filtered_draw_alpha=1.0;
+    q->sampling=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_NEAREST,GML_RENDER_EDGE_CLAMP_SUBIMAGE,
+      {0,0,W,H},GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION,0u};
+    unsigned width=variant==4u?W/2u:W,height=variant==4u?H/2u:H;
+    q->inverse_x[0]=width;q->inverse_y[1]=height;
+    q->inverse_anchor[0]=variant==2u?1.0:0.0;
+    for(unsigned c=0;c<4u;c++){
+      unsigned right=c==1u || c==2u,bottom=c>=2u;
+      q->x[c]=(right?width:0)+(variant==2u?1:0);q->y[c]=bottom?height:0;
+      q->u[c]=right;q->v[c]=bottom;
+      q->corner_colour[c]=variant==1u?0xFF70B0D0u:0xFFFFFFFFu;
+    }
+    states[1].samplers[0]=q->sampling;
+    anygm_test_graphics_fail_compile_containing(refuse?"#define GML_SCENE_EQUAL_EXTENT 1\n":NULL);
+    GmlRenderDrawBatch batch={ops,2u,states,2u};
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    anygm_test_graphics_fail_compile_containing(NULL);
+    int reduced=variant==0u || variant==2u || variant==3u;
+    int accepted=result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==batch.operation_count;
+    if(accepted!=(!refuse || !reduced))
+      fprintf(stderr,"equal-extent surface copy: api=%u variant=%u refuse=%u status=%u prefix=%u\n",
+        api,variant,refuse,result.status,result.accepted_prefix);
+    REQUIRE(accepted==(!refuse || !reduced),
+      "only white copies covering their equal-extent rendered source select the reduced program");
+    gml_gpu_destroy(gpu,1);
+  }
+  /* A compiler drops the colour inputs of the opaque copy and the alpha stamp; those reduced
+   * programs must not require them, while the blended copies still read the draw alpha. */
+  const unsigned filters[]={51u,53u,55u,56u};
+  for(unsigned api=0;api<2u;api++) for(unsigned selected=0;selected<4u;selected++){
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"reduced surface program context");
+    anygm_test_graphics_withhold_attribute_prefix("in_Colour");
+    char error[192];
+    GlSceneProgram *program=gml_gpu_opengl_scene_draw_program(gpu->backend,filters[selected],
+      GL_SCENE_NATIVE_EQUAL_EXTENT,error,sizeof error);
+    const char *fragment=anygm_test_graphics_shader_source(1);
+    REQUIRE(fragment && strstr(fragment,"#define GML_SCENE_EQUAL_EXTENT 1\n") &&
+      strstr(fragment,"#define GML_SCENE_WHITE_TINT 1\n"),
+      "the reduced surface program carries its equal-extent and white-tint source");
+    REQUIRE((program!=NULL)==(filters[selected]==55u || filters[selected]==56u),
+      "only reduced programs without a draw-alpha read build without colour inputs");
     gml_gpu_destroy(gpu,1);
   }
   return 1;
@@ -3607,7 +3787,7 @@ static int scene_classic_inverse_rect_batch_case(void){
 }
 
 static int scene_full_opaque_rectangle_clear_case(void){
-  for(unsigned embedded=0;embedded<2u;embedded++)for(unsigned variant=0;variant<9u;variant++){
+  for(unsigned embedded=0;embedded<2u;embedded++)for(unsigned variant=0;variant<11u;variant++){
     anygm_test_graphics_reset();
     GmlGpu *gpu=gml_gpu_create();
     GmlGpuContext context=fake_context(embedded?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
@@ -3638,6 +3818,10 @@ static int scene_full_opaque_rectangle_clear_case(void){
     if(variant==6u){p->region.x=1;p->region.width=11u;}
     if(variant==7u) p->rectangle_flags=2u<<GML_RENDER_RECTANGLE_BLEND_SHIFT;
     if(variant==8u) p->rectangle_flags=GML_RENDER_RECTANGLE_CLASSIC;
+    /* Translucent plain rectangles onto an alpha-preserving target; the second one is a
+     * gradient and keeps the rectangle program. */
+    if(variant==9u || variant==10u){p->rectangle_flags=GML_RENDER_RECTANGLE_TARGET_ALPHA;p->alpha=.255;}
+    if(variant==10u){p->rectangle_flags|=GML_RENDER_RECTANGLE_GRADIENT;p->corner_colour[2]^=0x00000100u;}
     GmlRenderDrawBatch batch={ops,2u,NULL,0u};
     GmlRenderExecutionResult result=device.submit(device.context,&batch);
     REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==2u,
@@ -3650,6 +3834,15 @@ static int scene_full_opaque_rectangle_clear_case(void){
     if(variant==6u)
       REQUIRE(anygm_test_graphics_scene_sampler()==31,
         "plain partial opaque rectangles use the unchanged direct-colour sampler");
+    if(variant==9u){
+      unsigned factors[4];anygm_test_graphics_blend_factors(factors);
+      REQUIRE(anygm_test_graphics_scene_sampler()==31 && factors[0]==GL_SRC_ALPHA &&
+        factors[1]==GL_ONE_MINUS_SRC_ALPHA && factors[2]==GL_SRC_ALPHA &&
+        factors[3]==GL_ONE_MINUS_SRC_ALPHA,
+        "a translucent plain target-alpha rectangle is its constant colour, source-over blended");
+    }
+    if(variant==10u) REQUIRE(anygm_test_graphics_scene_sampler()==34,
+      "a translucent gradient rectangle keeps the rectangle program");
     if(optimized){
       float red=0,green=0,blue=0,alpha=0;int x=0,y=0,w=0,h=0;
       anygm_test_graphics_clear_colour(&red,&green,&blue,&alpha);
@@ -9275,6 +9468,8 @@ int main(int argc,char **argv){
     {"scene_native_zero_alpha_blend",scene_native_zero_alpha_blend_case},
     {"scene_white_tint_batches",scene_white_tint_batches_case},
     {"scene_opaque_unit_surface_copy",scene_opaque_unit_surface_copy_case},
+    {"scene_equal_extent_surface_copy",scene_equal_extent_surface_copy_case},
+    {"scene_opaque_surface_replacement_copy",scene_opaque_surface_replacement_copy_case},
     {"scene_general_program_demand",scene_general_program_demand_case},
     {"scene_staged_upload",scene_staged_upload_case},
     {"scene_staged_upload_bound",scene_staged_upload_bound_case},

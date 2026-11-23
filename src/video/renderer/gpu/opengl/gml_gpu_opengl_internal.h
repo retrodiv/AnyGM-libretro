@@ -294,7 +294,8 @@ typedef struct GlScene {
   int available;
 } GlScene;
 
-enum { GL_SCENE_NATIVE_PLAIN=1,GL_SCENE_NATIVE_WHITE_TINT=2,GL_SCENE_NATIVE_ZERO_ALPHA_BLEND=4 };
+enum { GL_SCENE_NATIVE_PLAIN=1,GL_SCENE_NATIVE_WHITE_TINT=2,GL_SCENE_NATIVE_ZERO_ALPHA_BLEND=4,
+       GL_SCENE_NATIVE_EQUAL_EXTENT=8 };
 
 struct GmlGpuBackend {
   uint64_t target_attachments,target_reuses,white_unit_clears,white_tint_quads,zero_alpha_blend_quads,identity_map_draws,bounded_surface_draws;

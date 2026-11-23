@@ -2546,22 +2546,29 @@ int gml_render_gpu_opengl_copy_image(GmlGpuBackend *backend,const GmlRenderDrawO
 
 /* Full-source opaque device-point draws need no shader blend work. Integral
  * contained rectangles use the same physical nearest sampling as a framebuffer
- * blit; other sampling rules retain their existing shader owner. */
+ * blit; other sampling rules retain their existing shader owner. Every stored
+ * alpha byte of the source is 255, so source-over (either alpha rule) and the
+ * unblended replacement, whose written alpha is one, store the source bytes. */
 static int opaque_surface_device_copy(const GmlRenderDrawOp *op,
   const GmlRenderDrawStateSnapshot *state,const GlSceneImage *source){
   const GmlRenderQuad *q=&op->payload.quad;
+  int blend=qualified_blend(state);
+  int screen_rule=op->target.image.resource_class==GML_RENDER_RESOURCE_SCREEN && blend==1 &&
+    state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
   if(!source || !source->valid || !source->rendered_origin || !source->alpha_opaque ||
      source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
      (source->ref.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
       source->ref.resource_class!=GML_RENDER_RESOURCE_APPLICATION &&
       source->ref.resource_class!=GML_RENDER_RESOURCE_SURFACE) ||
      op->scene_family!=GML_RENDER_SCENE_SURFACE ||
-     op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN ||
+     (op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
+      op->target.image.resource_class!=GML_RENDER_RESOURCE_SURFACE) ||
      same_logical(source->ref,op->target.image) ||
      op->target.width!=source->width || op->target.height!=source->height ||
      state->write_mask!=15u || state->alpha!=255u || state->colour!=0xFFFFFFFFu ||
-     state->source_alpha_key || state->source_palette.enabled || qualified_blend(state)!=1 ||
-     state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
+     state->source_alpha_key || state->source_palette.enabled ||
+     (blend!=0 && blend!=1 && blend!=3) ||
+     (state->coverage_policy && state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) ||
      (state->alpha_test_enabled && state->alpha_test_reference>=255u) ||
      q->shape!=GML_RENDER_QUAD_AXIS_ALIGNED || q->span_active ||
      q->sampling.source_region.x || q->sampling.source_region.y ||
@@ -2570,6 +2577,7 @@ static int opaque_surface_device_copy(const GmlRenderDrawOp *op,
      q->filtered_draw_alpha!=1.0) return 0;
   int physical=q->sampling.filter==GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT &&
     q->sampling.quantisation==0u;
+  if(physical && !screen_rule) return 0;
   double left=physical?q->x[0]:0.0,top=physical?q->y[0]:0.0;
   double width=physical?q->x[1]-left:source->width;
   double height=physical?q->y[2]-top:source->height;
@@ -2582,11 +2590,15 @@ static int opaque_surface_device_copy(const GmlRenderDrawOp *op,
      q->inverse_anchor[0]!=left || q->inverse_anchor[1]!=top ||
      q->inverse_x[0]!=width || q->inverse_x[1] ||
      q->inverse_y[0] || q->inverse_y[1]!=height) return 0;
+  /* The first span_y component selects only the zero-alpha discard and whether the written
+   * alpha is the sampled one; no stored byte is zero and every one is 255. */
+  if(q->span_y[0] && (physical || (q->span_y[0]!=1.0 && q->span_y[0]!=2.0 && q->span_y[0]!=3.0)))
+    return 0;
   for(unsigned c=0;c<4u;c++){
     unsigned right=c==1u || c==2u,bottom=c>=2u;
     if(q->x[c]!=left+(right?width:0.0) || q->y[c]!=top+(bottom?height:0.0) ||
        q->u[c]!=right || q->v[c]!=bottom || q->corner_colour[c]!=0xFFFFFFFFu ||
-       q->span_x[c] || q->span_y[c]) return 0;
+       q->span_x[c] || (c && q->span_y[c])) return 0;
   }
   return 1;
 }
@@ -2912,6 +2924,30 @@ static int flush_quads(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage 
       for(unsigned channel=0;channel<4u;channel++)
         if(!(colour[channel]>=0.0f && colour[channel]<=1.0f))
           native_flags&=~GL_SCENE_NATIVE_ZERO_ALPHA_BLEND;
+    }
+  }
+  /* A surface copy whose quads cover exactly their equal-extent map rectangles sends every
+   * rasterised fragment to its own texel, so the general point-phase fallback is unreachable.
+   * With white corners the rounded tint product is the sampled byte, and without a palette or
+   * key the sample is the texel. The variant omits those terms; a tiled device runs the
+   * complete program at half its threads. */
+  if((filter==51u || filter==53u || filter==55u || filter==56u) && source && source!=target &&
+     source->rendered_origin && !source_alpha_key && (!palette || !palette->enabled)){
+    native_flags|=GL_SCENE_NATIVE_EQUAL_EXTENT;
+    for(uint32_t quad=0;quad<count && (native_flags&GL_SCENE_NATIVE_EQUAL_EXTENT);quad++){
+      const float *q=scene->vertices+(size_t)quad*6u*GL_SCENE_VERTEX_FLOATS;
+      int equal=q[14]==(float)source->width && q[15]==(float)source->height &&
+        q[17]==(float)target->height && isfinite(q[12]) && isfinite(q[13]) &&
+        fabsf(q[12])<=65536.0f && fabsf(q[13])<=65536.0f &&
+        q[12]==floorf(q[12]) && q[13]==floorf(q[13]);
+      for(unsigned corner=0;equal && corner<6u;corner++){
+        const float *at=q+(size_t)corner*GL_SCENE_VERTEX_FLOATS;
+        equal=memcmp(at+12,q+12,6u*sizeof(float))==0 && at[26]==0.0f &&
+          at[4]==1.0f && at[5]==1.0f && at[6]==1.0f &&
+          isfinite(at[0]) && isfinite(at[1]) &&
+          at[0]>=q[12] && at[0]<=q[12]+q[14] && at[1]>=q[13] && at[1]<=q[13]+q[15];
+      }
+      if(!equal) native_flags&=~GL_SCENE_NATIVE_EQUAL_EXTENT;
     }
   }
   program=gml_gpu_opengl_scene_draw_program(backend,filter,native_flags,NULL,0);
@@ -3834,6 +3870,19 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
        op->payload.primitive.kind==GML_RENDER_PRIMITIVE_RECTANGLE &&
        primitive_blend==0 && op->payload.primitive.alpha==1.0 &&
        !(op->payload.primitive.rectangle_flags&~GML_RENDER_RECTANGLE_TARGET_ALPHA))
+      primitive_filter=31u;
+    /* A translucent plain rectangle onto an alpha-preserving target is a constant too: the
+     * rectangle program answers the authored colour and the unrounded draw alpha, which is
+     * the vertex colour. Its general per-fragment program costs tens of milliseconds over a
+     * full screen on a tiled device. */
+    if(rectangle && !textured_vertex && !vertex_span && primitive_filter==34u &&
+       primitive_blend==3 && op->payload.primitive.alpha_blend &&
+       op->payload.primitive.alpha<1.0 &&
+       op->payload.primitive.rectangle_flags==GML_RENDER_RECTANGLE_TARGET_ALPHA &&
+       op->payload.primitive.corner_colour[0]==op->payload.primitive.corner_colour[1] &&
+       op->payload.primitive.corner_colour[0]==op->payload.primitive.corner_colour[2] &&
+       op->payload.primitive.corner_colour[0]==op->payload.primitive.corner_colour[3] &&
+       ((op->payload.primitive.corner_colour[0]^op->payload.primitive.colour)&0xFFFFFFu)==0u)
       primitive_filter=31u;
     int native_factors=rectangle && batch->states && op->state_index<batch->state_count &&
       gml_render_blend_snapshot_native(&batch->states[op->state_index]);

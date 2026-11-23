@@ -338,10 +338,16 @@ static GlSceneProgramVariant scene_program_variant(uint32_t filter,int native_fl
   case 39u:return GL_SCENE_PROGRAM_CONSTANT_39;
   case 41u:return GL_SCENE_PROGRAM_CONSTANT_41;
   case 30u:return GL_SCENE_PROGRAM_CONSTANT_30;
-  case 53u:return GL_SCENE_PROGRAM_CONSTANT_53;
-  case 55u:return GL_SCENE_PROGRAM_CONSTANT_55;
+  case 53u:
+    return (native_flags&GL_SCENE_NATIVE_EQUAL_EXTENT)?
+      GL_SCENE_PROGRAM_CONSTANT_53_EQUAL_EXTENT:GL_SCENE_PROGRAM_CONSTANT_53;
+  case 55u:
+    return (native_flags&GL_SCENE_NATIVE_EQUAL_EXTENT)?
+      GL_SCENE_PROGRAM_CONSTANT_55_EQUAL_EXTENT:GL_SCENE_PROGRAM_CONSTANT_55;
   case 147u:return GL_SCENE_PROGRAM_CONSTANT_147;
-  case 51u:return GL_SCENE_PROGRAM_CONSTANT_51;
+  case 51u:
+    return (native_flags&GL_SCENE_NATIVE_EQUAL_EXTENT)?
+      GL_SCENE_PROGRAM_CONSTANT_51_EQUAL_EXTENT:GL_SCENE_PROGRAM_CONSTANT_51;
   case 43u:return GL_SCENE_PROGRAM_CONSTANT_43;
   case 27u:return GL_SCENE_PROGRAM_CONSTANT_27;
   case 15u:return GL_SCENE_PROGRAM_CONSTANT_15;
@@ -356,7 +362,9 @@ static GlSceneProgramVariant scene_program_variant(uint32_t filter,int native_fl
   case 33u:return GL_SCENE_PROGRAM_CONSTANT_33;
   case 153u:return GL_SCENE_PROGRAM_CONSTANT_153;
   case 49u:return GL_SCENE_PROGRAM_CONSTANT_49;
-  case 56u:return GL_SCENE_PROGRAM_CONSTANT_56;
+  case 56u:
+    return (native_flags&GL_SCENE_NATIVE_EQUAL_EXTENT)?
+      GL_SCENE_PROGRAM_CONSTANT_56_EQUAL_EXTENT:GL_SCENE_PROGRAM_CONSTANT_56;
   case 8u:return GL_SCENE_PROGRAM_CONSTANT_8;
   default:
     if((filter>=65u && filter<=74u) || (filter>=79u && filter<=82u) ||

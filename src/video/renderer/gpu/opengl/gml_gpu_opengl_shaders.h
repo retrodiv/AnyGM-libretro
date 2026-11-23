@@ -573,11 +573,13 @@
 #define GML_GPU_OPENGL_SCENE_IDENTITY_POINT_MAPPING \
   "      // Equal extents make every in-bounds point-phase rule the identity.\n" \
   "      ivec2 at=p;\n" \
+  "#ifndef GML_SCENE_EQUAL_EXTENT\n" \
   "      if(any(notEqual(size,dest)) || v_span_y.w!=0.0 ||\n" \
   "         any(lessThan(p,ivec2(0))) || any(greaterThanEqual(p,dest))){\n" \
   "        at=p*size/dest;\n" \
   GML_GPU_OPENGL_SCENE_POINT_MAP_RULES("        ") \
-  "      }\n"
+  "      }\n" \
+  "#endif\n"
 
 #define GML_GPU_OPENGL_SCENE_FRAGMENT_PREFIX \
   "uniform sampler2D u_image;\n" \
@@ -1002,12 +1004,16 @@
   "    if(sample_filter>50 && sample_filter<=64){\n" \
   "      ivec2 dest=ivec2(abs(v_map.zw)),size=textureSize(u_image,0);\n" \
   "      ivec2 p=ivec2(int(gl_FragCoord.x),int(v_step.y)-1-int(gl_FragCoord.y))-ivec2(v_map.xy);\n" \
+  "#ifndef GML_SCENE_EQUAL_EXTENT\n" \
   "      if(v_map.z<0.0) p.x=dest.x-1-p.x;\n" \
-  "      if(v_map.w<0.0) p.y=dest.y-1-p.y;\n"
+  "      if(v_map.w<0.0) p.y=dest.y-1-p.y;\n" \
+  "#endif\n"
 
 #define GML_GPU_OPENGL_SCENE_FRAGMENT_SUFFIX \
+  "#ifndef GML_SCENE_EQUAL_EXTENT\n" \
   "      if(v_span_y.w>0.0 && (any(lessThan(at,ivec2(0))) || any(greaterThanEqual(at,size)))) discard;\n" \
   "      at=clamp(at,ivec2(0),size-ivec2(1));\n" \
+  "#endif\n" \
   "      if(v_step.x!=0.0) at.y=size.y-1-at.y;\n" \
   "      sampled=uvec4(floor(source_texel(at,0)*255.0+0.5));\n" \
   "    }else {\n" \
@@ -1019,10 +1025,12 @@
   "      sampled=uvec4(floor(source_texture(uv)*255.0+0.5));\n" \
   "    }\n" \
   "    if(u_alpha_test>=0 && sampled.a<=uint(u_alpha_test)) discard;\n" \
+  "#ifndef GML_SCENE_EQUAL_EXTENT\n" \
   "    if(u_source_alpha_key!=0){\n" \
   "      int channel=(u_source_alpha_key>>9)-1;\n" \
   "      if(sampled[channel]<uint(u_source_alpha_key&511)) sampled.a=0u;\n" \
   "    }\n" \
+  "#endif\n" \
   "    if(sample_filter>50 && sample_filter<=64 && sampled.a==0u && v_span_y.x!=1.0 && v_span_y.x!=4.0) discard;\n" \
   "    if(rule<44 && (sampled.a==0u || (rule<41 && v_colour.a<=0.0 && sample_filter<=50)) && !(sample_filter>50 && (v_span_y.x==1.0 || v_span_y.x==4.0))) discard;\n" \
   "    if(rule==41 || rule==48){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
