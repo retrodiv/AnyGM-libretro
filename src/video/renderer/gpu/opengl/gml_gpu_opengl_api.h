@@ -261,7 +261,7 @@ typedef struct GmlGlApi {
   void     (*BeginTransformFeedback)(GLenum mode);
   void     (*EndTransformFeedback)(void);
   void     (*DispatchCompute)(GLuint x,GLuint y,GLuint z);
-  void     (*MemoryBarrier)(GLbitfield barriers);
+  void     (*ShaderMemoryBarrier)(GLbitfield barriers);
   void     (*DrawArraysIndirect)(GLenum mode,const void *indirect);
   void     (*BlendFuncSeparate)(GLenum source_rgb,GLenum destination_rgb,
                                 GLenum source_alpha,GLenum destination_alpha);

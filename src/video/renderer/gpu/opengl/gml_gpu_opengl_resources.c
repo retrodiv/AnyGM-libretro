@@ -389,7 +389,7 @@ void gml_gpu_opengl_scene_reset(GmlGpuBackend *backend,const GmlGpuContext *cont
   GL_SCENE_LOAD(GetIntegeri_v,"glGetIntegeri_v");
   GL_SCENE_LOAD(BindBufferBase,"glBindBufferBase");
   GL_SCENE_LOAD(DispatchCompute,"glDispatchCompute");
-  GL_SCENE_LOAD(MemoryBarrier,"glMemoryBarrier");
+  GL_SCENE_LOAD(ShaderMemoryBarrier,"glMemoryBarrier");
   GL_SCENE_LOAD(DrawArraysIndirect,"glDrawArraysIndirect");
 #undef GL_SCENE_LOAD
   if(!backend->gl.GetIntegerv || !backend->gl.Finish) return;
@@ -420,7 +420,7 @@ void gml_gpu_opengl_scene_reset(GmlGpuBackend *backend,const GmlGpuContext *cont
       ?major>3 || (major==3 && minor>=1):major>4 || (major==4 && minor>=3);
     scene->supports_recovery_indirect=version && backend->gl.GetIntegeri_v &&
       backend->gl.BindBufferBase && backend->gl.DispatchCompute &&
-      backend->gl.MemoryBarrier && backend->gl.DrawArraysIndirect;
+      backend->gl.ShaderMemoryBarrier && backend->gl.DrawArraysIndirect;
   }
   scene->available=scene->max_texture_size>0;
 }

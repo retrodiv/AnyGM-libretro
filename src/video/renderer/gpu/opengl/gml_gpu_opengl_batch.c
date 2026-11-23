@@ -2757,9 +2757,9 @@ static int recovery_indirect_prepare(GmlGpuBackend *backend){
   backend->gl.UseProgram(scene->recovery_indirect_program);
   backend->gl.Uniform1i(scene->recovery_indirect_u_screen,2);
   backend->gl.Uniform1i(scene->recovery_indirect_u_application,3);
-  backend->gl.MemoryBarrier(GL_COMMAND_BARRIER_BIT|GL_SHADER_STORAGE_BARRIER_BIT);
+  backend->gl.ShaderMemoryBarrier(GL_COMMAND_BARRIER_BIT|GL_SHADER_STORAGE_BARRIER_BIT);
   backend->gl.DispatchCompute(1u,1u,1u);
-  backend->gl.MemoryBarrier(GL_COMMAND_BARRIER_BIT|GL_SHADER_STORAGE_BARRIER_BIT);
+  backend->gl.ShaderMemoryBarrier(GL_COMMAND_BARRIER_BIT|GL_SHADER_STORAGE_BARRIER_BIT);
   backend->gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,0u,0u);
   backend->gl.BindBuffer(GL_SHADER_STORAGE_BUFFER,(GLuint)generic);
   backend->gl.UseProgram(0u);

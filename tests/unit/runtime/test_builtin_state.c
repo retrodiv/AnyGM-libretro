@@ -1268,6 +1268,8 @@ static int sparse_array_storage_roundtrips(void){
     ok=slot!=NULL;
     if(ok){
       *slot=flat;
+      gml_arr_set(flat,0,vreal(11));
+      gml_arr_set(flat,128,vint64(INT64_C(9007199254740993)));
       gml_arr_set(flat,64000,vreal(47));
     }
   }
@@ -1282,7 +1284,7 @@ static int sparse_array_storage_roundtrips(void){
   slot=ok?gml_varmap_get(&restored.globals,"sparse"):NULL;
   ok=slot && slot->arr && gml_arr_get_2d(*slot,12,2).d==31;
   if(ok){
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
     GmlArr *array=slot->arr;
     ok=array->mapped_data_bytes==(size_t)array->cap*sizeof(GmlVal);
 #endif
@@ -1295,13 +1297,20 @@ static int sparse_array_storage_roundtrips(void){
   slot=ok?gml_varmap_get(&restored.globals,"flat"):NULL;
   ok=slot && slot->arr && gml_arr_get(*slot,64000).d==47;
   if(ok){
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
     GmlArr *array=slot->arr;
     ok=array->mapped_data_bytes==(size_t)array->cap*sizeof(GmlVal);
 #endif
     gml_arr_set(*slot,131072,vreal(19));
-    ok=ok && gml_arr_get(*slot,64000).d==47 &&
-             gml_arr_get(*slot,102400).d==0 && gml_arr_get(*slot,131072).d==19;
+    GmlVal integer=gml_arr_get(*slot,128);
+    ok=ok && gml_arr_get(*slot,0).d==11 &&
+             integer.number_kind==GML_NUM_INT64 && integer.integer==INT64_C(9007199254740993) &&
+             gml_arr_get(*slot,64000).d==47 &&
+             gml_arr_get(*slot,63999).d==0 && gml_arr_get(*slot,102400).d==0 &&
+             gml_arr_get(*slot,131072).d==19;
+#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
+    ok=ok && array->mapped_data_bytes==(size_t)array->cap*sizeof(GmlVal);
+#endif
   }
   free(original);
   free(copy);

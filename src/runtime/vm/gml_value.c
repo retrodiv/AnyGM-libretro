@@ -17,7 +17,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(__linux__)
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#elif defined(__linux__) || defined(__APPLE__)
 #include <sys/mman.h>
 #endif
 
@@ -162,13 +165,23 @@ static GmlVal *array_sparse_storage(int capacity,size_t *mapped_bytes){
   size_t count=capacity?(size_t)capacity:1;
   *mapped_bytes=0;
   if(count>SIZE_MAX/sizeof(GmlVal)) return NULL;
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
   size_t bytes=count*sizeof(GmlVal);
-  /* Large calloc calls may clear a reused allocator arena eagerly. A private
-   * anonymous mapping commits physical pages only when a sparse entry is written. */
+  /* Large calloc calls may clear a reused allocator arena eagerly. Request
+   * demand-zero pages from the host to leave holes untouched. */
   if(bytes>=256u*1024u){
-    void *data=mmap(NULL,bytes,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+#if defined(_WIN32)
+    void *data=VirtualAlloc(NULL,bytes,MEM_RESERVE|MEM_COMMIT,PAGE_READWRITE);
+    if(!data) return NULL;
+#else
+#if defined(__APPLE__)
+    const int anonymous=MAP_ANON;
+#else
+    const int anonymous=MAP_ANONYMOUS;
+#endif
+    void *data=mmap(NULL,bytes,PROT_READ|PROT_WRITE,MAP_PRIVATE|anonymous,-1,0);
     if(data==MAP_FAILED) return NULL;
+#endif
     *mapped_bytes=bytes;
     return data;
   }
@@ -183,13 +196,74 @@ int gml_arr_allocate_sparse(GmlArr *array,int capacity){
 }
 
 static void array_storage_release(GmlArr *array){
-#if defined(__linux__)
+#if defined(_WIN32)
+  if(array->mapped_data_bytes){
+    VirtualFree(array->data,0,MEM_RELEASE);
+    return;
+  }
+#elif defined(__linux__) || defined(__APPLE__)
   if(array->mapped_data_bytes){
     munmap(array->data,array->mapped_data_bytes);
     return;
   }
 #endif
   free(array->data);
+}
+
+#if defined(__APPLE__) || defined(_WIN32)
+static void array_copy_nonzero_blocks(void *destination,const void *source,size_t length){
+  /* A restored flat array has no row lengths. Comparing against zero preserves
+   * unwritten blocks without relying on whether populated pages are resident. */
+  static const unsigned char zero[4096];
+  unsigned char *dst=destination;
+  const unsigned char *src=source;
+  while(length){
+    size_t span=length<sizeof zero?length:sizeof zero;
+    if(memcmp(src,zero,span)) memcpy(dst,src,span);
+    src+=span;
+    dst+=span;
+    length-=span;
+  }
+}
+#endif
+
+static int array_sparse_grow(GmlArr *array,int capacity){
+  int rows=array->is_2d && array->row_len;
+#if defined(__linux__)
+  if(!rows){
+    /* Grow a restored flat array without faulting in its existing holes. */
+    size_t bytes=(size_t)capacity*sizeof(GmlVal);
+    void *grown=mremap(array->data,array->mapped_data_bytes,bytes,MREMAP_MAYMOVE);
+    if(grown==MAP_FAILED) return 0;
+    array->data=grown;
+    array->mapped_data_bytes=bytes;
+    return 1;
+  }
+#endif
+  size_t mapped_bytes;
+  GmlVal *grown=array_sparse_storage(capacity,&mapped_bytes);
+  if(!grown) return 0;
+  if(array->data){
+    if(rows){
+      /* Legacy rows live at row*32000+column. Copy their occupied spans. */
+      int backed_rows=array->cap/GML_2D_STRIDE+(array->cap%GML_2D_STRIDE!=0);
+      for(int r=0;r<array->height2d && r<array->row_cap && r<backed_rows;r++){
+        int base=r*GML_2D_STRIDE;
+        int span=array->row_len[r];
+        if(span<=0) continue;
+        if(span>array->cap-base) span=array->cap-base;
+        memcpy(grown+base,array->data+base,(size_t)span*sizeof(GmlVal));
+      }
+#if defined(__APPLE__) || defined(_WIN32)
+    } else {
+      array_copy_nonzero_blocks(grown,array->data,array->mapped_data_bytes);
+#endif
+    }
+    array_storage_release(array);
+  }
+  array->data=grown;
+  array->mapped_data_bytes=mapped_bytes;
+  return 1;
 }
 
 static void array_heap_free_node(GmlArr *array){
@@ -417,37 +491,10 @@ void gml_arr_index_ensure(GmlArr *A, int idx){
   if(idx<0 || idx>=GML_ARR_MAX_INDEX) return;
   if(gml_arr_growth_hook && A && idx>=A->len) gml_arr_growth_hook(idx,A->len);
   if(idx>=A->cap){ int nc=A->cap?A->cap:8; while(nc<=idx) nc*=2;
-    /* A zeroed GmlVal IS vreal(0) — V_REAL is 0, 0.0 is all-zero bits and both pointers are null —
-     * so the grown region needs no initialising pass. That pass was the whole resident cost of a
-     * legacy 2D array: those live flat at row*32000+col, so a large table reaches a huge index and
-     * writing a zero into every hole faulted in many pages that hold nothing. Only the rows
-     * that carry data get copied, leaving the rest of the new storage untouched. */
-    if(A->is_2d && A->row_len){
-      size_t mapped_bytes;
-      GmlVal *grown=array_sparse_storage(nc,&mapped_bytes);
-      if(!grown) return;
-      if(A->data){
-        for(int r=0;r<A->height2d && r<A->row_cap;r++){
-          long base=(long)r*GML_2D_STRIDE;
-          long span=A->row_len[r];
-          if(base>=A->cap || span<=0) continue;
-          if(base+span>A->cap) span=A->cap-base;
-          memcpy(grown+base,A->data+base,(size_t)span*sizeof(GmlVal));
-        }
-        array_storage_release(A);
-      }
-      A->data=grown;
-      A->mapped_data_bytes=mapped_bytes;
-#if defined(__linux__)
-    } else if(A->mapped_data_bytes){
-      /* Sparse state encoding can also describe a one-dimensional array.
-       * Growing its mapping preserves occupied pages and leaves new slots at zero. */
-      size_t bytes=(size_t)nc*sizeof(GmlVal);
-      void *grown=mremap(A->data,A->mapped_data_bytes,bytes,MREMAP_MAYMOVE);
-      if(grown==MAP_FAILED) return;
-      A->data=grown;
-      A->mapped_data_bytes=bytes;
-#endif
+    /* The all-zero representation is vreal(0). Sparse growth leaves gaps in
+     * that representation without explicitly initializing them. */
+    if((A->is_2d && A->row_len) || A->mapped_data_bytes){
+      if(!array_sparse_grow(A,nc)) return;
     } else {
       /* A dense array has no holes to avoid: extend in place where the allocator can and write
        * the zeros, which is cheaper than allocating a second block and copying the whole of it. */
