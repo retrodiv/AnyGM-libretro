@@ -616,8 +616,11 @@ int gml_gpu_opengl_checkpoint_program(GmlGpuBackend *backend){
   scene->checkpoint_u_image=backend->gl.GetUniformLocation(scene->checkpoint_program,"u_image");
   scene->checkpoint_u_previous=backend->gl.GetUniformLocation(scene->checkpoint_program,"u_previous");
   scene->checkpoint_u_alpha=backend->gl.GetUniformLocation(scene->checkpoint_program,"u_alpha");
+  scene->checkpoint_u_pass=backend->gl.GetUniformLocation(scene->checkpoint_program,"u_pass");
+  scene->checkpoint_u_extent=backend->gl.GetUniformLocation(scene->checkpoint_program,"u_extent");
   if(scene->checkpoint_u_image<0 || scene->checkpoint_u_previous<0 ||
-     scene->checkpoint_u_alpha<0) goto refused;
+     scene->checkpoint_u_alpha<0 || scene->checkpoint_u_pass<0 ||
+     scene->checkpoint_u_extent<0) goto refused;
   scene->checkpoint_program_failed=0;
   return 1;
 refused:

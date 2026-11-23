@@ -662,6 +662,9 @@ typedef struct GmlRenderImageUpload {
 typedef struct GmlRenderImageReadbackResult {
   GmlRenderRect updated_region;
   uint64_t pixel_reads,pixel_bytes,mask_reads,mask_bytes;
+  /* Nonzero when the device keeps a baseline at the version just read, so a caller that retains
+   * these bytes may name that version in its next explicit-baseline read. */
+  uint32_t checkpoint_retained;
 } GmlRenderImageReadbackResult;
 
 typedef struct GmlRenderImageReadback {

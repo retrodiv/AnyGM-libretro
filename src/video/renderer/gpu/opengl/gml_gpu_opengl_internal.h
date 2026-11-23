@@ -16,6 +16,10 @@ enum {
   GL_CONTENT_UNIFORMS=64,
   GL_READBACK_SLOTS=8,
   GL_SCENE_MAX_IMAGES=64,
+  /* Two fixed frame-target baselines, then numbered surfaces sharing one byte budget. */
+  GL_SCENE_FRAME_CHECKPOINTS=2,
+  GL_SCENE_CHECKPOINTS=8,
+  GL_SCENE_SURFACE_CHECKPOINT_BYTES=32*1024*1024,
   GL_SCENE_MAX_QUADS=2048,
   GL_SCENE_WHITE_TEXELS=16384,
   GL_SCENE_STAGING_MIN_BYTES=64*1024,
@@ -177,6 +181,7 @@ typedef struct GlSceneCheckpoint {
   GmlRenderImageRef image;
   GLuint texture;
   uint32_t width,height,pixel_format;
+  uint64_t last_used;
 } GlSceneCheckpoint;
 
 /* Uniform locations belong to their program, not to the current draw. GLES normally shares
@@ -219,11 +224,16 @@ typedef struct GlDepthTriangleProgram {
 
 typedef struct GlScene {
   GlSceneImage images[GL_SCENE_MAX_IMAGES];
-  /* Exactly one bounded baseline for each owned frame-target class, never per surface. */
-  GlSceneCheckpoint checkpoints[2];
+  /* One bounded baseline for each owned frame-target class, then numbered surfaces, least
+   * recently checkpointed first out, within GL_SCENE_SURFACE_CHECKPOINT_BYTES. */
+  GlSceneCheckpoint checkpoints[GL_SCENE_CHECKPOINTS];
   GLuint checkpoint_program,checkpoint_mask,checkpoint_framebuffer;
+  /* The first comparison pass: one texel for every 32 pixels of a row. */
+  GLuint checkpoint_rows,checkpoint_rows_framebuffer;
   GLint checkpoint_u_image,checkpoint_u_previous,checkpoint_u_alpha;
+  GLint checkpoint_u_pass,checkpoint_u_extent;
   uint32_t checkpoint_mask_width,checkpoint_mask_height;
+  uint32_t checkpoint_rows_width,checkpoint_rows_height;
   int checkpoint_program_failed;
   GlSceneProgram main_program,filtered_program,compact_programs[GL_SCENE_COMPACT_PROGRAM_COUNT];
   GLuint vertex_buffer,vertex_array,instance_buffer,instance_array;

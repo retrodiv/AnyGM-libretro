@@ -1314,18 +1314,23 @@ the exact clock, cadence and GPU-completion exclusions and neutral controls.
 This instrumentation does not change any rule, shader or authority boundary
 mapped below; checkpoint bytes remain product cost, not test overhead.
 
-Retained SCREEN/application canonical checkpoints may use explicit-baseline
-incremental reads (R03-P9-INCREMENTAL-CHECKPOINT). The backend compares current
-RGBA8 pixels with the previous successful GPU checkpoint using exact texel
-fetches, downloads a small 32-by-32 tile change mask and then one union rectangle
-of changed pixels. The existing host row/channel converter packs that region;
-the resource publishes only that rectangle after complete success. An unchanged
-image publishes nothing. This preserves a complete current CPU-canonical frame
-before frontend return; it does not eliminate all CPU data or observer cost.
-Ordinary observers, cold/stale baselines, numbered targets, changed extents or
-formats, unsupported detection, dense changes and targets above the independent
-32-MiB GPU baseline limit retain full readback. Two baseline textures and one
-small shared mask are context-local, bounded, disposable and never state bytes.
+Retained SCREEN/application and numbered-surface canonical checkpoints may use
+explicit-baseline incremental reads (R03-P9-INCREMENTAL-CHECKPOINT). The backend
+compares current RGBA8 pixels with the previous successful GPU checkpoint using
+exact texel fetches in two short passes (32-pixel row segments, then 32 segments
+per tile), downloads the small 32-by-32 tile change mask and then reads each row
+of changed tiles over its changed columns; consecutive rows with one span share a
+read. The existing host row/channel converter packs those regions; the resource
+publishes only their union after complete success. An unchanged image publishes
+nothing. This preserves a complete current CPU-canonical image before frontend
+return; it does not eliminate all CPU data or observer cost. Ordinary observers,
+cold/stale baselines, changed extents or formats, unsupported detection and
+targets above the 32-MiB GPU baseline limit retain full readback. The two frame
+targets own one baseline texture each; numbered surfaces share six further slots
+within one 32-MiB budget, the least recently checkpointed surface leaving first.
+A surface's host staging lives exactly as long as the device reports its
+baseline (`checkpoint_retained`). Baselines, the two pass targets and the mask are
+context-local, bounded, disposable and never state bytes.
 `readbacks`/`readback_bytes` count actual attempted pixel reads, including failed
 ones; `checkpoint_masks`/`checkpoint_mask_bytes` separately count actual mask
 reads. Logical checkpoint success is still resource-owned. Correctness controls

@@ -10,7 +10,8 @@ marketing version. It is a numeric field in a validated binary header.
 ## Save-state schema
 
 Incremental device checkpoints do not change state bytes or capacity policy.
-Retained frame-target staging names an explicit successful baseline; the device
+Retained frame-target and numbered-surface staging names an explicit successful
+baseline; the device
 may download only exact changed regions, but the resource publishes them only
 after success and keeps a complete current CPU-canonical image before frontend
 return. Baseline textures, change masks and staging versions are disposable

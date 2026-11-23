@@ -235,6 +235,8 @@ void gml_gpu_opengl_scene_forget(GmlGpuBackend *backend){
   memset(scene->checkpoints,0,sizeof scene->checkpoints);
   scene->checkpoint_program=scene->checkpoint_mask=scene->checkpoint_framebuffer=0;
   scene->checkpoint_mask_width=scene->checkpoint_mask_height=0;
+  scene->checkpoint_rows=scene->checkpoint_rows_framebuffer=0;
+  scene->checkpoint_rows_width=scene->checkpoint_rows_height=0;
   scene->checkpoint_program_failed=0;
   memset(&scene->main_program,0,sizeof scene->main_program);
   memset(&scene->filtered_program,0,sizeof scene->filtered_program);
@@ -275,13 +277,16 @@ void gml_gpu_opengl_scene_destroy(GmlGpuBackend *backend,int context_is_current)
   if(context_is_current && backend->loaded){
     for(size_t index=0;index<GL_SCENE_MAX_IMAGES;index++)
       scene_delete_image(backend,&scene->images[index]);
-    for(size_t index=0;index<2u;index++)
+    for(size_t index=0;index<GL_SCENE_CHECKPOINTS;index++)
       if(scene->checkpoints[index].texture)
         backend->gl.DeleteTextures(1,&scene->checkpoints[index].texture);
     if(scene->checkpoint_program) backend->gl.DeleteProgram(scene->checkpoint_program);
     if(scene->checkpoint_mask) backend->gl.DeleteTextures(1,&scene->checkpoint_mask);
     if(scene->checkpoint_framebuffer)
       backend->gl.DeleteFramebuffers(1,&scene->checkpoint_framebuffer);
+    if(scene->checkpoint_rows) backend->gl.DeleteTextures(1,&scene->checkpoint_rows);
+    if(scene->checkpoint_rows_framebuffer)
+      backend->gl.DeleteFramebuffers(1,&scene->checkpoint_rows_framebuffer);
     if(scene->main_program.program) backend->gl.DeleteProgram(scene->main_program.program);
     for(unsigned pass=0;pass<2u;pass++)
       if(scene->depth_triangle_program[pass].program)
@@ -1308,16 +1313,82 @@ static int scene_readback_pixels(GmlGpuBackend *backend,GlSceneImage *image,
   return 1;
 }
 
+/* Frame targets own fixed baselines. Numbered surfaces share the remaining slots within one
+ * byte budget: a surface takes its own slot, a free one, or the least recently checkpointed one,
+ * and older surface baselines are released until the budget holds. */
+static GlSceneCheckpoint *scene_checkpoint_slot(GmlGpuBackend *backend,const GlSceneImage *image){
+  GlScene *scene=&backend->scene;
+  GlSceneCheckpoint *slot=NULL;
+  uint64_t bytes=(uint64_t)image->width*image->height*4u,held=0;
+  if(image->ref.resource_class==GML_RENDER_RESOURCE_SCREEN) return &scene->checkpoints[0];
+  if(image->ref.resource_class==GML_RENDER_RESOURCE_APPLICATION) return &scene->checkpoints[1];
+  if(image->ref.resource_class!=GML_RENDER_RESOURCE_SURFACE ||
+     bytes>GL_SCENE_SURFACE_CHECKPOINT_BYTES) return NULL;
+  for(unsigned index=GL_SCENE_FRAME_CHECKPOINTS;index<GL_SCENE_CHECKPOINTS && !slot;index++)
+    if(scene->checkpoints[index].texture &&
+       scene_same_logical(scene->checkpoints[index].image,image->ref))
+      slot=&scene->checkpoints[index];
+  for(unsigned index=GL_SCENE_FRAME_CHECKPOINTS;index<GL_SCENE_CHECKPOINTS && !slot;index++)
+    if(!scene->checkpoints[index].texture) slot=&scene->checkpoints[index];
+  if(!slot){
+    slot=&scene->checkpoints[GL_SCENE_FRAME_CHECKPOINTS];
+    for(unsigned index=GL_SCENE_FRAME_CHECKPOINTS+1u;index<GL_SCENE_CHECKPOINTS;index++)
+      if(scene->checkpoints[index].last_used<slot->last_used) slot=&scene->checkpoints[index];
+  }
+  if(!scene_same_logical(slot->image,image->ref)) slot->image.content_version=0;
+  for(;;){
+    GlSceneCheckpoint *oldest=NULL;
+    held=0;
+    for(unsigned index=GL_SCENE_FRAME_CHECKPOINTS;index<GL_SCENE_CHECKPOINTS;index++){
+      GlSceneCheckpoint *other=&scene->checkpoints[index];
+      if(other==slot || !other->texture) continue;
+      held+=(uint64_t)other->width*other->height*4u;
+      if(!oldest || other->last_used<oldest->last_used) oldest=other;
+    }
+    if(held+bytes<=GL_SCENE_SURFACE_CHECKPOINT_BYTES || !oldest) break;
+    backend->gl.DeleteTextures(1,&oldest->texture);
+    memset(oldest,0,sizeof *oldest);
+  }
+  slot->last_used=++scene->use_clock;
+  return slot;
+}
+
+/* A comparison pass draws into its own small colour target, grown and never shrunk. */
+static int checkpoint_pass_target(GmlGpuBackend *backend,GLuint *texture,GLuint *framebuffer,
+                                  uint32_t *held_width,uint32_t *held_height,
+                                  uint32_t width,uint32_t height){
+  if(!*texture) backend->gl.GenTextures(1,texture);
+  if(!*framebuffer) backend->gl.GenFramebuffers(1,framebuffer);
+  if(!*texture || !*framebuffer) return 0;
+  backend->gl.ActiveTexture(GL_TEXTURE0);
+  backend->gl.BindTexture(GL_TEXTURE_2D,*texture);
+  if(*held_width<width || *held_height<height){
+    if(*held_width>width) width=*held_width;
+    if(*held_height>height) height=*held_height;
+    backend->gl.TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,(GLsizei)width,(GLsizei)height,
+                            0,GL_RGBA,GL_UNSIGNED_BYTE,NULL);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
+    *held_width=width;*held_height=height;
+  }
+  backend->gl.BindFramebuffer(GL_FRAMEBUFFER,*framebuffer);
+  backend->gl.FramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,*texture,0);
+  return backend->gl.CheckFramebufferStatus(GL_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE;
+}
+
 /* A mask never becomes a CPU picture. It describes exact device differences from an explicitly
- * preserved successful checkpoint; the one union rectangle bounds the existing pixel reader. */
+ * preserved successful checkpoint; its rows of changed tiles bound the existing pixel reader. */
 static int scene_checkpoint_region(GmlGpuBackend *backend,GlSceneImage *image,
                                     const GlSceneCheckpoint *checkpoint,uint32_t format,
-                                    GmlRenderImageReadbackResult *result){
+                                    GmlRenderImageReadbackResult *result,
+                                    GmlRenderRect *bands,uint32_t *band_count){
   GlScene *scene=&backend->scene;
   uint32_t columns=(image->width+31u)/32u,rows=(image->height+31u)/32u;
   uint32_t left=columns,right=0,bottom=rows,top=0;
+  *band_count=0;
   size_t bytes=(size_t)columns*rows*4u;
-  GLint active=0;
+  GLint active=0,extent[2];
   if(!backend->gl.GetQueryiv || !scene_scratch_ready(scene,bytes) ||
      !gml_gpu_opengl_checkpoint_program(backend)) return 0;
   backend->gl.GetQueryiv(GL_ANY_SAMPLES_PASSED,GL_CURRENT_QUERY,&active);
@@ -1325,26 +1396,12 @@ static int scene_checkpoint_region(GmlGpuBackend *backend,GlSceneImage *image,
   backend->gl.GetQueryiv(backend->api==GML_GPU_API_OPENGL_CORE?GL_SAMPLES_PASSED:
                            GL_ANY_SAMPLES_PASSED_CONSERVATIVE,GL_CURRENT_QUERY,&active);
   if(active || backend->gl.GetError()!=GL_NO_ERROR) return 0;
-  if(!scene->checkpoint_mask) backend->gl.GenTextures(1,&scene->checkpoint_mask);
-  if(!scene->checkpoint_framebuffer)
-    backend->gl.GenFramebuffers(1,&scene->checkpoint_framebuffer);
-  if(!scene->checkpoint_mask || !scene->checkpoint_framebuffer) return 0;
-  backend->gl.ActiveTexture(GL_TEXTURE0);
-  backend->gl.BindTexture(GL_TEXTURE_2D,scene->checkpoint_mask);
-  if(scene->checkpoint_mask_width<columns || scene->checkpoint_mask_height<rows){
-    uint32_t width=scene->checkpoint_mask_width>columns?scene->checkpoint_mask_width:columns;
-    uint32_t height=scene->checkpoint_mask_height>rows?scene->checkpoint_mask_height:rows;
-    backend->gl.TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,(GLsizei)width,(GLsizei)height,
-                            0,GL_RGBA,GL_UNSIGNED_BYTE,NULL);
-    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
-    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
-    if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
-    scene->checkpoint_mask_width=width;scene->checkpoint_mask_height=height;
-  }
-  backend->gl.BindFramebuffer(GL_FRAMEBUFFER,scene->checkpoint_framebuffer);
-  backend->gl.FramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,
-                                    scene->checkpoint_mask,0);
-  if(backend->gl.CheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE) return 0;
+  if(!checkpoint_pass_target(backend,&scene->checkpoint_rows,&scene->checkpoint_rows_framebuffer,
+                             &scene->checkpoint_rows_width,&scene->checkpoint_rows_height,
+                             columns,image->height) ||
+     !checkpoint_pass_target(backend,&scene->checkpoint_mask,&scene->checkpoint_framebuffer,
+                             &scene->checkpoint_mask_width,&scene->checkpoint_mask_height,
+                             columns,rows)) return 0;
   backend->gl.Disable(GL_BLEND);backend->gl.Disable(GL_DEPTH_TEST);
   backend->gl.Disable(GL_STENCIL_TEST);backend->gl.Disable(GL_CULL_FACE);
   backend->gl.Disable(GL_DITHER);backend->gl.Disable(GL_SCISSOR_TEST);
@@ -1357,14 +1414,28 @@ static int scene_checkpoint_region(GmlGpuBackend *backend,GlSceneImage *image,
   }
   backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
   backend->gl.DepthMask(GL_FALSE);
-  backend->gl.Viewport(0,0,(GLsizei)columns,(GLsizei)rows);
   backend->gl.BindVertexArray(backend->vertex_array);
   backend->gl.UseProgram(scene->checkpoint_program);
   backend->gl.Uniform1i(scene->checkpoint_u_image,0);
   backend->gl.Uniform1i(scene->checkpoint_u_previous,1);
   backend->gl.Uniform1i(scene->checkpoint_u_alpha,format!=GML_RENDER_PIXEL_XRGB8888);
+  /* Pass 0: each row's 32-pixel segments, compared with the baseline. */
+  extent[0]=(GLint)image->width;extent[1]=(GLint)image->height;
+  backend->gl.Uniform1i(scene->checkpoint_u_pass,0);
+  backend->gl.Uniform2iv(scene->checkpoint_u_extent,1,extent);
+  backend->gl.BindFramebuffer(GL_FRAMEBUFFER,scene->checkpoint_rows_framebuffer);
+  backend->gl.Viewport(0,0,(GLsizei)columns,(GLsizei)image->height);
   backend->gl.ActiveTexture(GL_TEXTURE0);backend->gl.BindTexture(GL_TEXTURE_2D,image->texture);
   backend->gl.ActiveTexture(GL_TEXTURE1);backend->gl.BindTexture(GL_TEXTURE_2D,checkpoint->texture);
+  backend->gl.DrawArrays(GL_TRIANGLES,0,3);
+  /* Pass 1: 32 consecutive segments of one column make a tile. */
+  extent[0]=(GLint)columns;
+  backend->gl.Uniform1i(scene->checkpoint_u_pass,1);
+  backend->gl.Uniform2iv(scene->checkpoint_u_extent,1,extent);
+  backend->gl.BindFramebuffer(GL_FRAMEBUFFER,scene->checkpoint_framebuffer);
+  backend->gl.Viewport(0,0,(GLsizei)columns,(GLsizei)rows);
+  backend->gl.BindTexture(GL_TEXTURE_2D,0);
+  backend->gl.ActiveTexture(GL_TEXTURE0);backend->gl.BindTexture(GL_TEXTURE_2D,scene->checkpoint_rows);
   backend->gl.DrawArrays(GL_TRIANGLES,0,3);
   backend->gl.PixelStorei(GL_PACK_ALIGNMENT,1);
   if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
@@ -1375,14 +1446,35 @@ static int scene_checkpoint_region(GmlGpuBackend *backend,GlSceneImage *image,
   backend->gl.BindTexture(GL_TEXTURE_2D,0);backend->gl.ActiveTexture(GL_TEXTURE0);
   backend->gl.BindTexture(GL_TEXTURE_2D,0);
   if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
-  for(uint32_t y=0;y<rows;y++) for(uint32_t x=0;x<columns;x++)
-    if(scene->scratch[((size_t)y*columns+x)*4u]){
-      if(x<left) left=x;
-      if(x+1u>right) right=x+1u;
-      if(y<bottom) bottom=y;
-      if(y+1u>top) top=y+1u;
+  /* Each row of changed tiles is read on its own, spanning only its changed columns: the
+   * changes of one picture are usually a few separate objects, and their union rectangle can
+   * cover most of it. Consecutive rows with the same span share one read. */
+  for(uint32_t y=0;y<rows;y++){
+    uint32_t row_left=columns,row_right=0;
+    for(uint32_t x=0;x<columns;x++)
+      if(scene->scratch[((size_t)y*columns+x)*4u]){
+        if(x<row_left) row_left=x;
+        row_right=x+1u;
+      }
+    if(!row_right) continue;
+    if(row_left<left) left=row_left;
+    if(row_right>right) right=row_right;
+    if(y<bottom) bottom=y;
+    top=y+1u;
+    if(bands){
+      uint32_t x0=row_left*32u,x1=row_right*32u>image->width?image->width:row_right*32u;
+      uint32_t y1=(y+1u)*32u>image->height?image->height:(y+1u)*32u;
+      GmlRenderRect *last=*band_count?&bands[*band_count-1u]:NULL;
+      /* Mask rows count from the bottom; storage rows from the top. */
+      if(last && last->x==(int32_t)x0 && last->width==x1-x0 &&
+         last->y==(int32_t)(image->height-y*32u)){
+        last->y=(int32_t)(image->height-y1);
+        last->height+=y1-y*32u;
+      } else bands[(*band_count)++]=(GmlRenderRect){(int32_t)x0,(int32_t)(image->height-y1),
+                                                    x1-x0,y1-y*32u};
     }
-  if(!right){ result->updated_region=(GmlRenderRect){0};return 1; }
+  }
+  if(!right){ result->updated_region=(GmlRenderRect){0};*band_count=0;return 1; }
   right=right*32u>image->width?image->width:right*32u;
   top=top*32u>image->height?image->height:top*32u;
   result->updated_region=(GmlRenderRect){(int32_t)(left*32u),(int32_t)(image->height-top),
@@ -1423,6 +1515,8 @@ int gml_gpu_opengl_scene_readback(GmlGpuBackend *backend,const GmlRenderImageRea
   GlSceneCheckpoint *checkpoint=NULL;
   GmlRenderImageReadbackResult result={0};
   GmlRenderImageReadback selected;
+  GmlRenderRect *bands=NULL;
+  uint32_t band_count=0;
   size_t row_bytes;
   int success=1;
   if(transfer && transfer->result) *transfer->result=result;
@@ -1441,32 +1535,40 @@ int gml_gpu_opengl_scene_readback(GmlGpuBackend *backend,const GmlRenderImageRea
   result.updated_region=transfer->region;
   if(transfer->checkpoint && transfer->result && transfer->region.x==0 && transfer->region.y==0 &&
      transfer->region.width==image->width && transfer->region.height==image->height &&
-     (uint64_t)image->width*image->height*4u<=32u*1024u*1024u){
-    if(image->ref.resource_class==GML_RENDER_RESOURCE_SCREEN) checkpoint=&backend->scene.checkpoints[0];
-    if(image->ref.resource_class==GML_RENDER_RESOURCE_APPLICATION) checkpoint=&backend->scene.checkpoints[1];
-  }
+     (uint64_t)image->width*image->height*4u<=32u*1024u*1024u)
+    checkpoint=scene_checkpoint_slot(backend,image);
   if(checkpoint && transfer->checkpoint_baseline_version &&
      scene_same_logical(checkpoint->image,image->ref) &&
      checkpoint->image.content_version==transfer->checkpoint_baseline_version &&
      checkpoint->width==image->width && checkpoint->height==image->height &&
      checkpoint->pixel_format==transfer->pixel_format){
-    if(!scene_checkpoint_region(backend,image,checkpoint,transfer->pixel_format,&result)){
+    bands=(GmlRenderRect*)malloc(((size_t)image->height+31u)/32u*sizeof *bands);
+    if(!scene_checkpoint_region(backend,image,checkpoint,transfer->pixel_format,&result,
+                                bands,&band_count)){
       /* Optional detection failure cannot weaken an otherwise available exact full read. */
       backend->gl.GetError();
       result.updated_region=transfer->region;
+      band_count=0;
     }
   }
   if(result.updated_region.width){
-    size_t offset=(size_t)(uint32_t)result.updated_region.y*transfer->stride_bytes+
-                   (size_t)(uint32_t)result.updated_region.x*4u;
-    selected=*transfer;selected.region=result.updated_region;
-    if(checkpoint){ selected.bytes=(uint8_t*)transfer->bytes+offset;selected.byte_capacity-=offset; }
-    success=scene_readback_pixels(backend,image,&selected,&result);
+    /* Without bands, the one region is the union of the changes or the complete image. */
+    uint32_t reads=band_count?band_count:1u;
+    for(uint32_t index=0;index<reads && success;index++){
+      GmlRenderRect region=band_count?bands[index]:result.updated_region;
+      size_t offset=(size_t)(uint32_t)region.y*transfer->stride_bytes+
+                     (size_t)(uint32_t)region.x*4u;
+      selected=*transfer;selected.region=region;
+      if(checkpoint){ selected.bytes=(uint8_t*)transfer->bytes+offset;selected.byte_capacity-=offset; }
+      success=scene_readback_pixels(backend,image,&selected,&result);
+    }
   }
+  free(bands);
   if(checkpoint){
     if(success) scene_checkpoint_remember(backend,image,checkpoint,transfer->pixel_format,
                                           result.updated_region.width!=0u);
     else checkpoint->image.content_version=0;
+    result.checkpoint_retained=success && scene_same_version(checkpoint->image,image->ref);
   }
   if(transfer->result) *transfer->result=result;
   return success;
@@ -2009,7 +2111,7 @@ void gml_gpu_opengl_scene_retire(GmlGpuBackend *backend,GmlRenderImageRef image)
                      image.resource_class==GML_RENDER_RESOURCE_SHADER_SAMPLER ||
                      image.resource_class==GML_RENDER_RESOURCE_SHADER_SOURCE;
   if(!backend || !backend->loaded) return;
-  for(size_t index=0;index<2u;index++)
+  for(size_t index=0;index<GL_SCENE_CHECKPOINTS;index++)
     if(scene_same_logical(backend->scene.checkpoints[index].image,image))
       backend->scene.checkpoints[index].image.content_version=0;
   for(size_t index=0;index<GL_SCENE_MAX_IMAGES;index++){

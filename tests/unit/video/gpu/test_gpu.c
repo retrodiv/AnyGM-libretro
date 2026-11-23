@@ -4794,6 +4794,101 @@ static int incremental_checkpoint_contract_case(void){
   return 1;
 }
 
+/* Numbered surfaces take shared baseline slots: changed tile rows are read as separate bands,
+ * rows with one span share a read, and the least recently checkpointed surface leaves first
+ * once the byte budget is reached. */
+static int surface_checkpoint_case(void){
+  uint32_t pixels[65u*33u],before[65u*33u];
+  GmlGpu *gpu;
+  GmlGpuContext context=fake_context(GML_GPU_API_OPENGLES3);
+  GmlRenderDeviceServices device={0};
+  GmlRenderDrawOp clear={0};
+  GmlRenderDrawBatch batch={&clear,1u,NULL,0u};
+  GmlRenderImageReadback readback={0};
+  GmlRenderImageReadbackResult result={0};
+  anygm_test_graphics_reset();
+  gpu=gml_gpu_create();
+  REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"surface checkpoint context adopted");
+  gml_gpu_device_services(gpu,&device);
+  clear.opcode=GML_RENDER_OP_CLEAR;
+  clear.target.image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SURFACE,301u,1u,2u};
+  clear.target.storage_version=1u;clear.target.width=65u;clear.target.height=33u;
+  clear.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  clear.target.region=(GmlRenderRect){0,0,65u,33u};
+  REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,"surface drawn");
+  readback.image=clear.target.image;readback.storage_width=65u;readback.storage_height=33u;
+  readback.region=clear.target.region;readback.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  readback.stride_bytes=65u*4u;readback.byte_capacity=sizeof pixels;readback.bytes=pixels;
+  readback.result=&result;
+  REQUIRE(device.readback(device.context,&readback) && !result.checkpoint_retained,
+          "a surface read without the opt-in keeps no baseline");
+  readback.checkpoint=1u;
+  REQUIRE(device.readback(device.context,&readback) && result.pixel_reads==1u &&
+          result.pixel_bytes==sizeof pixels && !result.mask_reads && result.checkpoint_retained,
+          "a cold surface checkpoint reads everything and keeps its baseline");
+  static const struct { unsigned bits,reads; uint64_t bytes; } masks[]={
+    /* bottom-left tile and top-right tile: two bands of different spans */
+    {1u|32u,2u,32u*32u*4u+1u*1u*4u},
+    /* the left column of both tile rows: one span, one read of every row */
+    {1u|8u,1u,32u*33u*4u},
+  };
+  for(unsigned index=0;index<2u;index++){
+    memcpy(before,pixels,sizeof before);
+    clear.target.image.content_version++;
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,"surface redrawn");
+    readback.checkpoint_baseline_version=readback.image.content_version;
+    readback.image=clear.target.image;
+    anygm_test_graphics_checkpoint_mask(masks[index].bits);
+    REQUIRE(device.readback(device.context,&readback) && result.mask_reads==1u &&
+            result.pixel_reads==masks[index].reads && result.pixel_bytes==masks[index].bytes &&
+            result.checkpoint_retained,"changed tile rows are read as bands");
+    for(unsigned y=0;y<33u;y++) for(unsigned x=0;x<65u;x++){
+      int first=index==0u?x<32u && y>=1u:x<32u;
+      int second=index==0u && x==64u && y==0u;
+      if(!first && !second)
+        REQUIRE(pixels[y*65u+x]==before[y*65u+x],"pixels outside every band keep their bytes");
+    }
+  }
+  gml_gpu_destroy(gpu,1);
+
+  /* Three 16-MiB surfaces against a 32-MiB budget. */
+  {
+    const uint32_t extent=2048u;
+    size_t bytes=(size_t)extent*extent*4u;
+    uint8_t *large=(uint8_t*)malloc(bytes);
+    uint64_t versions[3]={0};
+    REQUIRE(large,"budget buffer allocated");
+    anygm_test_graphics_reset();
+    gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"budget context adopted");
+    gml_gpu_device_services(gpu,&device);
+    readback=(GmlRenderImageReadback){0};
+    readback.storage_width=readback.storage_height=extent;
+    readback.region=(GmlRenderRect){0,0,extent,extent};
+    readback.pixel_format=GML_RENDER_PIXEL_ARGB8888;readback.stride_bytes=extent*4u;
+    readback.byte_capacity=bytes;readback.bytes=large;readback.checkpoint=1u;readback.result=&result;
+    clear.target.width=clear.target.height=extent;
+    clear.target.region=readback.region;
+    for(unsigned order=0;order<5u;order++){
+      /* A, B and C cold; then A again (evicted by C) and C (still held). */
+      unsigned surface=order<3u?order:(order==3u?0u:2u);
+      clear.target.image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SURFACE,400u+surface,1u,
+                                             versions[surface]+1u};
+      REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,
+              "budget surface drawn");
+      readback.image=clear.target.image;
+      readback.checkpoint_baseline_version=versions[surface];
+      REQUIRE(device.readback(device.context,&readback) && result.checkpoint_retained,
+              "every surface within the budget keeps a baseline once read");
+      REQUIRE(result.mask_reads==(order==4u?1u:0u),
+              "an evicted baseline reads in full; a held one compares");
+      versions[surface]=clear.target.image.content_version;
+    }
+    gml_gpu_destroy(gpu,1);free(large);
+  }
+  return 1;
+}
+
 static int incremental_checkpoint_budget_case(void){
   const uint32_t width=4096u,height=2049u;
   size_t bytes=(size_t)width*height*4u;
@@ -9026,6 +9121,7 @@ int main(int argc,char **argv){
     {"scene_readback_formats",scene_readback_formats_case},
     {"incremental_checkpoint_contract",incremental_checkpoint_contract_case},
     {"incremental_checkpoint_budget",incremental_checkpoint_budget_case},
+    {"surface_checkpoint",surface_checkpoint_case},
     {"scene_atlas_retire_advanced_version",scene_atlas_retire_advanced_version_case},
     {"scene_alpha_composition",scene_alpha_composition_case},
     {"scene_opaque_target_sourceover",scene_opaque_target_sourceover_case},

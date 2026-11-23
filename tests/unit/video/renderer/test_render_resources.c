@@ -43,6 +43,7 @@ typedef struct FakeDevice {
   int fail_partial_readback;
   int fail_submit_at;
   int incremental_readback;
+  int retain_checkpoint;
   uint32_t last_checkpoint;
   uint64_t last_checkpoint_baseline;
   uint32_t status,accepted_prefix;
@@ -201,10 +202,13 @@ static int fake_readback(void *context,const GmlRenderImageReadback *readback){
       if(fake->incremental_readback==3) return 0;
       if(fake->incremental_readback==4) readback->result->updated_region.x=3;
     }
+    readback->result->checkpoint_retained=fake->retain_checkpoint && readback->checkpoint;
     return 1;
   }
   for(uint32_t index=0;index<readback->storage_width*readback->storage_height;index++)
     pixels[index]=fake->readback_colour;
+  if(readback->result)
+    readback->result->checkpoint_retained=fake->retain_checkpoint && readback->checkpoint;
   return 1;
 }
 
@@ -1645,7 +1649,8 @@ static int incremental_checkpoint_publication(void){
 }
 
 /* Staging reuse changes allocation lifetime, not device pixels, CPU visibility or failure
- * publication. Cover both retained owner classes and the deliberately transient surface path. */
+ * publication. Cover both retained owner classes and the surface path, transient while the device
+ * keeps no baseline for it. */
 static int bounded_checkpoint_staging_lifecycle(void){
   const uint32_t classes[]={GML_RENDER_RESOURCE_SCREEN,GML_RENDER_RESOURCE_APPLICATION,
                             GML_RENDER_RESOURCE_SURFACE};
@@ -1752,6 +1757,71 @@ static int bounded_checkpoint_staging_lifecycle(void){
     for(unsigned index=0;index<64u;index++) CHECK(larger[index]==last_colour);
     gml_render_resource_destroy(resource);
   }
+  return 1;
+}
+
+/* A numbered surface keeps its staging exactly while the device reports the matching baseline:
+ * its next read names that version and publishes only the changed bytes. */
+static int surface_checkpoint_follows_device_baseline(void){
+  uint32_t pixels[16];
+  const uint32_t *reader=NULL;
+  GmlRenderImageRef image=target_ref(1u,1u);
+  GmlRenderResourceLimits limits={0};
+  GmlRenderJournalMetrics metrics={0};
+  GmlRenderDrawOp operation=clear_op(2u,0u,GML_RENDER_DEVICE_CHECKPOINT);
+  GmlRenderDrawBatch batch={&operation,1u,NULL,0u};
+  FakeDevice fake={0};
+  GmlRenderDeviceServices device=service(&fake);
+  GmlRenderResource *resource;
+  uint64_t cold_version;
+  image.resource_class=GML_RENDER_RESOURCE_SURFACE;
+  fill(pixels,0xFF010203u);
+  operation.target.image=image;
+  operation.target.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+  resource=gml_render_resource_create(image,4u,4u,GML_RENDER_PIXEL_ARGB8888,pixels,limits);
+  CHECK(resource);
+  fake.retain_checkpoint=1;fake.incremental_readback=1;
+  fake.readback_colour=0xFF111111u;
+  operation.target.image=gml_render_resource_image_ref(resource);
+  operation.target.image.content_version++;
+  CHECK(gml_render_resource_submit(resource,&device,&batch,NULL,0u)==
+        GML_RENDER_RESOURCE_EXEC_DEVICE);
+  CHECK(gml_render_resource_acquire_cpu_read(resource,&reader) && reader==pixels);
+  cold_version=operation.target.image.content_version;
+  CHECK(fake.last_checkpoint==1u && !fake.last_checkpoint_baseline);
+  gml_render_resource_journal_metrics(resource,&metrics);
+  CHECK(metrics.checkpoint_allocations==1u && metrics.checkpoint_staging_bytes==64u);
+  fake.readback_colour=0xFF222222u;
+  operation.target.image=gml_render_resource_image_ref(resource);
+  operation.target.image.content_version++;
+  CHECK(gml_render_resource_submit(resource,&device,&batch,NULL,0u)==
+        GML_RENDER_RESOURCE_EXEC_DEVICE);
+  CHECK(gml_render_resource_acquire_cpu_read(resource,&reader) && reader==pixels);
+  CHECK(fake.last_checkpoint_baseline==cold_version);
+  for(unsigned index=0;index<16u;index++)
+    CHECK(pixels[index]==(index==9u || index==10u?0xFF222222u:0xFF111111u));
+  gml_render_resource_journal_metrics(resource,&metrics);
+  CHECK(metrics.checkpoint_allocations==1u && metrics.checkpoint_staging_bytes==64u);
+  /* The device lets the baseline go: the staging goes with it and the next read is cold. */
+  fake.retain_checkpoint=0;
+  operation.target.image=gml_render_resource_image_ref(resource);
+  operation.target.image.content_version++;
+  CHECK(gml_render_resource_submit(resource,&device,&batch,NULL,0u)==
+        GML_RENDER_RESOURCE_EXEC_DEVICE);
+  CHECK(gml_render_resource_acquire_cpu_read(resource,&reader) && reader==pixels);
+  gml_render_resource_journal_metrics(resource,&metrics);
+  CHECK(metrics.checkpoint_staging_bytes==0u);
+  fake.readback_colour=0xFF333333u;
+  operation.target.image=gml_render_resource_image_ref(resource);
+  operation.target.image.content_version++;
+  CHECK(gml_render_resource_submit(resource,&device,&batch,NULL,0u)==
+        GML_RENDER_RESOURCE_EXEC_DEVICE);
+  CHECK(gml_render_resource_acquire_cpu_read(resource,&reader) && reader==pixels);
+  CHECK(fake.last_checkpoint==1u && !fake.last_checkpoint_baseline);
+  for(unsigned index=0;index<16u;index++) CHECK(pixels[index]==0xFF333333u);
+  gml_render_resource_journal_metrics(resource,&metrics);
+  CHECK(metrics.checkpoint_allocations==2u && metrics.checkpoint_staging_bytes==0u);
+  gml_render_resource_destroy(resource);
   return 1;
 }
 
@@ -22159,6 +22229,7 @@ int main(void){
   passed+=resident_checkpoint_span_seals_at_observer();
   passed+=checkpoint_span_mixed_suffix_and_faults();
   passed+=bounded_checkpoint_staging_lifecycle();
+  passed+=surface_checkpoint_follows_device_baseline();
   passed+=incremental_checkpoint_publication();
   passed+=public_surface_part_qualified_dispatch();
   passed+=resident_opaque_atlas_sprite_gpu();
@@ -22332,7 +22403,7 @@ int main(void){
   passed+=resident_lazy_native_atlas();
   passed+=resident_unit_texel_magnification();
   passed+=opaque_rectangle_clear_complement();
-  enum { total=352 };
+  enum { total=353 };
   printf("render resource cases: passed=%d failed=%d\n",passed,total-passed);
   return passed==total?EXIT_SUCCESS:EXIT_FAILURE;
 }

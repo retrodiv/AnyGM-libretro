@@ -803,6 +803,9 @@ static int resource_checkpoint(GmlRenderResource *resource,
     return 0;
   }
   bytes=(size_t)resource->width*resource->height*4u;
+  /* A numbered surface keeps its staging only while the device keeps the matching baseline. */
+  int retain_surface=resource->image.resource_class==GML_RENDER_RESOURCE_SURFACE &&
+                     bytes<=resource->limits.checkpoint_staging_bytes;
   checkpoint=resource->checkpoint_staging;
   if(!checkpoint){
     checkpoint=(uint32_t*)malloc(bytes);
@@ -812,7 +815,8 @@ static int resource_checkpoint(GmlRenderResource *resource,
     }
     resource->checkpoint_allocations++;
     /* Extents are immutable for this owner. Keep one bounded host plane for the two owned
-     * frame targets; other resources and over-budget targets retain transient allocation.
+     * frame targets, and for a numbered surface once the device reports its baseline (below);
+     * other resources and over-budget targets retain transient allocation.
      * Staging is scratch, not a checkpoint: only a complete successful read is published. */
     if((resource->image.resource_class==GML_RENDER_RESOURCE_SCREEN ||
         resource->image.resource_class==GML_RENDER_RESOURCE_APPLICATION) &&
@@ -829,7 +833,7 @@ static int resource_checkpoint(GmlRenderResource *resource,
   readback.bytes=checkpoint;
   result.updated_region=readback.region;
   readback.result=&result;
-  if(checkpoint==resource->checkpoint_staging){
+  if(checkpoint==resource->checkpoint_staging || retain_surface){
     readback.checkpoint=1u;
     if(resource->checkpoint_staging_device==device->context &&
        resource->checkpoint_staging_version==resource->cpu_version)
@@ -856,6 +860,14 @@ static int resource_checkpoint(GmlRenderResource *resource,
     size_t first=(size_t)((uint32_t)result.updated_region.y+row)*resource->width+
                    (uint32_t)result.updated_region.x;
     memcpy(resource->pixels+first,checkpoint+first,(size_t)result.updated_region.width*4u);
+  }
+  if(retain_surface){
+    if(result.checkpoint_retained) resource->checkpoint_staging=checkpoint;
+    else if(checkpoint==resource->checkpoint_staging){
+      resource->checkpoint_staging=NULL;
+      resource->checkpoint_staging_version=0;
+      resource->checkpoint_staging_device=NULL;
+    }
   }
   if(checkpoint==resource->checkpoint_staging){
     resource->checkpoint_staging_version=resource->image.content_version;

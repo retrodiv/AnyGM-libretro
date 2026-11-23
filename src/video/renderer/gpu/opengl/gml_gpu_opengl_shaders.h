@@ -500,23 +500,34 @@
   "  o_color=vec4(0.0);\n" \
   "}\n"
 
+/* Two passes, so that every fragment does a short fixed amount of work: pass 0 compares the 32
+ * pixels of one row segment, pass 1 joins the 32 segments of one tile column. u_extent is the
+ * logical extent of the pass input, whatever storage behind it. */
 #define GML_GPU_OPENGL_CHECKPOINT_FRAGMENT_BODY \
   "uniform sampler2D u_image;\n" \
   "uniform sampler2D u_previous;\n" \
   "uniform int u_alpha;\n" \
+  "uniform int u_pass;\n" \
+  "uniform ivec2 u_extent;\n" \
   "out vec4 fragment_colour;\n" \
-  "bool checkpoint_tile_changed(ivec2 origin){\n" \
-  "  ivec2 extent=textureSize(u_image,0);\n" \
-  "  for(int y=0;y<32;y++) for(int x=0;x<32;x++){\n" \
-  "    ivec2 p=origin+ivec2(x,y);\n" \
-  "    if(p.x>=extent.x || p.y>=extent.y) continue;\n" \
-  "    vec4 a=texelFetch(u_image,p,0),b=texelFetch(u_previous,p,0);\n" \
-  "    if(any(notEqual(a.rgb,b.rgb)) || (u_alpha!=0 && a.a!=b.a)) return true;\n" \
+  "bool checkpoint_tile_changed(ivec2 cell){\n" \
+  "  bool changed=false;\n" \
+  "  if(u_pass==0){\n" \
+  "    for(int x=0;x<32;x++){\n" \
+  "      ivec2 p=ivec2(cell.x*32+x,cell.y);\n" \
+  "      if(p.x<u_extent.x){\n" \
+  "        vec4 a=texelFetch(u_image,p,0),b=texelFetch(u_previous,p,0);\n" \
+  "        changed=changed || any(notEqual(a.rgb,b.rgb)) || (u_alpha!=0 && a.a!=b.a);\n" \
+  "      }\n" \
+  "    }\n" \
+  "  } else for(int y=0;y<32;y++){\n" \
+  "    ivec2 p=ivec2(cell.x,cell.y*32+y);\n" \
+  "    if(p.y<u_extent.y) changed=changed || texelFetch(u_image,p,0).r!=0.0;\n" \
   "  }\n" \
-  "  return false;\n" \
+  "  return changed;\n" \
   "}\n" \
   "void main(){\n" \
-  "  float changed=checkpoint_tile_changed(ivec2(gl_FragCoord.xy)*32)?1.0:0.0;\n" \
+  "  float changed=checkpoint_tile_changed(ivec2(gl_FragCoord.xy))?1.0:0.0;\n" \
   "  fragment_colour=vec4(changed,0.0,0.0,1.0);\n" \
   "}\n"
 
