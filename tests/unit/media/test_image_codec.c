@@ -4,8 +4,10 @@
 #include "gml_image_codec.h"
 
 #include <limits.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int expect(int condition,const char *what){
@@ -79,6 +81,153 @@ static int large_png_bytes(void){
   return ok;
 }
 
+/* Exercises the direct 8-bit RGBA decode against the defining transform: each image is filtered
+ * row by row with all five PNG filters, compressed, split across several IDAT chunks and decoded
+ * back. Streams outside that form must still decode through the generic loader. */
+static uint32_t png_test_crc(const uint8_t *data,size_t size){
+  uint32_t crc=0xffffffffu;
+  for(size_t index=0;index<size;index++){
+    crc^=data[index];
+    for(int bit=0;bit<8;bit++) crc=(crc>>1)^(0xedb88320u&(0u-(crc&1u)));
+  }
+  return crc^0xffffffffu;
+}
+
+static uint8_t *png_test_chunk(uint8_t *at,const char *type,const uint8_t *data,uint32_t size){
+  at[0]=(uint8_t)(size>>24);at[1]=(uint8_t)(size>>16);at[2]=(uint8_t)(size>>8);at[3]=(uint8_t)size;
+  memcpy(at+4,type,4);
+  if(size) memcpy(at+8,data,size);
+  uint32_t crc=png_test_crc(at+4,size+4u);
+  at[8+size]=(uint8_t)(crc>>24);at[9+size]=(uint8_t)(crc>>16);
+  at[10+size]=(uint8_t)(crc>>8);at[11+size]=(uint8_t)crc;
+  return at+12+size;
+}
+
+static uint8_t png_test_paeth(int a,int b,int c){
+  int p=a+b-c,pa=abs(p-a),pb=abs(p-b),pc=abs(p-c);
+  return (uint8_t)(pa<=pb && pa<=pc?a:pb<=pc?b:c);
+}
+
+/* Writes a PNG of the given colour type. Row y uses filter (y+first_filter)%5, and the
+ * compressed stream is cut into pieces of at most split bytes. */
+static int png_test_build(const uint8_t *pixels,uint32_t width,uint32_t height,int colour,
+                          int first_filter,size_t split,const char *extra_chunk,
+                          size_t trailing,GmlMediaBuffer *out){
+  uint32_t channels=colour==6?4u:3u;
+  size_t row=(size_t)width*channels,raw_size=(row+1u)*height+trailing;
+  uint8_t *raw=calloc(raw_size,1);
+  GmlMediaBuffer zlib={0};
+  if(!raw) return 0;
+  for(uint32_t y=0;y<height;y++){
+    uint8_t filter=(uint8_t)((y+(uint32_t)first_filter)%5u);
+    uint8_t *line=raw+(size_t)y*(row+1u);
+    line[0]=filter;
+    for(size_t i=0;i<row;i++){
+      size_t x=i/channels,c=i%channels;
+      const uint8_t *source=pixels+((size_t)y*width+x)*4u+c;
+      int value=*source;
+      int left=i>=channels?source[-4]:0;
+      int up=y?source[-(ptrdiff_t)width*4]:0;
+      int corner=y && i>=channels?source[-(ptrdiff_t)width*4-4]:0;
+      int predicted=filter==1?left:filter==2?up:filter==3?(left+up)>>1:
+                    filter==4?png_test_paeth(left,up,corner):0;
+      line[1+i]=(uint8_t)(value-predicted);
+    }
+  }
+  int ok=gml_deflate_encode_zlib(raw,raw_size,&zlib);
+  free(raw);
+  if(!ok) return 0;
+  size_t pieces=split?(zlib.size+split-1u)/split:1u;
+  size_t capacity=8u+25u+(extra_chunk?24u:0u)+zlib.size+12u*pieces+12u;
+  out->data=malloc(capacity);
+  if(!out->data){gml_media_buffer_release(&zlib);return 0;}
+  uint8_t *at=out->data;
+  memcpy(at,"\x89PNG\r\n\x1a\n",8);at+=8;
+  uint8_t header[13]={(uint8_t)(width>>24),(uint8_t)(width>>16),(uint8_t)(width>>8),(uint8_t)width,
+                      (uint8_t)(height>>24),(uint8_t)(height>>16),(uint8_t)(height>>8),(uint8_t)height,
+                      8,(uint8_t)colour,0,0,0};
+  at=png_test_chunk(at,"IHDR",header,13);
+  if(extra_chunk){
+    static const uint8_t payload[12]={0,0,0,0,0,0,0,0,0,0,0,0};
+    at=png_test_chunk(at,extra_chunk,payload,colour==6 && !strcmp(extra_chunk,"tRNS")?6u:12u);
+  }
+  for(size_t offset=0;offset<zlib.size;){
+    size_t length=split && zlib.size-offset>split?split:zlib.size-offset;
+    at=png_test_chunk(at,"IDAT",zlib.data+offset,(uint32_t)length);
+    offset+=length;
+  }
+  at=png_test_chunk(at,"IEND",NULL,0);
+  out->size=(size_t)(at-out->data);
+  gml_media_buffer_release(&zlib);
+  return 1;
+}
+
+static int png_test_decodes_to(const GmlMediaBuffer *png,const uint8_t *pixels,uint32_t width,
+                               uint32_t height,int opaque){
+  GmlMediaBuffer decoded={0};
+  int decoded_width=0,decoded_height=0,components=0;
+  int ok=gml_image_decode_rgba(png->data,png->size,&decoded,&decoded_width,&decoded_height,
+                               &components) &&
+    decoded_width==(int)width && decoded_height==(int)height &&
+    components==(opaque?3:4) && decoded.size==(size_t)width*height*4u;
+  for(size_t index=0;ok && index<decoded.size;index++)
+    ok=decoded.data[index]==(opaque && index%4u==3u?255u:pixels[index]);
+  gml_media_buffer_release(&decoded);
+  return ok;
+}
+
+static int png_direct_decode(void){
+  static const uint32_t sizes[][2]={{67,41},{1,9},{9,1},{300,64}};
+  int ok=1;
+  for(size_t shape=0;shape<sizeof sizes/sizeof sizes[0];shape++){
+    uint32_t width=sizes[shape][0],height=sizes[shape][1];
+    size_t bytes=(size_t)width*height*4u;
+    uint8_t *pixels=malloc(bytes);
+    if(!expect(pixels!=NULL,"PNG test pixels")) return 0;
+    /* Bands repeat with byte periods of one to eight, then a pseudo-random band, so the
+     * compressed stream carries literals and matches at short and long distances. */
+    uint32_t random=UINT32_C(0x9e3779b9);
+    for(uint32_t y=0;y<height;y++) for(size_t i=0;i<(size_t)width*4u;i++){
+      uint32_t band=(y/3u)%10u;
+      random=random*UINT32_C(1664525)+UINT32_C(1013904223);
+      pixels[(size_t)y*width*4u+i]=band<8u?(uint8_t)(17u*(i%(band+1u))+y/30u):
+                                   band==8u?(uint8_t)(random>>24):(uint8_t)(i/4u+y);
+    }
+    GmlMediaBuffer png={0};
+    for(int first=0;first<5;first++) for(int split=0;split<2;split++){
+      ok&=expect(png_test_build(pixels,width,height,6,first,split?7u:0u,
+                                split?"tEXt":NULL,0,&png) &&
+                 png_test_decodes_to(&png,pixels,width,height,0),
+                 "RGBA PNG decodes exactly under every row filter and IDAT split");
+      gml_media_buffer_release(&png);
+    }
+    /* The generic loader accepts surplus image data after the last row. */
+    ok&=expect(png_test_build(pixels,width,height,6,3,5u,NULL,16u,&png) &&
+               png_test_decodes_to(&png,pixels,width,height,0),
+               "RGBA PNG with surplus image data decodes exactly");
+    gml_media_buffer_release(&png);
+    ok&=expect(png_test_build(pixels,width,height,2,1,0u,NULL,0,&png) &&
+               png_test_decodes_to(&png,pixels,width,height,1),
+               "RGB PNG still decodes opaque");
+    gml_media_buffer_release(&png);
+    /* Transparency is invalid with an alpha channel, and a cut stream is incomplete. */
+    ok&=expect(png_test_build(pixels,width,height,6,0,0u,"tRNS",0,&png) &&
+               !png_test_decodes_to(&png,pixels,width,height,0),
+               "RGBA PNG with transparency chunk is refused");
+    gml_media_buffer_release(&png);
+    if(png_test_build(pixels,width,height,6,4,0u,NULL,0,&png)){
+      GmlMediaBuffer decoded={0};
+      int w=0,h=0,c=0;
+      ok&=expect(!gml_image_decode_rgba(png.data,png.size/2u,&decoded,&w,&h,&c) &&
+                 !decoded.data && !w && !h && !c,
+                 "truncated RGBA PNG is refused transactionally");
+    } else ok&=expect(0,"truncated PNG build");
+    gml_media_buffer_release(&png);
+    free(pixels);
+  }
+  return ok;
+}
+
 int main(void){
   static const uint8_t rgba[]={
     0xff,0x00,0x00,0xff, 0x00,0xff,0x00,0x80,
@@ -106,6 +255,7 @@ int main(void){
   };
   int ok=1;
   ok&=large_png_bytes();
+  ok&=png_direct_decode();
 
   GmlMediaBuffer png={0};
   ok&=expect(gml_image_encode_png(rgba,2,2,4,8,&png),"encode PNG");
