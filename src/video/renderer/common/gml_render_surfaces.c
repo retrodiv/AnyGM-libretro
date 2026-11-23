@@ -3438,7 +3438,6 @@ static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,do
        (surf==r->surface_canvas || r->target_id==r->surface_canvas)) ||
      r->pending_presentation ||
      resident_surface_shader_selected(r) ||
-     (!r->alphablend && resolved_canvas!=2 && resolved_canvas!=RESIDENT_SURFACE_MANUAL_POINT) ||
      (r->blendmode && !destination_blend && !raw_replace) ||
      (r->color_write_mask!=15u && resolved_canvas!=2) ||
      (destination_blend?(r->blend_equation<1 || r->blend_equation>5 ||
@@ -3491,6 +3490,11 @@ static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,do
      (fabs(dw-(double)source_width*r->gui_scale_x)<=.001 &&
       fabs(dh-(double)source_height*r->gui_scale_y)<=.001 &&
       (fabs(dw-lround(dw))>=.001 || fabs(dh-lround(dh))>=.001))));
+  /* Disabled blending reaches the device through the resolved and manual
+   * owners, or through that GUI leaf: it copies colour and stamps coverage
+   * like the CPU kernel, which never takes the leaf for a self-sampling draw. */
+  if(!r->alphablend && resolved_canvas!=2 && resolved_canvas!=RESIDENT_SURFACE_MANUAL_POINT &&
+     (!point_presentation || feedback || r->blendmode)) return 0;
   /* This established opaque GUI presentation leaf does not inspect sampled
    * alpha. Other old owners keep their cutoff fence; the ordinary function
    * executor below carries and tests its raw surface alpha explicitly. */

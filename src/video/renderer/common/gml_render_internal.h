@@ -666,6 +666,9 @@ typedef struct GmlRender {
    * instead of one per draw. Only for a program whose answer moves with the draw, which cannot be
    * kept for a rectangle and would otherwise pay a device round trip per glyph. */
   uint32_t *run_plane; size_t run_plane_capacity;
+  /* Derived glyph cells whose texels already carry a palette-grid program's answer.
+   * Device input only: content cannot name them and state never carries them. */
+  GmlSprite *mapped_glyphs; unsigned mapped_glyph_next;
   /* The colour a gathered run hands the program, rather than having baked it in. */
   float shade_vertex_colour[4]; int shade_vertex_colour_valid;
   int run_plane_active;
@@ -886,6 +889,9 @@ int gml_render_runtime_sprite_scene_source_view(GmlRender *r,GmlSprite *sprite,i
                                                 GmlRenderResourceSource *source);
 int gml_render_runtime_sprite_scene_retire(GmlRender *r,GmlSprite *sprite);
 int gml_render_runtime_frame_index(GmlSprite *sprite,int frame);
+#define GML_MAPPED_GLYPHS 64u
+void gml_render_mapped_glyphs_free(GmlRender *r);
+int gml_render_cpu_backend_grid_page(GmlRender *r,const GmlTpag *page,uint8_t *rgba);
 void gml_render_sprite_cache_free(GmlSprite *sprite);
 void gml_render_sprite_state_cache_clear(GmlSprite *sprite);
 /* Restore collision metadata without replacing pixels or recomputing saved bounds. */

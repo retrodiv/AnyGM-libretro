@@ -8079,3 +8079,26 @@ void gml_render_cpu_blit_sprite_stretched_resolved(GmlRender *r,GmlSprite *sprit
   blit_sprite_stretched_impl(r,sprite,frame,dx,dy,dw,dh,blend,alpha);
   gml_render_dispatch_cpu_scope_end(r,&scope);
 }
+/* Resolve a point-sampled palette-grid cell through the software kernel's own
+ * mapping. This prepares immutable device input and writes no target pixel. */
+int gml_render_cpu_backend_grid_page(GmlRender *r,const GmlTpag *page,uint8_t *rgba){
+  const struct GmlShaderPal *grid;
+  GmlGridPixelCache cache={0};
+  if(!r || !page || !rgba || page->atlas<0 || page->atlas>=r->n_atlas ||
+     page->sx<0 || page->sy<0 || page->sw<=0 || page->sh<=0 || !(grid=grid_active(r)) ||
+     r->lut_pal_sprite>=r->n_spr || r->spr[r->lut_pal_sprite].h>256) return 0;
+  GmlAtlas *atlas=&r->atlas[page->atlas];
+  if(!atlas_pixels(r,page->atlas) || page->sx>atlas->w-page->sw ||
+     page->sy>atlas->h-page->sh) return 0;
+  for(int y=0;y<page->sh;y++){
+    const uint8_t *from=atlas->px+(((size_t)(page->sy+y)*atlas->w)+page->sx)*4u;
+    uint8_t *to=rgba+(size_t)y*page->sw*4u;
+    for(int x=0;x<page->sw;x++,from+=4,to+=4){
+      uint32_t value=grid_map_px_cached(r,grid,((uint32_t)from[3]<<24)|((uint32_t)from[0]<<16)|
+                                               ((uint32_t)from[1]<<8)|from[2],&cache);
+      to[0]=(uint8_t)(value>>16);to[1]=(uint8_t)(value>>8);
+      to[2]=(uint8_t)value;to[3]=(uint8_t)(value>>24);
+    }
+  }
+  return 1;
+}

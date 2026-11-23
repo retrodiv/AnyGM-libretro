@@ -768,11 +768,12 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
      (!resident_mapped_screen_gui_font(r) ||
       !gml_render_compose_resident_underlay(r))) return 0;
   int runtime_function=source_override && physical_sprite_page==17;
+  int mapped_text=source_override && family==GML_RENDER_SCENE_TEXT && physical_sprite_page==14;
   if(source_override && (!r || !page ||
-     (!runtime_function && (!r->classic || r->interp || physical_sprite_page!=4 ||
+     (!runtime_function && !mapped_text && (!r->classic || r->interp || physical_sprite_page!=4 ||
        xs!=1.0 || ys!=1.0 || colour!=0xFFFFFFu || draw_alpha!=1.0 ||
        !page->scene_opaque_checked || !page->scene_binary_alpha)) ||
-     family!=GML_RENDER_SCENE_SPRITE ||
+     (family!=GML_RENDER_SCENE_SPRITE && !mapped_text) ||
      !source_override->borrowed_immutable || !source_override->bytes ||
      source_override->image.resource_class!=GML_RENDER_RESOURCE_ATLAS ||
      !(source_override->image.identity&UINT32_C(0x80000000)) ||
@@ -1045,7 +1046,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
       ((family!=GML_RENDER_SCENE_SPRITE && !gui_crop) ||
        !resident_identity_screen_gui(r))) ||
      (family==GML_RENDER_SCENE_SPRITE?resident_sprite_program_blocks(r):
-      r->active_shader>=0 && !keyed_background) ||
+      r->active_shader>=0 && !keyed_background && !mapped_text) ||
      (r->alpha_test_enable && !integer_atlas) ||
      (!r->alphablend && !integer_atlas) ||
      (r->blendmode && !replace && !fog_rotated_normal && !(integer_atlas && r->blendmode==2) &&
@@ -1275,7 +1276,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     }
     int copied_font_cache=text_function && physical_sprite_page==14 &&
       page->argb_cache && page->alpha_runs_built && page->alpha_row_min && page->alpha_row_max;
-    int unit_white=!source_alpha_key && !flat_fog_sprite && !r->blendmode && (!r->alpha_test_enable || !r->alpha_test_ref) &&
+    int unit_white=!source_alpha_key && !mapped_text && !flat_fog_sprite && !r->blendmode && (!r->alpha_test_enable || !r->alpha_test_ref) &&
       fabs(xs)==1.0 && fabs(ys)==1.0 && colour==0xFFFFFFu &&
       /* Detached TILE views cannot enter cached partial-opacity or reflected
        * white copies. Only the forward full-opacity copy has a snapped fallback. */
@@ -1315,7 +1316,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     /* The unchanged white/full-alpha application leaf can read one adjacent
      * atlas texel at a trailing tie. Keep its physical bounds without claiming
      * that the original crop's cached alpha classification covers that texel. */
-    int contiguous=!source_alpha_key && !flat_fog_sprite && firstgen && !tile_function && !r->blendmode &&
+    int contiguous=!source_alpha_key && !mapped_text && !flat_fog_sprite && firstgen && !tile_function && !r->blendmode &&
       (!r->alpha_test_enable || !r->alpha_test_ref) &&
       r->alphablend && colour==0xFFFFFFu && draw_alpha==1.0;
     if(contiguous && (xs>1.0 || ((scaled_background || text_function || tiled_sprite_function) && xs>0.0 &&
@@ -2121,6 +2122,47 @@ int gml_render_resident_font_glyph(GmlRender *r,int atlas,int source_x,int sourc
   return 0;
 }
 
+/* A palette-grid program is a finite source-colour function under point
+ * sampling. Give the existing glyph packet the software kernel's mapped cell;
+ * this adds no shader body, and content-addressed cells need no invalidation. */
+static int resident_grid_font_glyph(GmlRender *r,const GmlTpag *page,
+  double left,double top,double xs,double ys,uint32_t colour,double alpha){
+  if(r->classic || r->interp || r->active_shader<0 || r->active_shader>=r->n_shader_pal ||
+     !r->shader_pal || !r->shader_pal[r->active_shader].grid || r->fog_flat ||
+     r->alpha_test_enable || !r->alphablend || r->blendmode || r->color_write_mask!=15u ||
+     r->font_sdf_active || page->sw<=0 || page->sh<=0 ||
+     (uint64_t)page->sw*(uint64_t)page->sh>65536u || !r->device.context ||
+     !r->device.observe_on_demand || !r->device.observe_on_demand(r->device.context)) return 0;
+  if(!r->mapped_glyphs &&
+     !(r->mapped_glyphs=calloc(GML_MAPPED_GLYPHS,sizeof *r->mapped_glyphs))) return 0;
+  size_t bytes=(size_t)page->sw*(size_t)page->sh*4u;
+  uint8_t *mapped=malloc(bytes);
+  if(!mapped || !gml_render_cpu_backend_grid_page(r,page,mapped)){free(mapped);return 0;}
+  GmlSprite *cell=NULL;
+  for(unsigned i=0;i<GML_MAPPED_GLYPHS && !cell;i++){
+    GmlSprite *held=&r->mapped_glyphs[i];
+    if(held->runtime_rgba && held->w==page->sw && held->h==page->sh &&
+       !memcmp(held->runtime_rgba,mapped,bytes)) cell=held;
+  }
+  if(cell) free(mapped);
+  else{
+    GmlSprite *replaced=&r->mapped_glyphs[r->mapped_glyph_next];
+    /* Retirement submits any queued draw that still borrows these bytes. */
+    if(!gml_render_runtime_sprite_scene_retire(r,replaced)){free(mapped);return 0;}
+    free(replaced->runtime_rgba);
+    memset(replaced,0,sizeof *replaced);
+    replaced->runtime_rgba=mapped;replaced->w=page->sw;replaced->h=page->sh;replaced->n_frames=1;
+    r->mapped_glyph_next=(r->mapped_glyph_next+1u)%GML_MAPPED_GLYPHS;
+    cell=replaced;
+  }
+  GmlRenderResourceSource source={0};
+  if(!gml_render_runtime_sprite_scene_source_view(r,cell,0,&source)) return 0;
+  GmlTpag derived={.atlas=-1,.sw=page->sw,.sh=page->sh,.tx=page->tx,.ty=page->ty,
+    .tw=page->tw,.th=page->th,.bw=page->bw,.bh=page->bh};
+  return resident_atlas_crop_from_page(r,&derived,0,0,page->sw,page->sh,left,top,xs,ys,
+    GML_RENDER_SCENE_TEXT,colour,alpha,14,&source);
+}
+
 int gml_render_resident_sprite_font_glyph(GmlRender *r,int page_index,
   double left,double top,double xs,double ys,uint32_t colour,double alpha){
   if(!r || page_index<0 || page_index>=r->n_tpag) return 0;
@@ -2141,7 +2183,7 @@ int gml_render_resident_sprite_font_glyph(GmlRender *r,int page_index,
       page->sw,page->sh,left,top,xs,ys,colour,alpha);
   if(resident_atlas_crop_from_page(r,page,0,0,page->sw,page->sh,left,top,xs,ys,
                                  GML_RENDER_SCENE_TEXT,colour,alpha,14,NULL)) return 1;
-  return 0;
+  return resident_grid_font_glyph(r,page,left,top,xs,ys,colour,alpha);
 }
 
 int gml_render_resident_atlas_page(GmlRender *r,int page_index,

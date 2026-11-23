@@ -84,6 +84,15 @@ int gml_render_runtime_sprite_scene_retire(GmlRender *r,GmlSprite *sprite){
   return 1;
 }
 
+void gml_render_mapped_glyphs_free(GmlRender *r){
+  if(!r || !r->mapped_glyphs) return;
+  for(unsigned i=0;i<GML_MAPPED_GLYPHS;i++){
+    (void)gml_render_runtime_sprite_scene_retire(r,&r->mapped_glyphs[i]);
+    free(r->mapped_glyphs[i].runtime_rgba);
+  }
+  free(r->mapped_glyphs);r->mapped_glyphs=NULL;r->mapped_glyph_next=0;
+}
+
 static int sprite_set_runtime_rgba(GmlRender *r,GmlSprite *s, uint8_t *rgba, int w, int h, int frames, int xorig, int yorig, int extra){
   if(!gml_render_runtime_sprite_scene_retire(r,s)) return 0;
   if(frames<1) frames=1;

@@ -8367,6 +8367,89 @@ static int resident_manual_point_surface(void){
   return 1;
 }
 
+/* A palette-grid sprite-font glyph reaches the device as an immutable cell
+ * carrying the program's mapped colours, selected again whenever the column changes. */
+static int resident_palette_grid_glyph(void){
+  GmlRender *r=calloc(1,sizeof *r);GmlWin content={.bytecode=16};
+  FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+  uint32_t screen[32*32]={0};
+  static const uint8_t source[16]={10,20,30,255, 40,50,60,255, 90,90,90,255, 0,0,0,0};
+  static const uint8_t palette[24]={10,20,30,255, 111,112,113,255, 121,122,123,255,
+                                    40,50,60,255, 141,142,143,255, 151,152,153,255};
+  static const uint8_t expected[2][16]={
+    {111,112,113,255, 141,142,143,255, 90,90,90,255, 0,0,0,0},
+    {121,122,123,255, 151,152,153,255, 90,90,90,255, 0,0,0,0}};
+  CHECK(r && !gml_render_init(r,NULL));r->win=&content;
+  r->atlas=calloc(1,sizeof *r->atlas);r->tpag=calloc(1,sizeof *r->tpag);
+  r->spr=calloc(2,sizeof *r->spr);r->shader_pal=calloc(1,sizeof *r->shader_pal);
+  CHECK(r->atlas && r->tpag && r->spr && r->shader_pal);
+  r->n_atlas=r->n_tpag=r->n_shader_pal=1;r->n_spr=2;
+  r->atlas[0].px=malloc(sizeof source);r->spr[0].frame=calloc(1,sizeof(int));
+  r->spr[1].runtime_rgba=malloc(sizeof palette);
+  CHECK(r->atlas[0].px && r->spr[0].frame && r->spr[1].runtime_rgba);
+  memcpy(r->atlas[0].px,source,sizeof source);r->atlas[0].w=r->atlas[0].h=2;
+  r->tpag[0]=(GmlTpag){.sw=2,.sh=2,.tw=2,.th=2,.bw=2,.bh=2};
+  r->spr[0].w=r->spr[0].h=2;r->spr[0].n_frames=1;
+  memcpy(r->spr[1].runtime_rgba,palette,sizeof palette);
+  r->spr[1].w=3;r->spr[1].h=2;r->spr[1].n_frames=1;
+  r->lut_pal_sprite=1;r->lut_pal_frame=0;
+  r->shader_pal[0].grid=1;r->shader_pal[0].grid_explicit_mix=1;
+  device.observe_on_demand=fake_observe_on_demand;
+  gml_render_bind_device(r,&device);gml_render_set_scene_device(r,1);
+  gml_render_application_surface_bind(r,screen,32,32,1);
+  CHECK(gml_render_begin_resident_base(r,screen,32,32,0,0));
+  gml_render_set_pending_fill(r,0xFF112233u);gml_render_flush_pending_fill(r);
+  CHECK(gml_render_scene_submit_pending(r));
+  r->active_shader=0;r->alphablend=1;r->interp=0;r->color_write_mask=15u;
+  for(unsigned draw=0;draw<3u;draw++){
+    unsigned column=draw==1u;
+    r->shader_pal[0].grid_id=column?2.0f:1.0f;
+    CHECK(gml_render_resident_sprite_font_glyph(r,0,4,4,2,2,0xFFFFFFu,.3));
+    CHECK(gml_render_scene_submit_pending(r) && r->resident_application_pass && !fake.readbacks);
+    CHECK(fake.last_opcode==GML_RENDER_OP_TEXTURED_QUAD &&
+      (fake.last_batch_source_ids[0]&UINT32_C(0x80000000)));
+    unsigned held=0u;
+    for(unsigned i=0;i<GML_MAPPED_GLYPHS;i++)
+      if(r->mapped_glyphs[i].runtime_rgba &&
+         !memcmp(r->mapped_glyphs[i].runtime_rgba,expected[column],16u)) held++;
+    CHECK(held==1u && r->mapped_glyph_next==(draw?2u:1u));
+  }
+  CHECK(!memcmp(r->atlas[0].px,source,sizeof source));
+  r->alphablend=0;
+  CHECK(!gml_render_resident_sprite_font_glyph(r,0,4,4,2,2,0xFFFFFFu,.3));
+  gml_render_free(r);free(r);
+  return 1;
+}
+
+/* An early Studio GUI copy with disabled blending selects the pixel-centre
+ * presentation leaf whether or not the application image has proved coverage. */
+static int resident_disabled_blend_gui_presentation(void){
+  for(unsigned opaque=0;opaque<2u;opaque++)
+  for(unsigned blending=0;blending<=opaque;blending++){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={.bytecode=16};
+    FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
+    uint32_t screen[24*18]={0};
+    CHECK(r && !gml_render_init(r,NULL));r->win=&content;r->app_draw_enable=0;
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(r,&device);gml_render_set_scene_device(r,1);
+    CHECK(gml_render_application_surface_ensure_owned(r,16,12));
+    for(unsigned i=0;i<16u*12u;i++) r->app_surface_owned[i]=opaque?0xFF315779u:0x70315779u;
+    CHECK(gml_render_application_surface_select_owned(r,(int)opaque));
+    CHECK(gml_render_begin_resident_base(r,screen,24,18,0,0));
+    gml_render_set_pending_fill(r,0xFF112233u);
+    gml_render_application_surface_publish(r);gml_render_gui_begin(r,24,18);
+    r->alphablend=(int)blending;
+    gml_draw_surface_stretched(r,0,0,0,24,18,0xFFFFFFu,1.0);
+    CHECK(!r->pending_presentation && gml_render_scene_submit_pending(r));
+    CHECK(fake.last_filter==GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT && !fake.readbacks);
+    CHECK(fake.last_quad.x[0]==0.0 && fake.last_quad.y[0]==0.0 &&
+      fake.last_quad.x[2]==24.0 && fake.last_quad.y[2]==18.0 &&
+      fake.last_quad.inverse_x[0]==24.0 && fake.last_quad.inverse_y[1]==18.0);
+    gml_render_gui_end(r);gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
 static int resident_deferred_borrowed_screen_materialization(void){
   for(unsigned written_target=0;written_target<2u;written_target++)
   for(unsigned suffix=0;suffix<2u;suffix++){
@@ -21841,6 +21924,8 @@ int main(void){
     else if(!strcmp(selected,"borrowed-screen-handoff")) passed=resident_borrowed_application_screen_handoff();
     else if(!strcmp(selected,"deferred-borrowed-screen")) passed=resident_deferred_borrowed_screen_materialization();
     else if(!strcmp(selected,"manual-point-surface")) passed=resident_manual_point_surface();
+    else if(!strcmp(selected,"palette-grid-glyph")) passed=resident_palette_grid_glyph();
+    else if(!strcmp(selected,"disabled-blend-gui-presentation")) passed=resident_disabled_blend_gui_presentation();
     else if(!strcmp(selected,"surface-capture-pending-fill")) passed=runtime_surface_capture_observes_pending_fill();
     else if(!strcmp(selected,"surface-sprite-append")) passed=runtime_sprite_surface_append_lifetime();
     else if(!strcmp(selected,"skip-cpu-draws")) passed=skip_cpu_draw_policy_preserves_observers();
@@ -22020,6 +22105,8 @@ int main(void){
   passed+=resident_borrowed_application_screen_handoff();
   passed+=resident_deferred_borrowed_screen_materialization();
   passed+=resident_manual_point_surface();
+  passed+=resident_disabled_blend_gui_presentation();
+  passed+=resident_palette_grid_glyph();
   passed+=resident_outline_coverage_public_order();
   passed+=resident_atlas_uv_refusal_preserves_queued_prefix();
   passed+=resident_application_sprite_cpu_fallback();
@@ -22245,7 +22332,7 @@ int main(void){
   passed+=resident_lazy_native_atlas();
   passed+=resident_unit_texel_magnification();
   passed+=opaque_rectangle_clear_complement();
-  enum { total=350 };
+  enum { total=352 };
   printf("render resource cases: passed=%d failed=%d\n",passed,total-passed);
   return passed==total?EXIT_SUCCESS:EXIT_FAILURE;
 }
