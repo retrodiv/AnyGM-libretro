@@ -645,12 +645,14 @@ uint64_t state_hash_bytes(const void *data,size_t size){
 }
 
 static void state_write_override_identity(CoreW *writer,const char *text){
-  if(!strstr(text,"statereserve|") && !strstr(text,"crtmode|") && !strstr(text,"roomspeed|")){
+  if(!strstr(text,"statereserve|") && !strstr(text,"crtmode|") && !strstr(text,"roomspeed|") &&
+     !strstr(text,"emptyscreen|")){
     cw_u64(writer,state_hash_bytes(text,strlen(text)));
     return;
   }
   /* Allocation policy does not change simulation, and a CRT mode or its room cadence belongs to
    * the live host option, which is no state identity either: neither is written into the state.
+   * Keeping an empty screen only withholds a presentation fallback, so it is left out too.
    * Retain the exact bytes and order of every other normalized directive, so existing content
    * identities remain unchanged. */
   char filtered[sizeof(((AnygmEngine *)0)->content_overrides_text)];
@@ -660,7 +662,8 @@ static void state_write_override_identity(CoreW *writer,const char *text){
   for(const char *line=text;*line;){
     const char *end=strchr(line,'\n');
     size_t length=end?(size_t)(end-line)+1u:strlen(line);
-    if(strncmp(line,"statereserve|",13) && !engine_override_is_host_policy(line)){
+    if(strncmp(line,"statereserve|",13) && strncmp(line,"emptyscreen|",12) &&
+       !engine_override_is_host_policy(line)){
       if(length>sizeof filtered-used){ writer->ok=0;return; }
       memcpy(filtered+used,line,length);used+=length;
     }

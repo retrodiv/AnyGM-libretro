@@ -123,6 +123,11 @@ Content overrides must be enabled. This declaration does not change the state fo
 arbitrary future growth, or make a fixed frontend resize an already allocated ring.
 It affects allocation only, so changing it does not invalidate a state's simulation identity.
 
+`emptyscreen|keep` declares that content which composes its own screen leaves an uncoloured
+frame as it is: the core skips its end-of-frame empty-screen check and application-surface
+fallback. See [Keeping an empty screen](CONTENT_CONFIGURATION.md#keeping-an-empty-screen).
+It is not part of state identity.
+
 `gamepad|keyboard` selects keyboard emulation for this content even when it contains optional
 joystick or gamepad functions. RetroPad directions and action buttons use the existing keyboard
 mapping; native pad connection, button and axis reads return inactive values. This is useful for

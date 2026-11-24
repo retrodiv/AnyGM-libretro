@@ -2573,6 +2573,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
    * monitor-sized target to arrive at it would also force the frame back onto the processor. */
   if (!render_presentation.application_draw_enabled && !engine->composed_frame &&
       !anygm_host_development_setting(&engine->host,"GML_NO_CRT") &&
+      !engine_overrides_keep_empty_screen(engine) &&
       !gml_render_deferred_presentation(&engine->render,NULL) &&
       !gml_render_recover_empty_screen(&engine->render,gtarget,gtw,gth,
                                        prx,pry,prw,prh,engine->aspect_force_active)) {

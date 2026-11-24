@@ -501,6 +501,25 @@ adds no state fields and does not change simulation identity. A fixed frontend c
 ring before the first frame, so install or edit the anchor before loading content; the reserve
 does not resize an existing ring or promise that arbitrary future growth will fit.
 
+## Keeping an empty screen
+
+When content turns off the automatic application-surface draw and composes the screen itself,
+the core checks at the end of each frame whether that screen was left without colour. If so, and
+the application surface has some, it draws the surface so that a compositor the core does not
+yet reproduce cannot leave a black picture. This fallback is not part of the original runner.
+The check reads the whole screen every frame: on a tiled GPU it costs a further full load and
+store of the screen even when it draws nothing.
+
+```ini
+[overrides]
+emptyscreen|keep
+```
+
+`emptyscreen|keep` declares that this content composes its own screen correctly. A frame it
+leaves without colour is then shown as it is, and the check is not made. The argument is only
+`keep`; scopes are not accepted. Content overrides must be enabled. The directive writes no
+state and is not part of state identity; it only withholds a presentation fallback.
+
 ## Lifecycle and bounds
 
 Configuration is read during preparation. Close/reopen content to reload
@@ -517,7 +536,8 @@ Effective override text and the launch-anchor envelope contribute to the
 active state configuration fingerprint. Replaced default assignments do not.
 [Declared CRT modes and room cadences](#declared-crt-mode) are excluded because they follow a
 live host option and write no state. The allocation-only `statereserve` declaration is excluded:
-changing a buffer minimum does not change simulation identity. Its enabled values contribute their
+changing a buffer minimum does not change simulation identity. So is
+[`emptyscreen|keep`](#keeping-an-empty-screen), which only withholds a presentation fallback. Its enabled values contribute their
 maximum across layers, so a later lower minimum cannot withdraw a larger one.
 Programs, parameters, ordered pipelines and patch declarations contribute to derived-content
 cache identity; bindings do not change declaration identity. Neither programs, patch bytes nor

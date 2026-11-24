@@ -1266,6 +1266,11 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
                      line_number);
             return 0;
           }
+        } else if(!strncmp(slot->code,"emptyscreen|",12)){
+          if(strcmp(slot->code+12,"keep")){
+            snprintf(error,error_capacity,"directive %d: emptyscreen| takes keep",line_number);
+            return 0;
+          }
         } else if(!strncmp(slot->code,"gamepad|",8)){
           if(strcmp(slot->code+8,"keyboard") && strcmp(slot->code+8,"single") &&
              strcmp(slot->code+8,"auto")){
@@ -1317,6 +1322,15 @@ size_t engine_overrides_state_reserve(const AnygmEngine *engine){
       reserve=bytes;
   }
   return reserve;
+}
+/* The content composes its own screen: a frame it leaves without colour is shown as it is,
+ * without the application-surface fallback and the whole-screen test that decides it. */
+int engine_overrides_keep_empty_screen(const AnygmEngine *engine){
+  int active=engine_boot_cheats_active(engine);
+  for(int i=0;i<active;i++)
+    if(engine->boot_cheats[i].enabled && !strcmp(engine->boot_cheats[i].code,"emptyscreen|keep"))
+      return 1;
+  return 0;
 }
 static void cheat_monitor_declaration(const CheatSlot *slots,int count,
                                       double *height,double *minimum,double *maximum){

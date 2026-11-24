@@ -69,6 +69,58 @@ static void crt_host_policy_declarations(void){
                            "?crt roomspeed|4,7|48\n"));
 }
 
+static void empty_screen_declarations(void){
+  CheatSlot slots[GML_MAX_CHEATS];int count=0;char error[256],effective[4096];
+  const char *invalid[]={"emptyscreen|","emptyscreen|draw","emptyscreen|keep|1",
+    "emptyscreen|Keep","?crt emptyscreen|keep","?gameres emptyscreen|keep"};
+  for(size_t i=0;i<sizeof invalid/sizeof invalid[0];i++)
+    assert(!engine_boot_overrides_parse(invalid[i],slots,&count,error,sizeof error));
+  assert(engine_boot_overrides_parse("emptyscreen|keep\n$probe=1\nemptyscreen|keep\n",
+                                     slots,&count,error,sizeof error));
+  assert(count==2 && engine_boot_overrides_text(slots,count,effective,sizeof effective));
+  assert(!strcmp(effective,"$probe=1\nemptyscreen|keep\n"));
+  AnygmEngine *engine=calloc(1,sizeof *engine);assert(engine);
+  engine->config.content_overrides=1;
+  memcpy(engine->boot_cheats,slots,sizeof slots[0]*(size_t)count);engine->boot_cheat_count=count;
+  assert(engine_overrides_keep_empty_screen(engine));
+  engine->boot_cheats[1].enabled=0;
+  assert(!engine_overrides_keep_empty_screen(engine));
+  engine->boot_cheats[1].enabled=1;engine->config.content_overrides=0;
+  assert(!engine_overrides_keep_empty_screen(engine));
+  free(engine);
+  /* Adding or removing the declaration keeps states made under the other anchor loadable. */
+  AnygmSyntheticContent fixture;assert(anygm_synthetic_content_create(&fixture));
+  char anchor[256],text[512];
+  snprintf(anchor,sizeof anchor,"%s/empty.anygm",fixture.directory);
+  const char *name=strrchr(fixture.path,'/');name=name?name+1:fixture.path;
+  AnygmHostServices services={0};services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *live=NULL;assert(anygm_create(&services,&live)==ANYGM_OK);
+  AnygmContentSource source={0};source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;source.path=fixture.path;
+  source.system_directory=fixture.directory;source.cache_directory=fixture.directory;
+  snprintf(text,sizeof text,"[anygm]\npayload=%s\n[overrides]\n$semantic_marker=7\n",name);
+  write_text(anchor,text);
+  assert(anygm_load(live,&source,NULL)==ANYGM_OK);
+  assert(!engine_overrides_keep_empty_screen(live));frame(live);
+  size_t capacity=anygm_state_size(live),written=0;
+  uint8_t *state=malloc(capacity);assert(state);
+  assert(anygm_state_save(live,state,capacity,&written)==ANYGM_OK);
+  anygm_unload(live);
+  snprintf(text,sizeof text,"[anygm]\npayload=%s\n[overrides]\nemptyscreen|keep\n"
+    "$semantic_marker=7\n",name);write_text(anchor,text);
+  assert(anygm_load(live,&source,NULL)==ANYGM_OK);
+  assert(engine_overrides_keep_empty_screen(live));
+  assert(anygm_state_load(live,state,written)==ANYGM_OK);frame(live);
+  anygm_unload(live);
+  snprintf(text,sizeof text,"[anygm]\npayload=%s\n[overrides]\nemptyscreen|keep\n"
+    "$semantic_marker=8\n",name);write_text(anchor,text);
+  assert(anygm_load(live,&source,NULL)==ANYGM_OK);
+  assert(anygm_state_load(live,state,written)==ANYGM_ERROR_STATE_MISMATCH);
+  anygm_destroy(live);free(state);
+  assert(!remove(anchor));anygm_synthetic_content_destroy(&fixture);
+}
+
 static void state_reserve_declarations(void){
   CheatSlot slots[GML_MAX_CHEATS];int count=0;char error[256];
   const char *invalid[]={"","0","-1","1.5","0x100000","1073741825",
@@ -898,6 +950,7 @@ int main(void){
   crt_setting_callback();
   crt_setting_layout();
   crt_host_policy_declarations();
+  empty_screen_declarations();
   state_reserve_declarations();
   roomskip_destination();
   roomalarm_declaration();
