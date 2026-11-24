@@ -203,6 +203,8 @@ void libretro_options_finalize_graphics(bool available){ (void)available; }
 const char *libretro_options_value(const char *key){ (void)key; return NULL; }
 void libretro_options_publish_rooms(void){}
 void libretro_options_release(void){}
+void libretro_options_prepare_rotation(void){}
+void libretro_options_release_rotation(void){}
 void libretro_input_register(void){}
 void libretro_input_snapshot(AnygmInputFrame *input,uint32_t width,uint32_t height){
   (void)width; (void)height;

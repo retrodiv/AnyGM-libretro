@@ -454,8 +454,9 @@ the picture. An anchor can name the mode instead:
 ?crt roomspeed|3,5-6|50
 ```
 
-`crtmode|width|height|hz` hands the host a frame of exactly `width` by `height` with the picture
-centred at its own pixel size between black margins, and asks the host to present at `hz`. Width
+`crtmode|width|height|hz` defines a canvas of exactly `width` by `height` before image rotation,
+with the picture centred at its own pixel size between black margins. It asks the host to present at
+`hz`. Width
 is 16 to 640, height 16 to 480 and refresh 2 to 300, all integers. A picture larger than the
 declared extent keeps the automatic CRT policy at the declared refresh. Logical steps and game
 speed are unchanged: a slower game holds pictures on some refreshes and a faster one runs several

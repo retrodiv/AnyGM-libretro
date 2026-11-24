@@ -72,6 +72,7 @@ typedef struct LibretroAdapter {
   AnygmFrameOutput frame;
   AnygmAvInfo av;
   AnygmConfig config;
+  unsigned requested_frontend_rotation;
   void *display_mode;
   uint32_t display_requested_hz,display_active_hz,display_source_hz;
   bool display_notification_pending;
@@ -93,6 +94,7 @@ typedef struct LibretroAdapter {
   bool loaded;
   bool provisional_av_exposed;
   bool startup_av_notification_pending;
+  float announced_aspect;
   bool scene_gpu_selected;
   bool content_glsl_selected;
   bool content_glsl_candidate;
@@ -165,6 +167,8 @@ void libretro_cache_end(void);
 void libretro_cache_abandon(void);
 void libretro_options_register(void);
 void libretro_options_apply(bool all_fields);
+void libretro_options_prepare_rotation(void);
+void libretro_options_release_rotation(void);
 void libretro_options_finalize_graphics(bool device_available);
 const char *libretro_options_value(const char *key);
 void libretro_options_publish_rooms(void);

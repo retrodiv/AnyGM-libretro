@@ -549,12 +549,29 @@ static void crt_adjustment_forces_the_logical_raster(void){
   begin(2,3);
   const struct retro_core_option_v2_definition *raster=definition("anygm_render_game_resolution");
   const struct retro_core_option_v2_definition *crt=definition("anygm_adjust_crt_tv");
-  if(!crt || !raster || raster!=crt+1 || strcmp(crt->desc,"Adjust for 4:3 CRT TV") ||
+  const struct retro_core_option_v2_definition *oversize=definition("anygm_crt_oversize_handling");
+  const struct retro_core_option_v2_definition *orientation=definition("anygm_os_screen_orientation");
+  const struct retro_core_option_v2_definition *rotation=definition("anygm_image_rotation");
+  const struct retro_core_option_v2_definition *shaders=definition("anygm_content_shader_readback");
+  if(!crt || !raster || raster!=crt+3 || strcmp(crt->desc,"Adjust for 4:3 CRT TV") ||
      strcmp(crt->default_value,"Off"))
     complain("CRT adjustment must precede game resolution and default to Off");
+  if(!oversize || !orientation || !rotation || !shaders ||
+     oversize!=crt+1 || orientation!=oversize+1 || shaders!=rotation+1)
+    complain("CRT and rotation options must be next to their related settings");
+  else if(strcmp(oversize->category_key,"video") || strcmp(orientation->category_key,"video") ||
+          strcmp(rotation->category_key,"video") || strcmp(oversize->desc,"CRT Oversize Handling") ||
+          strcmp(orientation->desc,"OS Screen Orientation") || strcmp(rotation->desc,"Image Rotation") ||
+          strcmp(oversize->default_value,"W:640 H:480") || strcmp(orientation->default_value,"Horizontal") ||
+          strcmp(rotation->default_value,"None"))
+    complain("CRT and rotation labels, categories and defaults must match their menu");
   if(!menu_time_visibility){ complain("CRT visibility callback missing"); return; }
   libretro_options_apply(true);
   expect("CRT default",applied_config.values.adjust_crt_tv,0u);
+  expect("CRT oversize default",applied_config.values.crt_oversize_small,0u);
+  expect("CRT keep-axis default",applied_config.values.crt_oversize_keep,0u);
+  expect("OS orientation default",applied_config.values.crt_vertical,0u);
+  expect("image rotation default",applied_config.values.image_rotation,ANYGM_IMAGE_ROTATION_NONE);
   answered_monitor_value="1920";
   answered_aspect_value="16:9";
   for(unsigned raster_on=0;raster_on<2;raster_on++){
@@ -565,6 +582,9 @@ static void crt_adjustment_forces_the_logical_raster(void){
       libretro_options_apply(false);
       unsigned effective=raster_on || crt_on;
       expect("CRT always visible",shown("anygm_adjust_crt_tv"),1u);
+      expect("CRT size visibility",shown("anygm_crt_oversize_handling"),crt_on);
+      expect("OS orientation visibility",shown("anygm_os_screen_orientation"),crt_on);
+      expect("image rotation always visible",shown("anygm_image_rotation"),1u);
       expect("raster selector visibility",shown("anygm_render_game_resolution"),!crt_on);
       expect("effective raster",g_libretro.config.present_logical_raster,effective);
       expect("CRT selection",applied_config.values.adjust_crt_tv,crt_on);
@@ -588,6 +608,15 @@ static void crt_adjustment_forces_the_logical_raster(void){
   const char *flat=flat_text("anygm_adjust_crt_tv");
   if(!flat || strcmp(flat,"Adjust for 4:3 CRT TV; Off|On"))
     complain("legacy CRT option declaration differs");
+  flat=flat_text("anygm_crt_oversize_handling");
+  if(!flat || strcmp(flat,"CRT Oversize Handling; W:640 H:480|W:Keep H:480|W:320 H:240|W:Keep H:240"))
+    complain("legacy CRT oversize declaration differs");
+  flat=flat_text("anygm_os_screen_orientation");
+  if(!flat || strcmp(flat,"OS Screen Orientation; Horizontal|Vertical"))
+    complain("legacy OS orientation declaration differs");
+  flat=flat_text("anygm_image_rotation");
+  if(!flat || strcmp(flat,"Image Rotation; None|Left|Right|Upside Down"))
+    complain("legacy rotation declaration differs");
 }
 
 /* The runtime can poll changed values before the menu asks whether to rebuild its list. */

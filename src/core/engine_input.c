@@ -382,8 +382,35 @@ void engine_input_poll_mouse(AnygmEngine *engine){
   engine->mouse_wheel=engine->input.wheel_delta;
   int px=engine->input.pointer_x,py=engine->input.pointer_y;
   int pp=engine->input.pointer_pressed?1:0;
-  int dx=engine->input.mouse_delta_x,dy=engine->input.mouse_delta_y;
+  double dx=engine->input.mouse_delta_x,dy=engine->input.mouse_delta_y;
   unsigned ow = engine->output_width ? engine->output_width : engine->width, oh = engine->output_height ? engine->output_height : engine->height;
+  unsigned rotation=engine->config.image_rotation;
+  if(rotation){
+    unsigned width=0,height=0;
+    engine_host_extent(engine,&width,&height);
+    if(px>=0 && py>=0 && width && height){
+      unsigned displayed_width=width,displayed_height=height;
+      engine_rotate_extent(rotation,&displayed_width,&displayed_height);
+      /* An inclusive host endpoint can name the far edge, one past the final pixel. */
+      if((unsigned)px>=displayed_width) px=(int)displayed_width-1;
+      if((unsigned)py>=displayed_height) py=(int)displayed_height-1;
+      int x=px;
+      if(rotation==ANYGM_IMAGE_ROTATION_LEFT){
+        px=(int)width-1-py;
+        py=x;
+      }else if(rotation==ANYGM_IMAGE_ROTATION_RIGHT){
+        px=py;
+        py=(int)height-1-x;
+      }else{
+        px=(int)width-1-px;
+        py=(int)height-1-py;
+      }
+    }
+    double x=dx;
+    if(rotation==ANYGM_IMAGE_ROTATION_LEFT){ dx=-dy; dy=x; }
+    else if(rotation==ANYGM_IMAGE_ROTATION_RIGHT){ dx=dy; dy=-x; }
+    else { dx=-dx; dy=-dy; }
+  }
   unsigned crop_x=0,crop_y=0,crop_width=ow,crop_height=oh;
   int cropped=engine_present_crop_rect(engine,ow,oh,&crop_x,&crop_y,&crop_width,&crop_height);
   if(engine->host_canvas_active && engine->host_canvas_width>0 && engine->host_canvas_height>0){
@@ -393,8 +420,8 @@ void engine_input_poll_mouse(AnygmEngine *engine){
     if(py>=0)
       py=(int)lround((py-engine->host_canvas_y)*(double)crop_height/engine->host_canvas_height)+
          (cropped?(int)crop_y:0);
-    dx=(int)lround(dx*(double)crop_width/engine->host_canvas_width);
-    dy=(int)lround(dy*(double)crop_height/engine->host_canvas_height);
+    dx=round(dx*crop_width/engine->host_canvas_width);
+    dy=round(dy*crop_height/engine->host_canvas_height);
   }
   int mmode = core_opt_mouse_mode(engine);              /* 0 auto, 1 absolute, 2 relative */
   int pointer_signal=(px>=0 && py>=0) || pp;

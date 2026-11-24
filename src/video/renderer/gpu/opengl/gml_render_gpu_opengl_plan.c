@@ -132,6 +132,8 @@ static void begin_plan_state(GmlGpuBackend *backend,uint32_t target_height){
   backend->gl.UseProgram(backend->program);
   backend->gl.Uniform1i(backend->u_source,0);
   backend->gl.Uniform1i(backend->u_rgb_query,0);
+  backend->gl.Uniform1i(backend->u_rotation,0);
+  backend->gl.Uniform1i(backend->u_area_filter,0);
   backend->gl.Uniform1i(backend->u_map_x,1);
   backend->gl.Uniform1i(backend->u_map_y,2);
   backend->gl.Uniform1i(backend->u_target_height,(GLint)target_height);
@@ -256,8 +258,9 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
       int resident_source=0;
       int sharp=op->opcode==GML_PLAN_OP_BLIT_OPAQUE_SHARP_BILINEAR;
       int filtered=sharp || op->opcode==GML_PLAN_OP_BLIT_OPAQUE_BOX;
-      GLint filter_destination[2]={filtered?(GLint)op->destination.width:0,
-                                   filtered?(GLint)op->destination.height:0};
+      int area=op->opcode==GML_PLAN_OP_BLIT_OPAQUE_AREA;
+      GLint filter_destination[2]={filtered || area?(GLint)op->destination.width:0,
+                                   filtered || area?(GLint)op->destination.height:0};
       if(op->opcode==GML_PLAN_OP_PRESENT_CPU_FRAME){
         axis_x=identity_axis(image->width);
         axis_y=identity_axis(image->height);
@@ -294,7 +297,7 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
         failed=1;
         break;
       }
-      if(!filtered &&
+      if(!filtered && !area &&
          (!gml_gpu_opengl_upload_axis(backend,index*2u,&axis_x,op->destination.width,counters,&map_x) ||
           !gml_gpu_opengl_upload_axis(backend,index*2u+1u,&axis_y,op->destination.height,counters,&map_y))){
         gml_gpu_opengl_record_error(error,error_capacity,"graphics axis map upload failed");
@@ -309,6 +312,7 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
       backend->gl.Uniform1i(backend->u_sharp_scale,
                             sharp?(GLint)gml_plan_sharp_scale(&op->destination,image):0);
       backend->gl.Uniform2iv(backend->u_filter_destination,1,filter_destination);
+      backend->gl.Uniform1i(backend->u_area_filter,area);
       backend->gl.ActiveTexture(GL_TEXTURE0);
       backend->gl.BindTexture(GL_TEXTURE_2D,source_name);
       if(filtered){
@@ -371,12 +375,12 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
 
 /* R03-PRESENT-INTEGER-SHIFT: an immutable complete picture is sampled at integer
  * indices. The canonical cache is never a target of this delivery-only pass. */
-int gml_render_gpu_opengl_present_shift(GmlGpuBackend *backend,uintptr_t framebuffer,
-  uint32_t width,uint32_t height,uint64_t generation,int dx,int dy,int scratch,
+int gml_render_gpu_opengl_present_transform(GmlGpuBackend *backend,uintptr_t framebuffer,
+  uint32_t width,uint32_t height,uint64_t generation,int dx,int dy,unsigned rotation,int scratch,
   GmlGpuCounters *counters,char *error,size_t error_capacity){
   if(!backend || !backend->loaded || !backend->program || !width || !height ||
      width>GML_PLAN_MAX_EXTENT || height>GML_PLAN_MAX_EXTENT ||
-     (scratch!=0 && scratch!=1)) return 0;
+     rotation>3u || (scratch!=0 && scratch!=1)) return 0;
   GLuint source=0,map_x=0,map_y=0;
   if(scratch){
     if(!backend->readback_present_valid || backend->readback_width!=width ||
@@ -394,18 +398,27 @@ int gml_render_gpu_opengl_present_shift(GmlGpuBackend *backend,uintptr_t framebu
   uint32_t ax=(uint32_t)(dx<0?-dx:dx),ay=(uint32_t)(dy<0?-dy:dy);
   GmlPlanRect whole={0,0,width,height};
   GmlPlanRect written={dx>0?dx:0,dy>0?dy:0,width-ax,height-ay};
-  GmlPlanAxis x=identity_axis(width),y=identity_axis(height);
-  x.destination_first=dx<0?-dx:0;y.destination_first=dy<0?-dy:0;
-  if(!gml_gpu_opengl_upload_axis(backend,0u,&x,written.width,counters,&map_x) ||
-     !gml_gpu_opengl_upload_axis(backend,1u,&y,written.height,counters,&map_y)) return 0;
+  if(rotation){
+    if(rotation&1u){ whole.width=height; whole.height=width; }
+    written=whole;
+  }else{
+    GmlPlanAxis x=identity_axis(width),y=identity_axis(height);
+    x.destination_first=dx<0?-dx:0;
+    y.destination_first=dy<0?-dy:0;
+    if(!gml_gpu_opengl_upload_axis(backend,0u,&x,written.width,counters,&map_x) ||
+       !gml_gpu_opengl_upload_axis(backend,1u,&y,written.height,counters,&map_y)) return 0;
+  }
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,(GLuint)framebuffer);
-  begin_plan_state(backend,height);
-  gml_gpu_opengl_set_rect(backend,&whole,height);
-  backend->gl.ClearColor(0.0f,0.0f,0.0f,1.0f);
-  backend->gl.Clear(GL_COLOR_BUFFER_BIT);
-  gml_gpu_opengl_set_rect(backend,&written,height);
-  backend->gl.Uniform1i(backend->u_dest_x,written.x);
-  backend->gl.Uniform1i(backend->u_dest_y,written.y);
+  begin_plan_state(backend,whole.height);
+  if(!rotation){
+    gml_gpu_opengl_set_rect(backend,&whole,whole.height);
+    backend->gl.ClearColor(0.0f,0.0f,0.0f,1.0f);
+    backend->gl.Clear(GL_COLOR_BUFFER_BIT);
+  }
+  gml_gpu_opengl_set_rect(backend,&written,whole.height);
+  backend->gl.Uniform1i(backend->u_dest_x,rotation?dx:written.x);
+  backend->gl.Uniform1i(backend->u_dest_y,rotation?dy:written.y);
+  backend->gl.Uniform1i(backend->u_rotation,(GLint)rotation);
   backend->gl.Uniform1i(backend->u_source_height,(GLint)height);
   backend->gl.Uniform1i(backend->u_resident_source,1);
   backend->gl.Uniform1i(backend->u_sharp_scale,0);

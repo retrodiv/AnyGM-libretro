@@ -204,6 +204,13 @@ int gml_render_plan_add_blit_box(GmlRenderPlan *plan,uint32_t source,
   return 1;
 }
 
+int gml_render_plan_add_blit_area(GmlRenderPlan *plan,uint32_t source,
+                                  GmlPlanRect destination,uint32_t alpha_write){
+  if(!gml_render_plan_add_blit_box(plan,source,destination,alpha_write)) return 0;
+  plan->operations[plan->operation_count-1].opcode=GML_PLAN_OP_BLIT_OPAQUE_AREA;
+  return 1;
+}
+
 int gml_render_plan_add_blit_sharp_bilinear(GmlRenderPlan *plan,uint32_t source,
                                             GmlPlanRect destination,uint32_t alpha_write){
   GmlPlanOp *op=append(plan);
@@ -309,16 +316,19 @@ int gml_render_plan_validate(const GmlRenderPlan *plan){
                  image->resident_image.resource_class==GML_RENDER_RESOURCE_SCREEN;
       if((op->opcode!=GML_PLAN_OP_BLIT_OPAQUE_NEAREST &&
           op->opcode!=GML_PLAN_OP_BLIT_OPAQUE_BOX &&
-          op->opcode!=GML_PLAN_OP_BLIT_OPAQUE_SHARP_BILINEAR) ||
+          op->opcode!=GML_PLAN_OP_BLIT_OPAQUE_SHARP_BILINEAR &&
+          op->opcode!=GML_PLAN_OP_BLIT_OPAQUE_AREA) ||
          (!application && !screen) ||
          !image->resident_image.content_version || !image->opaque) return 0;
     } else if(image->device_completed){
-      if(plan->target!=GML_PLAN_TARGET_HOST_FRAMEBUFFER ||
+      if((plan->target!=GML_PLAN_TARGET_HOST_FRAMEBUFFER &&
+          plan->target!=GML_PLAN_TARGET_DEVICE_PRESENTATION) ||
          image->image_class!=GML_PLAN_IMAGE_COMPLETED_FRAME || !image->opaque ||
          image->device_completed!=1u ||
          (op->opcode!=GML_PLAN_OP_BLIT_OPAQUE_NEAREST &&
           op->opcode!=GML_PLAN_OP_BLIT_OPAQUE_BOX &&
-          op->opcode!=GML_PLAN_OP_BLIT_OPAQUE_SHARP_BILINEAR)) return 0;
+          op->opcode!=GML_PLAN_OP_BLIT_OPAQUE_SHARP_BILINEAR &&
+          op->opcode!=GML_PLAN_OP_BLIT_OPAQUE_AREA)) return 0;
     } else if(!image->cpu_pixels) return 0;
     switch(op->opcode){
       case GML_PLAN_OP_BLIT_OPAQUE_NEAREST:
@@ -327,6 +337,7 @@ int gml_render_plan_validate(const GmlRenderPlan *plan){
         if(op->axis_x.source_extent!=image->width) return 0;
         if(op->axis_y.source_extent!=image->height) return 0;
         break;
+      case GML_PLAN_OP_BLIT_OPAQUE_AREA:
       case GML_PLAN_OP_BLIT_OPAQUE_BOX:
         /* The reduction reads the whole source and writes the whole destination rectangle. */
         if(image->width<op->destination.width && image->height<op->destination.height) return 0;
@@ -457,10 +468,17 @@ int gml_render_plan_gpu_eligible(GmlRenderPlan *plan){
       plan->fallback_reason=GML_PLAN_FALLBACK_UNSUPPORTED_OPERATION;
       return 0;
     }
+    if(op->opcode==GML_PLAN_OP_BLIT_OPAQUE_AREA &&
+       ((!plan->images[op->source].resident_image.resource_class &&
+         !plan->images[op->source].device_completed) || op->alpha_write!=0xFFu)){
+      plan->fallback_reason=GML_PLAN_FALLBACK_BOX_REDUCTION;
+      return 0;
+    }
     if(op->opcode!=GML_PLAN_OP_CLEAR_XRGB &&
        op->opcode!=GML_PLAN_OP_BLIT_OPAQUE_NEAREST &&
        op->opcode!=GML_PLAN_OP_BLIT_OPAQUE_BOX &&
        op->opcode!=GML_PLAN_OP_BLIT_OPAQUE_SHARP_BILINEAR &&
+       op->opcode!=GML_PLAN_OP_BLIT_OPAQUE_AREA &&
        op->opcode!=GML_PLAN_OP_PRESENT_CPU_FRAME &&
        op->opcode!=GML_PLAN_OP_SHADER_DRAW){
       plan->fallback_reason=GML_PLAN_FALLBACK_UNSUPPORTED_OPERATION;

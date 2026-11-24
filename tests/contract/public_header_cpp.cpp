@@ -3,7 +3,7 @@
  */
 #include "anygm.h"
 
-static_assert(ANYGM_API_VERSION==11u,"unexpected API version");
+static_assert(ANYGM_API_VERSION==12u,"unexpected API version");
 static_assert(ANYGM_STATE_SCHEMA==70u,"unexpected state schema");
 
 int anygm_public_header_cpp_probe(){

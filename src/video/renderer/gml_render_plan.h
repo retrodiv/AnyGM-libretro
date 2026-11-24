@@ -106,7 +106,9 @@ typedef enum GmlPlanOpcode {
   /* Software sharp bilinear: integer nearest prescale followed by bilinear at pixel centres.
    * The shared prescale is ceil(min(destination_width/source_width,
    * destination_height/source_height)), at least one. */
-  GML_PLAN_OP_BLIT_OPAQUE_SHARP_BILINEAR=5
+  GML_PLAN_OP_BLIT_OPAQUE_SHARP_BILINEAR=5,
+  /* Average each fractional source footprint with coverage weights. */
+  GML_PLAN_OP_BLIT_OPAQUE_AREA=6
 } GmlPlanOpcode;
 
 typedef struct GmlPlanRect {
@@ -274,6 +276,8 @@ static inline uint32_t gml_plan_sharp_scale(const GmlPlanRect *destination,
   return x<y?x:y;
 }
 
+int gml_render_plan_add_blit_area(GmlRenderPlan *plan,uint32_t source,
+                                  GmlPlanRect destination,uint32_t alpha_write);
 int gml_render_plan_add_blit_sharp_bilinear(GmlRenderPlan *plan,uint32_t source,
                                             GmlPlanRect destination,uint32_t alpha_write);
 /* The terminal presentation drawn through the content's own program. The shader record is copied

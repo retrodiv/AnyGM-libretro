@@ -327,6 +327,14 @@ Enabled content configuration may override this load-time selection through
 [`renderer|...`](docs/CONTENT_CONFIGURATION.md#content-renderer-selection).
 It requests the same rendering policy and graphics availability as the corresponding menu option.
 
+## CRT display and rotation
+
+In the **Video** core options, **Adjust for 4:3 CRT TV** keeps the game raster and fits it to
+the CRT. **OS Screen Orientation** tells the core how the system has already oriented the
+screen. **Image Rotation** turns the picture, including the GUI. **CRT Oversize Handling**
+selects the fit for images that exceed the CRT limits. The [CRT display guide](docs/PORTING.md#crt-presentation-and-image-rotation)
+shows how the options combine for native portrait, native landscape and 1920×1080 images.
+
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)

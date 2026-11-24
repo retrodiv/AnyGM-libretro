@@ -112,7 +112,9 @@ int engine_build_host_plan(AnygmEngine *engine,GmlRenderPlan *plan,uint32_t targ
   canvas.y=engine->host_canvas_y;
   canvas.width=(uint32_t)engine->host_canvas_width;
   canvas.height=(uint32_t)engine->host_canvas_height;
-  if(engine->host_crt_active){
+  if(engine->host_crt_area_filter){
+    if(!gml_render_plan_add_blit_area(plan,image,canvas,0u)) return 0;
+  } else if(engine->host_crt_active){
     if(!gml_render_plan_add_blit_sharp_bilinear(plan,image,canvas,0u)) return 0;
   } else if(canvas.width>=source.width && canvas.height>=source.height){
     GmlPlanAxis axis_x,axis_y;
@@ -146,21 +148,60 @@ static void present_shift_rows(uint32_t *destination,const uint32_t *source,
     }
   }
 }
-static const uint32_t *present_shift_frame(AnygmEngine *engine,const uint32_t *source,
-                                           unsigned width,unsigned height){
-  if(!engine || !source || width==0 || height==0) return source;
-  int dx=engine->present_shift_x, dy=engine->present_shift_y;
-  if(dx==0 && dy==0) return source;
-  if((unsigned)abs(dx)>=width || (unsigned)abs(dy)>=height) return source;
-  size_t need=(size_t)width*(size_t)height;
-  if(need>SIZE_MAX/sizeof(uint32_t)) return source;
-  if(engine->present_shift_cap<need){
-    uint32_t *grown=realloc(engine->present_shift_screen,need*sizeof(uint32_t));
-    if(!grown) return source;
-    engine->present_shift_screen=grown;
-    engine->present_shift_cap=need;
+void engine_rotate_extent(unsigned rotation,unsigned *width,unsigned *height){
+  if(rotation&1u){
+    unsigned swap=*width;
+    *width=*height;
+    *height=swap;
   }
-  present_shift_rows(engine->present_shift_screen,source,width,height,dx,dy);
+}
+
+static const uint32_t *present_transform_frame(AnygmEngine *engine,const uint32_t *source,
+                                               unsigned *width,unsigned *height){
+  unsigned source_width=*width,source_height=*height;
+  unsigned rotation=engine->host_rotation;
+  int dx=engine->present_shift_x,dy=engine->present_shift_y;
+  if(dx>= (int)source_width || dx<=-(int)source_width ||
+     dy>= (int)source_height || dy<=-(int)source_height) dx=dy=0;
+  if(!rotation && !dx && !dy) return source;
+  size_t count=(size_t)source_width*source_height;
+  if(engine->present_shift_cap<count){
+    size_t bytes=count*sizeof(uint32_t);
+    if(!anygm_host_permits_allocation(&engine->host,bytes)) return rotation?NULL:source;
+    uint32_t *grown=realloc(engine->present_shift_screen,bytes);
+    if(!grown) return rotation?NULL:source;
+    engine->present_shift_screen=grown;
+    engine->present_shift_cap=count;
+  }
+  uint32_t *destination=engine->present_shift_screen;
+  if(!rotation){
+    present_shift_rows(destination,source,source_width,source_height,dx,dy);
+  }else{
+    engine_rotate_extent(rotation,width,height);
+    /* Work along contiguous destination rows, undoing the turn before the content's shift. */
+    int step_x=rotation==ANYGM_IMAGE_ROTATION_UPSIDE_DOWN?-1:0;
+    int step_y=(rotation==ANYGM_IMAGE_ROTATION_LEFT)-(rotation==ANYGM_IMAGE_ROTATION_RIGHT);
+    int step=step_x+step_y*(int)source_width;
+    for(unsigned y=0;y<*height;y++){
+      int sx,sy;
+      if(rotation==ANYGM_IMAGE_ROTATION_LEFT){
+        sx=(int)(source_width-1-y)-dx;
+        sy=-dy;
+      }else if(rotation==ANYGM_IMAGE_ROTATION_RIGHT){
+        sx=(int)y-dx;
+        sy=(int)source_height-1-dy;
+      }else{
+        sx=(int)source_width-1-dx;
+        sy=(int)(source_height-1-y)-dy;
+      }
+      int index=sy*(int)source_width+sx;
+      for(unsigned x=0;x<*width;x++,index+=step){
+        *destination++=(unsigned)sx<source_width && (unsigned)sy<source_height?source[index]:0u;
+        sx+=step_x;
+        sy+=step_y;
+      }
+    }
+  }
   gml_render_dispatch_cpu_composition(&engine->render,GML_RENDER_SCENE_SURFACE);
   return engine->present_shift_screen;
 }
@@ -171,46 +212,47 @@ int resolve_host_frame(AnygmEngine *engine,const uint32_t **pixels,
   engine->host_plan_valid=0;
   /* Every path from here reads the completed frame, so it has to be the canonical one. */
   if(!engine_materialize_completed_frame(engine)) return 0;
-  if(!engine->host_canvas_active){
-    if(pixels) *pixels=present_shift_frame(engine,engine->screen,host_width,host_height);
-    if(width) *width=host_width;
-    if(height) *height=host_height;
-    return 1;
+  const uint32_t *source=engine->screen;
+  if(engine->host_canvas_active){
+    if(!engine->host_screen &&
+       !anygm_host_permits_allocation(&engine->host,(size_t)host_width*host_height*sizeof(uint32_t)))
+      return 0;
+    if(!ensure_scratch_buffer(engine,&engine->host_screen)) return 0;
+    /* The scratch buffer is allocated black and the scaler rewrites every pixel of the canvas
+     * rectangle each frame, so the margins around it only need clearing when the geometry that
+     * defines them changes. The buffer is read with host_width as its stride, so a changed host
+     * extent reinterprets every row and has to clear as well. */
+    int clear_required=
+       !engine->host_clear_valid ||
+       engine->host_clear_host_width!=host_width ||
+       engine->host_clear_host_height!=host_height ||
+       engine->host_clear_canvas_x!=engine->host_canvas_x ||
+       engine->host_clear_canvas_y!=engine->host_canvas_y ||
+       engine->host_clear_canvas_width!=engine->host_canvas_width ||
+       engine->host_clear_canvas_height!=engine->host_canvas_height;
+    if(clear_required){
+      engine->host_clear_valid=1;
+      engine->host_clear_host_width=host_width;
+      engine->host_clear_host_height=host_height;
+      engine->host_clear_canvas_x=engine->host_canvas_x;
+      engine->host_clear_canvas_y=engine->host_canvas_y;
+      engine->host_clear_canvas_width=engine->host_canvas_width;
+      engine->host_clear_canvas_height=engine->host_canvas_height;
+    }
+    if(!engine_build_host_plan(engine,&engine->host_plan,GML_PLAN_TARGET_CPU_FRAME,
+                               host_width,host_height,clear_required) ||
+       !gml_render_cpu_plan_execute_pooled(&engine->host_plan,engine->host_screen,host_width,
+                                                &engine->render)){
+      engine->host_clear_valid=0;
+      return 0;
+    }
+    engine->host_plan_valid=1;
+    source=engine->host_screen;
   }
-  if(!engine->host_screen &&
-     !anygm_host_permits_allocation(&engine->host,(size_t)host_width*host_height*sizeof(uint32_t)))
-    return 0;
-  if(!ensure_scratch_buffer(engine,&engine->host_screen)) return 0;
-  /* The scratch buffer is allocated black and the scaler rewrites every pixel of the canvas
-   * rectangle each frame, so the margins around it only need clearing when the geometry that
-   * defines them changes. The buffer is read with host_width as its stride, so a changed host
-   * extent reinterprets every row and has to clear as well. */
-  int clear_required=
-     !engine->host_clear_valid ||
-     engine->host_clear_host_width!=host_width ||
-     engine->host_clear_host_height!=host_height ||
-     engine->host_clear_canvas_x!=engine->host_canvas_x ||
-     engine->host_clear_canvas_y!=engine->host_canvas_y ||
-     engine->host_clear_canvas_width!=engine->host_canvas_width ||
-     engine->host_clear_canvas_height!=engine->host_canvas_height;
-  if(clear_required){
-    engine->host_clear_valid=1;
-    engine->host_clear_host_width=host_width;
-    engine->host_clear_host_height=host_height;
-    engine->host_clear_canvas_x=engine->host_canvas_x;
-    engine->host_clear_canvas_y=engine->host_canvas_y;
-    engine->host_clear_canvas_width=engine->host_canvas_width;
-    engine->host_clear_canvas_height=engine->host_canvas_height;
-  }
-  if(!engine_build_host_plan(engine,&engine->host_plan,GML_PLAN_TARGET_CPU_FRAME,
-                             host_width,host_height,clear_required) ||
-     !gml_render_cpu_plan_execute_pooled(&engine->host_plan,engine->host_screen,host_width,
-                                              &engine->render)){
-    engine->host_clear_valid=0;
-    return 0;
-  }
-  engine->host_plan_valid=1;
-  if(pixels) *pixels=present_shift_frame(engine,engine->host_screen,host_width,host_height);
+  if(pixels){
+    *pixels=present_transform_frame(engine,source,&host_width,&host_height);
+    if(!*pixels) return 0;
+  }else engine_rotate_extent(engine->host_rotation,&host_width,&host_height);
   if(width) *width=host_width;
   if(height) *height=host_height;
   return 1;
@@ -808,13 +850,17 @@ static int aspect_canvas_present_res(AnygmEngine *engine,unsigned base_w, unsign
 }
 /* One relative, inclusive 10% rule for forced shapes and CRT padding. Integer cross-products
  * keep exact boundary rasters inside the interval without floating-point endpoint drift. */
-static int aspect_within_tolerance(unsigned width,unsigned height,int mode){
-  unsigned numerator,denominator;
+static int aspect_fraction_within_tolerance(unsigned width,unsigned height,
+                                            unsigned numerator,unsigned denominator){
   if(!width || !height) return 0;
-  gmc_aspect_force_fraction(mode,&numerator,&denominator);
   uint64_t actual=(uint64_t)width*denominator*10u;
   uint64_t target=(uint64_t)height*numerator;
   return actual>=target*9u && actual<=target*11u;
+}
+static int aspect_within_tolerance(unsigned width,unsigned height,int mode){
+  unsigned numerator,denominator;
+  gmc_aspect_force_fraction(mode,&numerator,&denominator);
+  return aspect_fraction_within_tolerance(width,height,numerator,denominator);
 }
 static void apply_aspect_force_to_res(AnygmEngine *engine,unsigned base_w, unsigned base_h,
                                       unsigned *ow, unsigned *oh) {
@@ -970,7 +1016,38 @@ static int content_keeps_aspect_ratio(const AnygmEngine *engine){
          !anygm_policy_uses_classic_runtime(&engine->win) &&
          engine->win.option_scaling<0;
 }
-static void host_canvas_update(AnygmEngine *engine){
+/* Use the fixed canvas for the picture's visual proportions, with native samples along the
+ * variable axis. For a narrow picture, add samples to the margins rather than scaling that axis.
+ * When padding would exceed the maximum host extent, the host can add the remaining bars. */
+static void fit_crt_keep_axis(AnygmEngine *engine,unsigned source_width,unsigned source_height,
+                             int vertical,unsigned scale,int cropped){
+  unsigned kept=vertical?source_height:source_width;
+  unsigned other=vertical?source_width:source_height;
+  unsigned fixed=3u*scale;
+  unsigned fitted=fixed;
+  unsigned ideal=(other*4u+2u)/3u;
+  if(kept>=ideal){
+    ideal=kept;
+    fitted=4u*scale*other/kept;
+    if(!fitted) fitted=1;
+  }
+  unsigned extent=ideal>FB_MAX_W?FB_MAX_W:ideal;
+  unsigned kept_margin=(extent-kept)/2u;
+  unsigned fixed_margin=(fixed-fitted)/2u;
+  engine->host_output_width=vertical?fixed:extent;
+  engine->host_output_height=vertical?extent:fixed;
+  engine->host_canvas_x=(int)(vertical?fixed_margin:kept_margin);
+  engine->host_canvas_y=(int)(vertical?kept_margin:fixed_margin);
+  engine->host_canvas_width=(int)(vertical?fitted:kept);
+  engine->host_canvas_height=(int)(vertical?kept:fitted);
+  engine->host_canvas_active=cropped || engine->host_output_width!=source_width ||
+                            engine->host_output_height!=source_height ||
+                            fitted!=other;
+  double aspect=(4.0*extent)/(3.0*ideal);
+  engine->host_display_aspect=vertical!=((engine->host_rotation&1u)!=0)?1.0/aspect:aspect;
+}
+
+void engine_update_host_canvas(AnygmEngine *engine){
   unsigned source_width=engine->output_width;
   unsigned source_height=engine->output_height;
   int cropped=engine_present_crop_rect(engine,engine->output_width,engine->output_height,
@@ -980,30 +1057,46 @@ static void host_canvas_update(AnygmEngine *engine){
   int native_padding=0,declared=0;
   /* output and its declared crop already include the forced aspect. The TV is only a final
    * destination; it must not become the window, GUI or camera extent seen by content. */
+  /* Keep CRT fitting in the user's coordinates, then pack the frame in the host's order. */
+  engine->host_rotation=(engine->config.image_rotation+4u-engine->config.frontend_rotation)&3u;
   engine->host_crt_active=0;
+  engine->host_crt_area_filter=0;
+  engine->host_display_aspect=0.0;
   if(engine->config.present_logical_raster && engine->config.adjust_crt_tv &&
      source_width && source_height){
+    /* Select limits in source coordinates. Either quarter turn swaps the scanout axes.
+     * Frontend rotation only determines how the fitted frame is delivered. */
+    int vertical=engine->config.crt_vertical!=((engine->config.image_rotation&1u)!=0);
+    unsigned limit_width=vertical?244u:364u,limit_height=vertical?364u:244u;
+    unsigned aspect_width=vertical?3u:4u,aspect_height=vertical?4u:3u;
     if(engine->crt_mode_width && source_width<=engine->crt_mode_width &&
        source_height<=engine->crt_mode_height){
       host_width=engine->crt_mode_width; host_height=engine->crt_mode_height;
       native_padding=declared=1;
       engine->host_crt_active=1;
-    } else if(source_width<=364u && source_height<=244u &&
-       !aspect_within_tolerance(source_width,source_height,GMC_ASPECT_FORCE_4_3)){
+    } else if(source_width<=limit_width && source_height<=limit_height &&
+       !aspect_fraction_within_tolerance(source_width,source_height,aspect_width,aspect_height)){
       /* Add pixels on one axis only, never resample the native image. A fractional extent
        * rounds up; the centred integer margins can differ by one pixel. */
-      if((uint64_t)source_width*3u>(uint64_t)source_height*4u)
-        host_height=(source_width*3u+3u)/4u;
+      if((uint64_t)source_width*aspect_height>(uint64_t)source_height*aspect_width)
+        host_height=(source_width*aspect_height+aspect_width-1u)/aspect_width;
       else
-        host_width=(source_height*4u+2u)/3u;
+        host_width=(source_height*aspect_width+aspect_height-1u)/aspect_height;
       native_padding=1;
       engine->host_crt_active=1;
     }
     /* A declared mode states its own extent; the automatic limits size only undeclared rasters. */
-    if(!declared && (host_width>364u || host_height>244u)){
-      host_width=640u; host_height=480u;
-      native_padding=0;
+    if(!declared && (host_width>limit_width || host_height>limit_height)){
+      unsigned scale=engine->config.crt_oversize_small?80u:160u;
+      engine->host_crt_area_filter=engine->config.crt_oversize_small;
       engine->host_crt_active=1;
+      if(engine->config.crt_oversize_keep){
+        fit_crt_keep_axis(engine,source_width,source_height,vertical,scale,cropped);
+        return;
+      }
+      host_width=aspect_width*scale;
+      host_height=aspect_height*scale;
+      native_padding=0;
     }
   }
   if(!engine->config.present_logical_raster){
@@ -1307,7 +1400,7 @@ void compute_present(AnygmEngine *engine) {
   /* The configured extent has already participated in the effective window and GUI policies
    * above. A presentation path which intentionally retains a narrower completed raster still
    * needs a correctly shaped host framebuffer, so uniformly fit that last result as a fallback. */
-  host_canvas_update(engine);
+  engine_update_host_canvas(engine);
   /* Earlier implicit GUI coordinates follow the authored window even when an automatic
    * application surface is presented through a larger client. Publishing that destination
    * as the query extent displaces GUI code which centres and scales from window_get_*.
@@ -1474,14 +1567,20 @@ void sync_room_fps(AnygmEngine *engine,int publish_changes) {
   unsigned nw, nh; cur_room_res(engine,&nw, &nh);
   unsigned pw = engine->output_width, ph = engine->output_height;
   unsigned host_pw=engine->host_output_width,host_ph=engine->host_output_height;
+  double host_previous_aspect=engine->host_display_aspect;
+  engine_rotate_extent(engine->host_rotation,&host_pw,&host_ph);
   unsigned prev_w = engine->width, prev_h = engine->height;
   engine->width = nw; engine->height = nh;
   compute_present(engine);
+  unsigned host_w=engine->host_output_width,host_h=engine->host_output_height;
+  engine_rotate_extent(engine->host_rotation,&host_w,&host_h);
+  int host_geometry_changed=host_w!=host_pw || host_h!=host_ph ||
+    engine->host_display_aspect!=host_previous_aspect;
   int mode_changed = engine->crt_mode_hz != engine->published_crt_mode_hz;
   engine->published_crt_mode_hz = engine->crt_mode_hz;
   if (!mode_changed && room == engine->fps_room && fps == engine->fps && nw == prev_w && nh == prev_h &&
       engine->output_width == pw && engine->output_height == ph &&
-      engine->host_output_width==host_pw && engine->host_output_height==host_ph) {
+      !host_geometry_changed) {
     engine->fps_room = room;
     return;
   }
@@ -1498,8 +1597,7 @@ void sync_room_fps(AnygmEngine *engine,int publish_changes) {
   int fps_changed = (fps != engine->fps);
   int geom_changed = (nw != prev_w) || (nh != prev_h) ||
                      (engine->output_width != pw) || (engine->output_height != ph) ||
-                     (engine->host_output_width != host_pw) ||
-                     (engine->host_output_height != host_ph);
+                     host_geometry_changed;
   int changed = fps_changed || geom_changed || mode_changed;
   if(changed && anygm_host_development_setting(&engine->host,"GML_LOG_AV"))
     engine_logf(engine,ANYGM_LOG_DEBUG, "[av] room=%d bytecode=%u fps=%.2f size=%ux%u out=%ux%u host=%ux%u window=%dx%d gui=%dx%d\n",

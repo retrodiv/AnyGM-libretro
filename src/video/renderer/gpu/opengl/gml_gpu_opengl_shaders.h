@@ -329,6 +329,8 @@
   "uniform int u_rgb_query;\n" \
   "uniform ivec2 u_filter_destination;\n" \
   "uniform int u_sharp_scale;\n" \
+  "uniform int u_area_filter;\n" \
+  "uniform int u_rotation;\n" \
   "out vec4 o_color;\n" \
   "void main(){\n" \
   "  // R03_SHADER_SCREEN_RGB_QUERY: discard only exact RGB zero; coverage is irrelevant.\n" \
@@ -339,6 +341,31 @@
   "  }\n" \
   "  int dx=int(gl_FragCoord.x)-u_dest_x;\n" \
   "  int dy=(u_target_height-1-int(gl_FragCoord.y))-u_dest_y;\n" \
+  "  if(u_rotation!=0){\n" \
+  "    ivec2 size=textureSize(u_source,0),p=ivec2(dx+u_dest_x,dy+u_dest_y);\n" \
+  "    if(u_rotation==1) p=ivec2(size.x-1-p.y,p.x);\n" \
+  "    else if(u_rotation==3) p=ivec2(p.y,size.y-1-p.x);\n" \
+  "    else p=size-1-p;\n" \
+  "    p-=ivec2(u_dest_x,u_dest_y);\n" \
+  "    vec3 rgb=vec3(0.0);\n" \
+  "    if(all(greaterThanEqual(p,ivec2(0))) && all(lessThan(p,size)))\n" \
+  "      rgb=texelFetch(u_source,ivec2(p.x,size.y-1-p.y),0).rgb;\n" \
+  "    o_color=vec4(rgb,1.0); return;\n" \
+  "  }\n" \
+  "  if(u_area_filter!=0){\n" \
+  "    ivec2 size=textureSize(u_source,0),extent=u_filter_destination;\n" \
+  "    ivec2 lo=ivec2(dx,dy)*size,hi=lo+size;\n" \
+  "    ivec2 first=lo/extent,last=(hi-1)/extent;\n" \
+  "    vec3 total=vec3(0.0);\n" \
+  "    for(int y=first.y;y<=last.y;y++){\n" \
+  "      int wy=min(hi.y,(y+1)*extent.y)-max(lo.y,y*extent.y);\n" \
+  "      for(int x=first.x;x<=last.x;x++){\n" \
+  "        int wx=min(hi.x,(x+1)*extent.x)-max(lo.x,x*extent.x);\n" \
+  "        total+=texelFetch(u_source,ivec2(x,size.y-1-y),0).rgb*float(wx*wy);\n" \
+  "      }\n" \
+  "    }\n" \
+  "    o_color=vec4(total/float(size.x*size.y),1.0); return;\n" \
+  "  }\n" \
   "  if(u_sharp_scale>0){\n" \
   "    // Adjacent virtual texels map to equal or adjacent source texels.\n" \
   "    vec2 size=vec2(textureSize(u_source,0)),scale=vec2(float(u_sharp_scale));\n" \

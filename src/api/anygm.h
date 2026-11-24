@@ -15,8 +15,8 @@ extern "C" {
  * runtime library version, and every publishable metadata file declares the literal "Git" instead
  * of a number, so no copy can promise a value that has gone stale. CONTRIBUTING.md owns the single
  * increment step. */
-#define ANYGM_VERSION "0.1.999"
-#define ANYGM_API_VERSION 11u
+#define ANYGM_VERSION "0.1.1000"
+#define ANYGM_API_VERSION 12u
 #define ANYGM_HOST_SERVICES_VERSION 4u
 #define ANYGM_STATE_SCHEMA 70u
 #define ANYGM_MAX_GAMEPADS 4u
@@ -364,6 +364,14 @@ enum {
   ANYGM_CONTENT_SCENE_NO_FALLBACK=1u<<2
 };
 
+/* Counterclockwise quarter turns of the final host image. */
+enum {
+  ANYGM_IMAGE_ROTATION_NONE=0,
+  ANYGM_IMAGE_ROTATION_LEFT=1,
+  ANYGM_IMAGE_ROTATION_UPSIDE_DOWN=2,
+  ANYGM_IMAGE_ROTATION_RIGHT=3
+};
+
 typedef struct AnygmConfig {
   uint32_t struct_size;
   /* Optional virtual-monitor dimensions reported to content. Zero selects the runtime fallback.
@@ -389,9 +397,7 @@ typedef struct AnygmConfig {
    * window extent the content requested. A window larger than the view carries no extra detail
    * for a software renderer: the pixels are a nearest upscale the host performs anyway. */
   uint32_t present_logical_raster;
-  /* With the logical raster selected, fit a completed image wider than 364 or taller than 244
-   * into 640x480 using sharp bilinear and black margins. Test the extent after aspect forcing.
-   * This host presentation policy is neither simulation state nor state identity. */
+  /* With the logical raster selected, pad or fit the completed image for CRT presentation. */
   uint32_t adjust_crt_tv;
   /* Delete this content's generated local data (saves, extracted archive cache) and reload. */
   uint32_t clear_local_data;
@@ -427,6 +433,16 @@ typedef struct AnygmConfig {
    * and is not part of game state. A missing graphics context keeps ordinary OpenGL on CPU;the explicit
    * omission policy still skips its unsupported draws. */
   uint32_t scene_renderer;
+  /* Host presentation options. Zero selects the 640x480 fit, horizontal OS orientation and no
+   * rotation. The CRT settings apply only to CRT presentation. */
+  uint32_t crt_oversize_small;
+  uint32_t crt_vertical;
+  uint32_t image_rotation;
+  /* Keep native samples on the 640/320 axis of the CRT fit, before rotation. */
+  uint32_t crt_oversize_keep;
+  /* A quarter turn the host will apply to the delivered frame. The engine counter-rotates
+   * after fitting the image. Pointer coordinates still describe the image after the host turn. */
+  uint32_t frontend_rotation;
 } AnygmConfig;
 
 enum {
@@ -468,7 +484,12 @@ enum {
   ANYGM_CONFIG_CONTENT_SHADER_DEVICE_EXPECTED=1ull<<21,
   ANYGM_CONFIG_HYBRID_GPU_PRESENTATION=1ull<<22,
   ANYGM_CONFIG_ADJUST_CRT_TV=1ull<<23,
-  ANYGM_CONFIG_SCENE_RENDERER=1ull<<24
+  ANYGM_CONFIG_SCENE_RENDERER=1ull<<24,
+  ANYGM_CONFIG_CRT_OVERSIZE_SMALL=1ull<<25,
+  ANYGM_CONFIG_CRT_VERTICAL=1ull<<26,
+  ANYGM_CONFIG_IMAGE_ROTATION=1ull<<27,
+  ANYGM_CONFIG_CRT_OVERSIZE_KEEP=1ull<<28,
+  ANYGM_CONFIG_FRONTEND_ROTATION=1ull<<29
 };
 
 typedef struct AnygmInputFrame {

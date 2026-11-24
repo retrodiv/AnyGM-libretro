@@ -319,7 +319,7 @@ AnygmResult anygm_get_av_info(const AnygmEngine *engine,AnygmAvInfo *info){
   info->base_width=320;
   info->base_height=240;
   info->max_width=3840;
-  info->max_height=2160;
+  info->max_height=3840;
   info->aspect_ratio=4.0/3.0;
   info->frames_per_second=60.0;
   info->audio_rate=44100;
@@ -673,14 +673,23 @@ static int provisional_av_is_corrected(void){
   REQUIRE(load(),"content prepares before the deferred AV query");
   memset(&av,0,sizeof av);
   retro_get_system_av_info(&av);
-  REQUIRE(av.geometry.base_width==288u && av.geometry.base_height==216u,
-          "a prepared runtime exposes the bounded fallback geometry");
+  REQUIRE(av.geometry.base_width==288u && av.geometry.base_height==216u &&
+          av.geometry.max_width==3840u && av.geometry.max_height==3840u,
+          "a prepared runtime reserves enough capacity for either orientation");
   declared.context_reset();
   REQUIRE(start_calls==1,"the deferred context starts content after the AV query");
   retro_run();
   REQUIRE(geometry_updates==1 && system_av_updates==0 &&
           latest_geometry.base_width==320u && latest_geometry.base_height==240u,
           "the first frame replaces provisional geometry with the started runtime's geometry");
+  /* The core has refreshed AV for a Reset while the frontend still has the prior rotated frame. */
+  g_libretro.frame.width=240u;
+  g_libretro.frame.height=320u;
+  g_libretro.display_active_hz=60u;
+  scheduled_steps=2;
+  retro_run();
+  REQUIRE(geometry_updates==2 && system_av_updates==0 && video_calls==2,
+          "a two-step tick announces the new video geometry once");
   finish();
   return 0;
 }

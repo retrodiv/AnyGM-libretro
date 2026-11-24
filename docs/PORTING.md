@@ -76,39 +76,98 @@ rounding drift. For 4:3 the accepted interval is 1.2 through 22/15. Each experim
 its own target; this is not an exclusive classification (16:10 is on the lower 16:9 boundary).
 Existing content-ownership exceptions to aspect forcing remain unchanged.
 
-## CRT presentation
+## CRT presentation and image rotation
 
-`adjust_crt_tv` is an optional live presentation setting, effective only with
-`present_logical_raster`. After aspect forcing and any declared presentation crop, an image wider
-than 364 pixels or taller than 244 pixels is fitted into a 640x480 frame. The complete image keeps
-its square-pixel aspect ratio with centered black margins. An image at or below both limits keeps
-its own raster when within the shared 4:3 tolerance. Outside it, only one host dimension grows
-to pad the native image to 4:3, with centered black margins and no resampling. A fractional
-dimension rounds up to a whole pixel, approximating 4:3 within that rounding; odd margins differ
-by one pixel, with the extra pixel at the bottom or right. The limits are checked again on this
-padded extent. A result above either limit uses the existing direct source-to-640x480 fit without
-an intermediate padded image. Thus 320x180 becomes 320x240, while 360x180 would require 360x270
-and instead selects 640x480. Window queries, GUI coordinates and camera geometry remain owned by
-the content and the existing aspect policy.
+The **Video** core options apply to the completed frame. The game keeps its logical raster,
+window, GUI and camera geometry. Use the core-provided aspect ratio in the frontend so it can
+display the canvas with the intended proportions.
 
-A declared CRT mode replaces these automatic extents whenever the picture fits inside it, padding
-both axes as needed without resampling. A larger picture follows the automatic policy above.
+### What each option does
 
-The fit uses sharp bilinear: a virtual integer nearest enlargement followed by bilinear sampling
-at destination pixel centres. Its shared integer prescale is the ceiling of the smaller fitted
-axis scale, with a minimum of one. Exact integer enlargement preserves hard pixel edges; reduction
-uses bilinear sampling. The software render-plan executor owns the filter on every host. With an
-adopted graphics context the filtered frame is uploaded for presentation; a terminal content shader
-is evaluated at its original extent and read back synchronously before filtering. That extra
-readback can cost more on discrete GPUs.
+| Option | Effect |
+| --- | --- |
+| **Adjust for 4:3 CRT TV** (`adjust_crt_tv`) | Off by default. On forces game-resolution rendering, hides **Render at game resolution** and enables CRT fitting. |
+| **OS Screen Orientation** (`crt_vertical`) | Set **Horizontal** (default) for a system rotation of 0° or 180°, and **Vertical** for a system rotation of 90° or 270°. This supplies the CRT axes. The system setting determines its own rotation angle. |
+| **Image Rotation** (`image_rotation`) | Turns the picture and GUI **Left** or **Right** by 90°, or **Upside Down** by 180°. **None** (default) applies zero extra rotation. This option also works with CRT adjustment off. Pointer coordinates follow the displayed picture. |
+| **CRT Oversize Handling** | Chooses the destination for an image that exceeds the CRT limits. The default is `W:640 H:480`. Images that fit remain at native sample density. |
 
-The host receives the final padded or fitted raster aspect. Physical resolution, interlacing,
-refresh rate and TV output are host responsibilities. Optional display-frequency host callbacks
-can query and request a native mode, or submit a request to a frontend that owns CRT switching.
-The libretro option is named
-**Adjust for 4:3 CRT TV**, defaults to Off and precedes **Render at game resolution**. Enabling CRT
-forces game-resolution rendering and hides that selector. Disabling CRT restores its stored
-selection. Monitor dimensions and aspect forcing follow the effective rendering choice.
+CRT adjustment exposes the OS orientation and oversize controls. AnyGM checks the CRT limits
+after aspect forcing and presentation cropping. Left and Right swap
+the limits and canvas axes before fitting. None and Upside Down use the axes selected by
+**OS Screen Orientation**.
+
+| OS Screen Orientation | Image Rotation | Width × height limit in game coordinates | Canvas aspect |
+| --- | --- | --- | --- |
+| Horizontal | None or Upside Down | 364×244 | 4:3 |
+| Horizontal | Left or Right | 244×364 | 3:4 |
+| Vertical | None or Upside Down | 244×364 | 3:4 |
+| Vertical | Left or Right | 364×244 | 4:3 |
+
+The limits are inclusive. An image within the limits and within the CRT aspect tolerance keeps
+its original dimensions and pixels. Outside the aspect tolerance, AnyGM tries to add centered
+black margins along one axis. It uses the oversize fit if either the original image or the padded
+canvas exceeds the limits. For example, a horizontal 320×180 image can pad to 320×240, while
+padding 360×180 to 360×270 would exceed the 244-line limit. A content-declared CRT mode supplies
+its own native canvas when the picture fits it.
+
+### Oversize modes
+
+The following example uses a 1920×1080 game raster, a horizontal screen and no image rotation.
+The picture keeps its visual aspect, centered in the 4:3 canvas with black margins.
+
+| CRT Oversize Handling | Frame sent to the frontend | Picture inside the frame | Black lines at the top and bottom |
+| --- | --- | --- | --- |
+| `W:640 H:480` | 640×480 | 640×360 | 60 each |
+| `W:Keep H:480` | 1920×480 | 1920×360 | 60 each |
+| `W:320 H:240` | 320×240 | 320×180 | 30 each |
+| `W:Keep H:240` | 1920×240 | 1920×180 | 30 each |
+
+The 480-line modes use sharp bilinear filtering. The 240-line modes use a weighted area filter.
+**Keep** preserves the samples along the variable axis. It adds black samples to that axis
+when a narrow image needs side margins. The display aspect describes the canvas independently of
+its raster dimensions. If the ideal padded extent exceeds the host's maximum, the reported
+aspect accounts for the remaining margins supplied by the frontend.
+
+The vertical fit uses a 3:4 canvas in game coordinates. For a 1080×1920 portrait image,
+`W:Keep H:480` keeps all 1920 source lines and fits the picture into 360×1920 within a
+480×1920 canvas. Each side gets 60 black columns. When the frontend accepts paired rotation,
+the core sends the canvas in scanout order as 1920×480, with the 480-line axis fixed.
+
+### Native portrait and landscape examples
+
+These examples use `W:640 H:480` and a frontend that accepts core rotation requests.
+**Canvas before rotation** describes the fit in game coordinates. **Frame sent** describes
+the framebuffer the frontend receives.
+
+| Game raster | System rotation | OS Screen Orientation | Image Rotation | Canvas before rotation | Frame sent |
+| --- | --- | --- | --- | --- | --- |
+| 224×288 | None | Horizontal | None | 640×480, with a centered 373×480 picture | 640×480 |
+| 224×288 | Left | Vertical | None | Native 224×288 | 288×224 |
+| 224×288 | None | Horizontal | Left | Native 224×288 | 288×224 |
+| 224×288 | Left | Vertical | Right | 640×480, with a centered 373×480 picture | 640×480 |
+| 288×216 | None | Horizontal | None | Native 288×216 | 288×216 |
+| 288×216 | Left | Vertical | None | 480×640, with a centered 480×360 picture | 640×480 |
+| 288×216 | Left | Vertical | Right | Native 288×216 | 288×216 |
+
+For the 224×288 image, **Vertical + None** with a system turn to the left and
+**Horizontal + Left** with no system turn produce the same displayed picture. A system turn to
+the left and an image turn to the right cancel. That pair uses the same fit and orientation as
+**Horizontal + None** with no system turn. For the 288×216 image, **Vertical + None** has to fit
+288 source columns into a CRT orientation that allows only 244. This accounts for the margins in
+that row.
+
+### Frontend rotation and live changes
+
+For a vertical fit with a system quarter turn, libretro can request a compensating turn from the
+frontend and send the inverse turn in the framebuffer. This packs the frame in scanout order
+while keeping the intended picture orientation. If the frontend declines, AnyGM applies the
+image turn in software with the same fitting limits. Libretro reports the framebuffer extent and
+the aspect after the requested frontend turn.
+
+Video settings can change during gameplay and stay outside serialized state. The frontend
+controls when the physical video mode changes, including its resolution and refresh rate.
+For a live orientation change to look the same as a fresh launch, the frontend must apply its
+system rotation together with each updated core rotation request.
 
 ## Optional host graphics target
 

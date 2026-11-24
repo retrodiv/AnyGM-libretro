@@ -135,10 +135,10 @@ int gml_gpu_capture_scene_image(GmlGpu *gpu,GmlRenderImageRef image,uint32_t wid
 int gml_gpu_read_completed_frame(GmlGpu *gpu,uint32_t *pixels,uint32_t pitch_pixels,
                                 uint32_t width,uint32_t height,uint64_t generation);
 /* Redisplay the unchanged completed image, or the immediately preceding device-only
- * presentation plan, with an integer host offset and opaque black vacated bands.
+ * presentation plan, with an integer offset followed by counterclockwise quarter turns.
  * The latter is single-use scratch, never state authority. */
-int gml_gpu_present_shifted_frame(GmlGpu *gpu,uint32_t width,uint32_t height,
-                                  uint64_t generation,int dx,int dy,int scratch);
+int gml_gpu_present_transformed_frame(GmlGpu *gpu,uint32_t width,uint32_t height,
+                                  uint64_t generation,int dx,int dy,unsigned rotation,int scratch);
 
 void gml_gpu_counters(const GmlGpu *gpu,GmlGpuCounters *counters);
 /* The most recent lifecycle failure, as a bounded, content-neutral string, or NULL. */

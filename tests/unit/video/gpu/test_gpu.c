@@ -422,19 +422,19 @@ static int integer_presentation_shift_case(void){
     REQUIRE(gpu && gml_gpu_context_reset(gpu,&context) &&
             gml_gpu_capture_completed_frame(gpu,8u,4u,11u),"shift adopts canonical storage");
     gml_gpu_counters(gpu,&before);
-    REQUIRE(!gml_gpu_present_shifted_frame(gpu,8u,4u,12u,1,-1,0) &&
-            !gml_gpu_present_shifted_frame(gpu,7u,4u,11u,1,-1,0) &&
-            !gml_gpu_present_shifted_frame(gpu,8u,4u,11u,1,-1,1) &&
-            !gml_gpu_present_shifted_frame(gpu,8u,4u,11u,1,-1,2) &&
-            !gml_gpu_present_shifted_frame(gpu,0u,4u,11u,1,-1,0),
+    REQUIRE(!gml_gpu_present_transformed_frame(gpu,8u,4u,12u,1,-1,0,0) &&
+            !gml_gpu_present_transformed_frame(gpu,7u,4u,11u,1,-1,0,0) &&
+            !gml_gpu_present_transformed_frame(gpu,8u,4u,11u,1,-1,0,1) &&
+            !gml_gpu_present_transformed_frame(gpu,8u,4u,11u,1,-1,0,2) &&
+            !gml_gpu_present_transformed_frame(gpu,0u,4u,11u,1,-1,0,0),
             "shift refuses wrong versions,dimensions and absent sources before drawing");
     gml_gpu_counters(gpu,&after);
     REQUIRE(after.draw_calls==before.draw_calls,"shift source refusal submits nothing");
     current=0u;anygm_test_graphics_forbid_calls();
-    REQUIRE(!gml_gpu_present_shifted_frame(gpu,8u,4u,11u,1,-1,0) &&
+    REQUIRE(!gml_gpu_present_transformed_frame(gpu,8u,4u,11u,1,-1,0,0) &&
             !anygm_test_graphics_calls_after_forget(),"revoked shift access calls no GL entry");
     anygm_test_graphics_allow_calls();current=1u;
-    REQUIRE(gml_gpu_present_shifted_frame(gpu,8u,4u,11u,1,-1,0),
+    REQUIRE(gml_gpu_present_transformed_frame(gpu,8u,4u,11u,1,-1,0,0),
             "canonical shift resumes when the owning context returns");
     gml_gpu_counters(gpu,&after);
     REQUIRE(after.draw_calls==before.draw_calls+1u &&
@@ -445,15 +445,15 @@ static int integer_presentation_shift_case(void){
     REQUIRE(build_canvas_plan(&plan,pixels,8,4,8,4,0,0,8,4),"scratch host plan builds");
     plan.target=GML_PLAN_TARGET_DEVICE_PRESENTATION;
     REQUIRE(gml_gpu_execute_plan(gpu,&plan) &&
-            gml_gpu_present_shifted_frame(gpu,8u,4u,12u,-1,1,1) &&
-            !gml_gpu_present_shifted_frame(gpu,8u,4u,12u,-1,1,1),
+            gml_gpu_present_transformed_frame(gpu,8u,4u,12u,-1,1,0,1) &&
+            !gml_gpu_present_transformed_frame(gpu,8u,4u,12u,-1,1,0,1),
             "device-only host scratch is consumed exactly once");
     REQUIRE(gml_gpu_execute_plan(gpu,&plan) && gml_gpu_context_reset(gpu,&context) &&
-            !gml_gpu_present_shifted_frame(gpu,8u,4u,11u,1,-1,0) &&
-            !gml_gpu_present_shifted_frame(gpu,8u,4u,12u,-1,1,1),
+            !gml_gpu_present_transformed_frame(gpu,8u,4u,11u,1,-1,0,0) &&
+            !gml_gpu_present_transformed_frame(gpu,8u,4u,12u,-1,1,0,1),
             "unexpected context reset invalidates both delivery sources");
     gml_gpu_context_lost(gpu);anygm_test_graphics_forbid_calls();
-    REQUIRE(!gml_gpu_present_shifted_frame(gpu,8u,4u,11u,1,-1,0) &&
+    REQUIRE(!gml_gpu_present_transformed_frame(gpu,8u,4u,11u,1,-1,0,0) &&
             !anygm_test_graphics_calls_after_forget(),"lost shift context is not accessed");
     anygm_test_graphics_allow_calls();gml_gpu_destroy(gpu,0);
   }

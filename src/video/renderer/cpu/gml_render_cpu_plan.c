@@ -279,6 +279,42 @@ static void execute_box(const GmlPlanOp *op,const GmlPlanImage *image,
   execute_box_rows(op,image,target,pitch,0,destination_height);
 }
 
+/* Measure the overlap in integer units of 1/destination_extent source pixels.
+ * The weights in each footprint sum to source_width * source_height. */
+static unsigned area_overlap(unsigned texel,unsigned extent,unsigned first,unsigned end){
+  unsigned left=texel*extent,right=left+extent;
+  return (right<end?right:end)-(left>first?left:first);
+}
+
+static void execute_area(const GmlPlanOp *op,const GmlPlanImage *image,
+                         uint32_t *target,uint32_t pitch){
+  unsigned dw=op->destination.width,dh=op->destination.height;
+  unsigned sw=image->width,sh=image->height;
+  uint64_t area=(uint64_t)sw*sh;
+  for(unsigned y=0;y<dh;y++){
+    unsigned top=y*sh,bottom=top+sh;
+    uint32_t *row=target+(size_t)(op->destination.y+y)*pitch+op->destination.x;
+    for(unsigned x=0;x<dw;x++){
+      unsigned left=x*sw,right=left+sw;
+      uint64_t red=0,green=0,blue=0;
+      for(unsigned sy=top/dh;sy*dh<bottom;sy++){
+        unsigned wy=area_overlap(sy,dh,top,bottom);
+        const uint32_t *source=image->cpu_pixels+(size_t)sy*image->pitch_pixels;
+        for(unsigned sx=left/dw;sx*dw<right;sx++){
+          uint64_t weight=(uint64_t)wy*area_overlap(sx,dw,left,right);
+          uint32_t pixel=source[sx];
+          red+=((pixel>>16)&255u)*weight;
+          green+=((pixel>>8)&255u)*weight;
+          blue+=(pixel&255u)*weight;
+        }
+      }
+      row[x]=plan_pixel(((uint32_t)((red+area/2)/area)<<16)|
+                        ((uint32_t)((green+area/2)/area)<<8)|
+                        (uint32_t)((blue+area/2)/area),op->alpha_write);
+    }
+  }
+}
+
 typedef struct PlanSharpTap {
   uint32_t first,second,weight;
 } PlanSharpTap;
@@ -417,6 +453,9 @@ int gml_render_cpu_plan_execute_pooled(const GmlRenderPlan *plan,uint32_t *targe
           execute_nearest_accumulator(op,image,target,target_pitch_pixels,pool_owner);
         else
           execute_nearest_pixel_centre(op,image,target,target_pitch_pixels);
+        break;
+      case GML_PLAN_OP_BLIT_OPAQUE_AREA:
+        execute_area(op,image,target,target_pitch_pixels);
         break;
       case GML_PLAN_OP_BLIT_OPAQUE_BOX:
         execute_box(op,image,target,target_pitch_pixels,pool_owner);

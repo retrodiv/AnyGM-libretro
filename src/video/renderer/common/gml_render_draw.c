@@ -241,6 +241,7 @@ void gml_render_dispatch_gpu_plan_completion(GmlRender *render,
       case GML_PLAN_OP_CLEAR_XRGB: family=GML_RENDER_SCENE_PRIMITIVE; break;
       case GML_PLAN_OP_BLIT_OPAQUE_NEAREST:
       case GML_PLAN_OP_BLIT_OPAQUE_BOX:
+      case GML_PLAN_OP_BLIT_OPAQUE_AREA:
       case GML_PLAN_OP_BLIT_OPAQUE_SHARP_BILINEAR:
       case GML_PLAN_OP_PRESENT_CPU_FRAME: family=GML_RENDER_SCENE_SURFACE; break;
       case GML_PLAN_OP_SHADER_DRAW: family=GML_RENDER_SCENE_EFFECT; break;

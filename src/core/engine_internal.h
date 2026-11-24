@@ -369,8 +369,10 @@ struct AnygmEngine {
    * monitor as that effective window extent; a path which deliberately retains a narrower raster
    * can still wrap its completed frame in the distinct host framebuffer below. */
   unsigned host_output_width,host_output_height;
+  double host_display_aspect;
   int host_canvas_active,host_canvas_x,host_canvas_y,host_canvas_width,host_canvas_height;
-  int host_crt_active;
+  int host_crt_active,host_crt_area_filter;
+  unsigned host_rotation;
   /* Live host policy resolved from CRT-scoped declarations. None of it is serialized. */
   unsigned crt_mode_width,crt_mode_height;
   uint32_t crt_mode_hz,published_crt_mode_hz;
@@ -537,6 +539,8 @@ int resolve_host_frame(AnygmEngine *engine,const uint32_t **pixels,
 /* The extent the host is presented, which is the completed frame's own extent unless a distinct
  * host framebuffer wraps it. */
 void engine_host_extent(const AnygmEngine *engine,unsigned *width,unsigned *height);
+void engine_rotate_extent(unsigned rotation,unsigned *width,unsigned *height);
+void engine_update_host_canvas(AnygmEngine *engine);
 /* Resolve the valid source rectangle selected from the completed frame. A zero return means the
  * whole frame; invalid or empty inset combinations fail closed to that whole frame as well. */
 int engine_present_crop_rect(const AnygmEngine *engine,unsigned source_width,

@@ -5636,7 +5636,8 @@ static int completed_frame_capacity_case(void){
 /* A terminal content program must finish at its authored raster before CRT filtering. The fake
  * proves device-only completion, ownership and transport; the software plan cases own pixels. */
 static int crt_terminal_program_extent(unsigned source_w,unsigned source_h,
-                                       unsigned host_w,unsigned host_h,int native_padding){
+                                       unsigned host_w,unsigned host_h,int native_padding,
+                                       int area_filter,unsigned rotation){
   Session session;
   CurrentContextWitness witness={1u,0u};
   AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
@@ -5654,6 +5655,8 @@ static int crt_terminal_program_extent(unsigned source_w,unsigned source_h,
   engine->output_width=source_w; engine->output_height=source_h;
   engine->host_output_width=host_w; engine->host_output_height=host_h;
   engine->host_crt_active=engine->host_canvas_active=1;
+  engine->host_crt_area_filter=area_filter;
+  engine->host_rotation=rotation;
   engine->host_canvas_width=native_padding?(int)source_w:(int)host_w;
   engine->host_canvas_height=native_padding?(int)source_h:(int)host_h;
   engine->host_canvas_x=((int)host_w-engine->host_canvas_width)/2;
@@ -5673,8 +5676,10 @@ static int crt_terminal_program_extent(unsigned source_w,unsigned source_h,
   gml_render_shader_set_current(render,0);
   gml_draw_surface_stretched(render,0,0,0,source_w,source_h,0xFFFFFFu,1.0);
   gml_render_shader_set_current(render,-1);
+  unsigned width=0,height=0;
   int ok=gml_render_deferred_presentation(render,NULL) &&
-         engine_present_hardware_screen(engine,NULL,NULL) &&
+         engine_present_hardware_screen(engine,&width,&height) &&
+         width==(rotation&1u?host_h:host_w) && height==(rotation&1u?host_w:host_h) &&
          anygm_test_graphics_quad_draw_calls()==1 &&
          anygm_test_graphics_read_pixels()==0 && !anygm_test_graphics_async_read_pixels() &&
          !gml_render_deferred_presentation(render,NULL) &&
@@ -5685,10 +5690,11 @@ static int crt_terminal_program_extent(unsigned source_w,unsigned source_h,
   ok=ok && counters.completed_frame_copies==1u && counters.scene_readbacks==0u;
   int x=0,y=0,w=0,h=0;
   anygm_test_graphics_viewport(&x,&y,&w,&h);
-  ok=ok && x==engine->host_canvas_x &&
-           y==(int)host_h-engine->host_canvas_y-engine->host_canvas_height &&
-           w==engine->host_canvas_width && h==engine->host_canvas_height &&
-           engine->readback_is_pipelined==1;
+  if(rotation) ok=ok && x==0 && y==0 && w==(int)width && h==(int)height;
+  else ok=ok && x==engine->host_canvas_x &&
+                y==(int)host_h-engine->host_canvas_y-engine->host_canvas_height &&
+                w==engine->host_canvas_width && h==engine->host_canvas_height;
+  ok=ok && engine->readback_is_pipelined==1;
   gml_render_gui_end(render);
   render->shader_pal=saved_pal; render->n_shader_pal=0;
   gml_render_application_surface_bind(render,engine->fb,engine->width,engine->height,1);
@@ -5697,9 +5703,10 @@ static int crt_terminal_program_extent(unsigned source_w,unsigned source_h,
   return 1;
 }
 static int crt_terminal_program_case(void){
-  return crt_terminal_program_extent(400,300,640,480,0) &&
-         crt_terminal_program_extent(320,180,320,240,1) &&
-         crt_terminal_program_extent(240,240,320,240,1);
+  return crt_terminal_program_extent(400,300,640,480,0,0,ANYGM_IMAGE_ROTATION_NONE) &&
+         crt_terminal_program_extent(320,180,320,240,1,0,ANYGM_IMAGE_ROTATION_NONE) &&
+         crt_terminal_program_extent(240,240,320,240,1,0,ANYGM_IMAGE_ROTATION_NONE) &&
+         crt_terminal_program_extent(400,300,320,240,0,1,ANYGM_IMAGE_ROTATION_RIGHT);
 }
 
 /* An ordinary deferred final draw has to finish at the logical raster before CRT fitting too.

@@ -31,14 +31,27 @@ static struct retro_core_option_v2_definition g_definitions[]={
    {{"None",NULL},{"Light",NULL},{"Medium",NULL},{"High",NULL},{"Maximum",NULL},{NULL,NULL}},
    "High"},
   {"anygm_adjust_crt_tv","Adjust for 4:3 CRT TV",NULL,
-   "Enables Render at game resolution and hides its selector. Fits images wider than 364 pixels "
-   "or taller than 244 pixels into 640x480 using sharp bilinear filtering. Preserves the image's aspect ratio "
-   "with centered black bars. Smaller images outside 4:3 +/-10% receive native-pixel black "
-   "padding to 4:3, then the size limits are checked again. All checks follow Aspect Ratio "
-   "force. The frontend controls the TV video mode.",
+   "Enables Render at game resolution and hides its selector. Applies CRT size limits after aspect "
+   "forcing and crop. Fits oversized images into the selected CRT canvas with centered black margins. "
+   "Smaller images outside the CRT aspect tolerance receive native-pixel padding and are checked again. "
+   "The frontend controls the TV video mode.",
    NULL,"video",
    {{"Off",NULL},{"On",NULL},{NULL,NULL}},
    "Off"},
+  {"anygm_crt_oversize_handling","CRT Oversize Handling",NULL,
+   "Selects the canvas for oversized images. The 480-line fit uses sharp bilinear and the "
+   "240-line fit uses area filtering. Keep preserves native samples along the width. "
+   "A vertical CRT canvas swaps the fixed and preserved axes. Use the core's aspect ratio.",
+   NULL,"video",
+   {{"W:640 H:480",NULL},{"W:Keep H:480",NULL},{"W:320 H:240",NULL},{"W:Keep H:240",NULL},{NULL,NULL}},
+   "W:640 H:480"},
+  {"anygm_os_screen_orientation","OS Screen Orientation",NULL,
+   "Match the screen orientation already set in the operating system. This option only selects "
+   "the axes for CRT fitting. The operating system controls its own rotation. Vertical swaps "
+   "the 364x244 limits and canvas axes. Left or Right Image Rotation swaps them again.",
+   NULL,"video",
+   {{"Horizontal",NULL},{"Vertical",NULL},{NULL,NULL}},
+   "Horizontal"},
   {"anygm_render_game_resolution","Render at game resolution",NULL,
    "Delivers the game's own raster and lets this program scale it. Monitor width and height use "
    "Game Base on this path. Off renders at the effective presentation window: the monitor "
@@ -97,6 +110,11 @@ static struct retro_core_option_v2_definition g_definitions[]={
    NULL,"input",
    {{"Auto",NULL},{"Absolute (pointer)",NULL},{"Relative (delta)",NULL},{NULL,NULL}},
    "Auto"},
+  {"anygm_image_rotation","Image Rotation",NULL,
+   "Turns the complete game image left, right or upside down. Left and Right also swap the CRT canvas axes.",
+   NULL,"video",
+   {{"None",NULL},{"Left",NULL},{"Right",NULL},{"Upside Down",NULL},{NULL,NULL}},
+   "None"},
   {"anygm_content_shader_readback","Game shaders (GLSL)",NULL,
    "Controls the game's GLSL programs that the software renderer does not already recognize. "
 #if ANYGM_HARDWARE_RENDER
@@ -554,8 +572,15 @@ static int update_option_visibility(void){
   display.key="anygm_adjust_crt_tv";
   display.visible=true;
   delivered=g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display) && delivered;
+  display.key="anygm_image_rotation";
+  delivered=g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display) && delivered;
+  display.visible=crt!=0;
+  display.key="anygm_crt_oversize_handling";
+  delivered=g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display) && delivered;
+  display.key="anygm_os_screen_orientation";
+  delivered=g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display) && delivered;
   display.key="anygm_render_game_resolution";
-  display.visible=crt?false:true;
+  display.visible=crt==0;
   delivered=g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display) && delivered;
   /* Frontends may temporarily ignore environment calls while probing a resident core.
    * Cache only hints that reached the frontend, so the next live update retries them. */
@@ -616,6 +641,40 @@ void libretro_options_release(void){
   g_room_count=0;
   g_room_page=0;
   invalidate_published_visibility();
+}
+
+static void update_frontend_rotation(unsigned rotation){
+  if(rotation==g_libretro.requested_frontend_rotation) return;
+  g_libretro.requested_frontend_rotation=rotation;
+  g_libretro.config.frontend_rotation=0;
+  if(!g_libretro.environment) return;
+  if(g_libretro.environment(RETRO_ENVIRONMENT_SET_ROTATION,&rotation)){
+    g_libretro.config.frontend_rotation=rotation;
+  }else if(rotation){
+    /* Some frontends record the request before checking whether they can apply it. */
+    unsigned reset=0;
+    g_libretro.environment(RETRO_ENVIRONMENT_SET_ROTATION,&reset);
+  }
+}
+
+static unsigned crt_frontend_rotation(const AnygmConfig *config){
+  if(!config->adjust_crt_tv || !config->crt_vertical) return ANYGM_IMAGE_ROTATION_NONE;
+  /* A user quarter turn applies to the screen itself. Otherwise, send the portrait canvas
+   * sideways and pair the two turns so the chosen image orientation is preserved. */
+  return (config->image_rotation&1u)?config->image_rotation:ANYGM_IMAGE_ROTATION_LEFT;
+}
+
+void libretro_options_prepare_rotation(void){
+  update_frontend_rotation(crt_frontend_rotation(&g_libretro.config));
+  AnygmConfigDelta delta={0};
+  delta.struct_size=sizeof delta;
+  delta.fields=ANYGM_CONFIG_FRONTEND_ROTATION;
+  delta.values=g_libretro.config;
+  anygm_set_config(g_libretro.engine,&delta);
+}
+
+void libretro_options_release_rotation(void){
+  update_frontend_rotation(ANYGM_IMAGE_ROTATION_NONE);
 }
 
 void libretro_options_apply(bool all_fields){
@@ -700,6 +759,19 @@ void libretro_options_apply(bool all_fields){
      available for content and host-monitor layouts that depend on it. */
   config->present_logical_raster=present_logical_raster;
   config->adjust_crt_tv=crt;
+  value=option_value("anygm_crt_oversize_handling");
+  config->crt_oversize_small=value && (!strcmp(value,"W:320 H:240") ||
+    !strcmp(value,"W:Keep H:240") || !strcmp(value,"320x240"));
+  config->crt_oversize_keep=value && (!strcmp(value,"W:Keep H:480") || !strcmp(value,"W:Keep H:240"));
+  value=option_value("anygm_os_screen_orientation");
+  config->crt_vertical=value && !strcmp(value,"Vertical");
+  value=option_value("anygm_image_rotation");
+  config->image_rotation=!value?ANYGM_IMAGE_ROTATION_NONE:
+    !strcmp(value,"Left")?ANYGM_IMAGE_ROTATION_LEFT:
+    !strcmp(value,"Right")?ANYGM_IMAGE_ROTATION_RIGHT:
+    !strcmp(value,"Upside Down")?ANYGM_IMAGE_ROTATION_UPSIDE_DOWN:ANYGM_IMAGE_ROTATION_NONE;
+  if(g_libretro.loaded || g_libretro.prepared)
+    update_frontend_rotation(crt_frontend_rotation(config));
   config->clear_local_data=option_on("anygm_clear_local_data",0);
 
   /* Choosing another stretch of rooms changes which rooms the chooser holds, not any setting the
@@ -722,7 +794,8 @@ void libretro_options_apply(bool all_fields){
       ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_ADJUST_CRT_TV|ANYGM_CONFIG_CLEAR_LOCAL_DATA|
       ANYGM_CONFIG_CONTENT_OVERRIDES|ANYGM_CONFIG_CONTENT_SHADER_READBACK|
       ANYGM_CONFIG_CONTENT_SHADER_DEVICE_EXPECTED|ANYGM_CONFIG_HYBRID_GPU_PRESENTATION|
-      ANYGM_CONFIG_SCENE_RENDERER;
+      ANYGM_CONFIG_SCENE_RENDERER|ANYGM_CONFIG_CRT_OVERSIZE_SMALL|ANYGM_CONFIG_CRT_VERTICAL|
+      ANYGM_CONFIG_IMAGE_ROTATION|ANYGM_CONFIG_CRT_OVERSIZE_KEEP|ANYGM_CONFIG_FRONTEND_ROTATION;
   if(g_libretro.loaded || g_libretro.prepared)
     delta.fields&=~(ANYGM_CONFIG_REPORT_ALL_SHADERS_COMPILED|
                     ANYGM_CONFIG_CONTENT_SHADER_READBACK|

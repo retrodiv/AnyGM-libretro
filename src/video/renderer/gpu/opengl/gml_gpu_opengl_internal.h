@@ -329,7 +329,7 @@ struct GmlGpuBackend {
   GLint u_target_height;
   GLint u_source_height,u_resident_source,u_rgb_query;
   GLint u_filter_destination;
-  GLint u_sharp_scale;
+  GLint u_sharp_scale,u_area_filter,u_rotation;
   GlSourceTexture sources[GML_PLAN_MAX_IMAGES];
   GlAxisMap maps[GL_MAP_SLOTS];
   uint16_t *map_scratch;
@@ -419,8 +419,8 @@ int gml_gpu_opengl_compose_shader_output(GmlGpuBackend *backend,GlSceneImage *ta
                                          GmlRenderRect region);
 int gml_gpu_opengl_bind_readback_target(GmlGpuBackend *backend,uint32_t width,uint32_t height,
                                          char *error,size_t error_capacity);
-int gml_render_gpu_opengl_present_shift(GmlGpuBackend *backend,uintptr_t framebuffer,
-  uint32_t width,uint32_t height,uint64_t generation,int dx,int dy,int scratch,
+int gml_render_gpu_opengl_present_transform(GmlGpuBackend *backend,uintptr_t framebuffer,
+  uint32_t width,uint32_t height,uint64_t generation,int dx,int dy,unsigned rotation,int scratch,
   GmlGpuCounters *counters,char *error,size_t error_capacity);
 int gml_gpu_opengl_read_back_target(GmlGpuBackend *backend,GmlRenderPlan *plan,
                                      char *error,size_t error_capacity);

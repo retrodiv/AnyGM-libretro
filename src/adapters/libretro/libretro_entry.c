@@ -213,6 +213,7 @@ void retro_init(void){
 }
 
 void retro_deinit(void){
+  libretro_options_release_rotation();
   libretro_hw_render_release();
   if(g_libretro.engine){
     anygm_destroy(g_libretro.engine);
@@ -252,13 +253,19 @@ static double frontend_cadence(void){
   return g_libretro.av.presentation_frequency_hz?g_libretro.av.presentation_frequency_hz:content_fps();
 }
 
+static float frontend_aspect(void){
+  float aspect=g_libretro.av.aspect_ratio>0.0?(float)g_libretro.av.aspect_ratio:4.0f/3.0f;
+  /* The frontend needs the buffer's extent and the aspect after its core-requested turn. */
+  return (g_libretro.config.frontend_rotation&1u)?1.0f/aspect:aspect;
+}
+
 static void fill_av_info(struct retro_system_av_info *info){
   memset(info,0,sizeof *info);
   info->geometry.base_width=g_libretro.av.base_width?g_libretro.av.base_width:288;
   info->geometry.base_height=g_libretro.av.base_height?g_libretro.av.base_height:216;
   info->geometry.max_width=g_libretro.av.max_width?g_libretro.av.max_width:3840;
-  info->geometry.max_height=g_libretro.av.max_height?g_libretro.av.max_height:2160;
-  info->geometry.aspect_ratio=g_libretro.av.aspect_ratio>0?(float)g_libretro.av.aspect_ratio:4.0f/3.0f;
+  info->geometry.max_height=g_libretro.av.max_height?g_libretro.av.max_height:3840;
+  info->geometry.aspect_ratio=frontend_aspect();
   info->timing.fps=g_libretro.presented_fps>0?g_libretro.presented_fps:frontend_cadence();
   if(g_libretro.display_notification_pending){
     if(g_libretro.display_requested_hz) info->timing.fps=g_libretro.display_requested_hz;
@@ -282,6 +289,7 @@ void retro_get_system_av_info(struct retro_system_av_info *info){
   /* A frontend asking afresh adopts the content's current cadence. */
   g_libretro.presented_fps=0.0;
   fill_av_info(info);
+  g_libretro.announced_aspect=info->geometry.aspect_ratio;
   if(!g_libretro.display_active_hz && !g_libretro.display_notification_pending)
     g_libretro.presented_fps=info->timing.fps;
   /* The initial AV answer is the frontend's startup cadence, not a SET_SYSTEM_AV_INFO call
@@ -393,6 +401,7 @@ bool libretro_content_start(void){
     char error[512];
     anygm_get_last_error(g_libretro.engine,error,sizeof error);
     libretro_log(RETRO_LOG_ERROR,"Prepared content startup failed (%d): %s\n",result,error);
+    libretro_options_release_rotation();
     libretro_display_release();
     return false;
   }
@@ -465,6 +474,7 @@ bool retro_load_game(const struct retro_game_info *info){
   g_libretro.keyboard_text_count=0;
   g_libretro.provisional_av_exposed=false;
   g_libretro.startup_av_notification_pending=false;
+  g_libretro.announced_aspect=0.0f;
   memset(g_libretro.setting_cache,0,sizeof g_libretro.setting_cache);
   g_libretro.setting_cache_count=0;
   update_directories();
@@ -516,6 +526,7 @@ bool retro_load_game(const struct retro_game_info *info){
     return false;
   }
   g_libretro.prepared=true;
+  libretro_options_prepare_rotation();
   g_libretro.scene_gpu_selected=(content_info.flags&ANYGM_CONTENT_SCENE_OPENGL)!=0;
   g_libretro.config.scene_renderer=g_libretro.scene_gpu_selected?
     ((content_info.flags&ANYGM_CONTENT_SCENE_NO_FALLBACK)?
@@ -546,6 +557,7 @@ bool retro_load_game_special(unsigned type,const struct retro_game_info *info,si
 }
 
 void libretro_abort_for_memory(void){
+  libretro_options_release_rotation();
   libretro_hw_render_release();
   if(g_libretro.engine){
     anygm_unload_for_memory_pressure(g_libretro.engine);
@@ -584,6 +596,7 @@ void retro_unload_game(void){
       (unsigned long long)g_libretro.frame_profile_summary_over_25000,
       (unsigned long long)g_libretro.frame_profile_summary_over_33333);
   }
+  libretro_options_release_rotation();
   libretro_hw_render_release();
   anygm_unload(g_libretro.engine);
   libretro_display_release();
@@ -667,7 +680,10 @@ static void update_display_request(void){
                  "Display frontend request: hz=%u accepted=%u observed_target=%u\n",
                  g_libretro.display_requested_hz,accepted?1u:0u,
                  libretro_display_frequency(NULL));
-    if(accepted) g_libretro.display_active_hz=g_libretro.display_requested_hz;
+    if(accepted){
+      g_libretro.display_active_hz=g_libretro.display_requested_hz;
+      g_libretro.announced_aspect=av.geometry.aspect_ratio;
+    }
     g_libretro.display_notification_pending=false;
   }
 }
@@ -810,6 +826,7 @@ void retro_run(void){
   timing.valid=true;
   timing.begin_ns=timing.active?frame_profile_now(&timing):0;
   uint32_t completed_steps=0;
+  unsigned previous_frontend_rotation=g_libretro.config.frontend_rotation;
   apply_live_options();
   if(g_libretro.display_requested_hz || g_libretro.display_active_hz ||
      g_libretro.display_notification_pending) {
@@ -829,7 +846,8 @@ void retro_run(void){
   AnygmInputFrame input;
   uint32_t width=g_libretro.frame.width?g_libretro.frame.width:g_libretro.av.base_width;
   uint32_t height=g_libretro.frame.height?g_libretro.frame.height:g_libretro.av.base_height;
-  libretro_input_snapshot(&input,width,height);
+  bool input_axes_swapped=(previous_frontend_rotation&1u)!=0;
+  libretro_input_snapshot(&input,input_axes_swapped?height:width,input_axes_swapped?width:height);
   uint32_t steps=1;
   if(g_libretro.display_active_hz &&
      anygm_schedule_frame(g_libretro.engine,g_libretro.display_active_hz,&steps)!=ANYGM_OK){
@@ -904,7 +922,13 @@ void retro_run(void){
    * to receive from the geometry it currently holds. The dimensions here are bounded by the
    * constant maxima declared in retro_get_system_av_info, so this can never enlarge them. */
   bool timing_changed=(g_libretro.frame.flags&ANYGM_FRAME_TIMING_CHANGED)!=0;
-  bool geometry_changed=(g_libretro.frame.flags&ANYGM_FRAME_GEOMETRY_CHANGED)!=0;
+  /* Reset or state load can refresh cached AV before it is sent to the frontend. Compare with
+   * the previous video's extent and announced aspect on the first step of the tick. */
+  bool geometry_changed=(g_libretro.frame.flags&ANYGM_FRAME_GEOMETRY_CHANGED)!=0 ||
+    (step==0 && g_libretro.frame.width && g_libretro.frame.height &&
+     (g_libretro.frame.width!=width || g_libretro.frame.height!=height ||
+      (g_libretro.announced_aspect>0.0f && g_libretro.av.aspect_ratio>0.0 &&
+       g_libretro.announced_aspect!=frontend_aspect())));
   bool av_refreshed=false;
   if(g_libretro.startup_av_notification_pending){
     /* The only AV answer available before context adoption was fill_av_info's documented
@@ -913,7 +937,7 @@ void retro_run(void){
     libretro_update_av();
     av_refreshed=true;
     timing_changed=timing_changed ||
-      g_libretro.av.max_width!=3840u || g_libretro.av.max_height!=2160u ||
+      g_libretro.av.max_width!=3840u || g_libretro.av.max_height!=3840u ||
       frontend_cadence()!=60.0 || g_libretro.av.audio_rate!=44100u;
     geometry_changed=geometry_changed ||
       g_libretro.av.base_width!=288u || g_libretro.av.base_height!=216u ||
@@ -945,6 +969,7 @@ void retro_run(void){
       g_libretro.environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO,&av);
     else if(geometry_changed)
       g_libretro.environment(RETRO_ENVIRONMENT_SET_GEOMETRY,&av.geometry);
+    if(announce || geometry_changed) g_libretro.announced_aspect=av.geometry.aspect_ratio;
   }
   if(step+1==calls) prepare_expected_save();
   uint64_t video_started=timing.active && step+1==calls?frame_profile_now(&timing):0;

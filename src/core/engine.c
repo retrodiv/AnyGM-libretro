@@ -1187,6 +1187,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   if(engine->state_just_loaded && engine->state_frame_available){
     engine->output_width=engine->state_frame_width;
     engine->output_height=engine->state_frame_height;
+    engine_update_host_canvas(engine);
     engine->state_just_loaded=0;
     engine->state_reapply_size=0;
     engine_clear_video_restore_source(engine);
@@ -3064,17 +3065,20 @@ AnygmResult anygm_get_av_info(const AnygmEngine *engine,AnygmAvInfo *info){
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED || !info)
     return ANYGM_ERROR_INVALID_STATE;
   if(info->struct_size<sizeof *info) return ANYGM_ERROR_INCOMPATIBLE_ABI;
-  info->base_width=engine->host_output_width?engine->host_output_width:
-                   (engine->output_width?engine->output_width:engine->width);
-  info->base_height=engine->host_output_height?engine->host_output_height:
-                    (engine->output_height?engine->output_height:engine->height);
+  unsigned width,height;
+  engine_host_extent(engine,&width,&height);
+  width=width?width:engine->width;
+  height=height?height:engine->height;
+  engine_rotate_extent(engine->host_rotation,&width,&height);
+  info->base_width=width;
+  info->base_height=height;
+  /* Keep the framebuffer capacity valid across a live quarter turn. */
   info->max_width=FB_MAX_W;
-  info->max_height=FB_MAX_H;
-  /* The ratio describes the frame actually handed over, so a host scaling to it preserves the
-   * shape. Taking it from the window extent instead reshapes the picture: content routinely asks
-   * for a window whose proportions differ from its view, and a 4:3 raster announced as the 16:9
-   * window it requested arrives at the player stretched. */
-  info->aspect_ratio=info->base_height?(double)info->base_width/info->base_height:4.0/3.0;
+  info->max_height=FB_MAX_W;
+  /* Publish the display aspect of the delivered raster. A CRT Keep canvas has rectangular
+   * samples. Other rasters use square pixels, independently of the content's window size. */
+  info->aspect_ratio=engine->host_display_aspect>0.0?engine->host_display_aspect:
+    info->base_height?(double)info->base_width/info->base_height:4.0/3.0;
   info->frames_per_second=engine->fps;
   info->audio_rate=44100;
   info->display_frequency_request_hz=engine_display_request(engine);
@@ -3371,6 +3375,36 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
       engine->config.adjust_crt_tv=want;
       engine->fps_room=-1;
     }
+  }
+  if(f&ANYGM_CONFIG_CRT_OVERSIZE_SMALL){
+    uint32_t small=delta->values.crt_oversize_small!=0;
+    if(engine->config.adjust_crt_tv && engine->config.crt_oversize_small!=small)
+      engine->fps_room=-1;
+    engine->config.crt_oversize_small=small;
+  }
+  if(f&ANYGM_CONFIG_CRT_OVERSIZE_KEEP){
+    uint32_t keep=delta->values.crt_oversize_keep!=0;
+    if(engine->config.adjust_crt_tv && engine->config.crt_oversize_keep!=keep)
+      engine->fps_room=-1;
+    engine->config.crt_oversize_keep=keep;
+  }
+  if(f&ANYGM_CONFIG_CRT_VERTICAL){
+    uint32_t vertical=delta->values.crt_vertical!=0;
+    if(engine->config.adjust_crt_tv && engine->config.crt_vertical!=vertical)
+      engine->fps_room=-1;
+    engine->config.crt_vertical=vertical;
+  }
+  if(f&ANYGM_CONFIG_IMAGE_ROTATION){
+    uint32_t rotation=delta->values.image_rotation<=ANYGM_IMAGE_ROTATION_RIGHT?
+      delta->values.image_rotation:ANYGM_IMAGE_ROTATION_NONE;
+    if(engine->config.image_rotation!=rotation) engine->fps_room=-1;
+    engine->config.image_rotation=rotation;
+  }
+  if(f&ANYGM_CONFIG_FRONTEND_ROTATION){
+    uint32_t rotation=delta->values.frontend_rotation<=ANYGM_IMAGE_ROTATION_RIGHT?
+      delta->values.frontend_rotation:ANYGM_IMAGE_ROTATION_NONE;
+    if(engine->config.frontend_rotation!=rotation) engine->fps_room=-1;
+    engine->config.frontend_rotation=rotation;
   }
   if(presentation_changed){
     engine->fps_room=-1;

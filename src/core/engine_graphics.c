@@ -584,17 +584,18 @@ int engine_execute_content_shader(void *context,const GmlRenderShaderRequest *re
 }
 
 /* A host-sized intermediate is transient, unlike the logical image saved in state.
- * The final integer translation samples it without a copy or CPU observation. */
+ * The final integer transform samples it without a copy or CPU observation. */
 static int engine_execute_host_plan(AnygmEngine *engine,GmlRenderPlan *plan,
                                      unsigned width,unsigned height){
-  int shifted=engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
-    (engine->present_shift_x || engine->present_shift_y);
-  if(shifted && !engine_graphics_is_current(engine)) return 0;
-  if(shifted) plan->target=GML_PLAN_TARGET_DEVICE_PRESENTATION;
+  int transformed=engine->host_rotation ||
+    (engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
+     (engine->present_shift_x || engine->present_shift_y));
+  if(transformed && !engine_graphics_is_current(engine)) return 0;
+  if(transformed) plan->target=GML_PLAN_TARGET_DEVICE_PRESENTATION;
   if(!engine_execute_graphics_plan(engine,plan)) return 0;
-  if(shifted){
-    if(!gml_gpu_present_shifted_frame(engine->gpu,width,height,engine->host_frame_generation,
-         engine->present_shift_x,engine->present_shift_y,1)) return 0;
+  if(transformed){
+    if(!gml_gpu_present_transformed_frame(engine->gpu,width,height,engine->host_frame_generation,
+         engine->present_shift_x,engine->present_shift_y,engine->host_rotation,1)) return 0;
     gml_render_dispatch_gpu_composition(&engine->render,GML_RENDER_SCENE_SURFACE);
   }
   return 1;
@@ -676,6 +677,7 @@ static int engine_present_indirect_gui_host(AnygmEngine *engine,
   engine->host_plan_valid=1;
   engine->host_clear_valid=0;
   engine->canvas_pass_frames++;
+  engine_rotate_extent(engine->host_rotation,&host_width,&host_height);
   if(width) *width=host_width;
   if(height) *height=host_height;
   return 1;
@@ -708,6 +710,7 @@ static int engine_present_completed_device_canvas(AnygmEngine *engine,
   engine->host_plan_valid=1;
   engine->host_clear_valid=0;
   engine->canvas_pass_frames++;
+  engine_rotate_extent(engine->host_rotation,&host_width,&host_height);
   if(width) *width=host_width;
   if(height) *height=host_height;
   return 1;
@@ -777,8 +780,10 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
   int scene=engine->scene_renderer_session==ANYGM_SCENE_RENDERER_OPENGL &&
             engine_graphics_active(engine);
   if(!hybrid && !shaders && !scene) return 0;
-  if(scene && (engine->present_shift_x || engine->present_shift_y) &&
+  unsigned rotation=engine->host_rotation;
+  if((rotation || (scene && (engine->present_shift_x || engine->present_shift_y))) &&
      !engine_graphics_is_current(engine)) return 0;
+  GmlPlanTarget target=rotation?GML_PLAN_TARGET_DEVICE_PRESENTATION:GML_PLAN_TARGET_HOST_FRAMEBUFFER;
   int crt_readback=engine->host_crt_active && engine->host_canvas_active;
   if(engine->host_canvas_active && scene &&
      engine_present_indirect_gui_host(engine,width,height)) return 1;
@@ -814,8 +819,7 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
   if(record.source_width<=0 || record.source_height<=0 ||
      record.destination_width<=0 || record.destination_height<=0) return 0;
   plan=&engine->host_plan;
-  gml_render_plan_reset(plan,GML_PLAN_TARGET_HOST_FRAMEBUFFER,
-                        engine->output_width,engine->output_height);
+  gml_render_plan_reset(plan,target,engine->output_width,engine->output_height);
   whole.x=0;
   whole.y=0;
   whole.width=engine->output_width;
@@ -928,8 +932,7 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
         gml_render_shader_mark_failed(&engine->render,record.shader);
     }
     engine_content_program_pixels_release(plan,&owned);
-    gml_render_plan_reset(plan,GML_PLAN_TARGET_HOST_FRAMEBUFFER,
-                          engine->output_width,engine->output_height);
+    gml_render_plan_reset(plan,target,engine->output_width,engine->output_height);
     if(!gml_render_plan_add_clear(plan,whole,record.has_fill?record.fill_color:0x000000u)) return 0;
     image=gml_render_plan_add_image(plan,&source);
     if(image==GML_PLAN_NO_IMAGE) return 0;
@@ -950,13 +953,18 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
   if(!engine_execute_graphics_plan(engine,plan)) return 0;
 presented:
   if(scene && engine_graphics_is_current(engine)){
-    if(!gml_gpu_capture_completed_frame(engine->gpu,engine->output_width,engine->output_height,
-                                        engine->host_frame_generation)) return 0;
+    int captured=rotation
+      ?gml_gpu_capture_device_presentation(engine->gpu,engine->output_width,engine->output_height,
+                                            engine->host_frame_generation)
+      :gml_gpu_capture_completed_frame(engine->gpu,engine->output_width,engine->output_height,
+                                       engine->host_frame_generation);
+    if(!captured) return 0;
     engine->frame_authority=ENGINE_FRAME_GPU_PRESENTED_DEVICE_RESIDENT;
   } else engine->frame_authority=ENGINE_FRAME_GPU_PRESENTED_CPU_RECONSTRUCTIBLE;
-  if(scene && (engine->present_shift_x || engine->present_shift_y)){
-    if(!gml_gpu_present_shifted_frame(engine->gpu,engine->output_width,engine->output_height,
-         engine->host_frame_generation,engine->present_shift_x,engine->present_shift_y,0)) return 0;
+  if(rotation || (scene && (engine->present_shift_x || engine->present_shift_y))){
+    if(!gml_gpu_present_transformed_frame(engine->gpu,engine->output_width,engine->output_height,
+         engine->host_frame_generation,engine->present_shift_x,engine->present_shift_y,rotation,
+         !scene)) return 0;
     gml_render_dispatch_gpu_composition(&engine->render,GML_RENDER_SCENE_SURFACE);
   }
   engine->host_plan_valid=1;
@@ -964,8 +972,10 @@ presented:
   /* The processor's copy of the frame was not written. Saying so is what keeps anything that needs
    * those pixels from reading the buffer instead of asking for them. */
   engine->host_clear_valid=0;
-  if(width) *width=engine->output_width;
-  if(height) *height=engine->output_height;
+  unsigned output_width=engine->output_width,output_height=engine->output_height;
+  engine_rotate_extent(rotation,&output_width,&output_height);
+  if(width) *width=output_width;
+  if(height) *height=output_height;
   return 1;
 }
 
@@ -1061,6 +1071,7 @@ static int engine_present_hardware_canvas_plan(AnygmEngine *engine,
   /* The host-sized copy was not written this frame, so its margins can no longer be assumed to
    * survive: a later software frame has to clear them again. */
   engine->host_clear_valid=0;
+  engine_rotate_extent(engine->host_rotation,&host_width,&host_height);
   if(width) *width=host_width;
   if(height) *height=host_height;
   return 1;
