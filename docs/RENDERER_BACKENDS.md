@@ -2987,6 +2987,14 @@ existing paired owner or rejection. No CPU writer, shader or state schema change
 An absent bound vertical plane with a retained peer keeps its existing CPU
 boundary; the numbered resource fixture additionally checks that refusal.
 
+R03-CLASSIC-SAMPLE-UNDERLAY selects filter128 through its own constant program.
+The fragment expressions and packet geometry are unchanged; specializing the
+existing branch prevents a V3D driver from deferring the general scene program's
+large dynamic selector until the first sample-plane draw. The constant-program
+compile, cache and context-loss controls cover both graphics APIs. This changes
+neither CPU composition nor the sample-plane pixel contract and adds no broader
+performance claim.
+
 ### Native modern sprite and manual compositor scope
 
 The conditional RGB recovery and hot rectangle/nearest coverage programs also

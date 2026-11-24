@@ -369,6 +369,7 @@ static GlSceneProgramVariant scene_program_variant(uint32_t filter,int native_fl
     return (native_flags&GL_SCENE_NATIVE_EQUAL_EXTENT)?
       GL_SCENE_PROGRAM_CONSTANT_56_EQUAL_EXTENT:GL_SCENE_PROGRAM_CONSTANT_56;
   case 8u:return GL_SCENE_PROGRAM_CONSTANT_8;
+  case 128u:return GL_SCENE_PROGRAM_CONSTANT_128;
   default:
     if((filter>=65u && filter<=74u) || (filter>=79u && filter<=82u) ||
        (filter>=112u && filter<=115u) || (filter>=137u && filter<=158u))
