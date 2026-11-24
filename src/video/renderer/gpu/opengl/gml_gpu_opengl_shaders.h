@@ -1607,7 +1607,8 @@
   "uniform int u_effect_linear;\n" \
   "uniform int u_effect_seed;\n" \
   "uniform sampler2D u_effect_sampler;\n" \
-  "uniform vec4 u_effect_clouds[4];\n" \
+  "uniform vec4 u_effect_parameters[4];\n" \
+  "uniform ivec4 u_effect_add;\n" \
   "uniform ivec4 u_effect_shade;\n" \
   "in vec2 v_texcoord;\n" \
   "in vec4 v_colour;\n" \
@@ -1702,24 +1703,97 @@
   "  return phase*phase*(3.0-2.0*phase);\n" \
   "}\n" \
   "ivec4 effect_cloud_pixel(ivec4 source){\n" \
-  "  float time=u_effect_clouds[0].x;\n" \
-  "  float scale=u_effect_clouds[0].w;\n" \
+  "  float time=u_effect_parameters[0].x;\n" \
+  "  float scale=u_effect_parameters[0].w;\n" \
   "  if(abs(scale)<0.000001)scale=1.0;\n" \
   "  vec2 point=vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y);\n" \
-  "  point=(point+u_effect_clouds[0].yz-u_effect_clouds[1].xy*time)/scale*u_effect_clouds[2].xy;\n" \
-  "  vec2 churn=u_effect_clouds[1].z*0.25*vec2(sin(time*0.7),cos(time*0.9));\n" \
+  "  point=(point+u_effect_parameters[0].yz-u_effect_parameters[1].xy*time)/scale*u_effect_parameters[2].xy;\n" \
+  "  vec2 churn=u_effect_parameters[1].z*0.25*vec2(sin(time*0.7),cos(time*0.9));\n" \
   "  point.x+=churn.x*sin(point.y*0.5+time);\n" \
   "  point.y+=churn.y*cos(point.x*0.5+time*1.3);\n" \
-  "  point.y+=u_effect_clouds[1].w*sin(point.x*3.0);\n" \
-  "  float level=u_effect_clouds[2].z,density=max(u_effect_clouds[2].w,0.0001);\n" \
-  "  float edge=max(u_effect_clouds[3].x,0.0001)/density;\n" \
-  "  float shade_edge=max(u_effect_clouds[3].w,0.0001)/density;\n" \
+  "  point.y+=u_effect_parameters[1].w*sin(point.x*3.0);\n" \
+  "  float level=u_effect_parameters[2].z,density=max(u_effect_parameters[2].w,0.0001);\n" \
+  "  float edge=max(u_effect_parameters[3].x,0.0001)/density;\n" \
+  "  float shade_edge=max(u_effect_parameters[3].w,0.0001)/density;\n" \
   "  float coverage=effect_cloud_smooth(level,level+edge,effect_cloud_noise(point));\n" \
-  "  float shaded=effect_cloud_smooth(level,level+shade_edge,effect_cloud_noise(point+u_effect_clouds[3].yz));\n" \
+  "  float shaded=effect_cloud_smooth(level,level+shade_edge,effect_cloud_noise(point+u_effect_parameters[3].yz));\n" \
   "  vec4 base=vec4(source)/255.0;\n" \
   "  vec3 paint=mix(vec3(u_effect_colour.rgb),vec3(u_effect_shade.rgb),shaded)/255.0*base.a;\n" \
   "  vec3 colour=mix(base.rgb,paint,coverage*base.a);\n" \
   "  return ivec4(ivec3(floor(clamp(colour,0.0,1.0)*255.0+0.5)),source.a);\n" \
+  "}\n" \
+  "// R03_SHADER_LAYER_BOXES: hashed cells and device-filtered palette samples.\n" \
+  "uint effect_cell_hash(uvec2 cell,uint seed){\n" \
+  "  uint h=cell.x*0x9E3779B1u^(cell.y+0x7F4A7C15u)*0x85EBCA77u^seed*0xC2B2AE3Du;\n" \
+  "  h^=h>>15u;h*=0x2C1B3C6Du;h^=h>>12u;h*=0x297A2D39u;h^=h>>15u;return h;\n" \
+  "}\n" \
+  "float effect_hash_fraction(uint value){return float(value&0xFFFFFFu)*(1.0/16777216.0);}\n" \
+  "ivec4 effect_boxes_pixel(ivec4 source){\n" \
+  "  float scale=u_effect_parameters[0].w,time=u_effect_parameters[0].x;\n" \
+  "  if(scale<=0.0 || source.a==0)return source;\n" \
+  "  vec2 point=vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y)-u_effect_parameters[0].yz;\n" \
+  "  ivec2 cell=ivec2(floor(point/scale));\n" \
+  "  vec4 colour=vec4(source)/255.0;\n" \
+  "  float sharp=u_effect_parameters[3].z;\n" \
+  "  float edge=max(sharp>0.0001?scale/sharp:scale,0.5);\n" \
+  "  float roundness=clamp(u_effect_parameters[2].w,0.0,1.0);\n" \
+  "  float count=max(u_effect_parameters[3].y,1.0);\n" \
+  "  for(int oy=-1;oy<=1;oy++)for(int ox=-1;ox<=1;ox++){\n" \
+  "    ivec2 c=cell+ivec2(ox,oy);\n" \
+  "    uint h0=effect_cell_hash(uvec2(c),0x1B0C5Du),h1=effect_cell_hash(uvec2(c),0x2A7F31u);\n" \
+  "    float r0=effect_hash_fraction(h0),r1=effect_hash_fraction(h0>>8u);\n" \
+  "    float r2=effect_hash_fraction(h1),r3=effect_hash_fraction(h1>>8u);\n" \
+  "    float size=mix(u_effect_parameters[1].x,u_effect_parameters[1].y,r0)*scale;\n" \
+  "    float phase=r2*6.2831853,wander=u_effect_parameters[2].x*scale*0.5;\n" \
+  "    float speed=u_effect_parameters[2].y;\n" \
+  "    vec2 centre=(vec2(c)+vec2(0.5))*scale+\n" \
+  "      wander*vec2(sin(speed*time+phase),cos(speed*time*0.8+phase*1.7));\n" \
+  "    float spin=mix(u_effect_parameters[1].z,u_effect_parameters[1].w,r1)*time;\n" \
+  "    float theta=-(u_effect_parameters[2].z+spin)*0.01745329252;\n" \
+  "    float ct=cos(theta),st=sin(theta);vec2 d=point-centre;\n" \
+  "    vec2 local=abs(vec2(d.x*ct-d.y*st,d.x*st+d.y*ct));\n" \
+  "    float radius=roundness*size*0.5,half_size=size*0.5-radius;\n" \
+  "    float distance_to_box=length(max(local-vec2(half_size),vec2(0.0)))-radius;\n" \
+  "    float coverage=clamp(0.5-distance_to_box/edge,0.0,1.0);\n" \
+  "    if(coverage<=0.0)continue;\n" \
+  "    float entry=(floor(r3*count)+0.5)/count;\n" \
+  "    vec4 palette=texture(u_effect_sampler,vec2(entry,fract(time*u_effect_parameters[3].x+r0)));\n" \
+  "    colour.rgb=mix(colour.rgb,palette.rgb*colour.a,coverage*palette.a*colour.a);\n" \
+  "  }\n" \
+  "  return ivec4(ivec3(floor(clamp(colour.rgb,0.0,1.0)*255.0+0.5)),source.a);\n" \
+  "}\n" \
+  "// R03_SHADER_LAYER_UNDERWATER: hardware noise and capture filtering.\n" \
+  "vec4 effect_water_sample(vec2 point){\n" \
+  "  vec2 uv=point/u_extent;\n" \
+  "  if(u_effect_parameters[3].w!=0.0)uv.y=1.0-uv.y;\n" \
+  "  return texture(u_image,uv);\n" \
+  "}\n" \
+  "ivec4 effect_water_pixel(){\n" \
+  "  vec2 point=vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y);\n" \
+  "  vec2 size=vec2(textureSize(u_effect_sampler,0)),displacement=vec2(0.0);\n" \
+  "  float time=u_effect_parameters[0].x;\n" \
+  "  for(int q=0;q<2;q++){\n" \
+  "    vec2 scale=q==0?u_effect_parameters[1].xy:u_effect_parameters[1].zw;\n" \
+  "    if(abs(scale.x)<0.000001)scale.x=1.0;\n" \
+  "    if(abs(scale.y)<0.000001)scale.y=1.0;\n" \
+  "    float speed=q==0?u_effect_parameters[2].x:u_effect_parameters[2].y;\n" \
+  "    float amount=q==0?u_effect_parameters[2].z:u_effect_parameters[2].w;\n" \
+  "    vec2 uv=(point+u_effect_parameters[0].yz*u_effect_parameters[0].w)/(scale*size);\n" \
+  "    uv.y+=speed*time;\n" \
+  "    vec2 noise=texture(u_effect_sampler,uv).rg;\n" \
+  "    displacement+=(noise-vec2(0.5))*2.0*amount;\n" \
+  "  }\n" \
+  "  float chroma=u_effect_parameters[3].x;\n" \
+  "  vec4 red=effect_water_sample(point+displacement*(1.0+chroma));\n" \
+  "  vec4 green=effect_water_sample(point+displacement*(1.0+chroma*0.5));\n" \
+  "  vec4 blue=effect_water_sample(point+displacement);\n" \
+  "  vec4 result=vec4(red.r,green.g,blue.b,blue.a);\n" \
+  "  float total=abs(u_effect_parameters[2].z)+abs(u_effect_parameters[2].w);\n" \
+  "  float strength=total>0.000001?length(displacement)/total:0.0;\n" \
+  "  float shine=effect_cloud_smooth(0.55,1.0,strength)*result.a;\n" \
+  "  result.rgb=(result.rgb+vec3(u_effect_colour.rgb)/255.0*shine)*\n" \
+  "    (vec3(u_effect_shade.rgb)/255.0)+vec3(u_effect_add.rgb)/255.0*result.a;\n" \
+  "  return ivec4(floor(clamp(result,0.0,1.0)*255.0+0.5));\n" \
   "}\n" \
   "#if GML_EXACT_FONT_MODE>0\n" \
   "void main(){\n" \
@@ -1785,8 +1859,8 @@
   "    return;\n" \
   "  }\n" \
   "  // R03_SHADER_LAYER_TINT_COLOURISE: transform premultiplied capture, then source-over.\n" \
-  "  if(u_blend_rule==2 || u_blend_rule==3 || u_blend_rule==4 || u_blend_rule==12){\n" \
-  "    if(u_blend_rule!=4 && source.a==0){ o_color=vec4(prior)/255.0; return; }\n" \
+  "  if(u_blend_rule==2 || u_blend_rule==3 || u_blend_rule==4 || u_blend_rule==12 || u_blend_rule==13 || u_blend_rule==14){\n" \
+  "    if(u_blend_rule!=4 && u_blend_rule!=14 && source.a==0){ o_color=vec4(prior)/255.0; return; }\n" \
   "    ivec4 filtered=source;\n" \
   "    if(u_blend_rule==2){\n" \
   "      filtered=ivec4(floor(vec4(source)*vec4(u_effect_colour)/255.0+0.5));\n" \
@@ -1807,6 +1881,8 @@
   "      vec3 result=mix(straight,ramp,clamp(u_effect_intensity,0.0,1.0))*float(source.a)/255.0;\n" \
   "      filtered.rgb=ivec3(floor(clamp(result,0.0,1.0)*255.0+0.5));\n" \
   "    } else if(u_blend_rule==12){ filtered=effect_cloud_pixel(source);\n" \
+  "    } else if(u_blend_rule==13){ filtered=effect_boxes_pixel(source);\n" \
+  "    } else if(u_blend_rule==14){ filtered=effect_water_pixel();\n" \
   "    } else {\n" \
   "      // R03_SHADER_LAYER_ZOOM_BLUR: sixteen bounded capture samples, then source-over.\n" \
   "      vec2 point=v_texcoord*u_extent;\n" \

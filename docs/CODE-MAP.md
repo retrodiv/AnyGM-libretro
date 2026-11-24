@@ -5,15 +5,21 @@
 
 `common/gml_render_effects.c::layer_effect_sampler_source` resolves a raw versioned
 runtime/atlas asset and logical trim without CPU sampling. `::layer_cloud_effect`
-prepares the bounded cloud descriptor; `::layer_effect_submit_gpu` binds capture
+prepares the bounded cloud descriptor; `::layer_sampler_effect` prepares typed
+palette/displacement descriptors; `::layer_effect_submit_gpu` binds capture
 and independent sampler through the existing resource contract. The OpenGL batch
 owner validates both sources and prepares an epoch-keyed private logical sampler
 with native clear/blit before shared effect drawing. The CLOUDS shader uses the
-device's repeat/linear sampling; other sampler-effect families remain debt.
+device's repeat/linear sampling. BOXES reuses that image with nearest/linear
+palette reads; UNDERWATER uses independent repeated noise and clamped nearest/linear
+capture reads. The shared snapshot and device validator declare the actual two
+filters. Hash cell indices are bounded before integer conversion; unqualified
+capture/source/state remains debt. Large blur and glow remain separate debt.
 `common/gml_render_runtime_images.c::gml_sprite_replace_from_rgba_frames` preserves
 its existing runtime ownership flag, matching assignment/alpha mutation. Focused
-resource guards cover native capture and replacement state; R03-P7-LAYER-CLOUDS
-owns device qualification requirements and exclusions. State schemas are unchanged.
+resource guards cover native capture and replacement state; R03-P7-LAYER-CLOUDS,
+R03-P7-LAYER-BOXES and R03-P7-LAYER-UNDERWATER own qualification requirements
+and exclusions. State schemas are unchanged.
 
 `src/video/renderer/common/gml_render_sample_setup.h` shares the original repeated
 texture-coordinate/fraction/weight preparation between software sampling and scalar

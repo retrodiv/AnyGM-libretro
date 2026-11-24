@@ -106,11 +106,13 @@ static int layer_effect_submit_gpu(GmlRender *r,const uint32_t *source_pixels,
   state.alpha=255u;
   if(!in_place){
     state.sampler_count=auxiliary?2u:1u;
-    state.samplers[0].filter=GML_RENDER_FILTER_NEAREST;
+    state.samplers[0].filter=effect->kind==GML_RENDER_LAYER_EFFECT_UNDERWATER && effect->linear?
+      GML_RENDER_FILTER_BILINEAR:GML_RENDER_FILTER_NEAREST;
     state.samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
     state.samplers[0].source_region=operation.target.region;
     if(auxiliary){
-      state.samplers[1].filter=GML_RENDER_FILTER_BILINEAR;
+      state.samplers[1].filter=effect->kind==GML_RENDER_LAYER_EFFECT_BOXES && !effect->linear?
+        GML_RENDER_FILTER_NEAREST:GML_RENDER_FILTER_BILINEAR;
       state.samplers[1].edge_rule=GML_RENDER_EDGE_REPEAT_SUBIMAGE;
       state.samplers[1].source_region=effect->sampler.source_region;
     }
@@ -189,6 +191,38 @@ static int layer_cloud_effect(GmlRender *r,const GmlLayerFilter *filter,
     effect->sampler.width<=caps.max_texture_extent && effect->sampler.height<=caps.max_texture_extent;
 }
 
+static int layer_sampler_effect(GmlRender *r,const GmlLayerFilter *filter,
+                                 double time,double camx,double camy,
+                                 GmlRenderLayerEffect *effect,GmlRenderResourceSource *source){
+  if(filter->kind==GML_LAYER_FILTER_CLOUDS)return layer_cloud_effect(r,filter,time,camx,camy,effect,source);
+  if(r->interp!=0 && r->interp!=1)return 0;
+  effect->intensity=1.0;effect->linear=(uint32_t)r->interp;
+  if(filter->kind==GML_LAYER_FILTER_BOXES){
+    const typeof(filter->u.boxes) *b=&filter->u.boxes;
+    effect->kind=GML_RENDER_LAYER_EFFECT_BOXES;
+    effect->boxes=(GmlRenderLayerBoxes){time,{camx,camy},b->scale,{b->size[0],b->size[1]},
+      {b->rotation[0],b->rotation[1]},b->displacement,b->speed,b->angle,b->roundness,
+      b->colour_speed,b->colours,b->sharpness};
+    /* Keep the cell index and its neighbours representable before any device cast. */
+    if(b->scale>0.0 && ((fabs(camx)+r->fbw+1.0)/b->scale>=1073741824.0 ||
+                       (fabs(camy)+r->fbh+1.0)/b->scale>=1073741824.0))return 0;
+  }else if(filter->kind==GML_LAYER_FILTER_UNDERWATER){
+    const typeof(filter->u.underwater) *u=&filter->u.underwater;
+    if(r->interp && (r->fbw>4096 || r->fbh>4096))return 0;
+    effect->kind=GML_RENDER_LAYER_EFFECT_UNDERWATER;
+    effect->underwater=(GmlRenderLayerUnderwater){time,{camx,camy},u->camera_scale,
+      {{u->scale[0][0],u->scale[0][1]},{u->scale[1][0],u->scale[1][1]}},
+      {u->speed[0],u->speed[1]},{u->amount[0],u->amount[1]},u->chroma};
+    effect->colour=u->glint_colour;effect->shade_colour=u->tint_colour;effect->add_colour=u->add_colour;
+  }else return 0;
+  double values[16];gml_render_layer_sampler_parameters(effect,values);
+  for(unsigned i=0;i<16u;i++)if(!isfinite(values[i]) || fabs(values[i])>1000000.0)return 0;
+  if(!layer_effect_sampler_source(r,filter->sampler_sprite,&effect->sampler,source))return 0;
+  const GmlRenderDeviceServices *device=gml_render_device(r);GmlRenderDeviceCaps caps={0};
+  return device && device->capabilities && device->capabilities(device->context,&caps) &&
+    effect->sampler.width<=caps.max_texture_extent && effect->sampler.height<=caps.max_texture_extent;
+}
+
 /* The filter-specific qualification stays at the captured-pass boundary. */
 static int layer_filter_try_gpu(GmlRender *r,const GmlLayerFilter *filter,
                                 int width,int height,double time,double camx,double camy){
@@ -198,9 +232,11 @@ static int layer_filter_try_gpu(GmlRender *r,const GmlLayerFilter *filter,
      (filter->kind!=GML_LAYER_FILTER_TINT &&
       filter->kind!=GML_LAYER_FILTER_COLOURISE &&
       filter->kind!=GML_LAYER_FILTER_ZOOM_BLUR &&
-      filter->kind!=GML_LAYER_FILTER_CLOUDS)) return 0;
-  if(filter->kind==GML_LAYER_FILTER_CLOUDS){
-    if(!r->layer_filter_gpu_capture || !layer_cloud_effect(r,filter,time,camx,camy,&effect,&auxiliary))return 0;
+      filter->kind!=GML_LAYER_FILTER_CLOUDS &&
+      filter->kind!=GML_LAYER_FILTER_BOXES && filter->kind!=GML_LAYER_FILTER_UNDERWATER)) return 0;
+  if(filter->kind==GML_LAYER_FILTER_CLOUDS || filter->kind==GML_LAYER_FILTER_BOXES ||
+     filter->kind==GML_LAYER_FILTER_UNDERWATER){
+    if(!r->layer_filter_gpu_capture || !layer_sampler_effect(r,filter,time,camx,camy,&effect,&auxiliary))return 0;
     return layer_effect_submit_gpu(r,r->layer_filter_src,r->layer_filter_resource,
       &auxiliary,&effect,width,height);
   }
@@ -281,10 +317,11 @@ int gml_render_layer_filter_begin(GmlRender *r,const GmlLayerFilter *filter){
     !r->gui_pass_active && !r->classic && r->active_shader<0;
   gml_render_prepare_draw(r);
   GmlRenderLayerEffect cloud={0};GmlRenderResourceSource sampler={0};
-  int cloud_candidate=r->scene_device_enabled && r->resident_application_pass &&
-    filter->kind==GML_LAYER_FILTER_CLOUDS &&
-    layer_cloud_effect(r,filter,0,r->cam_x,r->cam_y,&cloud,&sampler);
-  int native_capture=(cloud_candidate || filter->kind==GML_LAYER_FILTER_TINT ||
+  int sampler_candidate=r->scene_device_enabled && r->resident_application_pass &&
+    (filter->kind==GML_LAYER_FILTER_CLOUDS || filter->kind==GML_LAYER_FILTER_BOXES ||
+     filter->kind==GML_LAYER_FILTER_UNDERWATER) &&
+    layer_sampler_effect(r,filter,0,r->cam_x,r->cam_y,&cloud,&sampler);
+  int native_capture=(sampler_candidate || filter->kind==GML_LAYER_FILTER_TINT ||
     filter->kind==GML_LAYER_FILTER_COLOURISE || filter->kind==GML_LAYER_FILTER_ZOOM_BLUR) &&
     !r->classic_phase_scene_target &&
     gml_render_layer_capture_prepare(r,r->fbw,r->fbh,filter->affects_below);

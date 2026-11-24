@@ -1635,6 +1635,23 @@ static int source_palette_valid(const GmlRenderSourcePalette *palette){
   return 1;
 }
 
+static int layer_effect_extension(const char *extensions,const char *name){
+  if(!extensions)return 0;
+  size_t length=strlen(name);const char *found=extensions;
+  while((found=strstr(found,name))){
+    if((found==extensions || found[-1]==' ') && (found[length]==' ' || !found[length]))return 1;
+    found+=length;
+  }
+  return 0;
+}
+
+static int layer_effect_float_supported(const GmlGpuBackend *backend){
+  if(backend->api!=GML_GPU_API_OPENGLES3)return 1;
+  const char *extensions=(const char*)backend->gl.GetString(GL_EXTENSIONS);
+  return layer_effect_extension(extensions,"GL_OES_texture_float_linear") &&
+    layer_effect_extension(extensions,"GL_EXT_color_buffer_float");
+}
+
 static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batch){
   GmlRenderImageRef cleared[GL_SCENE_MAX_IMAGES];
   uint32_t clear_count=0;
@@ -1811,8 +1828,13 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
           op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_COLOURISE &&
           op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_ZOOM_BLUR &&
           op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_RGB_NOISE &&
-          op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_CLOUDS && !inline_effect) ||
+          op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_CLOUDS &&
+          op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_BOXES &&
+          op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_UNDERWATER && !inline_effect) ||
          !isfinite(op->payload.effect.intensity)) return 0;
+      if(op->payload.effect.kind==GML_RENDER_LAYER_EFFECT_UNDERWATER &&
+         (!layer_effect_float_supported(backend) || (op->payload.effect.linear &&
+          (target->width>4096u || target->height>4096u))))return 0;
       if(op->payload.effect.kind==GML_RENDER_LAYER_EFFECT_ZOOM_BLUR &&
          (!isfinite(op->payload.effect.centre[0]) ||
           !isfinite(op->payload.effect.centre[1]) ||
@@ -1841,25 +1863,32 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
            (op->payload.effect.kind==GML_RENDER_LAYER_EFFECT_INLINE_TINT &&
             (op->payload.effect.intensity!=1.0 || op->payload.effect.phase_seed))) return 0;
       }else{
-        int sampled=op->payload.effect.kind==GML_RENDER_LAYER_EFFECT_CLOUDS;
+        int sampled=gml_render_layer_effect_is_sampled(op->payload.effect.kind);
         if(op->source_count!=(sampled?2u:1u) || !op->sources) return 0;
         source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
         if(!source || !source->texture || source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
            same_logical(source->ref,target->image) ||
            source->width!=target->width || source->height!=target->height ||
            state->sampler_count!=(sampled?2u:1u) ||
-           state->samplers[0].filter!=GML_RENDER_FILTER_NEAREST ||
+           state->samplers[0].filter!=(op->payload.effect.kind==GML_RENDER_LAYER_EFFECT_UNDERWATER && op->payload.effect.linear?
+             GML_RENDER_FILTER_BILINEAR:GML_RENDER_FILTER_NEAREST) ||
            state->samplers[0].edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
            state->samplers[0].quantisation ||
            !full_region(state->samplers[0].source_region,source->width,source->height)) return 0;
         if(sampled){
           const GmlRenderLayerSampler *layout=&op->payload.effect.sampler;
           GlSceneImage *sampler=gml_gpu_opengl_scene_image(backend,op->sources[1]);
-          double parameters[16];gml_render_layer_cloud_parameters(&op->payload.effect.clouds,parameters);
+          double parameters[16];gml_render_layer_sampler_parameters(&op->payload.effect,parameters);
           for(unsigned i=0;i<16u;i++)if(!isfinite(parameters[i]) || fabs(parameters[i])>1000000.0)return 0;
+          if(op->payload.effect.kind==GML_RENDER_LAYER_EFFECT_BOXES){
+            const GmlRenderLayerBoxes *b=&op->payload.effect.boxes;
+            if(b->scale>0.0 && ((fabs(b->camera[0])+target->width+1.0)/b->scale>=1073741824.0 ||
+                               (fabs(b->camera[1])+target->height+1.0)/b->scale>=1073741824.0))return 0;
+          }
           if(op->payload.effect.intensity!=1.0 || op->payload.effect.centre[0]!=0.0 ||
              op->payload.effect.centre[1]!=0.0 || op->payload.effect.focus_radius!=0.0 ||
-             op->payload.effect.linear || op->payload.effect.phase_seed ||
+             (op->payload.effect.kind==GML_RENDER_LAYER_EFFECT_CLOUDS && op->payload.effect.linear) ||
+             op->payload.effect.linear>1u || op->payload.effect.phase_seed ||
              !backend->gl.BlitFramebuffer || backend->scene.max_texture_units<3 ||
              !sampler || !sampler->texture || sampler->source_partial ||
              (sampler->ref.resource_class!=GML_RENDER_RESOURCE_ATLAS && sampler->ref.resource_class!=GML_RENDER_RESOURCE_SPRITE) ||
@@ -1872,7 +1901,8 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
              layout->offset_x<0 || layout->offset_y<0 ||
              (uint64_t)(uint32_t)layout->offset_x+layout->source_region.width>layout->width ||
              (uint64_t)(uint32_t)layout->offset_y+layout->source_region.height>layout->height ||
-             state->samplers[1].filter!=GML_RENDER_FILTER_BILINEAR ||
+             state->samplers[1].filter!=(op->payload.effect.kind==GML_RENDER_LAYER_EFFECT_BOXES && !op->payload.effect.linear?
+               GML_RENDER_FILTER_NEAREST:GML_RENDER_FILTER_BILINEAR) ||
              state->samplers[1].edge_rule!=GML_RENDER_EDGE_REPEAT_SUBIMAGE ||
              state->samplers[1].quantisation || state->samplers[1].logical_margin_mask ||
              memcmp(&state->samplers[1].source_region,&layout->source_region,sizeof layout->source_region))return 0;
@@ -3524,25 +3554,31 @@ static void double_words(double value,GLint words[2]){
 /* Returns 1 on success, 0 before any target write, and -1 if the draw may have modified it. The
  * snapshot is only the affected rectangle, never the entire surface per overlapping sprite. */
 /* Expand a packed logical image with native clear/copy, then let the device
- * repeat and filter it. The cache is keyed by exact source version and layout. */
+ * repeat and filter it. Displacement uses a float sampler so normalized-byte filtering
+ * does not quantize the noise before it becomes a capture coordinate. The cache also
+ * keys its storage format; public source bytes remain unchanged. */
 static GLuint layer_effect_sampler_prepare(GmlGpuBackend *backend,GlSceneImage *source,
-                                           const GmlRenderLayerSampler *layout){
-  GlScene *scene=&backend->scene;
-  if(scene->effect_sampler_valid &&
-     !memcmp(&scene->effect_sampler_source,&source->ref,sizeof source->ref) &&
-     !memcmp(&scene->effect_sampler_layout,layout,sizeof *layout))return scene->effect_sampler_texture;
-  scene->effect_sampler_valid=0;
-  if(!scene->effect_sampler_texture)backend->gl.GenTextures(1,&scene->effect_sampler_texture);
-  if(!scene->effect_sampler_framebuffer)backend->gl.GenFramebuffers(1,&scene->effect_sampler_framebuffer);
-  if(!scene->effect_sampler_read_framebuffer)backend->gl.GenFramebuffers(1,&scene->effect_sampler_read_framebuffer);
-  if(!scene->effect_sampler_texture || !scene->effect_sampler_framebuffer || !scene->effect_sampler_read_framebuffer)return 0;
+                                           const GmlRenderLayerSampler *layout,GLenum format,
+                                           GlEffectSampleImage *image){
+  if(format==GL_RGBA32F && (layout->width>4096u || layout->height>4096u ||
+     !layer_effect_float_supported(backend)))return 0;
+  if(image->valid && image->format==format &&
+     !memcmp(&image->source,&source->ref,sizeof source->ref) &&
+     !memcmp(&image->layout,layout,sizeof *layout))return image->texture;
+  image->valid=0;
+  if(!image->texture)backend->gl.GenTextures(1,&image->texture);
+  if(!image->framebuffer)backend->gl.GenFramebuffers(1,&image->framebuffer);
+  if(!image->read_framebuffer)backend->gl.GenFramebuffers(1,&image->read_framebuffer);
+  if(!image->texture || !image->framebuffer || !image->read_framebuffer)return 0;
   backend->gl.ActiveTexture(GL_TEXTURE2);
-  backend->gl.BindTexture(GL_TEXTURE_2D,scene->effect_sampler_texture);
-  if(scene->effect_sampler_width!=layout->width || scene->effect_sampler_height!=layout->height){
-    backend->gl.TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,(GLsizei)layout->width,(GLsizei)layout->height,
-      0,GL_RGBA,GL_UNSIGNED_BYTE,NULL);
+  backend->gl.BindTexture(GL_TEXTURE_2D,image->texture);
+  if(image->width!=layout->width || image->height!=layout->height ||
+     image->format!=format){
+    backend->gl.TexImage2D(GL_TEXTURE_2D,0,(GLint)format,(GLsizei)layout->width,(GLsizei)layout->height,
+      0,GL_RGBA,format==GL_RGBA32F?GL_FLOAT:GL_UNSIGNED_BYTE,NULL);
     if(backend->gl.GetError()!=GL_NO_ERROR)return 0;
-    scene->effect_sampler_width=layout->width;scene->effect_sampler_height=layout->height;
+    image->format=format;
+    image->width=layout->width;image->height=layout->height;
   }
   backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
   backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
@@ -3550,13 +3586,13 @@ static GLuint layer_effect_sampler_prepare(GmlGpuBackend *backend,GlSceneImage *
   backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_REPEAT);
   backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_BASE_LEVEL,0);
   backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAX_LEVEL,0);
-  backend->gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER,scene->effect_sampler_framebuffer);
-  backend->gl.FramebufferTexture2D(GL_DRAW_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,scene->effect_sampler_texture,0);
+  backend->gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER,image->framebuffer);
+  backend->gl.FramebufferTexture2D(GL_DRAW_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,image->texture,0);
   if(backend->gl.CheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE)return 0;
   backend->gl.Scissor(0,0,(GLsizei)layout->width,(GLsizei)layout->height);
   backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);backend->gl.Disable(GL_BLEND);
   backend->gl.ClearColor(0,0,0,0);backend->gl.Clear(GL_COLOR_BUFFER_BIT);
-  backend->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,scene->effect_sampler_read_framebuffer);
+  backend->gl.BindFramebuffer(GL_READ_FRAMEBUFFER,image->read_framebuffer);
   backend->gl.FramebufferTexture2D(GL_READ_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,source->texture,0);
   if(backend->gl.CheckFramebufferStatus(GL_READ_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE)return 0;
   GmlRenderRect region=layout->source_region;
@@ -3566,8 +3602,8 @@ static GLuint layer_effect_sampler_prepare(GmlGpuBackend *backend,GlSceneImage *
     layout->offset_x,layout->offset_y,layout->offset_x+(GLint)region.width,
     layout->offset_y+(GLint)region.height,GL_COLOR_BUFFER_BIT,GL_NEAREST);
   if(backend->gl.GetError()!=GL_NO_ERROR)return 0;
-  scene->effect_sampler_source=source->ref;scene->effect_sampler_layout=*layout;
-  scene->effect_sampler_valid=1;return scene->effect_sampler_texture;
+  image->source=source->ref;image->layout=*layout;
+  image->valid=1;return image->texture;
 }
 
 static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
@@ -3585,8 +3621,19 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
   int inline_effect=effect && gml_render_layer_effect_is_inline(effect->kind);
   GLuint sampler_texture=0;
   if(auxiliary){
-    sampler_texture=layer_effect_sampler_prepare(backend,auxiliary,&effect->sampler);
+    sampler_texture=layer_effect_sampler_prepare(backend,auxiliary,&effect->sampler,
+      effect->kind==GML_RENDER_LAYER_EFFECT_UNDERWATER?GL_RGBA32F:GL_RGBA8,
+      &scene->effect_sampler);
     if(!sampler_texture)return 0;
+    backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
+  }
+  GLuint capture_texture=0;
+  if(effect && effect->kind==GML_RENDER_LAYER_EFFECT_UNDERWATER && effect->linear){
+    GmlRenderLayerSampler layout={.width=source->width,.height=source->height,
+      .source_region={0,0,source->width,source->height}};
+    capture_texture=layer_effect_sampler_prepare(backend,source,&layout,GL_RGBA32F,
+      &scene->effect_capture);
+    if(!capture_texture)return 0;
     backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
   }
   /* The certified identity underlay returns the source RGBA unchanged, including
@@ -3635,9 +3682,14 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
   backend->gl.Viewport(0,0,(GLsizei)target->width,(GLsizei)target->height);
   backend->gl.Scissor(left,bottom,width,height);
   backend->gl.ActiveTexture(GL_TEXTURE0);
-  backend->gl.BindTexture(GL_TEXTURE_2D,inline_effect?scene->snapshot_texture:source->texture);
-  backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
-  backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+  backend->gl.BindTexture(GL_TEXTURE_2D,inline_effect?scene->snapshot_texture:capture_texture?capture_texture:source->texture);
+  GLint capture_filter=effect && effect->kind==GML_RENDER_LAYER_EFFECT_UNDERWATER && effect->linear?GL_LINEAR:GL_NEAREST;
+  backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,capture_filter);
+  backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,capture_filter);
+  if(effect && effect->kind==GML_RENDER_LAYER_EFFECT_UNDERWATER){
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+  }
   backend->gl.UseProgram(exact->exact_program);
   backend->gl.Uniform2fv(exact->exact_u_extent,1,extent);
   backend->gl.Uniform1i(exact->exact_u_image,0);
@@ -3649,7 +3701,9 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
                                 effect->kind==GML_RENDER_LAYER_EFFECT_TINT?2:
                                 effect->kind==GML_RENDER_LAYER_EFFECT_COLOURISE?3:
                                 effect->kind==GML_RENDER_LAYER_EFFECT_ZOOM_BLUR?4:
-                                effect->kind==GML_RENDER_LAYER_EFFECT_CLOUDS?12:5):
+                                effect->kind==GML_RENDER_LAYER_EFFECT_CLOUDS?12:
+                                effect->kind==GML_RENDER_LAYER_EFFECT_BOXES?13:
+                                effect->kind==GML_RENDER_LAYER_EFFECT_UNDERWATER?14:5):
                           (qualified_blend(state)==11?9:qualified_blend(state)==7?8:qualified_blend(state)==6?7:
                            qualified_blend(state)==5?6:qualified_blend(state)==4?1:0));
   if(qualified_blend(state)==11){
@@ -3729,15 +3783,23 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
   }
   if(sampler_texture){
     double parameters[16];GLfloat values[16];
-    gml_render_layer_cloud_parameters(&effect->clouds,parameters);
+    gml_render_layer_sampler_parameters(effect,parameters);
     for(unsigned i=0;i<16u;i++)values[i]=(GLfloat)parameters[i];
+    if(effect->kind==GML_RENDER_LAYER_EFFECT_UNDERWATER)values[15]=!capture_texture && source->rendered_origin?1.0f:0.0f;
     uint32_t shade=effect->shade_colour;
     GLint rgba[4]={(GLint)((shade>>16)&255u),(GLint)((shade>>8)&255u),
       (GLint)(shade&255u),(GLint)(shade>>24)};
-    backend->gl.Uniform4fv(exact->exact_u_effect_clouds,4,values);
+    backend->gl.Uniform4fv(exact->exact_u_effect_parameters,4,values);
     backend->gl.Uniform4iv(exact->exact_u_effect_shade,1,rgba);
+    uint32_t add=effect->add_colour;
+    GLint extra[4]={(GLint)((add>>16)&255u),(GLint)((add>>8)&255u),
+      (GLint)(add&255u),(GLint)(add>>24)};
+    backend->gl.Uniform4iv(exact->exact_u_effect_add,1,extra);
     backend->gl.Uniform1i(exact->exact_u_effect_sampler,2);
     backend->gl.ActiveTexture(GL_TEXTURE2);backend->gl.BindTexture(GL_TEXTURE_2D,sampler_texture);
+    GLint sampler_filter=effect->kind==GML_RENDER_LAYER_EFFECT_BOXES && !effect->linear?GL_NEAREST:GL_LINEAR;
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,sampler_filter);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,sampler_filter);
     backend->gl.ActiveTexture(GL_TEXTURE0);
   }
   origin[0]=left;
@@ -3908,7 +3970,9 @@ int gml_render_gpu_opengl_apply_effect(GmlGpuBackend *backend,
       operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_COLOURISE &&
       operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_ZOOM_BLUR &&
       operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_RGB_NOISE &&
-      operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_CLOUDS && !inline_effect)) return 0;
+      operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_CLOUDS &&
+      operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_BOXES &&
+      operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_UNDERWATER && !inline_effect)) return 0;
   if(inline_effect)source=target;
   memset(shape,0,sizeof *shape);
   quad.opcode=GML_RENDER_OP_TEXTURED_QUAD;

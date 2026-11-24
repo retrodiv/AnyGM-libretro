@@ -205,7 +205,7 @@ typedef struct GlSceneExactProgram {
   GLint exact_u_blend_rule,exact_u_additive_alpha;
   GLint exact_u_effect_colour,exact_u_effect_intensity;
   GLint exact_u_effect_zoom,exact_u_effect_linear,exact_u_effect_seed;
-  GLint exact_u_effect_sampler,exact_u_effect_clouds,exact_u_effect_shade;
+  GLint exact_u_effect_sampler,exact_u_effect_parameters,exact_u_effect_shade,exact_u_effect_add;
   GLint exact_u_font_origin,exact_u_font_scale,exact_u_font_alpha;
   GLint exact_u_font_crop,exact_u_font_tint,exact_u_font_mode,exact_u_font_preserve_alpha;
   GLint exact_u_font_channel,exact_u_font_margin;
@@ -233,6 +233,15 @@ typedef struct GlDepthTriangleProgram {
   GLint extent,depth,colour,flags,policy,source,flat_uv,input_alpha,shade,fog_colour,fog_range;
   GLint alpha_coordinates,alpha_fraction,alpha_weights;
 } GlDepthTriangleProgram;
+
+typedef struct GlEffectSampleImage {
+  GLuint texture,framebuffer,read_framebuffer;
+  uint32_t width,height;
+  GLenum format;
+  GmlRenderImageRef source;
+  GmlRenderLayerSampler layout;
+  int valid;
+} GlEffectSampleImage;
 
 typedef struct GlScene {
   GlSceneImage images[GL_SCENE_MAX_IMAGES];
@@ -276,12 +285,8 @@ typedef struct GlScene {
   int instance_reuse_attempted;
   GlSceneExactProgram exact_programs[3];
   GLuint snapshot_texture,copy_framebuffer,rgb_query;
-  /* Disposable logical sampler, prepared from immutable decoded asset bytes. */
-  GLuint effect_sampler_texture,effect_sampler_framebuffer,effect_sampler_read_framebuffer;
-  uint32_t effect_sampler_width,effect_sampler_height;
-  GmlRenderImageRef effect_sampler_source;
-  GmlRenderLayerSampler effect_sampler_layout;
-  int effect_sampler_valid;
+  /* Disposable sampling images; public resources keep their actual byte format. */
+  GlEffectSampleImage effect_sampler,effect_capture;
   /* Two reusable reduction planes and two independent final predicates. No host observation. */
   GLuint rgb_reduce_program,rgb_reduce_framebuffer,rgb_reduce_texture[4];
   uint32_t rgb_reduce_width[4],rgb_reduce_height[4];

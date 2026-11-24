@@ -5389,7 +5389,7 @@ static int runtime_sprite_replacement_state_owner(void){
 
 /* A sampler effect must paint its captured draw and filter on the device.
  * The runtime sampler uses the public constructor so source metadata is valid. */
-static int resident_cloud_capture_exclusive_target(void){
+static int resident_sampler_capture_exclusive_target(int kind,int linear){
   enum {W=8,H=6};
   static const int revisions[]={530,701,800,810,0,0,0};
   static const int bytecodes[]={0,0,0,0,13,16,17};
@@ -5402,8 +5402,9 @@ static int resident_cloud_capture_exclusive_target(void){
     FakeDevice fake={.on_demand=1,.supported_operations=UINT64_MAX};
     GmlRenderDeviceServices device=service(&fake);uint32_t base[W*H]={0};
     GmlRenderResourceSource sampler={0};GmlRenderDispatchMetrics dispatch={0};
-    GmlLayerFilter filter={.kind=GML_LAYER_FILTER_CLOUDS,.sampler_sprite=0};
+    GmlLayerFilter filter={.kind=kind,.sampler_sprite=0};
     filter.affects_below=(int)below;
+    if(kind==GML_LAYER_FILTER_CLOUDS){
     filter.u.clouds.scale=3.0;filter.u.clouds.velocity[0]=2.0;filter.u.clouds.velocity[1]=-1.0;
     filter.u.clouds.turbulence=.65;filter.u.clouds.level=.3;filter.u.clouds.waves=.25;
     filter.u.clouds.shape[0]=.8;filter.u.clouds.shape[1]=1.1;
@@ -5411,7 +5412,16 @@ static int resident_cloud_capture_exclusive_target(void){
     filter.u.clouds.shade_offset[0]=.4;filter.u.clouds.shade_offset[1]=-.35;
     filter.u.clouds.shade_fade=1.4;filter.u.clouds.light_colour=0xE0B080FFu;
     filter.u.clouds.shade_colour=0x305090FFu;
-    CHECK(r && !gml_render_init(r,NULL));r->win=&content;r->classic=generation<4u;r->active_shader=-1;
+    }else if(kind==GML_LAYER_FILTER_BOXES){
+      filter.u.boxes=(typeof(filter.u.boxes)){.scale=4.0,.size={.5,.9},
+        .displacement=.3,.speed=.8,.angle=17,.rotation={-20,35},
+        .roundness=.4,.colour_speed=.2,.colours=4,.sharpness=5};
+    }else{
+      filter.u.underwater=(typeof(filter.u.underwater)){.speed={.15,-.2},
+        .scale={{1.3,.8},{-.7,1.2}},.amount={1.25,.75},.chroma=.3,.camera_scale=.6,
+        .glint_colour=0xFF507090u,.tint_colour=0xFFD0E0F0u,.add_colour=0xFF100804u};
+    }
+    CHECK(r && !gml_render_init(r,NULL));r->win=&content;r->classic=generation<4u;r->active_shader=-1;r->interp=linear;
     uint8_t *rgba=malloc(64u);CHECK(rgba);
     for(unsigned pixel=0;pixel<16u;pixel++){
       rgba[pixel*4u]=(uint8_t)(pixel*13u+17u);rgba[pixel*4u+1u]=(uint8_t)(pixel*7u+31u);
@@ -5436,8 +5446,8 @@ static int resident_cloud_capture_exclusive_target(void){
     gml_render_dispatch_diagnostics_enable(r,1);gml_render_set_skip_cpu_draws(r,1);
     int begun=gml_render_layer_filter_begin(r,&filter);
     if(!begun || !r->layer_filter_gpu_capture)
-      fprintf(stderr,"exclusive clouds: generation=%u owner=%u gui=%u below=%u begin=%d native=%d\n",
-        generation,owner,gui,below,begun,r->layer_filter_gpu_capture);
+      fprintf(stderr,"exclusive sampler kind=%d linear=%d: generation=%u owner=%u gui=%u below=%u begin=%d native=%d\n",
+        kind,linear,generation,owner,gui,below,begun,r->layer_filter_gpu_capture);
     CHECK(begun && r->layer_filter_gpu_capture && r->resident_application_pass);
     GmlRenderResource *capture=gml_render_scene_target_resource_ensure(r);CHECK(capture && capture!=parent);
     gml_render_primitive_rectangle(r,1,1,4,3,0x73A5D9u,0);
@@ -5446,6 +5456,12 @@ static int resident_cloud_capture_exclusive_target(void){
     gml_render_layer_filter_end(r,&filter,.375);
     CHECK(!r->layer_filter_active && r->fb==parent_pixels && r->target_id==parent_id &&
       r->target_sp==parent_sp && r->resident_application_pass && r->skip_cpu_draws);
+    CHECK(fake.last_effect_state.samplers[0].filter==
+      (kind==GML_LAYER_FILTER_UNDERWATER && linear?GML_RENDER_FILTER_BILINEAR:GML_RENDER_FILTER_NEAREST));
+    CHECK(fake.last_effect_state.samplers[1].filter==
+      (kind==GML_LAYER_FILTER_BOXES && !linear?GML_RENDER_FILTER_NEAREST:GML_RENDER_FILTER_BILINEAR));
+    CHECK(fake.last_effect.payload.effect.kind==(kind==GML_LAYER_FILTER_CLOUDS?GML_RENDER_LAYER_EFFECT_CLOUDS:
+        kind==GML_LAYER_FILTER_BOXES?GML_RENDER_LAYER_EFFECT_BOXES:GML_RENDER_LAYER_EFFECT_UNDERWATER));
     CHECK(fake.last_opcode==GML_RENDER_OP_LAYER_EFFECT && fake.last_source_count==2u &&
       !memcmp(&fake.last_source_image,&source,sizeof source) &&
       !memcmp(&fake.last_auxiliary_image,&sampler.image,sizeof sampler.image) &&
@@ -5460,8 +5476,20 @@ static int resident_cloud_capture_exclusive_target(void){
       for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)CHECK(!dispatch.cpu[family][reason]);
     fake.readback_colour=0xFF6B908Au;gml_render_free(r);free(r);controls++;
   }
-  printf("exclusive captured clouds target controls: %u\n",controls);
+  printf("exclusive captured sampler targets: kind=%d linear=%d controls=%u\n",kind,linear,controls);
   return controls==112u;
+}
+
+static int resident_cloud_capture_exclusive_target(void){
+  return resident_sampler_capture_exclusive_target(GML_LAYER_FILTER_CLOUDS,0);
+}
+
+static int resident_other_sampler_capture_exclusive_target(void){
+  for(int linear=0;linear<2;linear++){
+    CHECK(resident_sampler_capture_exclusive_target(GML_LAYER_FILTER_BOXES,linear));
+    CHECK(resident_sampler_capture_exclusive_target(GML_LAYER_FILTER_UNDERWATER,linear));
+  }
+  return 1;
 }
 
 static int resident_layer_capture_exclusive_target(void){
@@ -22955,6 +22983,7 @@ int main(void){
     else if(!strcmp(selected,"layer-capture-context-recovery")) passed=resident_layer_capture_context_recovery();
     else if(!strcmp(selected,"exclusive-layer-capture")) passed=resident_layer_capture_exclusive_target();
     else if(!strcmp(selected,"exclusive-cloud-capture")) passed=resident_cloud_capture_exclusive_target();
+    else if(!strcmp(selected,"exclusive-sampler-capture")) passed=resident_other_sampler_capture_exclusive_target();
     else if(!strcmp(selected,"runtime-sprite-replacement-state-owner")) passed=runtime_sprite_replacement_state_owner();
     else if(!strcmp(selected,"inline-native-target-effects")) passed=resident_inline_layer_effect_native_target();
     else if(!strcmp(selected,"ordinary-native-target-triangles")) passed=resident_ordinary_native_target_triangles();
@@ -23070,6 +23099,7 @@ int main(void){
   passed+=resident_layer_filter_capture_barrier();
   passed+=resident_layer_capture_exclusive_target();
   passed+=resident_cloud_capture_exclusive_target();
+  passed+=resident_other_sampler_capture_exclusive_target();
   passed+=runtime_sprite_replacement_state_owner();
   passed+=resident_classic_disabled_unit_alpha();
   passed+=resident_modern_unit_surface_alpha();
@@ -23362,7 +23392,7 @@ int main(void){
   passed+=resident_runtime_native_rotations();
   passed+=runtime_sprite_deferred_clear();
   passed+=resident_runtime_native_boundaries();
-  enum { total=370 };
+  enum { total=371 };
   printf("render resource cases: passed=%d failed=%d\n",passed,total-passed);
   return passed==total?EXIT_SUCCESS:EXIT_FAILURE;
 }

@@ -306,9 +306,13 @@ void gml_gpu_opengl_scene_destroy(GmlGpuBackend *backend,int context_is_current)
     for(size_t index=0;index<3u;index++)
       if(scene->exact_programs[index].exact_program)
         backend->gl.DeleteProgram(scene->exact_programs[index].exact_program);
-    if(scene->effect_sampler_texture) backend->gl.DeleteTextures(1,&scene->effect_sampler_texture);
-    if(scene->effect_sampler_framebuffer) backend->gl.DeleteFramebuffers(1,&scene->effect_sampler_framebuffer);
-    if(scene->effect_sampler_read_framebuffer) backend->gl.DeleteFramebuffers(1,&scene->effect_sampler_read_framebuffer);
+    GlEffectSampleImage *sample_images[]={&scene->effect_sampler,&scene->effect_capture};
+    for(unsigned i=0;i<2u;i++){
+      GlEffectSampleImage *image=sample_images[i];
+      if(image->texture)backend->gl.DeleteTextures(1,&image->texture);
+      if(image->framebuffer)backend->gl.DeleteFramebuffers(1,&image->framebuffer);
+      if(image->read_framebuffer)backend->gl.DeleteFramebuffers(1,&image->read_framebuffer);
+    }
     if(scene->snapshot_texture) backend->gl.DeleteTextures(1,&scene->snapshot_texture);
     if(scene->copy_framebuffer) backend->gl.DeleteFramebuffers(1,&scene->copy_framebuffer);
     if(scene->rgb_query && backend->gl.DeleteQueries)

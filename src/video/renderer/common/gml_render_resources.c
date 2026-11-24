@@ -614,7 +614,7 @@ static int batch_valid(const GmlRenderResource *resource,const GmlRenderDrawBatc
            operation->payload.shader->sampler_count>GML_PLAN_MAX_SAMPLERS ||
            operation->source_count!=1u+operation->payload.shader->sampler_count) return 0;
       } else if(operation->opcode==GML_RENDER_OP_LAYER_EFFECT &&
-                operation->payload.effect.kind==GML_RENDER_LAYER_EFFECT_CLOUDS){
+                gml_render_layer_effect_is_sampled(operation->payload.effect.kind)){
         if(operation->source_count!=2u ||
            operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
            same_logical(operation->sources[0],operation->sources[1]) ||

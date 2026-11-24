@@ -78,6 +78,8 @@ typedef void GLvoid;
 #define GL_UNSIGNED_SHORT 0x1403
 #define GL_RGBA 0x1908
 #define GL_RGBA8 0x8058
+#define GL_RGBA32F 0x8814
+#define GL_EXTENSIONS 0x1F03
 #define GL_RED_INTEGER 0x8D94
 #define GL_R16UI 0x8234
 #define GL_R32UI 0x8236

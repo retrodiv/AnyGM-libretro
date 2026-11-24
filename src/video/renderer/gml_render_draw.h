@@ -528,7 +528,9 @@ typedef enum GmlRenderLayerEffectKind {
   GML_RENDER_LAYER_EFFECT_RGB_NOISE=4,
   GML_RENDER_LAYER_EFFECT_INLINE_TINT=5,
   GML_RENDER_LAYER_EFFECT_INLINE_RGB_NOISE=6,
-  GML_RENDER_LAYER_EFFECT_CLOUDS=7
+  GML_RENDER_LAYER_EFFECT_CLOUDS=7,
+  GML_RENDER_LAYER_EFFECT_BOXES=8,
+  GML_RENDER_LAYER_EFFECT_UNDERWATER=9
 } GmlRenderLayerEffectKind;
 
 /* Inline effects read a device-owned snapshot of the current target, not an
@@ -537,6 +539,11 @@ typedef enum GmlRenderLayerEffectKind {
 static inline int gml_render_layer_effect_is_inline(uint32_t kind){
   return kind==GML_RENDER_LAYER_EFFECT_INLINE_TINT ||
          kind==GML_RENDER_LAYER_EFFECT_INLINE_RGB_NOISE;
+}
+
+static inline int gml_render_layer_effect_is_sampled(uint32_t kind){
+  return kind==GML_RENDER_LAYER_EFFECT_CLOUDS || kind==GML_RENDER_LAYER_EFFECT_BOXES ||
+         kind==GML_RENDER_LAYER_EFFECT_UNDERWATER;
 }
 
 /* A logical repeat image may occupy a trimmed rectangle of its physical source.
@@ -562,6 +569,15 @@ static inline void gml_render_layer_cloud_parameters(const GmlRenderLayerClouds 
   for(unsigned i=0;i<16u;i++)out[i]=values[i];
 }
 
+typedef struct GmlRenderLayerBoxes {
+  double time,camera[2],scale,size[2],rotation[2];
+  double displacement,speed,angle,roundness,colour_speed,colours,sharpness;
+} GmlRenderLayerBoxes;
+
+typedef struct GmlRenderLayerUnderwater {
+  double time,camera[2],camera_scale,scale[2][2],speed[2],amount[2],chroma;
+} GmlRenderLayerUnderwater;
+
 typedef struct GmlRenderLayerEffect {
   uint32_t kind;
   uint32_t colour;
@@ -571,9 +587,34 @@ typedef struct GmlRenderLayerEffect {
   uint32_t linear;
   int32_t phase_seed;
   GmlRenderLayerSampler sampler;
-  GmlRenderLayerClouds clouds;
-  uint32_t shade_colour;
+  union {
+    GmlRenderLayerClouds clouds;
+    GmlRenderLayerBoxes boxes;
+    GmlRenderLayerUnderwater underwater;
+  };
+  uint32_t shade_colour,add_colour;
 } GmlRenderLayerEffect;
+
+/* One uniform block for typed sampled effects. The backend resolves the capture
+ * texture origin into the last reserved underwater slot after validation. */
+static inline void gml_render_layer_sampler_parameters(const GmlRenderLayerEffect *effect,double out[16]){
+  for(unsigned i=0;i<16u;i++)out[i]=0.0;
+  if(effect->kind==GML_RENDER_LAYER_EFFECT_CLOUDS){
+    gml_render_layer_cloud_parameters(&effect->clouds,out);
+  }else if(effect->kind==GML_RENDER_LAYER_EFFECT_BOXES){
+    const GmlRenderLayerBoxes *b=&effect->boxes;
+    const double values[16]={b->time,b->camera[0],b->camera[1],b->scale,b->size[0],b->size[1],
+      b->rotation[0],b->rotation[1],b->displacement,b->speed,b->angle,b->roundness,
+      b->colour_speed,b->colours,b->sharpness,0};
+    for(unsigned i=0;i<16u;i++)out[i]=values[i];
+  }else if(effect->kind==GML_RENDER_LAYER_EFFECT_UNDERWATER){
+    const GmlRenderLayerUnderwater *u=&effect->underwater;
+    const double values[16]={u->time,u->camera[0],u->camera[1],u->camera_scale,
+      u->scale[0][0],u->scale[0][1],u->scale[1][0],u->scale[1][1],
+      u->speed[0],u->speed[1],u->amount[0],u->amount[1],u->chroma,0,0,0};
+    for(unsigned i=0;i<16u;i++)out[i]=values[i];
+  }
+}
 
 typedef enum GmlRenderReconstructionMode {
   GML_RENDER_REPLAY_EXACT=1,
