@@ -55,9 +55,8 @@ last override for a destination wins; duplicate transform keys remain invalid.
 
 ## Preparation and cache identity
 
-Complete-file SHA-256 selectors remain unsupported. Their full input reads were
-removed from ordinary startup. Fast recognition supports two section prefixes,
-followed by `.overrides`, `.transforms`, `.pipelines` or `.patches`:
+Fast recognition supports two section prefixes, followed by `.overrides`,
+`.transforms`, `.pipelines` or `.patches`:
 
 `imohash:payload:<digest>` identifies the selected payload using standard-default
 [imohash](https://github.com/kalafut/imohash). For Studio this is the actual data
@@ -70,9 +69,7 @@ identify the final payload member.
 Container bytes, including compression and auxiliary files, contribute to its
 identity. A matching ZIP section takes precedence over a matching payload section
 for settings both declare. Both selectors use 32 case-insensitive hexadecimal
-digits. The core reads the size from the digest. To migrate a section named
-`imohash:<size>:<digest>`, replace the size field with `payload` and keep the
-digest and section suffix.
+digits. The core reads the size from the digest.
 
 Selection first filters declared candidates by size; with no candidate, no hash
 is calculated. Standard imohash reads the entire payload below 131072 bytes.
