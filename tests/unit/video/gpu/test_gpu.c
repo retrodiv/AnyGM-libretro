@@ -1083,6 +1083,53 @@ static int layer_pass_namespace_case(void){
   return 1;
 }
 
+static int layer_glow_namespace_case(void){
+  for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++)
+  for(unsigned explicit_loss=0;explicit_loss<2u;explicit_loss++){
+    anygm_test_graphics_reset();GmlGpuContext context=fake_context(api);
+    GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"glow context adopted");
+    GlLayerGlow *pass=&gpu->backend->scene.layer_glow;
+    uint64_t epoch=gpu->backend->scene.context_epoch;
+    GLuint old[4],fresh[4];
+    for(unsigned i=0;i<4u;i++){
+      gpu->backend->gl.GenTextures(1,&pass->images[i].texture);
+      gpu->backend->gl.GenFramebuffers(1,&pass->images[i].framebuffer);
+      old[i]=pass->images[i].texture;
+      pass->images[i].width=17u;pass->images[i].height=13u;
+      pass->images[i].format=i<2u?GL_RGBA8:GL_RGBA32F;
+      pass->images[i].valid=1;
+    }
+    pass->program=gpu->backend->gl.CreateProgram();pass->failed=1;pass->mode=7;pass->active=1;
+    if(explicit_loss){
+      anygm_test_graphics_forbid_calls();gml_gpu_context_lost(gpu);
+      REQUIRE(!anygm_test_graphics_calls_after_forget(),"glow loss issues no GL calls");
+      anygm_test_graphics_allow_calls();
+      REQUIRE(gpu->backend->scene.context_epoch==epoch,"glow loss keeps epoch");
+    }
+    anygm_test_graphics_reset();
+    GmlGpuProc proc=anygm_test_graphics_proc(NULL,"glGenTextures");
+    void (*generate)(GLsizei,GLuint*)=NULL;memcpy(&generate,&proc,sizeof generate);
+    REQUIRE(generate,"successor glow namespace has texture allocator");
+    for(unsigned i=0;i<4u;i++){
+      GLuint foreign=0;
+      REQUIRE(anygm_test_graphics_reuse_name(old[i]),"successor can reuse old glow name");
+      generate(1,&foreign);REQUIRE(foreign==old[i],"foreign glow name was reused");
+    }
+    REQUIRE(gml_gpu_context_reset(gpu,&context),"glow successor adopted");
+    GlLayerGlow empty;memset(&empty,0,sizeof empty);
+    REQUIRE(!memcmp(pass,&empty,sizeof empty),"all glow names,program,uniforms and failures forgotten");
+    REQUIRE(gpu->backend->scene.context_epoch==epoch+1u,"glow successor advances epoch");
+    for(unsigned i=0;i<4u;i++){
+      gpu->backend->gl.GenTextures(1,&pass->images[i].texture);fresh[i]=pass->images[i].texture;
+    }
+    gml_gpu_destroy(gpu,1);
+    for(unsigned i=0;i<4u;i++)REQUIRE(anygm_test_graphics_texture_deleted(fresh[i]) &&
+      !anygm_test_graphics_texture_deleted(old[i]),"only current glow textures are deleted");
+  }
+  return 1;
+}
+
 static int lifecycle_loss_case(void){
   GmlGpu *gpu;
   GmlGpuContext context;
@@ -1774,6 +1821,123 @@ static int scene_service_contract_case(void){
 
 /* Typed neighbourhood metadata must refuse the entire batch before a valid
  * clear prefix writes. Fake storage tests ownership/admission, never pixels. */
+static int scene_layer_glow_case(void){
+  for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++){
+    anygm_test_graphics_reset();GmlGpuContext context=fake_context(api);
+    GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context) && gml_gpu_prepare_scene(gpu,8u,8u),
+      "glow contract context prepared");
+    gml_gpu_device_services(gpu,&device);
+    uint32_t pixels[64];for(unsigned i=0;i<64u;i++)pixels[i]=0xA5315779u;
+    GmlRenderImageRef source={GML_RENDER_RESOURCE_SCRATCH,19u,1u,1u};
+    GmlRenderImageUpload upload={.image=source,.storage_width=8u,.storage_height=8u,
+      .region={0,0,8u,8u},.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+      .stride_bytes=32u,.byte_capacity=sizeof pixels,.bytes=pixels};
+    REQUIRE(device.upload(device.context,&upload),"glow source is independently versioned");
+    GmlRenderDrawStateSnapshot states[2]={
+      {.write_mask=15u,.colour=0xffffffffu,.alpha=255u},
+      {.write_mask=15u,.colour=0xffffffffu,.alpha=255u,.sampler_count=1u}};
+    states[1].samplers[0]=(GmlRenderSamplingPolicy){.filter=GML_RENDER_FILTER_NEAREST,
+      .edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE,.source_region={0,0,8u,8u}};
+    GmlRenderDrawOp ops[2]={0};
+    ops[0].opcode=GML_RENDER_OP_CLEAR;ops[0].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+    ops[0].target=(GmlRenderTargetRef){{GML_RENDER_RESOURCE_SURFACE,7u,1u,1u},1u,8u,8u,
+      GML_RENDER_PIXEL_ARGB8888,{0,0,8u,8u}};ops[0].payload.clear_colour=0xA5315779u;
+    GmlRenderDrawBatch seed={ops,1u,states,1u};
+    REQUIRE(device.submit(device.context,&seed).status==GML_RENDER_EXEC_ACCEPTED,
+      "glow target exists before metadata refusals");
+    GmlRenderImageRef alias=ops[0].target.image;
+    ops[0].target.image.content_version=2u;
+    ops[1].opcode=GML_RENDER_OP_LAYER_EFFECT;ops[1].state_index=1u;
+    ops[1].scene_family=GML_RENDER_SCENE_EFFECT;ops[1].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    ops[1].target=ops[0].target;ops[1].target.image.content_version=3u;
+    ops[1].source_count=1u;ops[1].sources=&source;
+    ops[1].payload.effect=(GmlRenderLayerEffect){.kind=GML_RENDER_LAYER_EFFECT_GLOW,
+      .colour=0xffffffffu,.intensity=1.0,.glow={.radius=2.5,.quality=2,.gamma=1,.alpha=.7,.preserve_alpha=1}};
+    GmlRenderDrawBatch batch={ops,2u,states,2u};
+    int clears=anygm_test_graphics_clear_calls();
+    for(unsigned invalid=0;invalid<10u;invalid++){
+      GmlRenderDrawOp wrong[2]={ops[0],ops[1]};
+      switch(invalid){
+        case 0:wrong[1].payload.effect.glow.radius=NAN;break;
+        case 1:wrong[1].payload.effect.glow.quality=INFINITY;break;
+        case 2:wrong[1].payload.effect.glow.gamma=NAN;break;
+        case 3:wrong[1].payload.effect.glow.alpha=-INFINITY;break;
+        case 4:wrong[1].payload.effect.intensity=NAN;break;
+        case 5:wrong[1].payload.effect.glow.preserve_alpha=2;break;
+        case 6:wrong[1].payload.effect.glow.radius=1000001.0;break;
+        case 7:wrong[1].payload.effect.linear=1;break;
+        case 8:wrong[1].payload.effect.colour=0;break;
+        case 9:wrong[1].sources=&alias;break;
+      }
+      GmlRenderDrawBatch refused={wrong,2u,states,2u};
+      GmlRenderExecutionResult result=device.submit(device.context,&refused);
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+        !result.uncertain_target_count && anygm_test_graphics_clear_calls()==clears,
+        "invalid glow suffix cannot clear its parent prefix");
+    }
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,
+      "small glow has native byte axes and byte peak reduction without float-colour support");
+    GlLayerGlow *glow=&gpu->backend->scene.layer_glow;
+    REQUIRE(glow->program && !glow->active && glow->images[0].texture && glow->images[3].texture,
+      "private glow program and all four images remain owned after publication");
+    GLuint warm=glow->images[0].texture;
+    ops[0].target.image.content_version+=2;ops[1].target.image.content_version+=2;
+    ops[1].payload.effect.glow.quality=16;
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED &&
+      glow->images[0].texture==warm && !glow->active,"quality16 reuses bounded private glow storage");
+    ops[0].target.image.content_version+=2;ops[1].target.image.content_version+=2;
+    ops[1].payload.effect.glow.radius=20;
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    REQUIRE(result.status==(api==GML_GPU_API_OPENGLES3?GML_RENDER_EXEC_UNSUPPORTED:GML_RENDER_EXEC_ACCEPTED),
+      "large glow needs the shared float-prefix capability before the batch begins");
+    ops[1].payload.effect.intensity=-1;
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED && !glow->active,
+      "nonpositive halo retains native normal composition without a float-prefix requirement");
+    /* Account retained extents without allocating large driver storage. */
+    GlEffectSampleImage *sampled[2]={&gpu->backend->scene.effect_sampler,&gpu->backend->scene.effect_capture};
+    GLuint retired_glow[4],sampled_names[2];
+    for(unsigned i=0;i<4u;i++)retired_glow[i]=glow->images[i].texture;
+    for(unsigned i=0;i<2u;i++){
+      gpu->backend->gl.GenTextures(1,&sampled[i]->texture);sampled_names[i]=sampled[i]->texture;
+      sampled[i]->width=sampled[i]->height=4096u;sampled[i]->format=GL_RGBA32F;
+    }
+    ops[0].target.image.content_version+=2u;ops[1].target.image.content_version+=2u;
+    ops[1].payload.effect=(GmlRenderLayerEffect){.kind=GML_RENDER_LAYER_EFFECT_LARGE_BLUR,
+      .colour=0xffffffffu,.intensity=1.0,.blur={.radius=1.25}};
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,
+      "an incoming neighbourhood fits after idle cache retirement");
+    for(unsigned i=0;i<4u;i++)REQUIRE(anygm_test_graphics_texture_deleted(retired_glow[i]) &&
+      !glow->images[i].texture,"budget pressure retires all idle glow images");
+    for(unsigned i=0;i<2u;i++)REQUIRE(anygm_test_graphics_texture_deleted(sampled_names[i]),
+      "remaining pressure retires sampled storage");
+    ops[0].target.image.content_version+=2u;ops[1].target.image.content_version+=2u;
+    ops[1].payload.effect=(GmlRenderLayerEffect){.kind=GML_RENDER_LAYER_EFFECT_GLOW,
+      .colour=0xffffffffu,.intensity=1.0,.glow={.radius=2.5,.quality=2,.gamma=1,.alpha=.7,.preserve_alpha=1}};
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,
+      "native glow rebuilds retired private storage");
+    for(unsigned i=0;i<4u;i++)retired_glow[i]=glow->images[i].texture;
+    for(unsigned i=0;i<2u;i++){
+      gpu->backend->gl.GenTextures(1,&sampled[i]->texture);sampled_names[i]=sampled[i]->texture;
+      sampled[i]->width=sampled[i]->height=4096u;sampled[i]->format=GL_RGBA32F;
+    }
+    /* Model a nested neighbourhood while glow still owns its accumulators. */
+    glow->active=1;
+    ops[0].target.image.content_version+=2u;ops[1].target.image.content_version+=2u;
+    ops[1].payload.effect=(GmlRenderLayerEffect){.kind=GML_RENDER_LAYER_EFFECT_LARGE_BLUR,
+      .colour=0xffffffffu,.intensity=1.0,.blur={.radius=1.25}};
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,
+      "an active glow permits eviction of unrelated sampled storage");
+    for(unsigned i=0;i<4u;i++)REQUIRE(glow->images[i].texture==retired_glow[i] &&
+      !anygm_test_graphics_texture_deleted(retired_glow[i]),"active glow images cannot be retired by nested axes");
+    for(unsigned i=0;i<2u;i++)REQUIRE(anygm_test_graphics_texture_deleted(sampled_names[i]),
+      "nested axes retire only disposable sampled storage under pressure");
+    glow->active=0;
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_layer_blur_case(void){
   for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++){
     anygm_test_graphics_reset();GmlGpuContext context=fake_context(api);
@@ -9841,6 +10005,7 @@ int main(int argc,char **argv){
     {"context_loss",lifecycle_loss_case},
     {"sampled_effect_namespace",sampled_effect_namespace_case},
     {"layer_pass_namespace",layer_pass_namespace_case},
+    {"layer_glow_namespace",layer_glow_namespace_case},
     {"scene_preparation",scene_preparation_case},
     {"scene_region_overwrite",scene_region_overwrite_case},
     {"unbound_context_access",unbound_context_access_case},
@@ -9854,6 +10019,7 @@ int main(int argc,char **argv){
     {"scene_service_contract",scene_service_contract_case},
     {"scene_inline_effect",scene_inline_effect_case},
     {"scene_layer_blur",scene_layer_blur_case},
+    {"scene_layer_glow",scene_layer_glow_case},
     {"scene_unit_texel_magnification",scene_unit_texel_magnification_case},
     {"scene_native_triangles",scene_native_triangle_batch_case},
     {"scene_source_alpha_triangles",scene_source_alpha_triangle_case},

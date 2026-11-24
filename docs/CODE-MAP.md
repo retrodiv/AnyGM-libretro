@@ -1,3 +1,13 @@
+`gpu/opengl/gml_gpu_opengl_layer_glow.h` reuses neighbourhood axes for two
+blur pairs per quality step, performs paired device RGB maxima, and accumulates
+normal/gamma/additive results in two private byte images before one publication.
+Its separate shader/program and four images are disposable context-owned state.
+The combined sampled/neighbourhood/glow image plan stays within512MiB; fitting
+warm caches survive, and idle family storage is retired only under pressure.
+Metadata/lifecycle guards are separate from required actual-driver image/state
+qualification in the renderer inventory. CPU kernels and state schemas remain
+unchanged; no original-runner or speed evidence is claimed.
+
 `gpu/opengl/gml_gpu_opengl_layer_pass.h` owns the shared whole-image
 neighbourhood executor. Six disposable image slots hold two byte planes and
 horizontal/vertical reduced prefix pairs. Radii through seven use fixed-bound

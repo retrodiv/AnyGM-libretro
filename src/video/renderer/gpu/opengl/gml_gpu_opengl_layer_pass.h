@@ -17,6 +17,12 @@ static uint64_t layer_pass_retained_bytes(const GlLayerPass *pass,unsigned first
   return bytes;
 }
 
+static uint64_t layer_glow_retained_bytes(const GlLayerGlow *glow){
+  uint64_t bytes=0;
+  for(unsigned i=0;i<4u;i++)bytes+=layer_pass_image_bytes(&glow->images[i]);
+  return bytes;
+}
+
 static int layer_pass_supported(const GmlGpuBackend *backend,uint32_t width,
                                 uint32_t height,double radius){
   if(!width || !height || width>65536u || height>65536u ||
@@ -101,16 +107,22 @@ static int layer_pass_blur(GmlGpuBackend *backend,GlSceneImage *source,double ra
   uint64_t bytes=pixels*8u+(r<=7?layer_pass_retained_bytes(pass,2u):blocks*32u);
   uint64_t sampled=layer_pass_image_bytes(&backend->scene.effect_sampler)+
     layer_pass_image_bytes(&backend->scene.effect_capture);
+  uint64_t glow_bytes=layer_glow_retained_bytes(&backend->scene.layer_glow);
+  if(!backend->scene.layer_glow.active && bytes+sampled+glow_bytes>512u*1024u*1024u){
+    gml_gpu_opengl_effect_images_release(backend,backend->scene.layer_glow.images,4u);
+    glow_bytes=0;
+  }
   /* Keep warmed images across ordinary family changes. Evict only when the
    * new allocation plan would exceed the combined private-image budget. */
-  if(r<=7 && bytes+sampled>512u*1024u*1024u){
+  if(r<=7 && bytes+sampled+glow_bytes>512u*1024u*1024u){
     gml_gpu_opengl_effect_images_release(backend,&pass->images[2],4u);
     bytes=pixels*8u;
   }
-  if(bytes+sampled>512u*1024u*1024u){
+  if(bytes+sampled+glow_bytes>512u*1024u*1024u){
     gml_gpu_opengl_effect_images_release(backend,&backend->scene.effect_sampler,1u);
     gml_gpu_opengl_effect_images_release(backend,&backend->scene.effect_capture,1u);
   }
+  if(bytes+glow_bytes>512u*1024u*1024u)return 0;
   if(!gml_gpu_opengl_layer_pass_program(backend,error,capacity))return 0;
   for(unsigned i=0;i<(r<=7?2u:6u);i++){
     uint32_t width=i<2u?w:i<4u?(w+7u)/8u:w;

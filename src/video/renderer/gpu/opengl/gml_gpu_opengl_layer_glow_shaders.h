@@ -1,0 +1,55 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
+#ifndef GML_GPU_OPENGL_LAYER_GLOW_SHADERS_H
+#define GML_GPU_OPENGL_LAYER_GLOW_SHADERS_H
+
+/* Four-by-four paired device maxima and ordered byte-image composition. */
+static const char GML_LAYER_GLOW_FRAGMENT[]=
+  "uniform highp sampler2D u_source,u_halo,u_parent,u_peaks;\n"
+  "uniform ivec2 u_size;\n"
+  "uniform int u_mode,u_source_flip,u_halo_flip,u_preserve;\n"
+  "uniform float u_alpha,u_gamma,u_scale;\n"
+  "layout(location=0) out vec4 o_colour;\n"
+  "vec4 original(ivec2 p){\n"
+  "  if(u_source_flip!=0)p.y=u_size.y-1-p.y;\n"
+  "  return texelFetch(u_source,p,0);\n"
+  "}\n"
+  "vec4 halo(ivec2 p){\n"
+  "  if(u_halo_flip!=0)p.y=u_size.y-1-p.y;\n"
+  "  return texelFetch(u_halo,p,0);\n"
+  "}\n"
+  "void main(){\n"
+  "  ivec2 p=ivec2(gl_FragCoord.xy);\n"
+  "  if(u_mode<=1){\n"
+  "    vec4 peak=vec4(0.0);\n"
+  "    for(int y=0;y<4;y++)for(int x=0;x<4;x++){\n"
+  "      ivec2 q=p*4+ivec2(x,y);\n"
+  "      if(q.x>=u_size.x || q.y>=u_size.y)continue;\n"
+  "      if(u_mode==0){\n"
+  "        vec3 a=original(q).rgb,b=halo(q).rgb;\n"
+  "        peak=max(peak,vec4(max(a.r,max(a.g,a.b)),max(b.r,max(b.g,b.b)),0.0,0.0));\n"
+  "      }else peak=max(peak,texelFetch(u_source,q,0));\n"
+  "    }\n"
+  "    o_colour=peak;return;\n"
+  "  }\n"
+  "  vec4 parent=floor(texelFetch(u_parent,p,0)*255.0+0.5);\n"
+  "  if(u_mode==2){\n"
+  "    vec4 source=floor(original(p)*255.0+0.5);\n"
+  "    float a=source.a*(1.0/255.0)*clamp(u_alpha,0.0,1.0);\n"
+  "    if(a<=0.0){o_colour=parent/255.0;return;}\n"
+  "    vec3 rgb=floor(source.rgb*a+parent.rgb*(1.0-a)+0.5);\n"
+  "    float alpha=u_preserve!=0?min(255.0,floor(a*255.0+parent.a*(1.0-a)+0.5)):255.0;\n"
+  "    o_colour=vec4(rgb,alpha)/255.0;return;\n"
+  "  }\n"
+  "  vec2 peaks=texelFetch(u_peaks,ivec2(0),0).rg;\n"
+  "  float gain=peaks.g>0.0?max(1.0,sqrt(peaks.r/peaks.g)):1.0;\n"
+  "  vec4 base=clamp(halo(p)*gain,0.0,1.0);\n"
+  "  float gamma=max(u_gamma,0.1);\n"
+  "  vec4 value=gamma==1.0?base:pow(base,vec4(gamma));\n"
+  "  value=floor(clamp(value,0.0,1.0)*255.0+0.5);\n"
+  "  vec4 added=floor(value*u_scale+0.5);\n"
+  "  o_colour=vec4(min(parent.rgb+added.rgb,vec3(255.0)),mod(max(parent.a,added.a),256.0))/255.0;\n"
+  "}\n"
+;
+#endif

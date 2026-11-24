@@ -1653,6 +1653,7 @@ static int layer_effect_float_supported(const GmlGpuBackend *backend){
 }
 
 #include "gml_gpu_opengl_layer_pass.h"
+#include "gml_gpu_opengl_layer_glow.h"
 
 static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batch){
   GmlRenderImageRef cleared[GL_SCENE_MAX_IMAGES];
@@ -1833,8 +1834,14 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
           op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_CLOUDS &&
           op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_BOXES &&
           op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_UNDERWATER &&
-          op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_LARGE_BLUR && !inline_effect) ||
+          op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_LARGE_BLUR &&
+          op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_GLOW && !inline_effect) ||
          !isfinite(op->payload.effect.intensity)) return 0;
+      if(op->payload.effect.kind==GML_RENDER_LAYER_EFFECT_GLOW &&
+         (!layer_glow_supported(backend,target->width,target->height,&op->payload.effect) ||
+          op->payload.effect.colour!=0xffffffffu || op->payload.effect.centre[0]!=0.0 ||
+          op->payload.effect.centre[1]!=0.0 || op->payload.effect.focus_radius!=0.0 ||
+          op->payload.effect.linear || op->payload.effect.phase_seed))return 0;
       if(op->payload.effect.kind==GML_RENDER_LAYER_EFFECT_LARGE_BLUR &&
          (!layer_pass_supported(backend,target->width,target->height,op->payload.effect.blur.radius) ||
           op->payload.effect.intensity!=1.0 || op->payload.effect.colour!=0xffffffffu ||
@@ -3635,7 +3642,12 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
     int linear_capture=effect->kind==GML_RENDER_LAYER_EFFECT_UNDERWATER && effect->linear;
     uint64_t capture=linear_capture?(uint64_t)source->width*source->height*16u:
       layer_pass_image_bytes(&scene->effect_capture);
-    uint64_t neighbourhood=layer_pass_retained_bytes(&scene->layer_pass,0u);
+    uint64_t neighbourhood=layer_pass_retained_bytes(&scene->layer_pass,0u)+
+      layer_glow_retained_bytes(&scene->layer_glow);
+    if(sampled+capture+neighbourhood>512u*1024u*1024u){
+      gml_gpu_opengl_effect_images_release(backend,scene->layer_glow.images,4u);
+      neighbourhood=layer_pass_retained_bytes(&scene->layer_pass,0u);
+    }
     if(!linear_capture && sampled+capture+neighbourhood>512u*1024u*1024u){
       gml_gpu_opengl_effect_images_release(backend,&scene->effect_capture,1u);capture=0;
     }
@@ -3993,8 +4005,11 @@ int gml_render_gpu_opengl_apply_effect(GmlGpuBackend *backend,
       operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_CLOUDS &&
       operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_BOXES &&
       operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_UNDERWATER &&
-      operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_LARGE_BLUR && !inline_effect)) return 0;
+      operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_LARGE_BLUR &&
+      operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_GLOW && !inline_effect)) return 0;
   if(inline_effect)source=target;
+  if(operation->payload.effect.kind==GML_RENDER_LAYER_EFFECT_GLOW)
+    return layer_glow_execute(backend,target,source,&operation->payload.effect,error,error_capacity);
   GlSceneImage blurred={0};GmlRenderLayerEffect composite=operation->payload.effect;
   if(composite.kind==GML_RENDER_LAYER_EFFECT_LARGE_BLUR){
     if(!layer_pass_blur(backend,source,composite.blur.radius,3u,&blurred,error,error_capacity))return 0;

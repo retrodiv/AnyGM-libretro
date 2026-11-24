@@ -5,6 +5,7 @@
 #include "gml_gpu_opengl_internal.h"
 #include "gml_gpu_opengl_shaders.h"
 #include "gml_gpu_opengl_layer_pass_shaders.h"
+#include "gml_gpu_opengl_layer_glow_shaders.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -1139,6 +1140,29 @@ int gml_gpu_opengl_layer_pass_program(GmlGpuBackend *backend,char *error,size_t 
   pass->radius=backend->gl.GetUniformLocation(pass->program,"u_radius");
   pass->flip=backend->gl.GetUniformLocation(pass->program,"u_flip");
   pass->failed=0;return 1;
+}
+
+int gml_gpu_opengl_layer_glow_program(GmlGpuBackend *backend,char *error,size_t capacity){
+  GlLayerGlow *glow=&backend->scene.layer_glow;
+  if(glow->program)return 1;
+  if(glow->failed)return 0;
+  glow->failed=1;
+  const char *prefix=backend->api==GML_GPU_API_OPENGLES3?
+    GML_GPU_OPENGL_PREFIX_ES:GML_GPU_OPENGL_PREFIX_DESKTOP;
+  char vertex[sizeof GML_LAYER_PASS_VERTEX+256u],fragment[sizeof GML_LAYER_GLOW_FRAGMENT+256u];
+  snprintf(vertex,sizeof vertex,"%s%s",prefix,GML_LAYER_PASS_VERTEX);
+  snprintf(fragment,sizeof fragment,"%s%s",prefix,GML_LAYER_GLOW_FRAGMENT);
+  glow->program=link_content(backend,vertex,fragment,error,capacity);
+  if(!glow->program)return 0;
+#define GLOW_UNIFORM(field,name) glow->field=backend->gl.GetUniformLocation(glow->program,name)
+  GLOW_UNIFORM(source,"u_source");GLOW_UNIFORM(halo,"u_halo");
+  GLOW_UNIFORM(parent,"u_parent");GLOW_UNIFORM(peaks,"u_peaks");
+  GLOW_UNIFORM(size,"u_size");GLOW_UNIFORM(mode,"u_mode");
+  GLOW_UNIFORM(source_flip,"u_source_flip");GLOW_UNIFORM(halo_flip,"u_halo_flip");
+  GLOW_UNIFORM(alpha,"u_alpha");GLOW_UNIFORM(gamma,"u_gamma");
+  GLOW_UNIFORM(scale,"u_scale");GLOW_UNIFORM(preserve,"u_preserve");
+#undef GLOW_UNIFORM
+  glow->failed=0;return 1;
 }
 
 /* Compile the content's program for this context, or return the cached one. Returns NULL with the

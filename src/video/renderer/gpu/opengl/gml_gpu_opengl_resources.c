@@ -274,6 +274,7 @@ void gml_gpu_opengl_scene_forget(GmlGpuBackend *backend){
   memset(&scene->effect_sampler,0,sizeof scene->effect_sampler);
   memset(&scene->effect_capture,0,sizeof scene->effect_capture);
   memset(&scene->layer_pass,0,sizeof scene->layer_pass);
+  memset(&scene->layer_glow,0,sizeof scene->layer_glow);
   scene->snapshot_texture=scene->copy_framebuffer=scene->rgb_query=0;
   scene->rgb_reduce_program=scene->rgb_reduce_framebuffer=0;
   scene->recovery_indirect_program=scene->recovery_indirect_buffer=0;
@@ -324,6 +325,8 @@ void gml_gpu_opengl_scene_destroy(GmlGpuBackend *backend,int context_is_current)
     for(unsigned i=0;i<2u;i++)gml_gpu_opengl_effect_images_release(backend,sample_images[i],1u);
     gml_gpu_opengl_effect_images_release(backend,scene->layer_pass.images,6u);
     if(scene->layer_pass.program)backend->gl.DeleteProgram(scene->layer_pass.program);
+    gml_gpu_opengl_effect_images_release(backend,scene->layer_glow.images,4u);
+    if(scene->layer_glow.program)backend->gl.DeleteProgram(scene->layer_glow.program);
     if(scene->snapshot_texture) backend->gl.DeleteTextures(1,&scene->snapshot_texture);
     if(scene->copy_framebuffer) backend->gl.DeleteFramebuffers(1,&scene->copy_framebuffer);
     if(scene->rgb_query && backend->gl.DeleteQueries)

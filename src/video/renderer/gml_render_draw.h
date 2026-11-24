@@ -531,7 +531,8 @@ typedef enum GmlRenderLayerEffectKind {
   GML_RENDER_LAYER_EFFECT_CLOUDS=7,
   GML_RENDER_LAYER_EFFECT_BOXES=8,
   GML_RENDER_LAYER_EFFECT_UNDERWATER=9,
-  GML_RENDER_LAYER_EFFECT_LARGE_BLUR=10
+  GML_RENDER_LAYER_EFFECT_LARGE_BLUR=10,
+  GML_RENDER_LAYER_EFFECT_GLOW=11
 } GmlRenderLayerEffectKind;
 
 /* Inline effects read a device-owned snapshot of the current target, not an
@@ -593,6 +594,7 @@ typedef struct GmlRenderLayerEffect {
     GmlRenderLayerBoxes boxes;
     GmlRenderLayerUnderwater underwater;
     struct { double radius; } blur;
+    struct { double radius,quality,gamma,alpha; uint32_t preserve_alpha; } glow;
   };
   uint32_t shade_colour,add_colour;
 } GmlRenderLayerEffect;
