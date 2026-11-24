@@ -61,7 +61,7 @@ typedef struct FakeDevice {
   double last_filtered_draw_alpha;
   GmlRenderDrawStateSnapshot last_quad_state;
   GmlRenderQuad last_quad;
-  GmlRenderImageRef last_target_image,last_source_image;
+  GmlRenderImageRef last_target_image,last_source_image,last_auxiliary_image;
   GmlRenderImageRef submitted_targets[8];
   uint32_t submitted_counts[8];
   GmlRenderRect last_target_region;
@@ -137,6 +137,7 @@ static GmlRenderExecutionResult fake_submit(void *context,const GmlRenderDrawBat
     fake->last_target_region=last->target.region;
     fake->last_source_count=last->source_count;
     if(last->source_count)fake->last_source_image=last->sources[0];
+    if(last->source_count>1u)fake->last_auxiliary_image=last->sources[1];
     if(last->opcode==GML_RENDER_OP_LAYER_EFFECT){
       fake->last_effect=*last;
       if(batch->states && last->state_index<batch->state_count)
@@ -5337,6 +5338,119 @@ static int resident_layer_capture_context_recovery(void){
   CHECK(third.incarnation!=second.incarnation);gml_render_layer_filter_end(r,&filter,0);
   for(unsigned i=0;i<GML_MAX_SURFACES;i++)CHECK(!r->surface[i].live);
   gml_render_free(r);free(r);return 1;
+}
+
+/* Replacing a created sprite must retain its dynamic ownership and state route. */
+static int runtime_sprite_replacement_state_owner(void){
+  for(unsigned variant=0;variant<2u;variant++){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={.bytecode=17};uint32_t frame[48]={0};
+    CHECK(r && !gml_render_init(r,NULL));r->win=&content;r->active_shader=-1;
+    gml_render_begin(r,frame,8,6,0,0);
+    uint8_t *initial=malloc(64u);CHECK(initial);
+    for(unsigned i=0;i<64u;i++)initial[i]=(uint8_t)(i*7u+13u);
+    CHECK(gml_sprite_append_from_rgba_frames(r,initial,4,4,1,0,0,NULL)==0);
+    CHECK(r->spr[0].runtime_extra && !r->base_n_spr);
+    size_t capacity=gml_render_state_size(r,-1),written=0,used=0;
+    void *bytes=malloc(capacity);CHECK(bytes && capacity);
+    CHECK(gml_render_state_save(r,-1,bytes,capacity,&written) && written==capacity);
+    CHECK(gml_render_state_load(r,bytes,written,&used) && used==written);free(bytes);
+    unsigned frames=variant?2u:1u;size_t count=5u*3u*4u*frames;
+    uint8_t *replacement=malloc(count);CHECK(replacement);
+    for(size_t i=0;i<count;i++)replacement[i]=(uint8_t)(251u-i*3u);
+    int replaced=variant?gml_sprite_replace_from_rgba_frames(r,0,replacement,5,3,2,0,0):
+      gml_sprite_replace_from_rgba(r,0,replacement,5,3,0,0);
+    CHECK(replaced);
+    int extra=r->spr[0].runtime_extra;
+    capacity=gml_render_state_size(r,-1);bytes=malloc(capacity);written=used=0;CHECK(bytes && capacity);
+    int saved=gml_render_state_save(r,-1,bytes,capacity,&written);
+    int loaded=saved && gml_render_state_load(r,bytes,written,&used);
+    fprintf(stderr,"runtime replacement state: variant=%u extra=%d saved=%d loaded=%d size=%zu used=%zu\n",
+      variant,extra,saved,loaded,written,used);
+    CHECK(extra && saved && loaded && used==written && r->n_spr==1 &&
+      r->spr[0].runtime_extra && r->spr[0].w==5 && r->spr[0].h==3 &&
+      r->spr[0].n_frames==(int)frames && r->spr[0].runtime_rgba);
+    for(size_t i=0;i<count;i++)CHECK(r->spr[0].runtime_rgba[i]==(uint8_t)(251u-i*3u));
+    free(bytes);gml_sprite_delete(r,0);CHECK(!r->n_spr);
+    gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
+/* A sampler effect must paint its captured draw and filter on the device.
+ * The runtime sampler uses the public constructor so source metadata is valid. */
+static int resident_cloud_capture_exclusive_target(void){
+  enum {W=8,H=6};
+  static const int revisions[]={530,701,800,810,0,0,0};
+  static const int bytecodes[]={0,0,0,0,13,16,17};
+  unsigned controls=0;
+  for(unsigned generation=0;generation<7u;generation++)
+  for(unsigned owner=0;owner<4u;owner++)for(unsigned gui=0;gui<2u;gui++)
+  for(unsigned below=0;below<2u;below++){
+    GmlRender *r=calloc(1,sizeof *r);
+    GmlWin content={.classic_version=revisions[generation],.bytecode=bytecodes[generation]};
+    FakeDevice fake={.on_demand=1,.supported_operations=UINT64_MAX};
+    GmlRenderDeviceServices device=service(&fake);uint32_t base[W*H]={0};
+    GmlRenderResourceSource sampler={0};GmlRenderDispatchMetrics dispatch={0};
+    GmlLayerFilter filter={.kind=GML_LAYER_FILTER_CLOUDS,.sampler_sprite=0};
+    filter.affects_below=(int)below;
+    filter.u.clouds.scale=3.0;filter.u.clouds.velocity[0]=2.0;filter.u.clouds.velocity[1]=-1.0;
+    filter.u.clouds.turbulence=.65;filter.u.clouds.level=.3;filter.u.clouds.waves=.25;
+    filter.u.clouds.shape[0]=.8;filter.u.clouds.shape[1]=1.1;
+    filter.u.clouds.density=1.3;filter.u.clouds.fade=1.0;
+    filter.u.clouds.shade_offset[0]=.4;filter.u.clouds.shade_offset[1]=-.35;
+    filter.u.clouds.shade_fade=1.4;filter.u.clouds.light_colour=0xE0B080FFu;
+    filter.u.clouds.shade_colour=0x305090FFu;
+    CHECK(r && !gml_render_init(r,NULL));r->win=&content;r->classic=generation<4u;r->active_shader=-1;
+    uint8_t *rgba=malloc(64u);CHECK(rgba);
+    for(unsigned pixel=0;pixel<16u;pixel++){
+      rgba[pixel*4u]=(uint8_t)(pixel*13u+17u);rgba[pixel*4u+1u]=(uint8_t)(pixel*7u+31u);
+      rgba[pixel*4u+2u]=(uint8_t)(pixel*11u+47u);rgba[pixel*4u+3u]=255u;
+    }
+    CHECK(gml_sprite_append_from_rgba_frames(r,rgba,4,4,1,0,0,NULL)==0);
+    CHECK(gml_render_runtime_sprite_scene_source_view(r,&r->spr[0],0,&sampler));
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(r,&device);gml_render_set_scene_device(r,1);
+    if(owner==1u || owner==2u)CHECK(gml_render_application_surface_ensure_owned(r,W,H));
+    if(owner==1u)CHECK(gml_render_begin_resident_owned_application(r,3.75,-2.25,0));
+    else CHECK(gml_render_begin_resident_base(r,base,W,H,3.75,-2.25));
+    if(owner==2u){gml_render_application_surface_bind(r,r->app_surface_owned,W,H,0);CHECK(gml_surface_set_target(r,0));}
+    if(owner==3u){int id=gml_surface_create(r,W,H);CHECK(id>0 && gml_surface_set_target(r,id));}
+    if(gui)gml_render_gui_begin(r,W,H);
+    gml_render_set_pending_fill(r,0xFF315779u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));
+    GmlRenderResource *parent=gml_render_scene_target_resource_ensure(r);CHECK(parent);
+    GmlRenderImageRef previous=gml_render_resource_image_ref(parent);
+    uint32_t *parent_pixels=r->fb;int parent_id=r->target_id,parent_sp=r->target_sp;
+    int reads=fake.readbacks;
+    gml_render_dispatch_diagnostics_enable(r,1);gml_render_set_skip_cpu_draws(r,1);
+    int begun=gml_render_layer_filter_begin(r,&filter);
+    if(!begun || !r->layer_filter_gpu_capture)
+      fprintf(stderr,"exclusive clouds: generation=%u owner=%u gui=%u below=%u begin=%d native=%d\n",
+        generation,owner,gui,below,begun,r->layer_filter_gpu_capture);
+    CHECK(begun && r->layer_filter_gpu_capture && r->resident_application_pass);
+    GmlRenderResource *capture=gml_render_scene_target_resource_ensure(r);CHECK(capture && capture!=parent);
+    gml_render_primitive_rectangle(r,1,1,4,3,0x73A5D9u,0);
+    CHECK(gml_render_scene_submit_pending(r));
+    GmlRenderImageRef source=gml_render_resource_image_ref(capture);
+    gml_render_layer_filter_end(r,&filter,.375);
+    CHECK(!r->layer_filter_active && r->fb==parent_pixels && r->target_id==parent_id &&
+      r->target_sp==parent_sp && r->resident_application_pass && r->skip_cpu_draws);
+    CHECK(fake.last_opcode==GML_RENDER_OP_LAYER_EFFECT && fake.last_source_count==2u &&
+      !memcmp(&fake.last_source_image,&source,sizeof source) &&
+      !memcmp(&fake.last_auxiliary_image,&sampler.image,sizeof sampler.image) &&
+      fake.last_target_image.resource_class==previous.resource_class &&
+      fake.last_target_image.identity==previous.identity &&
+      fake.last_target_image.incarnation==previous.incarnation &&
+      fake.last_target_image.content_version==previous.content_version+1u && fake.readbacks==reads);
+    CHECK(gml_render_dispatch_metrics(r,&dispatch) && !dispatch.skipped && !dispatch.failed &&
+      !dispatch.unclassified && dispatch.gpu[GML_RENDER_SCENE_EFFECT]==1u &&
+      dispatch.gpu[GML_RENDER_SCENE_PRIMITIVE]>=1u);
+    for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
+      for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)CHECK(!dispatch.cpu[family][reason]);
+    fake.readback_colour=0xFF6B908Au;gml_render_free(r);free(r);controls++;
+  }
+  printf("exclusive captured clouds target controls: %u\n",controls);
+  return controls==112u;
 }
 
 static int resident_layer_capture_exclusive_target(void){
@@ -22783,6 +22897,8 @@ int main(void){
     else if(!strcmp(selected,"surface-source-device-cache")) passed=resident_surface_source_device_cache();
     else if(!strcmp(selected,"layer-capture-context-recovery")) passed=resident_layer_capture_context_recovery();
     else if(!strcmp(selected,"exclusive-layer-capture")) passed=resident_layer_capture_exclusive_target();
+    else if(!strcmp(selected,"exclusive-cloud-capture")) passed=resident_cloud_capture_exclusive_target();
+    else if(!strcmp(selected,"runtime-sprite-replacement-state-owner")) passed=runtime_sprite_replacement_state_owner();
     else if(!strcmp(selected,"inline-native-target-effects")) passed=resident_inline_layer_effect_native_target();
     else if(!strcmp(selected,"ordinary-native-target-triangles")) passed=resident_ordinary_native_target_triangles();
     else if(!strcmp(selected,"ordinary-native-triangles")) passed=resident_ordinary_native_triangles();
@@ -22896,6 +23012,8 @@ int main(void){
   passed+=first_generation_underlay_resource_borrow();
   passed+=resident_layer_filter_capture_barrier();
   passed+=resident_layer_capture_exclusive_target();
+  passed+=resident_cloud_capture_exclusive_target();
+  passed+=runtime_sprite_replacement_state_owner();
   passed+=resident_classic_disabled_unit_alpha();
   passed+=resident_modern_unit_surface_alpha();
   passed+=resident_surface_source_device_cache();
@@ -23186,7 +23304,7 @@ int main(void){
   passed+=resident_runtime_native_rotations();
   passed+=runtime_sprite_deferred_clear();
   passed+=resident_runtime_native_boundaries();
-  enum { total=367 };
+  enum { total=369 };
   printf("render resource cases: passed=%d failed=%d\n",passed,total-passed);
   return passed==total?EXIT_SUCCESS:EXIT_FAILURE;
 }

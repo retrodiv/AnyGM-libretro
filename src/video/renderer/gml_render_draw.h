@@ -527,14 +527,39 @@ typedef enum GmlRenderLayerEffectKind {
   GML_RENDER_LAYER_EFFECT_ZOOM_BLUR=3,
   GML_RENDER_LAYER_EFFECT_RGB_NOISE=4,
   GML_RENDER_LAYER_EFFECT_INLINE_TINT=5,
-  GML_RENDER_LAYER_EFFECT_INLINE_RGB_NOISE=6
+  GML_RENDER_LAYER_EFFECT_INLINE_RGB_NOISE=6,
+  GML_RENDER_LAYER_EFFECT_CLOUDS=7
 } GmlRenderLayerEffectKind;
 
 /* Inline effects read a device-owned snapshot of the current target, not an
- * external capture image. Captured effect kinds retain one distinct source. */
+ * external capture image. Captured effects retain a distinct source; sampler
+ * effects additionally bind an independently versioned image. */
 static inline int gml_render_layer_effect_is_inline(uint32_t kind){
   return kind==GML_RENDER_LAYER_EFFECT_INLINE_TINT ||
          kind==GML_RENDER_LAYER_EFFECT_INLINE_RGB_NOISE;
+}
+
+/* A logical repeat image may occupy a trimmed rectangle of its physical source.
+ * Its transparent complement is prepared on the device before hardware sampling. */
+typedef struct GmlRenderLayerSampler {
+  uint32_t width,height;
+  GmlRenderRect source_region;
+  int32_t offset_x,offset_y;
+} GmlRenderLayerSampler;
+
+typedef struct GmlRenderLayerClouds {
+  double time,camera[2],scale;
+  double velocity[2],turbulence,waves;
+  double shape[2],level,density;
+  double fade,shade_offset[2],shade_fade;
+} GmlRenderLayerClouds;
+
+static inline void gml_render_layer_cloud_parameters(const GmlRenderLayerClouds *c,double out[16]){
+  const double values[16]={c->time,c->camera[0],c->camera[1],c->scale,
+    c->velocity[0],c->velocity[1],c->turbulence,c->waves,
+    c->shape[0],c->shape[1],c->level,c->density,
+    c->fade,c->shade_offset[0],c->shade_offset[1],c->shade_fade};
+  for(unsigned i=0;i<16u;i++)out[i]=values[i];
 }
 
 typedef struct GmlRenderLayerEffect {
@@ -545,6 +570,9 @@ typedef struct GmlRenderLayerEffect {
   double focus_radius;
   uint32_t linear;
   int32_t phase_seed;
+  GmlRenderLayerSampler sampler;
+  GmlRenderLayerClouds clouds;
+  uint32_t shade_colour;
 } GmlRenderLayerEffect;
 
 typedef enum GmlRenderReconstructionMode {

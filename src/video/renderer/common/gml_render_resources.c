@@ -613,6 +613,13 @@ static int batch_valid(const GmlRenderResource *resource,const GmlRenderDrawBatc
         if(!operation->payload.shader ||
            operation->payload.shader->sampler_count>GML_PLAN_MAX_SAMPLERS ||
            operation->source_count!=1u+operation->payload.shader->sampler_count) return 0;
+      } else if(operation->opcode==GML_RENDER_OP_LAYER_EFFECT &&
+                operation->payload.effect.kind==GML_RENDER_LAYER_EFFECT_CLOUDS){
+        if(operation->source_count!=2u ||
+           operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+           same_logical(operation->sources[0],operation->sources[1]) ||
+           same_logical(operation->sources[0],resource->image) ||
+           same_logical(operation->sources[1],resource->image))return 0;
       } else if(operation->source_count!=1u) return 0;
       state=&batch->states[operation->state_index];
       source=find_input(sources,source_count,operation->sources[0]);

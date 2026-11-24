@@ -540,7 +540,10 @@ int gml_sprite_add_file(GmlRender *r, const char *path, int imgnum, int removeba
 }
 int gml_sprite_replace_from_rgba_frames(GmlRender *r, int sprite, uint8_t *rgba, int w, int h, int frames, int xorig, int yorig){
   if(sprite<0 || sprite>=r->n_spr || !rgba || w<=0 || h<=0 || frames<=0) return 0;
-  if(!sprite_set_runtime_rgba(r,&r->spr[sprite],rgba,w,h,frames,xorig,yorig,0)) return 0;
+  /* Replacing pixels retains the asset's allocation owner, as assign and alpha
+   * mutation do. A created sprite must remain deletable and restorable. */
+  if(!sprite_set_runtime_rgba(r,&r->spr[sprite],rgba,w,h,frames,xorig,yorig,
+                              r->spr[sprite].runtime_extra)) return 0;
   r->spr[sprite].metadata_flags &= GML_SPRITE_META_NINESLICE;
   if(r->spr[sprite].spine) r->spr[sprite].metadata_flags|=2u<<GML_SPRITE_META_TYPE_SHIFT;
   return 1;

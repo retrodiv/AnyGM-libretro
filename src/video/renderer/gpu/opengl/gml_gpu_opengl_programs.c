@@ -460,6 +460,9 @@ static GlSceneExactProgram *build_exact_program(GmlGpuBackend *backend,
                                                                "u_effect_linear");
   scene->exact_u_effect_seed=backend->gl.GetUniformLocation(scene->exact_program,
                                                              "u_effect_seed");
+  scene->exact_u_effect_sampler=backend->gl.GetUniformLocation(scene->exact_program,"u_effect_sampler");
+  scene->exact_u_effect_clouds=backend->gl.GetUniformLocation(scene->exact_program,"u_effect_clouds[0]");
+  scene->exact_u_effect_shade=backend->gl.GetUniformLocation(scene->exact_program,"u_effect_shade");
   scene->exact_u_font_origin=backend->gl.GetUniformLocation(scene->exact_program,"u_font_origin");
   scene->exact_u_font_scale=backend->gl.GetUniformLocation(scene->exact_program,"u_font_scale");
   scene->exact_u_font_alpha=backend->gl.GetUniformLocation(scene->exact_program,"u_font_alpha");
@@ -486,6 +489,8 @@ static GlSceneExactProgram *build_exact_program(GmlGpuBackend *backend,
        scene->exact_u_additive_alpha<0 || scene->exact_u_effect_colour<0 ||
        scene->exact_u_effect_intensity<0 || scene->exact_u_effect_zoom<0 ||
        scene->exact_u_effect_linear<0 || scene->exact_u_effect_seed<0 ||
+       scene->exact_u_effect_sampler<0 || scene->exact_u_effect_clouds<0 ||
+       scene->exact_u_effect_shade<0 ||
        scene->exact_u_underlay_size<0 || scene->exact_u_underlay_origin<0 ||
        scene->exact_u_underlay_flags<0 || scene->exact_u_surface_rule<0 ||
        scene->exact_u_surface_tint<0 || scene->exact_u_surface_alpha<0)) ||

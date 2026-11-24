@@ -33,10 +33,12 @@ static int layer_filter_reserve(GmlRender *r,size_t count){
  * inline effects consume the immutable snapshot of their current device target. */
 static int layer_effect_submit_gpu(GmlRender *r,const uint32_t *source_pixels,
                                    GmlRenderResource *source_resource,
+                                   const GmlRenderResourceSource *auxiliary,
                                    const GmlRenderLayerEffect *effect,
                                    int width,int height){
   GmlRenderResource *target;
-  GmlRenderResourceSource source={0};
+  GmlRenderResourceSource source={0},sources[2]={0};
+  GmlRenderImageRef refs[2]={0};
   GmlRenderImageRef source_ref={0},image;
   GmlRenderDrawOp operation={0};
   GmlRenderDrawStateSnapshot state={0};
@@ -87,8 +89,10 @@ static int layer_effect_submit_gpu(GmlRender *r,const uint32_t *source_pixels,
   operation.opcode=GML_RENDER_OP_LAYER_EFFECT;
   operation.scene_family=GML_RENDER_SCENE_EFFECT;
   operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
-  operation.source_count=in_place?0u:1u;
-  operation.sources=in_place?NULL:&source_ref;
+  sources[0]=source;refs[0]=source_ref;
+  if(auxiliary){sources[1]=*auxiliary;refs[1]=auxiliary->image;}
+  operation.source_count=in_place?0u:auxiliary?2u:1u;
+  operation.sources=in_place?NULL:refs;
   operation.target.image=image;
   operation.target.image.content_version++;
   operation.target.storage_version=1u;
@@ -101,24 +105,29 @@ static int layer_effect_submit_gpu(GmlRender *r,const uint32_t *source_pixels,
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
   if(!in_place){
-    state.sampler_count=1u;
+    state.sampler_count=auxiliary?2u:1u;
     state.samplers[0].filter=GML_RENDER_FILTER_NEAREST;
     state.samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
     state.samplers[0].source_region=operation.target.region;
+    if(auxiliary){
+      state.samplers[1].filter=GML_RENDER_FILTER_BILINEAR;
+      state.samplers[1].edge_rule=GML_RENDER_EDGE_REPEAT_SUBIMAGE;
+      state.samplers[1].source_region=effect->sampler.source_region;
+    }
   }
   batch=(GmlRenderDrawBatch){&operation,1u,&state,1u};
   if(in_place || source_resource){
     /* Raw target effects ignore the content draw preset, palette and shader.
      * The packet describes their complete effective state and selected owner. */
     result=gml_render_resource_submit_deferred(target,device,&batch,
-      in_place?NULL:&source,in_place?0u:1u);
+      in_place?NULL:sources,operation.source_count);
     gml_render_dispatch_batch_record(r,&batch,result);
     if(result==GML_RENDER_RESOURCE_EXEC_DEVICE && r->fb==r->app_surface_owned){
       r->app_surface_opaque=0;r->app_presentation_coverage_active=0;
     }
   }else{
-    result=application?gml_render_application_scene_submit(r,&batch,&source,1u):
-      gml_render_surface_scene_submit(r,r->target_id,&batch,&source,1u);
+    result=application?gml_render_application_scene_submit(r,&batch,sources,operation.source_count):
+      gml_render_surface_scene_submit(r,r->target_id,&batch,sources,operation.source_count);
     if(device->retire) device->retire(device->context,source_ref);
   }
   if(result==GML_RENDER_RESOURCE_EXEC_DEVICE){
@@ -137,14 +146,64 @@ static int layer_effect_submit_gpu(GmlRender *r,const uint32_t *source_pixels,
   return metrics.authority==GML_RENDER_RESOURCE_INVALID?-1:0;
 }
 
+/* Resolve only immutable asset bytes here. The device prepares logical trim
+ * and repeat storage; no scene pixels are evaluated or copied on the CPU. */
+static int layer_effect_sampler_source(GmlRender *r,int id,GmlRenderLayerSampler *sampler,
+                                       GmlRenderResourceSource *source){
+  if(id<0 || id>=r->n_spr)return 0;
+  GmlSprite *sprite=&r->spr[id];
+  if(sprite->w<=0 || sprite->h<=0 || sprite->w>4096 || sprite->h>4096 || sprite->n_frames<=0)return 0;
+  sampler->width=(uint32_t)sprite->w;sampler->height=(uint32_t)sprite->h;
+  if(sprite->runtime_rgba){
+    sampler->source_region=(GmlRenderRect){0,0,sampler->width,sampler->height};
+    return gml_render_runtime_sprite_scene_source_view(r,sprite,0,source);
+  }
+  if(!sprite->frame || sprite->frame[0]<0 || sprite->frame[0]>=r->n_tpag)return 0;
+  GmlTpag *page=&r->tpag[sprite->frame[0]];
+  if(page->sw<=0 || page->sh<=0 || page->sx<0 || page->sy<0 ||
+     !gml_render_atlas_scene_source_view(r,page->atlas,source))return 0;
+  int64_t x=page->tx,y=page->ty,w=page->sw,h=page->sh,sx=page->sx,sy=page->sy;
+  if(x<0){sx-=x;w+=x;x=0;}if(y<0){sy-=y;h+=y;y=0;}
+  if(x+w>sprite->w)w=sprite->w-x;
+  if(y+h>sprite->h)h=sprite->h-y;
+  if(w<=0 || h<=0 || sx+w>source->width || sy+h>source->height)return 0;
+  sampler->source_region=(GmlRenderRect){(int32_t)sx,(int32_t)sy,(uint32_t)w,(uint32_t)h};
+  sampler->offset_x=(int32_t)x;sampler->offset_y=(int32_t)y;return 1;
+}
+
+static int layer_cloud_effect(GmlRender *r,const GmlLayerFilter *filter,
+                               double time,double camx,double camy,
+                               GmlRenderLayerEffect *effect,GmlRenderResourceSource *source){
+  const typeof(filter->u.clouds) *c=&filter->u.clouds;
+  effect->kind=GML_RENDER_LAYER_EFFECT_CLOUDS;effect->intensity=1.0;
+  effect->colour=c->light_colour;effect->shade_colour=c->shade_colour;
+  effect->clouds=(GmlRenderLayerClouds){time,{camx,camy},c->scale,
+    {c->velocity[0],c->velocity[1]},c->turbulence,c->waves,
+    {c->shape[0],c->shape[1]},c->level,c->density,
+    c->fade,{c->shade_offset[0],c->shade_offset[1]},c->shade_fade};
+  double values[16];gml_render_layer_cloud_parameters(&effect->clouds,values);
+  for(unsigned i=0;i<16u;i++)if(!isfinite(values[i]) || fabs(values[i])>1000000.0)return 0;
+  if(!layer_effect_sampler_source(r,filter->sampler_sprite,&effect->sampler,source))return 0;
+  const GmlRenderDeviceServices *device=gml_render_device(r);GmlRenderDeviceCaps caps={0};
+  return device && device->capabilities && device->capabilities(device->context,&caps) &&
+    effect->sampler.width<=caps.max_texture_extent && effect->sampler.height<=caps.max_texture_extent;
+}
+
 /* The filter-specific qualification stays at the captured-pass boundary. */
 static int layer_filter_try_gpu(GmlRender *r,const GmlLayerFilter *filter,
-                                int width,int height){
+                                int width,int height,double time,double camx,double camy){
   GmlRenderLayerEffect effect={0};
+  GmlRenderResourceSource auxiliary={0};
   if(!r->layer_filter_gpu_candidate || !r->layer_filter_src ||
      (filter->kind!=GML_LAYER_FILTER_TINT &&
       filter->kind!=GML_LAYER_FILTER_COLOURISE &&
-      filter->kind!=GML_LAYER_FILTER_ZOOM_BLUR)) return 0;
+      filter->kind!=GML_LAYER_FILTER_ZOOM_BLUR &&
+      filter->kind!=GML_LAYER_FILTER_CLOUDS)) return 0;
+  if(filter->kind==GML_LAYER_FILTER_CLOUDS){
+    if(!r->layer_filter_gpu_capture || !layer_cloud_effect(r,filter,time,camx,camy,&effect,&auxiliary))return 0;
+    return layer_effect_submit_gpu(r,r->layer_filter_src,r->layer_filter_resource,
+      &auxiliary,&effect,width,height);
+  }
   if(filter->kind==GML_LAYER_FILTER_ZOOM_BLUR &&
      (!isfinite(filter->u.zoom_blur.centre[0]) ||
       !isfinite(filter->u.zoom_blur.centre[1]) ||
@@ -172,7 +231,7 @@ static int layer_filter_try_gpu(GmlRender *r,const GmlLayerFilter *filter,
     effect.linear=(uint32_t)r->interp;
   }
   return layer_effect_submit_gpu(r,r->layer_filter_src,
-    r->layer_filter_gpu_capture?r->layer_filter_resource:NULL,&effect,width,height);
+    r->layer_filter_gpu_capture?r->layer_filter_resource:NULL,NULL,&effect,width,height);
 }
 
 /* Both inline kernels consume the same immutable device snapshot. A missing
@@ -188,7 +247,7 @@ static int layer_inline_try_gpu(GmlRender *r,const GmlRenderLayerEffect *effect)
   gml_render_prepare_draw(r);
   if(!r->resident_application_pass || !gml_render_scene_target_matches(r) ||
      !gml_render_scene_submit_pending(r)) return 0;
-  return layer_effect_submit_gpu(r,NULL,NULL,effect,r->fbw,r->fbh);
+  return layer_effect_submit_gpu(r,NULL,NULL,NULL,effect,r->fbw,r->fbh);
 }
 
 void gml_render_layer_tint(GmlRender *r,uint32_t rgba){
@@ -221,7 +280,11 @@ int gml_render_layer_filter_begin(GmlRender *r,const GmlLayerFilter *filter){
   int gpu_candidate=r->resident_application_pass && gml_render_device(r) &&
     !r->gui_pass_active && !r->classic && r->active_shader<0;
   gml_render_prepare_draw(r);
-  int native_capture=(filter->kind==GML_LAYER_FILTER_TINT ||
+  GmlRenderLayerEffect cloud={0};GmlRenderResourceSource sampler={0};
+  int cloud_candidate=r->scene_device_enabled && r->resident_application_pass &&
+    filter->kind==GML_LAYER_FILTER_CLOUDS &&
+    layer_cloud_effect(r,filter,0,r->cam_x,r->cam_y,&cloud,&sampler);
+  int native_capture=(cloud_candidate || filter->kind==GML_LAYER_FILTER_TINT ||
     filter->kind==GML_LAYER_FILTER_COLOURISE || filter->kind==GML_LAYER_FILTER_ZOOM_BLUR) &&
     !r->classic_phase_scene_target &&
     gml_render_layer_capture_prepare(r,r->fbw,r->fbh,filter->affects_below);
@@ -268,7 +331,7 @@ void gml_render_layer_filter_end(GmlRender *r,const GmlLayerFilter *filter,doubl
   if(native_capture)r->resident_application_pass=parent_resident;
   r->layer_filter_active=0;
   if(submitted && !source_empty && r->fb && r->fbw==width && r->fbh==height){
-    int gpu=layer_filter_try_gpu(r,filter,width,height);
+    int gpu=layer_filter_try_gpu(r,filter,width,height,time_seconds,camera_x,camera_y);
     r->layer_filter_gpu_candidate=0;
     if(gpu>0 && render_setting(r,"GML_LOG_LAYER_EFFECT") &&
        (r->frame<4 || (r->frame%60)==0))
