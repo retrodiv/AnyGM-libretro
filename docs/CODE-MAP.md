@@ -21,6 +21,13 @@ resource guards cover native capture and replacement state; R03-P7-LAYER-CLOUDS,
 R03-P7-LAYER-BOXES and R03-P7-LAYER-UNDERWATER own qualification requirements
 and exclusions. State schemas are unchanged.
 
+`gpu/opengl/gml_gpu_opengl_resources.c::gml_gpu_opengl_scene_forget` clears
+both private sampling-image records when a context is lost or replaced. Names,
+layout and version keys never cross the namespace boundary; the context epoch
+remains monotonic. Current-context destruction alone deletes owned names.
+`tests/unit/video/gpu/test_gpu.c::sampled_effect_namespace_case` guards both
+transitions and both private images without changing CPU rendering or state bytes.
+
 `src/video/renderer/common/gml_render_sample_setup.h` shares the original repeated
 texture-coordinate/fraction/weight preparation between software sampling and scalar
 device state alpha. It reads no pixels. Shared normal binary64 shader arithmetic

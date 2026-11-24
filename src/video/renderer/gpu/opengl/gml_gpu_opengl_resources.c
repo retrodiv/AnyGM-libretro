@@ -260,6 +260,8 @@ void gml_gpu_opengl_scene_forget(GmlGpuBackend *backend){
   scene->instance_span_count=scene->instance_span_next=0;
   scene->instance_reuse_attempted=0;
   memset(scene->exact_programs,0,sizeof scene->exact_programs);
+  memset(&scene->effect_sampler,0,sizeof scene->effect_sampler);
+  memset(&scene->effect_capture,0,sizeof scene->effect_capture);
   scene->snapshot_texture=scene->copy_framebuffer=scene->rgb_query=0;
   scene->rgb_reduce_program=scene->rgb_reduce_framebuffer=0;
   scene->recovery_indirect_program=scene->recovery_indirect_buffer=0;

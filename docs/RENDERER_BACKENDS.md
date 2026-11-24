@@ -1889,7 +1889,10 @@ visible packed region and transparent trim offsets. The device clears a private
 logical sampler and blits the raw visible asset once per source version/layout,
 then uses its own repeat and linear filtering. Stable reuse requires no copy;
 replacement/resize/retirement cannot reuse a stale sampler epoch. Device context
-teardown owns the disposable sampler storage. No captured scene is uploaded or
+teardown owns the disposable sampler storage. Context loss/replacement also clears
+the private sampler and capture names, layouts and reuse keys without deleting
+objects into a successor namespace; the context epoch remains monotonic. The
+`lifecycle.sampled_effect_namespace` GPU contract guards these transitions. No captured scene is uploaded or
 filtered by the CPU. Finite parameter magnitude at most1000000, logical axes at
 most4096 and the device extent, three texture units and framebuffer blit are
 explicit admission bounds. Box palette sampling and underwater displacement share the same cache and

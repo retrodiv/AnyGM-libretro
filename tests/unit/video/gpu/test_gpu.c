@@ -969,6 +969,73 @@ static int completed_frame_snapshot_case(void){
   return 1;
 }
 
+/* A replacement namespace must not inherit names, layout, epoch keys or valid bits.
+ * New caches created there are deleted while current; the old names are never touched. */
+static int sampled_effect_namespace_case(void){
+  for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++)
+  for(unsigned explicit_loss=0;explicit_loss<2u;explicit_loss++){
+    anygm_test_graphics_reset();GmlGpuContext context=fake_context(api);
+    GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"sample cache context adopted");
+    GlScene *scene=&gpu->backend->scene;
+    GlEffectSampleImage *images[]={&scene->effect_sampler,&scene->effect_capture};
+    GLuint old_names[2],fresh_names[2];
+    uint64_t epoch=scene->context_epoch;
+    for(unsigned pass=0;pass<2u;pass++){
+      for(unsigned image=0;image<2u;image++){
+        GlEffectSampleImage *sample=images[image];
+        gpu->backend->gl.GenTextures(1,&sample->texture);
+        gpu->backend->gl.GenFramebuffers(1,&sample->framebuffer);
+        gpu->backend->gl.GenFramebuffers(1,&sample->read_framebuffer);
+        sample->width=4u;sample->height=3u;sample->format=image?GL_RGBA32F:GL_RGBA8;
+        sample->source=(GmlRenderImageRef){GML_RENDER_RESOURCE_SPRITE,7u,11u,13u};
+        sample->layout=(GmlRenderLayerSampler){.width=4u,.height=3u,
+          .source_region={1,0,2u,3u},.offset_x=1};sample->valid=1;
+        REQUIRE(sample->texture && sample->framebuffer && sample->read_framebuffer,
+          "both private sample images own allocated context names");
+        if(pass)fresh_names[image]=sample->texture;else old_names[image]=sample->texture;
+      }
+      if(pass)break;
+      if(explicit_loss){
+        anygm_test_graphics_forbid_calls();gml_gpu_context_lost(gpu);
+        REQUIRE(!anygm_test_graphics_calls_after_forget() && !gml_gpu_context_active(gpu),
+          "losing sample caches calls no vanished context");
+        anygm_test_graphics_allow_calls();
+        GlEffectSampleImage empty;memset(&empty,0,sizeof empty);
+        REQUIRE(!memcmp(images[0],&empty,sizeof empty) && !memcmp(images[1],&empty,sizeof empty),
+          "loss forgets every sample image name and reuse key");
+        REQUIRE(scene->context_epoch==epoch,"forgetting preserves the monotonic context domain");
+      }
+      /* The successor may give the same numeric names to frontend-owned textures. */
+      anygm_test_graphics_reset();
+      GmlGpuProc generator=anygm_test_graphics_proc(NULL,"glGenTextures");
+      void (*generate)(GLsizei,GLuint*)=NULL;memcpy(&generate,&generator,sizeof generate);
+      REQUIRE(generate,"replacement texture allocator is available");
+      for(unsigned image=0;image<2u;image++){
+        GLuint foreign=0;
+        REQUIRE(anygm_test_graphics_reuse_name(old_names[image]),"old numeric name is free in the successor");
+        generate(1,&foreign);
+        REQUIRE(foreign==old_names[image],"frontend reuses the predecessor's numeric texture name");
+      }
+      REQUIRE(gml_gpu_context_reset(gpu,&context),"sample cache replacement adopted");
+      GlEffectSampleImage empty;memset(&empty,0,sizeof empty);
+      REQUIRE(!memcmp(images[0],&empty,sizeof empty) && !memcmp(images[1],&empty,sizeof empty),
+        "replacement starts with empty sample caches even without a loss callback");
+      REQUIRE(scene->context_epoch==epoch+1u,"replacement advances the context domain");
+      REQUIRE(!anygm_test_graphics_texture_deleted(old_names[0]) &&
+              !anygm_test_graphics_texture_deleted(old_names[1]),
+        "replacement never deletes names belonging to its predecessor");
+    }
+    gml_gpu_destroy(gpu,1);
+    REQUIRE(anygm_test_graphics_texture_deleted(fresh_names[0]) &&
+            anygm_test_graphics_texture_deleted(fresh_names[1]) &&
+            !anygm_test_graphics_texture_deleted(old_names[0]) &&
+            !anygm_test_graphics_texture_deleted(old_names[1]),
+      "current destruction deletes fresh sample images and preserves foreign names");
+  }
+  return 1;
+}
+
 static int lifecycle_loss_case(void){
   GmlGpu *gpu;
   GmlGpuContext context;
@@ -9618,6 +9685,7 @@ int main(int argc,char **argv){
   static const AnygmTestCase lifecycle_cases[]={
     {"reset",lifecycle_reset_case},
     {"context_loss",lifecycle_loss_case},
+    {"sampled_effect_namespace",sampled_effect_namespace_case},
     {"scene_preparation",scene_preparation_case},
     {"scene_region_overwrite",scene_region_overwrite_case},
     {"unbound_context_access",unbound_context_access_case},
