@@ -222,6 +222,7 @@ void gml_render_rebind_content(GmlRender *r,GmlWin *win){
   if(r){
     r->win=win;
     gml_render_resource_bind_dispatch(r->app_surface_resource,r);
+    gml_render_resource_bind_dispatch(r->layer_filter_resource,r);
     gml_render_resource_bind_dispatch(r->base_scene_resource,r);
     gml_render_resource_bind_dispatch(r->retained_base_resource,r);
     gml_render_resource_bind_dispatch(r->base_history_resource,r);
@@ -807,7 +808,10 @@ int gml_render_target_pixel(GmlRender *r,int x,int y,uint32_t *pixel){
   current=r->fb;
   width=r->fbw;
   height=r->fbh;
-  if(r->fb==r->app_surface_owned && r->app_surface_resource)
+  if(r->layer_filter_gpu_capture && r->fb==r->layer_filter_src && r->layer_filter_resource){
+    if(!gml_render_resource_acquire_cpu_read(r->layer_filter_resource,&current))return 0;
+  }
+  else if(r->fb==r->app_surface_owned && r->app_surface_resource)
     current=surface_pixels_observe(r,0,&width,&height);
   else if(r->fb==r->base_scene_resource_pixels && r->base_scene_resource){
     if(!gml_render_resource_acquire_cpu_read(r->base_scene_resource,&current)) return 0;
@@ -1030,6 +1034,7 @@ void gml_render_free(GmlRender *r){
   free(r->run_plane); r->run_plane=NULL; r->run_plane_capacity=0;
   free(r->content_sampler_plane);
   free(r->shaded_plane); r->shaded_plane=NULL; r->shaded_plane_capacity=0; r->content_sampler_plane=NULL; r->content_sampler_plane_capacity=0;
+  gml_render_layer_capture_dispose(r);
   free(r->layer_filter_src); free(r->layer_filter_work); free(r->layer_filter_aux);
   free(r->app_presentation_coverage);
   free(r->app_presentation_alpha_scratch);

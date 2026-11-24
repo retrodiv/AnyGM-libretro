@@ -913,6 +913,8 @@ static int render_state_read(GmlRender *render,CoreR *s){
     /* Successful restoration replaces the old timeline,including transient
      * packets whose destination may be a non-application SCREEN allocation. */
     if(render->rotated_scene_batch) gml_render_application_scene_queue_dispose(render);
+    gml_render_layer_capture_abandon(render);
+    gml_render_layer_capture_dispose(render);
     gml_render_application_resource_dispose(render);
     gml_render_classic_phase_resource_dispose(render);
     gml_render_interpolated_resources_dispose(render);

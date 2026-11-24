@@ -219,6 +219,9 @@ static GmlRenderResource *scene_image_target(GmlRender *r,GmlRenderImageRef imag
   else if(image.resource_class==GML_RENDER_RESOURCE_SURFACE &&
           image.identity>0u && image.identity<=GML_MAX_SURFACES)
     target=r->surface[image.identity-1u].resource;
+  else if(r->layer_filter_resource &&
+          same_scene_image(image,gml_render_resource_image_ref(r->layer_filter_resource)))
+    target=r->layer_filter_resource;
   else if(r->classic_phase_resource &&
           same_scene_image(image,gml_render_resource_image_ref(r->classic_phase_resource)))
     target=r->classic_phase_resource;
@@ -283,6 +286,8 @@ int gml_render_application_scene_flush(GmlRender *r){
     GmlRenderResourceExecution result=gml_render_resource_submit_deferred(
       target,gml_render_device(r),&batch,views,source_count);
     gml_render_dispatch_batch_record(r,&batch,result);
+    if(result==GML_RENDER_RESOURCE_EXEC_DEVICE && r->layer_filter_gpu_capture &&
+       target==r->layer_filter_resource)r->fb_all_transparent=0;
     if(result==GML_RENDER_RESOURCE_EXEC_FAILED){
       GmlRenderJournalMetrics metrics={0};
       gml_render_resource_journal_metrics(target,&metrics);
@@ -367,6 +372,8 @@ int gml_render_checkpoint_pending_resources(GmlRender *r){
   const GmlRenderDeviceServices *device=gml_render_device(r);
   if(!r || !gml_render_rotated_scene_flush(r)) return 0;
   if(!gml_render_base_history_observe(r)) return 0;
+  if(r->layer_filter_gpu_capture && r->layer_filter_resource &&
+     !gml_render_resource_checkpoint(r->layer_filter_resource,device))return 0;
   for(int index=0;index<GML_MAX_SURFACES;index++)
     if(r->surface[index].resource &&
        !gml_render_resource_checkpoint(r->surface[index].resource,device)) return 0;
@@ -390,6 +397,8 @@ int gml_render_observe_device_resources(GmlRender *r){
   if(!r || !device || !gml_render_rotated_scene_flush(r) ||
      !gml_render_application_scene_flush(r)) return 0;
   if(!gml_render_base_history_observe(r)) return 0;
+  if(r->layer_filter_gpu_capture && r->layer_filter_resource &&
+     !gml_render_resource_observe_device(r->layer_filter_resource,device))return 0;
   for(int index=0;index<GML_MAX_SURFACES;index++)
     if(r->surface[index].resource &&
        !gml_render_resource_observe_device(r->surface[index].resource,device)) return 0;
@@ -458,7 +467,8 @@ int gml_render_device_observation_pending(const GmlRender *r){
     if(resource_loses_device_pixels(r->classic_interp_resource[index].resource)) return 1;
   for(int index=0;index<GML_MAX_SURFACES;index++)
     if(resource_loses_device_pixels(r->surface[index].resource)) return 1;
-  return resource_loses_device_pixels(r->app_surface_resource) ||
+  return (r->layer_filter_gpu_capture && resource_loses_device_pixels(r->layer_filter_resource)) ||
+         resource_loses_device_pixels(r->app_surface_resource) ||
          resource_loses_device_pixels(r->retained_base_resource) ||
          resource_loses_device_pixels(r->view_base_resource) ||
          resource_loses_device_pixels(r->base_scene_resource) ||
@@ -516,6 +526,7 @@ void gml_render_lose_volatile_device(GmlRender *r){
     r->target_stack[stack].opaque_known=r->target_stack[stack].all_opaque=
       r->target_stack[stack].all_transparent=0;
   }
+  gml_render_layer_capture_abandon(r);
   gml_render_abandon_device(r);
   for(int index=0;index<GML_MAX_SURFACES;index++)
     if(lost_surfaces&(UINT64_C(1)<<index)) gml_surface_free(r,index+1);
@@ -1010,6 +1021,9 @@ GmlRenderResource *gml_render_application_resource_ensure(GmlRender *r){
 }
 int gml_render_scene_target_matches(const GmlRender *r){
   if(!r || !r->fb || r->fbw<=0 || r->fbh<=0) return 0;
+  if(r->layer_filter_gpu_capture && r->layer_filter_active && r->target_id==-2)
+    return r->layer_filter_resource && r->fb==r->layer_filter_src &&
+      r->fbw==r->layer_filter_resource_width && r->fbh==r->layer_filter_resource_height;
   int slot=surface_slot(r->target_id);
   if(slot>=0) return r->target_sp>0 && r->surface[slot].live &&
     r->fb==r->surface[slot].px && r->fbw==r->surface[slot].w &&
@@ -1226,6 +1240,77 @@ static int resource_clear(GmlRenderResource *resource,const GmlRenderDeviceServi
     resource,device,&batch,NULL,0u);
   if(owner) gml_render_dispatch_batch_record(owner,&batch,result);
   return result==GML_RENDER_RESOURCE_EXEC_DEVICE;
+}
+
+void gml_render_layer_capture_dispose(GmlRender *r){
+  if(!r || !r->layer_filter_resource)return;
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  if(device && device->retire)
+    device->retire(device->context,gml_render_resource_image_ref(r->layer_filter_resource));
+  gml_render_resource_destroy(r->layer_filter_resource);
+  r->layer_filter_resource=NULL;
+  r->layer_filter_resource_width=r->layer_filter_resource_height=0;
+  r->layer_filter_gpu_capture=0;
+}
+
+int gml_render_layer_capture_prepare(GmlRender *r,int width,int height,int below){
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  GmlRenderDeviceCaps caps={0};GmlRenderResourceSource source={0};
+  if(!r || !r->layer_filter_src || !r->scene_device_enabled || gml_d3_is_active(r) ||
+     !r->resident_application_pass || !gml_render_scene_target_matches(r) ||
+     !device || !device->capabilities || !device->observe_on_demand ||
+     !device->observe_on_demand(device->context) ||
+     !device->capabilities(device->context,&caps) ||
+     !(caps.supported_operations&(UINT64_C(1)<<GML_RENDER_OP_CLEAR)) ||
+     !(caps.supported_operations&(UINT64_C(1)<<GML_RENDER_OP_COPY_IMAGE)) ||
+     !(caps.supported_operations&(UINT64_C(1)<<GML_RENDER_OP_LAYER_EFFECT)) ||
+     width<=0 || height<=0 || (uint32_t)width>caps.max_texture_extent ||
+     (uint32_t)height>caps.max_texture_extent ||
+     (size_t)width>16u*1024u*1024u/(size_t)height ||
+     !gml_render_scene_submit_pending(r))return 0;
+  GmlRenderResource *parent=gml_render_scene_target_resource_ensure(r);
+  if(!parent || (below && !gml_render_resource_prepare_device_source(parent,device,&source)))return 0;
+  if(r->layer_filter_resource){
+    GmlRenderJournalMetrics metrics={0};gml_render_resource_journal_metrics(r->layer_filter_resource,&metrics);
+    if(r->layer_filter_resource_width!=width || r->layer_filter_resource_height!=height ||
+       metrics.authority==GML_RENDER_RESOURCE_INVALID || metrics.logical_version==UINT64_MAX)
+      gml_render_layer_capture_dispose(r);
+  }
+  if(!r->layer_filter_resource){
+    uint64_t incarnation=gml_render_scene_incarnation_allocate();if(!incarnation)return 0;
+    /* The capture is a renderable surface, with an identity outside the public
+     * bounded pool. It reuses all existing surface executors without stealing a game ID. */
+    GmlRenderImageRef image={GML_RENDER_RESOURCE_SURFACE,GML_MAX_SURFACES+1u,incarnation,1u};
+    r->layer_filter_resource=gml_render_resource_create(image,(uint32_t)width,(uint32_t)height,
+      GML_RENDER_PIXEL_ARGB8888,r->layer_filter_src,(GmlRenderResourceLimits){0});
+    if(!r->layer_filter_resource)return 0;
+    gml_render_resource_bind_dispatch(r->layer_filter_resource,r);
+    r->layer_filter_resource_width=width;r->layer_filter_resource_height=height;
+  }
+  /* Clear allocates the destination using the established no-upload target path.
+   * The optional raw copy then retains every authored channel from the parent. */
+  if(!resource_clear(r->layer_filter_resource,device,(unsigned)width,(unsigned)height,0u,r))goto rejected;
+  if(below){
+    GmlRenderDrawOp op={0};GmlRenderDrawStateSnapshot state={0};
+    op.opcode=GML_RENDER_OP_COPY_IMAGE;op.scene_family=GML_RENDER_SCENE_SURFACE;
+    op.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    op.target=(GmlRenderTargetRef){gml_render_resource_image_ref(r->layer_filter_resource),1u,
+      (uint32_t)width,(uint32_t)height,GML_RENDER_PIXEL_ARGB8888,{0,0,(uint32_t)width,(uint32_t)height}};
+    if(op.target.image.content_version==UINT64_MAX)goto rejected;
+    op.target.image.content_version++;
+    op.source_count=1u;op.sources=&source.image;
+    op.payload.copy=(GmlRenderCopyRegion){{0,0,(uint32_t)width,(uint32_t)height},
+      {0,0,(uint32_t)width,(uint32_t)height},0u,(uint32_t)width,(uint32_t)width};
+    GmlRenderDrawBatch batch={&op,1u,&state,1u};
+    GmlRenderResourceExecution result=gml_render_resource_submit_deferred(
+      r->layer_filter_resource,device,&batch,&source,1u);
+    gml_render_dispatch_batch_record(r,&batch,result);
+    if(result!=GML_RENDER_RESOURCE_EXEC_DEVICE)goto rejected;
+  }
+  return 1;
+rejected:
+  gml_render_layer_capture_dispose(r);
+  return 0;
 }
 
 static int base_stage_clear(GmlRenderResource *resource,const GmlRenderDeviceServices *device,
@@ -1874,6 +1959,7 @@ GmlRenderResource *gml_render_scene_target_resource_ensure(GmlRender *r){
   GmlRenderImageRef image;
   uint64_t incarnation;
   if(!gml_render_scene_target_matches(r)) return NULL;
+  if(r->layer_filter_gpu_capture && r->target_id==-2)return r->layer_filter_resource;
   if(r->classic_phase_scene_target){
     if(!r->classic_phase_resource || r->target_sp || r->target_id!=-1 ||
        r->fb!=r->base_fb || r->classic_phase_y!=r->classic_phase_resource_pixels ||
@@ -2236,6 +2322,8 @@ GmlRenderResourceExecution gml_render_application_scene_submit(
     {free(mapped_states);return GML_RENDER_RESOURCE_EXEC_FAILED;}
   result=gml_render_resource_submit_deferred(resource,gml_render_device(r),batch,sources,source_count);
   gml_render_dispatch_batch_record(r,batch,result);
+  if(result==GML_RENDER_RESOURCE_EXEC_DEVICE && r->layer_filter_gpu_capture &&
+     resource==r->layer_filter_resource)r->fb_all_transparent=0;
   if(result!=GML_RENDER_RESOURCE_EXEC_FAILED && r->fb==r->app_surface_owned){
     r->app_surface_opaque=0;
     r->app_presentation_coverage_active=0;
@@ -3068,8 +3156,9 @@ static int surface_feedback_source(GmlRender *r,const GmlRenderDeviceServices *d
     if(r->pending_fill || !r->resident_application_pass ||
        !gml_render_scene_submit_pending(r)) return 0;
   }
-  return resource && (gml_render_resource_device_source_view(resource,device,source) ||
-    gml_render_resource_current_cpu_source_view(resource,source)) &&
+  /* Publish the source's actual device version once. Returning only a CPU view
+   * made each accepted draw upload an unchanged mutable surface again. */
+  return resource && gml_render_resource_prepare_device_source(resource,device,source) &&
     source->pixel_format==GML_RENDER_PIXEL_ARGB8888;
 }
 static int surface_feedback_enqueue(GmlRender *r,const GmlRenderDrawOp *operation,
@@ -3282,8 +3371,8 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
   q->inverse_anchor[0]=left;q->inverse_anchor[1]=top;
   q->inverse_x[0]=signed_width;q->inverse_y[1]=signed_height;
   int copy_source_alpha=replace && (!disabled_copy || fast_unit) &&
-    (!(r->classic && surf==0 && !masked_unit) ||
-    r->blendmode==6);
+    (!(r->classic && surf==0 && !masked_unit) || r->blendmode==6 ||
+     (disabled_copy && fast_unit));
   q->span_y[0]=copy_source_alpha?2.0:0.0;
   if(automatic && r->blendmode==6 && !masked_unit) q->span_y[0]=2.0;
   if(!fast_unit && !replace && !r->alphablend) q->span_y[0]=3.0;
@@ -3547,6 +3636,12 @@ static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,do
     if(width<=0.0 || height<=0.0) return 1;
   }
   unit=width==source_width && height==source_height;
+  /* The unquantised fixed-sampler packet carries only opaque target alpha.
+   * Preserving modern unit draws use the existing surface-function packet,
+   * which retains draw opacity and the ordinary sampled source-over policy. */
+  if(!resolved_canvas && unit && !point_presentation && !destination_blend &&
+     gml_render_modern_surface_blends_alpha(r))
+    return resident_surface_nearest_selection(r,surf,dx,dy,dw,dh,blend,alpha,0,NULL,0);
   /* A whole numbered source in the CPU's white/full-alpha normal leaf uses
    * leading-edge point magnification even with interpolation enabled. Keep
    * unit packets and true filtered partial/tinted draws on their old owners. */

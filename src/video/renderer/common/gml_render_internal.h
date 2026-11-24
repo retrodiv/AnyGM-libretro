@@ -482,6 +482,10 @@ typedef struct GmlRender {
   size_t    layer_filter_capacity;
   int       layer_filter_active;
   int       layer_filter_gpu_candidate;
+  /* Disposable capture owner; canonical filter storage remains in the existing source plane. */
+  GmlRenderResource *layer_filter_resource;
+  int       layer_filter_resource_width,layer_filter_resource_height;
+  int       layer_filter_gpu_capture;
   /* GM palette-template shaders threshold a canonical render and remap it to palette colors.
    * Parsed data-driven from the SHDR chunk's GLSL at init; shader_set activates one and the
    * surface-composite blit applies the map per pixel. has==0 -> unknown shader, no-op. */

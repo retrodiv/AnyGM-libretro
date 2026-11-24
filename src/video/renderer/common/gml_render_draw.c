@@ -823,6 +823,7 @@ static void render_unbind_device(GmlRender *render,int context_current){
   for(int index=0;index<GML_MAX_SURFACES;index++)
     gml_render_resource_context_lost(render->surface[index].resource);
   gml_render_resource_context_lost(render->app_surface_resource);
+  gml_render_resource_context_lost(render->layer_filter_resource);
   gml_render_resource_context_lost(render->base_scene_resource);
   gml_render_resource_context_lost(render->retained_base_resource);
   gml_render_resource_context_lost(render->retained_base_history_resource);

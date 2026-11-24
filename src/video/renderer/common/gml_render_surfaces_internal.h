@@ -28,6 +28,10 @@ GmlRenderResourceExecution gml_render_surface_scene_submit_deferred_shader(
 GmlRenderResource *gml_render_application_resource_ensure(GmlRender *render);
 void gml_render_application_resource_dispose(GmlRender *render);
 GmlRenderResource *gml_render_scene_target_resource_ensure(GmlRender *render);
+/* Prepare the existing filter source plane as a disposable raw device target. */
+int gml_render_layer_capture_prepare(GmlRender *render,int width,int height,int affects_below);
+void gml_render_layer_capture_dispose(GmlRender *render);
+void gml_render_layer_capture_abandon(GmlRender *render);
 int gml_render_scene_target_matches(const GmlRender *render);
 /* Register a current plain SCREEN for an independent full-target replacement.
  * This does not admit later drawing or change language-visible draw state. */

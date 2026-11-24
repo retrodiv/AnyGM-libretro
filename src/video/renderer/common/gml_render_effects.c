@@ -22,15 +22,17 @@ static int layer_filter_reserve(GmlRender *r,size_t count){
   uint32_t *work=malloc(count*sizeof(*work));
   uint32_t *aux=malloc(count*sizeof(*aux));
   if(!src || !work || !aux){ free(src); free(work); free(aux); return 0; }
+  gml_render_layer_capture_dispose(r);
   free(r->layer_filter_src); free(r->layer_filter_work); free(r->layer_filter_aux);
   r->layer_filter_src=src; r->layer_filter_work=work; r->layer_filter_aux=aux;
   r->layer_filter_capacity=count;
   return 1;
 }
 
-/* R03-P7-LAYER-EFFECT-SUBMIT: captured filters submit a CPU-current source;
+/* R03-P7-LAYER-EFFECT-SUBMIT: captures provide a resident source or a CPU checkpoint;
  * inline effects consume the immutable snapshot of their current device target. */
 static int layer_effect_submit_gpu(GmlRender *r,const uint32_t *source_pixels,
+                                   GmlRenderResource *source_resource,
                                    const GmlRenderLayerEffect *effect,
                                    int width,int height){
   GmlRenderResource *target;
@@ -51,7 +53,7 @@ static int layer_effect_submit_gpu(GmlRender *r,const uint32_t *source_pixels,
      (uint32_t)height>caps.max_texture_extent ||
      (size_t)width>SIZE_MAX/4u/(size_t)height ||
      (size_t)width*(size_t)height>16u*1024u*1024u ||
-     (!in_place && !source_pixels) || !r->fb || !effect || !isfinite(effect->intensity)) return 0;
+     (!in_place && !source_pixels && !source_resource) || !r->fb || !effect || !isfinite(effect->intensity)) return 0;
   /* The shared scene matcher also accepts numbered targets. After capture its
    * resident flag is cleared, so the application submitter would select the
    * owned application resource instead of this restored numbered destination. */
@@ -66,7 +68,10 @@ static int layer_effect_submit_gpu(GmlRender *r,const uint32_t *source_pixels,
   if(!target) return 0;
   image=gml_render_resource_image_ref(target);
   if(image.content_version==UINT64_MAX) return 0;
-  if(!in_place){
+  if(!in_place && source_resource){
+    if(!gml_render_resource_prepare_device_source(source_resource,device,&source))return 0;
+    source_ref=source.image;
+  }else if(!in_place){
     source_ref=(GmlRenderImageRef){GML_RENDER_RESOURCE_SCRATCH,1u,
       gml_render_scene_incarnation_allocate(),1u};
     if(!source_ref.incarnation) return 0;
@@ -102,10 +107,11 @@ static int layer_effect_submit_gpu(GmlRender *r,const uint32_t *source_pixels,
     state.samplers[0].source_region=operation.target.region;
   }
   batch=(GmlRenderDrawBatch){&operation,1u,&state,1u};
-  if(in_place){
+  if(in_place || source_resource){
     /* Raw target effects ignore the content draw preset, palette and shader.
      * The packet describes their complete effective state and selected owner. */
-    result=gml_render_resource_submit_deferred(target,device,&batch,NULL,0u);
+    result=gml_render_resource_submit_deferred(target,device,&batch,
+      in_place?NULL:&source,in_place?0u:1u);
     gml_render_dispatch_batch_record(r,&batch,result);
     if(result==GML_RENDER_RESOURCE_EXEC_DEVICE && r->fb==r->app_surface_owned){
       r->app_surface_opaque=0;r->app_presentation_coverage_active=0;
@@ -165,7 +171,8 @@ static int layer_filter_try_gpu(GmlRender *r,const GmlLayerFilter *filter,
     effect.focus_radius=filter->u.zoom_blur.focus_radius;
     effect.linear=(uint32_t)r->interp;
   }
-  return layer_effect_submit_gpu(r,r->layer_filter_src,&effect,width,height);
+  return layer_effect_submit_gpu(r,r->layer_filter_src,
+    r->layer_filter_gpu_capture?r->layer_filter_resource:NULL,&effect,width,height);
 }
 
 /* Both inline kernels consume the same immutable device snapshot. A missing
@@ -181,7 +188,7 @@ static int layer_inline_try_gpu(GmlRender *r,const GmlRenderLayerEffect *effect)
   gml_render_prepare_draw(r);
   if(!r->resident_application_pass || !gml_render_scene_target_matches(r) ||
      !gml_render_scene_submit_pending(r)) return 0;
-  return layer_effect_submit_gpu(r,NULL,effect,r->fbw,r->fbh);
+  return layer_effect_submit_gpu(r,NULL,NULL,effect,r->fbw,r->fbh);
 }
 
 void gml_render_layer_tint(GmlRender *r,uint32_t rgba){
@@ -214,18 +221,24 @@ int gml_render_layer_filter_begin(GmlRender *r,const GmlLayerFilter *filter){
   int gpu_candidate=r->resident_application_pass && gml_render_device(r) &&
     !r->gui_pass_active && !r->classic && r->active_shader<0;
   gml_render_prepare_draw(r);
+  int native_capture=(filter->kind==GML_LAYER_FILTER_TINT ||
+    filter->kind==GML_LAYER_FILTER_COLOURISE || filter->kind==GML_LAYER_FILTER_ZOOM_BLUR) &&
+    !r->classic_phase_scene_target &&
+    gml_render_layer_capture_prepare(r,r->fbw,r->fbh,filter->affects_below);
   /* The CPU capture and final composite must observe the current target, even
    * when the preceding scene/clear has only been submitted to the device. */
-  if(!gml_render_cpu_draw_barrier(r)) return 0;
-  if(r->target_id>0){
+  if(!native_capture && !gml_render_cpu_draw_barrier(r)) return 0;
+  if(!native_capture && r->target_id>0){
     int width=0,height=0;
     if(surface_pixels(r,r->target_id,&width,&height)!=r->fb ||
        width!=r->fbw || height!=r->fbh) return 0;
   }
   int captured_known=r->fb_opaque_known,captured_opaque=r->fb_all_opaque;
   int captured_transparent=r->fb_all_transparent;
-  if(filter->affects_below) memcpy(r->layer_filter_src,r->fb,count*sizeof(uint32_t));
-  else memset(r->layer_filter_src,0,count*sizeof(uint32_t));
+  if(!native_capture){
+    if(filter->affects_below) memcpy(r->layer_filter_src,r->fb,count*sizeof(uint32_t));
+    else memset(r->layer_filter_src,0,count*sizeof(uint32_t));
+  }
   r->target_stack[r->target_sp++]=(typeof(r->target_stack[0])){
     r->fb,r->fbw,r->fbh,r->cam_x,r->cam_y,r->projection_cam_x,r->projection_cam_y,
     r->target_id,r->fb_opaque_known,r->fb_all_opaque,r->fb_all_transparent,
@@ -238,7 +251,8 @@ int gml_render_layer_filter_begin(GmlRender *r,const GmlLayerFilter *filter){
   r->fb_all_transparent=filter->affects_below?captured_transparent:1;
   r->pending_underlay=0; r->underlay_x=r->underlay_y=r->underlay_w=r->underlay_h=0;
   r->pending_fill=0; r->pending_fill_color=0; r->layer_filter_active=1;
-  r->layer_filter_gpu_candidate=gpu_candidate;
+  r->layer_filter_gpu_candidate=gpu_candidate || native_capture;
+  r->layer_filter_gpu_capture=native_capture;
   return 1;
 }
 
@@ -247,9 +261,13 @@ void gml_render_layer_filter_end(GmlRender *r,const GmlLayerFilter *filter,doubl
   int width=r->fbw,height=r->fbh;
   double camera_x=r->cam_x,camera_y=r->cam_y;
   int source_empty=r->fb_all_transparent;
+  int native_capture=r->layer_filter_gpu_capture;
+  int submitted=!native_capture || gml_render_scene_submit_pending(r);
+  int parent_resident=r->target_sp>0?r->target_stack[r->target_sp-1].resident_pass:0;
   gml_render_cpu_layer_filter_restore_target(r);
+  if(native_capture)r->resident_application_pass=parent_resident;
   r->layer_filter_active=0;
-  if(!source_empty && r->fb && r->fbw==width && r->fbh==height){
+  if(submitted && !source_empty && r->fb && r->fbw==width && r->fbh==height){
     int gpu=layer_filter_try_gpu(r,filter,width,height);
     r->layer_filter_gpu_candidate=0;
     if(gpu>0 && render_setting(r,"GML_LOG_LAYER_EFFECT") &&
@@ -258,9 +276,24 @@ void gml_render_layer_filter_end(GmlRender *r,const GmlLayerFilter *filter,doubl
         "[layer-filter] f%ld kind=%d empty=0 size=%dx%d cam=%.3f,%.3f time=%.6f linear=%d backend=gpu capture_bytes=%zu checkpoint_bytes=%zu\n",
         r->frame,filter->kind,width,height,camera_x,camera_y,time_seconds,r->interp,
         (size_t)width*(size_t)height*4u,(size_t)width*(size_t)height*4u);
-    if(gpu!=0) return;
+    if(gpu!=0){r->layer_filter_gpu_capture=0;return;}
   }
   r->layer_filter_gpu_candidate=0;
+  r->layer_filter_gpu_capture=0;
+  if(native_capture){
+    if(!submitted || source_empty)return;
+    if(!gml_render_cpu_draw_barrier(r) ||
+       !gml_render_resource_acquire_cpu_read(r->layer_filter_resource,NULL))return;
+  }
   gml_render_cpu_layer_filter_end(r,filter,time_seconds,width,height,
                                   camera_x,camera_y,source_empty);
+}
+
+void gml_render_layer_capture_abandon(GmlRender *r){
+  if(!r || !r->layer_filter_gpu_capture)return;
+  /* The scene-loss owner discarded pending packets before abandoning this borrow. */
+  r->pending_fill=r->pending_underlay=0;
+  if(r->layer_filter_active && r->target_id==-2 && r->fb==r->layer_filter_src)
+    gml_render_cpu_layer_filter_restore_target(r);
+  r->layer_filter_active=r->layer_filter_gpu_candidate=r->layer_filter_gpu_capture=0;
 }
