@@ -1798,18 +1798,19 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
     if(op->opcode==GML_RENDER_OP_LAYER_EFFECT){
       const GmlRenderDrawStateSnapshot *state;
       GlSceneImage *source;
+      int inline_effect=gml_render_layer_effect_is_inline(op->payload.effect.kind);
       if(op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
          op->scene_family!=GML_RENDER_SCENE_EFFECT ||
          !backend->gl.CopyTexSubImage2D || !batch->states ||
-         op->state_index>=batch->state_count || op->source_count!=1u ||
-         !op->sources || target->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+         op->state_index>=batch->state_count ||
+         target->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
          !full_region(target->region,target->width,target->height) ||
          (!existing_target(backend,target) &&
           !cleared_earlier(cleared,clear_count,target->image)) ||
          (op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_TINT &&
           op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_COLOURISE &&
           op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_ZOOM_BLUR &&
-          op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_RGB_NOISE) ||
+          op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_RGB_NOISE && !inline_effect) ||
          !isfinite(op->payload.effect.intensity)) return 0;
       if(op->payload.effect.kind==GML_RENDER_LAYER_EFFECT_ZOOM_BLUR &&
          (!isfinite(op->payload.effect.centre[0]) ||
@@ -1821,25 +1822,35 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
           op->payload.effect.focus_radius<0.0 ||
           op->payload.effect.focus_radius>8192.0 ||
           op->payload.effect.linear>1u)) return 0;
-      if(op->payload.effect.kind==GML_RENDER_LAYER_EFFECT_RGB_NOISE &&
+      if((op->payload.effect.kind==GML_RENDER_LAYER_EFFECT_RGB_NOISE ||
+          op->payload.effect.kind==GML_RENDER_LAYER_EFFECT_INLINE_RGB_NOISE) &&
          (op->payload.effect.intensity<=0.0 ||
           op->payload.effect.intensity>1.0)) return 0;
       state=&batch->states[op->state_index];
-      source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
-      if(!source || !source->texture || source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
-         same_logical(source->ref,target->image) ||
-         source->width!=target->width || source->height!=target->height ||
-         state->write_mask!=15u || state->alpha!=255u ||
+      if(state->write_mask!=15u || state->alpha!=255u ||
          state->colour!=0xFFFFFFFFu || state->alpha_test_enabled ||
          qualified_blend(state)!=0 || state->coverage_policy ||
          state->material_identity || state->material_version ||
-         state->sampler_count!=1u ||
-         state->samplers[0].filter!=GML_RENDER_FILTER_NEAREST ||
-         state->samplers[0].edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
-         state->samplers[0].quantisation ||
-         !full_region(state->samplers[0].source_region,source->width,source->height) ||
          !((state->clip.width==0 && state->clip.height==0) ||
            full_region(state->clip,target->width,target->height))) return 0;
+      if(inline_effect){
+        if(op->source_count || op->sources || state->sampler_count ||
+           op->payload.effect.centre[0]!=0.0 || op->payload.effect.centre[1]!=0.0 ||
+           op->payload.effect.focus_radius!=0.0 || op->payload.effect.linear ||
+           (op->payload.effect.kind==GML_RENDER_LAYER_EFFECT_INLINE_TINT &&
+            (op->payload.effect.intensity!=1.0 || op->payload.effect.phase_seed))) return 0;
+      }else{
+        if(op->source_count!=1u || !op->sources) return 0;
+        source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
+        if(!source || !source->texture || source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
+           same_logical(source->ref,target->image) ||
+           source->width!=target->width || source->height!=target->height ||
+           state->sampler_count!=1u ||
+           state->samplers[0].filter!=GML_RENDER_FILTER_NEAREST ||
+           state->samplers[0].edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
+           state->samplers[0].quantisation ||
+           !full_region(state->samplers[0].source_region,source->width,source->height)) return 0;
+      }
       continue;
     }
     if(op->opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW){
@@ -3458,6 +3469,7 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
   GLfloat extent[2]={(GLfloat)target->width,(GLfloat)target->height};
   int outcome,font_mode=0;
   const GmlRenderQuad *q=&op->payload.quad;
+  int inline_effect=effect && gml_render_layer_effect_is_inline(effect->kind);
   /* The certified identity underlay returns the source RGBA unchanged, including
    * stored partial alpha. Reuse raw image transport instead of snapshotting a
    * predecessor that this branch never reads. Private preparation images have
@@ -3503,7 +3515,7 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
   backend->gl.Viewport(0,0,(GLsizei)target->width,(GLsizei)target->height);
   backend->gl.Scissor(left,bottom,width,height);
   backend->gl.ActiveTexture(GL_TEXTURE0);
-  backend->gl.BindTexture(GL_TEXTURE_2D,source->texture);
+  backend->gl.BindTexture(GL_TEXTURE_2D,inline_effect?scene->snapshot_texture:source->texture);
   backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
   backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
   backend->gl.UseProgram(exact->exact_program);
@@ -3512,7 +3524,9 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
   backend->gl.Uniform1i(exact->exact_u_previous,1);
   backend->gl.Uniform1i(exact->exact_u_repetitions,(GLint)repetitions);
   backend->gl.Uniform1i(exact->exact_u_blend_rule,
-                        effect?(effect->kind==GML_RENDER_LAYER_EFFECT_TINT?2:
+                        effect?(effect->kind==GML_RENDER_LAYER_EFFECT_INLINE_TINT?11:
+                                effect->kind==GML_RENDER_LAYER_EFFECT_INLINE_RGB_NOISE?10:
+                                effect->kind==GML_RENDER_LAYER_EFFECT_TINT?2:
                                 effect->kind==GML_RENDER_LAYER_EFFECT_COLOURISE?3:
                                 effect->kind==GML_RENDER_LAYER_EFFECT_ZOOM_BLUR?4:5):
                           (qualified_blend(state)==11?9:qualified_blend(state)==7?8:qualified_blend(state)==6?7:
@@ -3753,11 +3767,13 @@ int gml_render_gpu_opengl_apply_effect(GmlGpuBackend *backend,
                                        char *error,size_t error_capacity){
   GmlRenderDrawOp quad=*operation;
   GmlRenderQuad *shape=&quad.payload.quad;
-  if(!target || !source || !state ||
+  int inline_effect=gml_render_layer_effect_is_inline(operation->payload.effect.kind);
+  if(!target || (!source && !inline_effect) || !state ||
      (operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_TINT &&
       operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_COLOURISE &&
       operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_ZOOM_BLUR &&
-      operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_RGB_NOISE)) return 0;
+      operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_RGB_NOISE && !inline_effect)) return 0;
+  if(inline_effect)source=target;
   memset(shape,0,sizeof *shape);
   quad.opcode=GML_RENDER_OP_TEXTURED_QUAD;
   shape->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
@@ -4176,8 +4192,9 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
       continue;
     }
     if(op->opcode==GML_RENDER_OP_LAYER_EFFECT){
-      GlSceneImage *source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
-      int drawn=source?gml_render_gpu_opengl_apply_effect(backend,op,
+      int inline_effect=gml_render_layer_effect_is_inline(op->payload.effect.kind);
+      GlSceneImage *source=inline_effect?NULL:gml_gpu_opengl_scene_image(backend,op->sources[0]);
+      int drawn=(inline_effect || source)?gml_render_gpu_opengl_apply_effect(backend,op,
         &batch->states[op->state_index],target,source,error,error_capacity):0;
       if(drawn<0) mark_uncertain(&result,target);
       else if(!drawn) result.status=GML_RENDER_EXEC_RESOURCE_ERROR;

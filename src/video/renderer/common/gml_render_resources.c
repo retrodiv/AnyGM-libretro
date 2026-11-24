@@ -600,6 +600,12 @@ static int batch_valid(const GmlRenderResource *resource,const GmlRenderDrawBatc
          !batch->states || operation->state_index>=batch->state_count ||
          operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT) return 0;
       state=&batch->states[operation->state_index];
+    } else if(operation->opcode==GML_RENDER_OP_LAYER_EFFECT &&
+              gml_render_layer_effect_is_inline(operation->payload.effect.kind)){
+      if(operation->source_count || operation->sources || !batch->states ||
+         operation->state_index>=batch->state_count ||
+         operation->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT) return 0;
+      state=&batch->states[operation->state_index];
     } else {
       if(!batch->states || operation->state_index>=batch->state_count ||
          !operation->source_count || !operation->sources) return 0;

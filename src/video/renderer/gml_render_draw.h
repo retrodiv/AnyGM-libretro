@@ -525,8 +525,17 @@ typedef enum GmlRenderLayerEffectKind {
   GML_RENDER_LAYER_EFFECT_TINT=1,
   GML_RENDER_LAYER_EFFECT_COLOURISE=2,
   GML_RENDER_LAYER_EFFECT_ZOOM_BLUR=3,
-  GML_RENDER_LAYER_EFFECT_RGB_NOISE=4
+  GML_RENDER_LAYER_EFFECT_RGB_NOISE=4,
+  GML_RENDER_LAYER_EFFECT_INLINE_TINT=5,
+  GML_RENDER_LAYER_EFFECT_INLINE_RGB_NOISE=6
 } GmlRenderLayerEffectKind;
+
+/* Inline effects read a device-owned snapshot of the current target, not an
+ * external capture image. Captured effect kinds retain one distinct source. */
+static inline int gml_render_layer_effect_is_inline(uint32_t kind){
+  return kind==GML_RENDER_LAYER_EFFECT_INLINE_TINT ||
+         kind==GML_RENDER_LAYER_EFFECT_INLINE_RGB_NOISE;
+}
 
 typedef struct GmlRenderLayerEffect {
   uint32_t kind;

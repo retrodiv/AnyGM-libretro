@@ -1658,6 +1658,96 @@ static int scene_service_contract_case(void){
   return 1;
 }
 
+/* A zero-source effect snapshots its target before drawing. Malformed suffixes
+ * must refuse before even their otherwise valid clear prefix reaches GL. */
+static int scene_inline_effect_case(void){
+  for(unsigned api=0;api<2u;api++)for(unsigned noise=0;noise<2u;noise++){
+    anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    GmlRenderDeviceServices services={0};
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context) && gml_gpu_prepare_scene(gpu,8,8),
+      "inline-effect context and shared snapshot prepared");
+    gml_gpu_device_services(gpu,&services);
+    GmlRenderDrawStateSnapshot states[2]={
+      {.write_mask=15u,.colour=0xffffffffu,.alpha=255u},
+      {.write_mask=15u,.colour=0xffffffffu,.alpha=255u}};
+    GmlRenderDrawOp operations[2]={0};
+    operations[0].opcode=GML_RENDER_OP_CLEAR;operations[0].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+    operations[0].target=(GmlRenderTargetRef){{GML_RENDER_RESOURCE_SURFACE,7u,1u,1u},1u,8u,8u,
+      GML_RENDER_PIXEL_ARGB8888,{0,0,8u,8u}};
+    operations[0].payload.clear_colour=0xB1234567u;
+    operations[1].opcode=GML_RENDER_OP_LAYER_EFFECT;operations[1].state_index=1u;
+    operations[1].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    operations[1].scene_family=GML_RENDER_SCENE_EFFECT;operations[1].target=operations[0].target;
+    operations[1].target.image.content_version=2u;
+    operations[1].payload.effect=(GmlRenderLayerEffect){.kind=noise?GML_RENDER_LAYER_EFFECT_INLINE_RGB_NOISE:
+      GML_RENDER_LAYER_EFFECT_INLINE_TINT,.colour=0xC08040A0u,.intensity=noise?.625:1.0,.phase_seed=noise?1536:0};
+    GmlRenderDrawBatch batch={operations,2u,states,2u};
+    GmlRenderImageRef absent={GML_RENDER_RESOURCE_SCRATCH,9u,1u,1u};
+    int clears=anygm_test_graphics_clear_calls(),draws=anygm_test_graphics_scene_draw_calls();
+    unsigned copies=anygm_test_graphics_scene_copies(),reads=anygm_test_graphics_read_pixels();
+    for(unsigned bad=0;bad<18u;bad++){
+      GmlRenderDrawOp wrong[2]={operations[0],operations[1]};GmlRenderDrawStateSnapshot wrong_states[2]={states[0],states[1]};
+      GmlRenderDrawBatch refused={wrong,2u,wrong_states,2u};
+      switch(bad){
+        case 0:wrong[1].source_count=1u;wrong[1].sources=&absent;break;
+        case 1:wrong[1].sources=&absent;break;
+        case 2:wrong[1].payload.effect.kind=GML_RENDER_LAYER_EFFECT_RGB_NOISE;break;
+        case 3:wrong[1].reconstruction_mode=GML_RENDER_REPLAY_EXACT;break;
+        case 4:wrong[1].payload.effect.intensity=NAN;break;
+        case 5:wrong[1].payload.effect.intensity=noise?1.25:.5;break;
+        case 6:wrong_states[1].write_mask=7u;break;
+        case 7:wrong_states[1].sampler_count=1u;break;
+        case 8:wrong[1].payload.effect.centre[0]=1.0;break;
+        case 9:wrong[1].payload.effect.focus_radius=1.0;break;
+        case 10:wrong[1].payload.effect.linear=1u;break;
+        case 11:wrong_states[1].clip=(GmlRenderRect){0,0,4u,8u};break;
+        case 12:wrong[1].target.region.width=7u;break;
+        case 13:wrong_states[1].alpha_test_enabled=1u;break;
+        case 14:wrong_states[1].material_identity=1u;break;
+        case 15:if(noise)wrong[1].payload.effect.intensity=0.0;else wrong[1].payload.effect.phase_seed=1;break;
+        case 16:wrong_states[1].source_alpha_key=1u;break;
+        case 17:wrong_states[1].source_palette.enabled=1u;break;
+      }
+      GmlRenderExecutionResult result=services.submit(services.context,&refused);
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+        !result.uncertain_target_count && !result.all_destinations_uncertain,
+        "malformed inline suffix refuses the entire prefix transaction");
+      REQUIRE(anygm_test_graphics_clear_calls()==clears && anygm_test_graphics_scene_draw_calls()==draws &&
+        anygm_test_graphics_scene_copies()==copies && anygm_test_graphics_read_pixels()==reads,
+        "malformed inline work causes no clear,draw,snapshot or readback");
+    }
+    GmlRenderExecutionResult result=services.submit(services.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==2u,
+      "clear and one inline effect complete without an external source");
+    unsigned snapshot=anygm_test_graphics_scene_sampler_texture(0);
+    REQUIRE(snapshot && snapshot==anygm_test_graphics_scene_sampler_texture(1) &&
+      snapshot!=anygm_test_graphics_attached_texture() &&
+      anygm_test_graphics_scene_copies()==copies+1u &&
+      anygm_test_graphics_scene_draw_calls()==draws+1 && anygm_test_graphics_read_pixels()==reads,
+      "both samplers borrow one immutable snapshot,never the active target texture");
+    GmlGpuCounters counters={0};gml_gpu_counters(gpu,&counters);
+    REQUIRE(counters.scene_operations[GML_RENDER_OP_LAYER_EFFECT]==1u && !counters.scene_uploads &&
+      !counters.scene_readbacks,"only completed zero-source drawing receives credit");
+    operations[1].target.image.content_version=3u;
+    GmlRenderDrawBatch next={&operations[1],1u,states,2u};
+    anygm_test_graphics_fail_copy_at(anygm_test_graphics_scene_copies()+1u);
+    draws=anygm_test_graphics_scene_draw_calls();
+    result=services.submit(services.context,&next);
+    REQUIRE(result.status==GML_RENDER_EXEC_RESOURCE_ERROR && !result.accepted_prefix &&
+      anygm_test_graphics_scene_draw_calls()==draws,"snapshot failure issues no inline draw");
+    gml_gpu_counters(gpu,&counters);
+    REQUIRE(counters.scene_operations[GML_RENDER_OP_LAYER_EFFECT]==1u,
+      "a failed snapshot publishes no completed effect");
+    anygm_test_graphics_fail_copy_at(0u);
+    result=services.submit(services.context,&next);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==1u &&
+      anygm_test_graphics_scene_draw_calls()==draws+1,"the same versioned command retries after snapshot failure");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_optional_entry_refusal_case(void){
   GmlGpu *gpu;
   GmlGpuContext context;
@@ -9484,6 +9574,7 @@ int main(int argc,char **argv){
     {"missing_entry_point",missing_entry_point_case},
     {"program_failure",program_failure_case},
     {"scene_service_contract",scene_service_contract_case},
+    {"scene_inline_effect",scene_inline_effect_case},
     {"scene_unit_texel_magnification",scene_unit_texel_magnification_case},
     {"scene_native_triangles",scene_native_triangle_batch_case},
     {"scene_source_alpha_triangles",scene_source_alpha_triangle_case},

@@ -8,6 +8,7 @@
 
 /* The shared pass chooses its executor after restoring the captured target.
  * CPU pixel kernels remain private to this owner. */
+void gml_render_cpu_layer_tint(GmlRender *render,uint32_t rgba);
 void gml_render_cpu_layer_filter_restore_target(GmlRender *render);
 void gml_render_cpu_layer_rgb_noise(GmlRender *render,uint32_t sampler_tpag_ptr,
                                     double intensity,double animation,uint32_t rgb);

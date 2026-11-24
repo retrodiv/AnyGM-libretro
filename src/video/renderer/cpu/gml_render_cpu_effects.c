@@ -100,7 +100,7 @@ void gml_render_cpu_layer_rgb_noise(GmlRender *r, uint32_t sampler_tpag_ptr,
   if(r->dispatch_metrics.enabled)
     gml_render_dispatch_cpu_record(r,GML_RENDER_SCENE_EFFECT,reason,1u);
 }
-void gml_render_layer_tint(GmlRender *r, uint32_t rgba){
+void gml_render_cpu_layer_tint(GmlRender *r, uint32_t rgba){
   if(!r || !r->fb || r->fbw<=0 || r->fbh<=0 || rgba==0xFFFFFFFFu) return;
   unsigned reason=r->dispatch_metrics.enabled
     ?gml_render_dispatch_cpu_reason(r):GML_RENDER_DISPATCH_UNQUALIFIED;

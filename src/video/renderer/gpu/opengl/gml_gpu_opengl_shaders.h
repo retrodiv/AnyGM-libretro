@@ -1693,8 +1693,8 @@
   "}\n" \
   "#else\n" \
   "void main(){\n" \
-  "  ivec4 source=ivec4(round(texture(u_image,v_texcoord)*v_colour*255.0));\n" \
   "  ivec4 prior=ivec4(round(texelFetch(u_previous,ivec2(gl_FragCoord.xy)-u_region_origin,0)*255.0));\n" \
+  "  ivec4 source=(u_blend_rule==10 || u_blend_rule==11)?prior:ivec4(round(texture(u_image,v_texcoord)*v_colour*255.0));\n" \
   "#if GML_EXACT_FONT_MODE<0\n" \
   "  if(u_blend_rule==7){ o_color=vec4(filtered_font_pixel(prior))/255.0; return; }\n" \
   "#endif\n" \
@@ -1733,8 +1733,10 @@
   "    if(u_surface_rule.w==0) result.a=255;\n" \
   "    o_color=vec4(result)/255.0; return;\n" \
   "  }\n" \
+  "  // Inline tint transforms the snapshot's stored channels, without compositing.\n" \
+  "  if(u_blend_rule==11){ o_color=vec4(prior*u_effect_colour/255)/255.0; return; }\n" \
   "  // R03_SHADER_LAYER_RGB_NOISE: the CPU hash and alpha-weighted RGB mix.\n" \
-  "  if(u_blend_rule==5){\n" \
+  "  if(u_blend_rule==5 || u_blend_rule==10){\n" \
   "    uint x=uint(int(gl_FragCoord.x));\n" \
   "    uint y=uint(int(u_extent.y)-1-int(gl_FragCoord.y));\n" \
   "    uint h=x*0x9E3779B1u ^ (y+0x7F4A7C15u)*0x85EBCA77u ^ uint(u_effect_seed)*0xC2B2AE3Du;\n" \

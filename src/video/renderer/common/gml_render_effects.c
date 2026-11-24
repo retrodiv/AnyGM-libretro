@@ -28,14 +28,14 @@ static int layer_filter_reserve(GmlRender *r,size_t count){
   return 1;
 }
 
-/* R03-P7-LAYER-EFFECT-SUBMIT: the captured filter and the inline noise both
- * submit their CPU-current source through the same device checkpoint. */
+/* R03-P7-LAYER-EFFECT-SUBMIT: captured filters submit a CPU-current source;
+ * inline effects consume the immutable snapshot of their current device target. */
 static int layer_effect_submit_gpu(GmlRender *r,const uint32_t *source_pixels,
                                    const GmlRenderLayerEffect *effect,
                                    int width,int height){
   GmlRenderResource *target;
   GmlRenderResourceSource source={0};
-  GmlRenderImageRef source_ref,image;
+  GmlRenderImageRef source_ref={0},image;
   GmlRenderDrawOp operation={0};
   GmlRenderDrawStateSnapshot state={0};
   GmlRenderDrawBatch batch;
@@ -44,14 +44,14 @@ static int layer_effect_submit_gpu(GmlRender *r,const uint32_t *source_pixels,
   GmlRenderJournalMetrics metrics={0};
   const GmlRenderDeviceServices *device=gml_render_device(r);
   size_t bytes;
-  int application;
+  int application,in_place=effect && gml_render_layer_effect_is_inline(effect->kind);
   if(!device || !device->capabilities ||
      !device->capabilities(device->context,&caps) || !caps.max_texture_extent ||
      width<=0 || height<=0 || (uint32_t)width>caps.max_texture_extent ||
      (uint32_t)height>caps.max_texture_extent ||
      (size_t)width>SIZE_MAX/4u/(size_t)height ||
      (size_t)width*(size_t)height>16u*1024u*1024u ||
-     !source_pixels || !r->fb || !effect || !isfinite(effect->intensity)) return 0;
+     (!in_place && !source_pixels) || !r->fb || !effect || !isfinite(effect->intensity)) return 0;
   /* The shared scene matcher also accepts numbered targets. After capture its
    * resident flag is cleared, so the application submitter would select the
    * owned application resource instead of this restored numbered destination. */
@@ -66,22 +66,24 @@ static int layer_effect_submit_gpu(GmlRender *r,const uint32_t *source_pixels,
   if(!target) return 0;
   image=gml_render_resource_image_ref(target);
   if(image.content_version==UINT64_MAX) return 0;
-  source_ref=(GmlRenderImageRef){GML_RENDER_RESOURCE_SCRATCH,1u,
-    gml_render_scene_incarnation_allocate(),1u};
-  if(!source_ref.incarnation) return 0;
-  bytes=(size_t)width*(size_t)height*4u;
-  source.image=source_ref;
-  source.width=(uint32_t)width;
-  source.height=(uint32_t)height;
-  source.pixel_format=GML_RENDER_PIXEL_ARGB8888;
-  source.stride_bytes=(uint32_t)width*4u;
-  source.byte_capacity=bytes;
-  source.bytes=source_pixels;
+  if(!in_place){
+    source_ref=(GmlRenderImageRef){GML_RENDER_RESOURCE_SCRATCH,1u,
+      gml_render_scene_incarnation_allocate(),1u};
+    if(!source_ref.incarnation) return 0;
+    bytes=(size_t)width*(size_t)height*4u;
+    source.image=source_ref;
+    source.width=(uint32_t)width;
+    source.height=(uint32_t)height;
+    source.pixel_format=GML_RENDER_PIXEL_ARGB8888;
+    source.stride_bytes=(uint32_t)width*4u;
+    source.byte_capacity=bytes;
+    source.bytes=source_pixels;
+  }
   operation.opcode=GML_RENDER_OP_LAYER_EFFECT;
   operation.scene_family=GML_RENDER_SCENE_EFFECT;
   operation.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
-  operation.source_count=1u;
-  operation.sources=&source_ref;
+  operation.source_count=in_place?0u:1u;
+  operation.sources=in_place?NULL:&source_ref;
   operation.target.image=image;
   operation.target.image.content_version++;
   operation.target.storage_version=1u;
@@ -93,21 +95,35 @@ static int layer_effect_submit_gpu(GmlRender *r,const uint32_t *source_pixels,
   state.write_mask=15u;
   state.colour=0xFFFFFFFFu;
   state.alpha=255u;
-  state.sampler_count=1u;
-  state.samplers[0].filter=GML_RENDER_FILTER_NEAREST;
-  state.samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
-  state.samplers[0].source_region=operation.target.region;
+  if(!in_place){
+    state.sampler_count=1u;
+    state.samplers[0].filter=GML_RENDER_FILTER_NEAREST;
+    state.samplers[0].edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+    state.samplers[0].source_region=operation.target.region;
+  }
   batch=(GmlRenderDrawBatch){&operation,1u,&state,1u};
-  result=application?gml_render_application_scene_submit(r,&batch,&source,1u):
-    gml_render_surface_scene_submit(r,r->target_id,&batch,&source,1u);
-  if(device->retire) device->retire(device->context,source_ref);
+  if(in_place){
+    /* Raw target effects ignore the content draw preset, palette and shader.
+     * The packet describes their complete effective state and selected owner. */
+    result=gml_render_resource_submit_deferred(target,device,&batch,NULL,0u);
+    gml_render_dispatch_batch_record(r,&batch,result);
+    if(result==GML_RENDER_RESOURCE_EXEC_DEVICE && r->fb==r->app_surface_owned){
+      r->app_surface_opaque=0;r->app_presentation_coverage_active=0;
+    }
+  }else{
+    result=application?gml_render_application_scene_submit(r,&batch,&source,1u):
+      gml_render_surface_scene_submit(r,r->target_id,&batch,&source,1u);
+    if(device->retire) device->retire(device->context,source_ref);
+  }
   if(result==GML_RENDER_RESOURCE_EXEC_DEVICE){
     /* The source capture crossed the CPU barrier, but the accepted effect
      * makes this target device-current again. Re-enter the
      * resident draw contract so a later CPU-only draw crosses its write
      * barrier and invalidates that device version. */
     if(gml_render_scene_target_matches(r)) r->resident_application_pass=1;
-    r->fb_opaque_known=0;
+    if(!in_place)r->fb_opaque_known=0;
+    else if(effect->kind==GML_RENDER_LAYER_EFFECT_INLINE_TINT && (effect->colour>>24)<255u)
+      r->fb_opaque_known=r->fb_all_opaque=0;
     r->fb_all_transparent=0;
     return 1;
   }
@@ -152,41 +168,43 @@ static int layer_filter_try_gpu(GmlRender *r,const GmlLayerFilter *filter,
   return layer_effect_submit_gpu(r,r->layer_filter_src,&effect,width,height);
 }
 
-/* R03-P7-LAYER-RGB-NOISE: the inline effect reads the current target. Keep
- * the characterised CPU cache/kernel intact for unqualified and failed paths. */
+/* Both inline kernels consume the same immutable device snapshot. A missing
+ * capability or refused packet retains the established CPU authority barrier. */
+static int layer_inline_try_gpu(GmlRender *r,const GmlRenderLayerEffect *effect){
+  const GmlRenderDeviceServices *device=r?gml_render_device(r):NULL;
+  GmlRenderDeviceCaps caps={0};
+  if(!r || !r->resident_application_pass || !device || !device->capabilities ||
+     !device->capabilities(device->context,&caps) ||
+     !(caps.supported_operations&(UINT64_C(1)<<GML_RENDER_OP_LAYER_EFFECT)) ||
+     !gml_render_scene_target_matches(r) || r->layer_filter_active || r->pending_presentation)
+    return 0;
+  gml_render_prepare_draw(r);
+  if(!r->resident_application_pass || !gml_render_scene_target_matches(r) ||
+     !gml_render_scene_submit_pending(r)) return 0;
+  return layer_effect_submit_gpu(r,NULL,effect,r->fbw,r->fbh);
+}
+
+void gml_render_layer_tint(GmlRender *r,uint32_t rgba){
+  if(rgba==0xFFFFFFFFu)return;
+  GmlRenderLayerEffect effect={.kind=GML_RENDER_LAYER_EFFECT_INLINE_TINT,
+    .colour=rgba,.intensity=1.0};
+  if(layer_inline_try_gpu(r,&effect)!=0)return;
+  gml_render_cpu_layer_tint(r,rgba);
+}
+
 void gml_render_layer_rgb_noise(GmlRender *r,uint32_t sampler_tpag_ptr,
                                 double intensity,double animation,uint32_t rgb){
-  int gpu_candidate=r && r->fb && r->fbw>0 && r->fbh>0 &&
-    r->resident_application_pass && gml_render_device(r) &&
-    r->target_id<=0 && gml_render_scene_target_matches(r) &&
-    !r->layer_filter_active && !r->gui_pass_active && !r->classic &&
-    r->active_shader<0 && isfinite(intensity) && intensity>0.0 && intensity<=1.0 &&
-    isfinite(animation) &&
-    isfinite((double)(float)animation) &&
-    (double)(float)animation*4096.0>=INT32_MIN &&
-    (double)(float)animation*4096.0<=INT32_MAX;
-  if(gpu_candidate){
-    GmlRenderLayerEffect effect={0};
-    int opaque_known,all_opaque;
-    gml_render_prepare_draw(r);
-    if(!gml_render_cpu_draw_barrier(r)) return;
-    opaque_known=r->fb_opaque_known;
-    all_opaque=r->fb_all_opaque;
-    effect.kind=GML_RENDER_LAYER_EFFECT_RGB_NOISE;
-    effect.colour=rgb;
-    effect.intensity=intensity;
-    effect.phase_seed=(int32_t)llround((double)(float)animation*4096.0);
-    int result=layer_effect_submit_gpu(r,r->fb,&effect,r->fbw,r->fbh);
-    if(result>0){
-      r->fb_opaque_known=opaque_known;
-      r->fb_all_opaque=all_opaque;
-      return;
-    }
-    if(result<0) return;
+  if(isfinite(intensity) && intensity>0.0 && intensity<=1.0 &&
+     isfinite(animation) && isfinite((double)(float)animation) &&
+     (double)(float)animation*4096.0>=INT32_MIN &&
+     (double)(float)animation*4096.0<=INT32_MAX){
+    GmlRenderLayerEffect effect={.kind=GML_RENDER_LAYER_EFFECT_INLINE_RGB_NOISE,
+      .colour=rgb,.intensity=intensity,
+      .phase_seed=(int32_t)llround((double)(float)animation*4096.0)};
+    if(layer_inline_try_gpu(r,&effect)!=0)return;
   }
   gml_render_cpu_layer_rgb_noise(r,sampler_tpag_ptr,intensity,animation,rgb);
 }
-
 
 int gml_render_layer_filter_begin(GmlRender *r,const GmlLayerFilter *filter){
   if(!r || !filter || filter->kind==GML_LAYER_FILTER_NONE || !r->fb ||

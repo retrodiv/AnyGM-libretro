@@ -275,7 +275,7 @@ DISPATCH_ADDITIONAL = {
     "gml_render_application_surface_owned_mask",
     "gml_render_application_surface_owned_clear",
     "gml_render_completed_screen_mask",
-    "gml_render_layer_rgb_noise", "gml_render_layer_filter_end",
+    "gml_render_layer_tint", "gml_render_layer_rgb_noise", "gml_render_layer_filter_end",
     "gml_render_sprite_ext_unmasked",
     "gml_render_compose_resident_underlay", "gml_render_recover_empty_screen",
     "render_present_first_generation", "render_present_content_shader",

@@ -67,6 +67,8 @@ typedef struct FakeDevice {
   GmlRenderRect last_target_region;
   GmlRenderDrawOp last_primitive;
   GmlRenderDrawStateSnapshot last_primitive_state;
+  GmlRenderDrawOp last_effect;
+  GmlRenderDrawStateSnapshot last_effect_state;
   GmlRenderDrawOp last_depth;
   GmlRenderDrawStateSnapshot last_depth_state;
   unsigned depth_uploads,depth_reads;
@@ -134,6 +136,11 @@ static GmlRenderExecutionResult fake_submit(void *context,const GmlRenderDrawBat
     fake->last_target_image=last->target.image;
     fake->last_target_region=last->target.region;
     fake->last_source_count=last->source_count;
+    if(last->opcode==GML_RENDER_OP_LAYER_EFFECT){
+      fake->last_effect=*last;
+      if(batch->states && last->state_index<batch->state_count)
+        fake->last_effect_state=batch->states[last->state_index];
+    }
     if(last->opcode==GML_RENDER_OP_SOFTWARE3D_PASS){
       fake->last_depth=*last;
       if(batch->states && last->state_index<batch->state_count)
@@ -5182,6 +5189,66 @@ static int resident_layer_filter_capture_barrier(void){
   return 1;
 }
 
+static int resident_inline_layer_effect_native_target(void){
+  enum {W=8,H=6};
+  static const int revisions[]={530,700,800,0,0,0};
+  static const int bytecodes[]={0,0,0,13,15,17};
+  unsigned controls=0;
+  for(unsigned generation=0;generation<6u;generation++)
+  for(unsigned owner=0;owner<4u;owner++) for(unsigned gui=0;gui<2u;gui++)
+  for(unsigned noise=0;noise<2u;noise++) for(unsigned prefix=0;prefix<2u;prefix++){
+    GmlRender *r=calloc(1,sizeof *r);
+    GmlWin content={.classic_version=revisions[generation],.bytecode=bytecodes[generation]};
+    FakeDevice fake={.on_demand=1,.supported_operations=UINT64_C(1)<<GML_RENDER_OP_LAYER_EFFECT};
+    GmlRenderDeviceServices device=service(&fake);uint32_t base[W*H],shadow[W*H];
+    CHECK(r && !gml_render_init(r,NULL));r->win=&content;r->classic=generation<3u;
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(r,&device);gml_render_set_scene_device(r,1);
+    for(unsigned p=0;p<W*H;p++)base[p]=0xA5123456u;
+    if(owner==1u || owner==2u)CHECK(gml_render_application_surface_ensure_owned(r,W,H));
+    if(owner==1u)CHECK(gml_render_begin_resident_owned_application(r,0,0,0));
+    else CHECK(gml_render_begin_resident_base(r,base,W,H,0,0));
+    if(owner==2u){gml_render_application_surface_bind(r,r->app_surface_owned,W,H,0);CHECK(gml_surface_set_target(r,0));}
+    if(owner==3u){int id=gml_surface_create(r,W,H);CHECK(id>0 && gml_surface_set_target(r,id));}
+    if(gui)gml_render_gui_begin(r,W,H);
+    gml_render_set_pending_fill(r,0xB153789Au);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));memcpy(shadow,r->fb,sizeof shadow);
+    GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);CHECK(target);
+    GmlRenderImageRef before=gml_render_resource_image_ref(target);
+    int submits=fake.submits,uploads=fake.uploads,reads=fake.readbacks,queries=fake.rgb_queries;
+    if(prefix)gml_render_set_pending_fill(r,0xD1376589u);
+    /* Inline kernels transform raw target channels independently of selected
+     * draw alpha, preset, mask and GUI coordinate mapping. */
+    r->alpha=.3;r->blendmode=4;r->color_write_mask=5u;
+    if(noise)gml_render_layer_rgb_noise(r,0u,.625,.375,0x80C040u);
+    else gml_render_layer_tint(r,0xC08040A0u);
+    if(!r->resident_application_pass || fake.submits!=submits+1+(int)prefix){
+      fprintf(stderr,"inline native target: generation=%u owner=%u gui=%u noise=%u prefix=%u resident=%d submits=%d/%d\n",
+        generation,owner,gui,noise,prefix,r->resident_application_pass,fake.submits,submits);CHECK(0);
+    }
+    CHECK(fake.last_opcode==GML_RENDER_OP_LAYER_EFFECT && !fake.last_source_count &&
+      fake.last_batch_operations==1u && fake.last_batch_states==1u &&
+      fake.uploads==uploads && fake.readbacks==reads && fake.rgb_queries==queries &&
+      !memcmp(shadow,r->fb,sizeof shadow));
+    CHECK(fake.last_target_image.resource_class==before.resource_class &&
+      fake.last_target_image.identity==before.identity &&
+      fake.last_target_image.incarnation==before.incarnation &&
+      fake.last_target_image.content_version==before.content_version+1u+prefix &&
+      fake.last_effect.reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT &&
+      fake.last_effect.payload.effect.kind==(noise?GML_RENDER_LAYER_EFFECT_INLINE_RGB_NOISE:GML_RENDER_LAYER_EFFECT_INLINE_TINT) &&
+      fake.last_effect_state.write_mask==15u && !fake.last_effect_state.sampler_count &&
+      r->alpha==.3 && r->blendmode==4 && r->color_write_mask==5u);
+    GmlRenderJournalMetrics metrics={0};gml_render_resource_journal_metrics(target,&metrics);
+    CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.journal_bytes && !metrics.cpu_replays);
+    submits=fake.submits;gml_render_layer_tint(r,0xFFFFFFFFu);
+    gml_render_layer_rgb_noise(r,0u,0,.375,0x80C040u);
+    CHECK(fake.submits==submits && fake.readbacks==reads && !memcmp(shadow,r->fb,sizeof shadow));
+    gml_render_free(r);free(r);controls++;
+  }
+  printf("inline native target controls: %u\n",controls);
+  return controls==192u;
+}
+
 static int resident_inline_layer_effect_cpu_bridge(void){
   GmlRender *cpu=(GmlRender*)calloc(1,sizeof *cpu);
   GmlRender *resident=(GmlRender*)calloc(1,sizeof *resident);
@@ -5278,7 +5345,9 @@ static int resident_layer_effect_continuation_authority(void){
     GmlRenderDeviceServices device;
     GmlRenderJournalMetrics after_effect={0},after_cpu={0};
     GmlLayerFilter filter={0};
-    FakeDevice fake={0};
+    /* The inline owner now checks the declared operation capability. Keep
+     * this non-observing provider's immediate-checkpoint and CPU-suffix guard. */
+    FakeDevice fake={.supported_operations=UINT64_C(1)<<GML_RENDER_OP_LAYER_EFFECT};
     CHECK(render && gml_render_init(render,NULL)==0);
     fake.readback_colour=0xFF203040u;
     device=service(&fake);
@@ -5295,6 +5364,8 @@ static int resident_layer_effect_continuation_authority(void){
       CHECK(gml_render_layer_filter_begin(render,&filter));
       gml_render_layer_filter_end(render,&filter,0.375);
     }
+    CHECK(fake.last_effect.payload.effect.kind==(variant?GML_RENDER_LAYER_EFFECT_TINT:
+      GML_RENDER_LAYER_EFFECT_INLINE_RGB_NOISE) && fake.last_source_count==(variant?1u:0u));
     CHECK(gml_render_application_surface_owned_read(render,NULL));
     gml_render_resource_journal_metrics(render->app_surface_resource,&after_effect);
     CHECK(fake.submits>=2 && fake.readbacks==1 &&
@@ -22477,6 +22548,8 @@ int main(void){
     else if(!strcmp(selected,"roundrect-native-boundaries")) passed=resident_extended_roundrect_refusals();
     else if(!strcmp(selected,"ordinary-integer-centres")) passed=ordinary_colour_triangles_integer_centres();
     else if(!strcmp(selected,"native-triangle-geometric-noops")) passed=resident_native_triangle_geometric_noops();
+    else if(!strcmp(selected,"layer-effect-continuation-authority")) passed=resident_layer_effect_continuation_authority();
+    else if(!strcmp(selected,"inline-native-target-effects")) passed=resident_inline_layer_effect_native_target();
     else if(!strcmp(selected,"ordinary-native-target-triangles")) passed=resident_ordinary_native_target_triangles();
     else if(!strcmp(selected,"ordinary-native-triangles")) passed=resident_ordinary_native_triangles();
     else if(!strcmp(selected,"native-zero-alpha-triangles")) passed=resident_native_zero_alpha_triangles();
@@ -22589,6 +22662,7 @@ int main(void){
   passed+=first_generation_underlay_resource_borrow();
   passed+=resident_layer_filter_capture_barrier();
   passed+=resident_inline_layer_effect_cpu_bridge();
+  passed+=resident_inline_layer_effect_native_target();
   passed+=resident_layer_effect_continuation_authority();
   passed+=resident_numbered_layer_effect_target();
   passed+=resident_flat_primitive_public_order();
@@ -22873,7 +22947,7 @@ int main(void){
   passed+=resident_runtime_native_rotations();
   passed+=runtime_sprite_deferred_clear();
   passed+=resident_runtime_native_boundaries();
-  enum { total=361 };
+  enum { total=362 };
   printf("render resource cases: passed=%d failed=%d\n",passed,total-passed);
   return passed==total?EXIT_SUCCESS:EXIT_FAILURE;
 }
