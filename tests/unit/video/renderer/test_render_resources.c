@@ -16377,6 +16377,75 @@ static int resident_ordinary_native_triangles(void){
   return 1;
 }
 
+/* Ordinary source-free target ownership is independent of camera rotation.
+ * Keep preserving targets in the shared native protocol, with no CPU shadow
+ * repaint or implicit pixel query during enqueue and submission. */
+static int resident_ordinary_native_target_triangles(void){
+  enum {W=40,H=32};
+  static const int revisions[]={530,700,800,0,0,0};
+  static const int bytecodes[]={0,0,0,13,15,17};
+  unsigned controls=0;
+  for(unsigned generation=0;generation<6u;generation++)
+  for(unsigned owner=0;owner<4u;owner++)
+  for(unsigned gui=0;gui<2u;gui++)
+  for(unsigned fractional=0;fractional<2u;fractional++)
+  for(unsigned origin=0;origin<2u;origin++){
+    GmlRender *r=calloc(1,sizeof *r);
+    GmlWin content={.classic_version=revisions[generation],.bytecode=bytecodes[generation]};
+    FakeDevice fake={.on_demand=1,.supported_operations=UINT64_C(1)<<GML_RENDER_OP_COPY_IMAGE};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t base[W*H],shadow[W*H];CHECK(r && !gml_render_init(r,NULL));
+    r->win=&content;r->classic=content.classic_version!=0;
+    device.observe_on_demand=fake_observe_on_demand;
+    gml_render_bind_device(r,&device);gml_render_set_scene_device(r,1);
+    if(owner==1u || owner==2u) CHECK(gml_render_application_surface_ensure_owned(r,W,H));
+    if(owner==1u) CHECK(gml_render_begin_resident_owned_application(r,0,0,0));
+    else CHECK(gml_render_begin_resident_base(r,base,W,H,0,0));
+    if(owner==2u){
+      gml_render_application_surface_bind(r,r->app_surface_owned,W,H,0);
+      CHECK(gml_surface_set_target(r,0));
+    }
+    if(owner==3u){int id=gml_surface_create(r,W,H);CHECK(id>0 && gml_surface_set_target(r,id));}
+    if(gui)gml_render_gui_begin(r,W,H);
+    gml_render_set_pending_fill(r,0xB1234567u);gml_render_flush_pending_fill(r);
+    CHECK(gml_render_scene_submit_pending(r));memcpy(shadow,r->fb,sizeof shadow);
+    r->alphablend=1;r->blendmode=0;r->active_shader=-1;r->alpha=1.0;r->color_write_mask=15u;
+    GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);CHECK(target);
+    GmlRenderImageRef before=gml_render_resource_image_ref(target);
+    int submits=fake.submits,reads=fake.readbacks,queries=fake.rgb_queries;
+    if(!gml_render_cpu_backend_native_triangles(r,NULL,0u,origin)){
+      fprintf(stderr,"ordinary native target admission: generation=%u owner=%u gui=%u fractional=%u origin=%u\n",
+        generation,owner,gui,fractional,origin);CHECK(0);
+    }
+    GmlRenderCpuBackendTriangle triangle={.vertex={
+      {4,4,.2,.4,.6,1},{28,6,.7,.3,.2,1},{12,24,.3,.8,.4,1}}};
+    if(fractional)for(unsigned v=0;v<3u;v++)triangle.vertex[v][5]=.375;
+    CHECK(gml_render_cpu_backend_native_triangles(r,&triangle,1u,origin));
+    CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r));
+    unsigned preserving_application=owner==2u || (owner==1u && (generation==3u || generation==4u));
+    unsigned flags=origin?GML_RENDER_RECTANGLE_TOP_LEFT_FILL:0u;
+    if(owner==3u || preserving_application)flags|=GML_RENDER_RECTANGLE_TARGET_ALPHA;
+    if(preserving_application || (owner==3u && fractional))flags|=GML_RENDER_RECTANGLE_SOURCE_OVER_ALPHA;
+    CHECK(fake.submits==submits+1 && fake.last_batch_operations==1u &&
+      fake.readbacks==reads && fake.rgb_queries==queries && !memcmp(shadow,r->fb,sizeof shadow));
+    CHECK(fake.last_target_image.resource_class==before.resource_class &&
+      fake.last_target_image.identity==before.identity &&
+      fake.last_target_image.incarnation==before.incarnation &&
+      fake.last_target_image.content_version==before.content_version+1u &&
+      gml_render_native_triangle_valid(&fake.last_primitive) &&
+      fake.last_primitive.payload.primitive.rectangle_flags==flags &&
+      !memcmp(fake.last_primitive.payload.primitive.triangle,triangle.vertex,sizeof triangle.vertex));
+    r->color_write_mask=7u;CHECK(!gml_render_cpu_backend_native_triangles(r,NULL,0u,origin));
+    r->color_write_mask=15u;r->alpha_test_enable=1;
+    CHECK(!gml_render_cpu_backend_native_triangles(r,NULL,0u,origin));
+    r->alpha_test_enable=0;r->blendmode=2;
+    CHECK(!gml_render_cpu_backend_native_triangles(r,NULL,0u,origin));
+    gml_render_free(r);free(r);controls++;
+  }
+  printf("ordinary native target triangles: %u controls\n",controls);
+  return controls==192u;
+}
+
 static int resident_native_triangle_geometric_noops(void){
   enum { W=40,H=32 };
   for(unsigned origin=0;origin<2u;origin++){
@@ -21867,9 +21936,10 @@ static int resident_extended_roundrect_refusals(void){
     gml_software3d_draw_roundrect_2d(r,2,2,13,10,variant==1u?0:3,variant==1u?0:2,
       0x235A97u,variant==0u?0xE33A18u:0x235A97u,variant==1u?1.0/256.0:1.0,variant==1u);
     /* The original rejection protected the coverage-row gradient's EXACT0
-     * limit. Native triangles now own ordinary non-preserving filled gradients;
-     * retain every old control and the remaining unsafe/active3D boundaries. */
-    int placed=variant==0u && (owner==0u || (owner==1u && (policy<3u || policy==5u)));
+     * limit. Native triangles now own ordinary filled gradients, including
+     * preserving and explicitly bound targets; retain every old input and the
+     * remaining unsafe/active3D boundaries with their original strict checks. */
+    int placed=variant==0u;
     if(placed){
       CHECK(r->resident_application_pass && gml_render_scene_submit_pending(r) &&
         fake.submits==submits+1 && fake.last_batch_operations==68u &&
@@ -21883,7 +21953,7 @@ static int resident_extended_roundrect_refusals(void){
     gml_render_free(r);free(r);gml_software3d_destroy(graphics);controls++;
   }
   printf("extended roundrect boundaries: %u controls, %u native gradients, %u CPU\n",controls,native,cpu);
-  return controls==72u && native==10u && cpu==62u;
+  return controls==72u && native==24u && cpu==48u;
 }
 
 static int resident_registered_view_surface_source(void){
@@ -22407,6 +22477,7 @@ int main(void){
     else if(!strcmp(selected,"roundrect-native-boundaries")) passed=resident_extended_roundrect_refusals();
     else if(!strcmp(selected,"ordinary-integer-centres")) passed=ordinary_colour_triangles_integer_centres();
     else if(!strcmp(selected,"native-triangle-geometric-noops")) passed=resident_native_triangle_geometric_noops();
+    else if(!strcmp(selected,"ordinary-native-target-triangles")) passed=resident_ordinary_native_target_triangles();
     else if(!strcmp(selected,"ordinary-native-triangles")) passed=resident_ordinary_native_triangles();
     else if(!strcmp(selected,"native-zero-alpha-triangles")) passed=resident_native_zero_alpha_triangles();
     else if(!strcmp(selected,"native-positive-alpha-triangles")) passed=resident_native_positive_alpha_triangles();
@@ -22728,6 +22799,7 @@ int main(void){
   passed+=resident_native_runtime_textured_triangles();
   passed+=ordinary_colour_triangles_integer_centres();
   passed+=resident_ordinary_native_triangles();
+  passed+=resident_ordinary_native_target_triangles();
   passed+=resident_native_triangle_geometric_noops();
   passed+=resident_native_zero_alpha_triangles();
   passed+=resident_native_positive_alpha_triangles();
@@ -22801,7 +22873,7 @@ int main(void){
   passed+=resident_runtime_native_rotations();
   passed+=runtime_sprite_deferred_clear();
   passed+=resident_runtime_native_boundaries();
-  enum { total=360 };
+  enum { total=361 };
   printf("render resource cases: passed=%d failed=%d\n",passed,total-passed);
   return passed==total?EXIT_SUCCESS:EXIT_FAILURE;
 }

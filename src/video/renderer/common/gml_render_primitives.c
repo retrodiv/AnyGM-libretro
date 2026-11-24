@@ -528,15 +528,16 @@ static int resident_native_triangles(GmlRender *r,
      !isfinite(bilinear_size[0]) || !isfinite(bilinear_size[1]) ||
      bilinear_size[0]<1 || bilinear_size[0]>65536 ||
      bilinear_size[1]<1 || bilinear_size[1]>65536)) return 0;
-  int surface=view_rotation && r && r->target_id>0;
-  int preserving_application=view_rotation &&
-    gml_render_target_is_first_generation_application_surface(r);
+  int surface=r && r->target_id>0;
+  /* Explicit target0 preserves coverage in every generation. Automatic
+   * application coverage remains the first-generation policy. Neither depends
+   * on whether a selected view rotated the already placed native geometry. */
+  int preserving_application=gml_render_target_is_first_generation_application_surface(r) ||
+    (r && r->target_sp>0 && r->target_id==0);
   int additive=view_rotation && r && r->alphablend && r->blendmode==1 &&
     r->blend_equation==GML_RENDER_BLEND_ADD &&
     r->blend_equation_alpha==GML_RENDER_BLEND_ADD && !surface && !preserving_application;
   if(!resident_primitive_state_eligible_rule(r,1) ||
-     (!view_rotation && (r->target_sp || r->target_id!=-1 ||
-       gml_render_target_preserves_alpha(r))) ||
      gml_d3_is_active(r) ||
      r->classic_phase_scene_target || r->fog_flat || r->alpha_test_enable ||
      !r->alphablend || (r->blendmode && !additive) || r->color_write_mask!=15u ||
@@ -619,7 +620,7 @@ static int resident_native_triangles(GmlRender *r,
   GmlRenderImageRef next=gml_render_application_scene_next_image_ref(r,target);
   if((next.resource_class!=GML_RENDER_RESOURCE_SCREEN &&
       next.resource_class!=GML_RENDER_RESOURCE_APPLICATION &&
-      !(view_rotation && next.resource_class==GML_RENDER_RESOURCE_SURFACE)) ||
+      next.resource_class!=GML_RENDER_RESOURCE_SURFACE) ||
      next.content_version>UINT64_MAX-count)
     goto native_done;
   for(uint32_t i=0;i<count;i++){
@@ -772,8 +773,8 @@ int gml_render_cpu_backend_depth_triangle(GmlRender *r,GmlRenderDepthPrimitive *
 int gml_render_cpu_backend_native_triangles(GmlRender *r,
   const GmlRenderCpuBackendTriangle *triangles,uint32_t count,uint32_t top_left_fill){
   /* A selected modern view's identity pose shares its rotated colour/alpha
-   * contract. Ordinary SCREEN uses the same packet executor with its own
-   * target admission; GUI retains its existing coordinate mapper. */
+   * contract. Ordinary targets share the same packet and alpha executor;
+   * GUI retains its existing coordinate mapper. */
   int placed=gml_render_view_rotation_active(r) ||
     (r && !r->classic && !r->gui_pass_active &&
      anygm_policy_has_modern_layer_semantics(r->win) &&
