@@ -1,3 +1,21 @@
+`gpu/opengl/gml_gpu_opengl_layer_pass.h` owns the shared whole-image
+neighbourhood executor. Six disposable image slots hold two byte planes and
+horizontal/vertical reduced prefix pairs. Radii through seven use fixed-bound
+direct axes without prefix images or float-colour requirements. The shader sums eight-byte blocks,
+scans those blocks and resolves clamped windows with bounded endpoint work;
+large blur requests three ordered quantized axis pairs, then the established
+premultiplied compositor. Program linking reuses the existing shader owner.
+The neutral `scene_layer_blur` GPU contract checks whole-batch metadata
+refusal, small-kernel admission without float-colour support, warmed cache
+retention and budget-driven retirement; it makes no fake-driver pixel claim.
+Context forgetting clears the complete pass record; current destruction alone
+deletes its objects. Sampled effects and neighbourhood passes retain warmed private images while
+the combined allocation plan fits512MiB, releasing unused or alternate-family
+images only under budget pressure. CPU kernels
+and state schemas are unchanged. The renderer inventory owns the required actual-driver
+picture, transport, state, recovery and warm-cache controls; neutral contracts
+cover metadata and lifecycle rather than simulated pixel correctness.
+
 <!-- SPDX-License-Identifier: MIT -->
 <!-- Copyright (c) 2026 retrodiv <retrodiv@proton.me> -->
 

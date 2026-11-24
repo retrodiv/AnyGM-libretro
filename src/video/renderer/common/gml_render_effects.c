@@ -233,7 +233,16 @@ static int layer_filter_try_gpu(GmlRender *r,const GmlLayerFilter *filter,
       filter->kind!=GML_LAYER_FILTER_COLOURISE &&
       filter->kind!=GML_LAYER_FILTER_ZOOM_BLUR &&
       filter->kind!=GML_LAYER_FILTER_CLOUDS &&
-      filter->kind!=GML_LAYER_FILTER_BOXES && filter->kind!=GML_LAYER_FILTER_UNDERWATER)) return 0;
+      filter->kind!=GML_LAYER_FILTER_BOXES && filter->kind!=GML_LAYER_FILTER_UNDERWATER &&
+      filter->kind!=GML_LAYER_FILTER_LARGE_BLUR)) return 0;
+  if(filter->kind==GML_LAYER_FILTER_LARGE_BLUR){
+    if(!isfinite(filter->u.large_blur.radius) || fabs(filter->u.large_blur.radius)>1000000.0)return 0;
+    effect.kind=GML_RENDER_LAYER_EFFECT_LARGE_BLUR;
+    effect.colour=0xffffffffu;effect.intensity=1.0;
+    effect.blur.radius=filter->u.large_blur.radius;
+    return layer_effect_submit_gpu(r,r->layer_filter_src,
+      r->layer_filter_gpu_capture?r->layer_filter_resource:NULL,NULL,&effect,width,height);
+  }
   if(filter->kind==GML_LAYER_FILTER_CLOUDS || filter->kind==GML_LAYER_FILTER_BOXES ||
      filter->kind==GML_LAYER_FILTER_UNDERWATER){
     if(!r->layer_filter_gpu_capture || !layer_sampler_effect(r,filter,time,camx,camy,&effect,&auxiliary))return 0;
@@ -322,7 +331,8 @@ int gml_render_layer_filter_begin(GmlRender *r,const GmlLayerFilter *filter){
      filter->kind==GML_LAYER_FILTER_UNDERWATER) &&
     layer_sampler_effect(r,filter,0,r->cam_x,r->cam_y,&cloud,&sampler);
   int native_capture=(sampler_candidate || filter->kind==GML_LAYER_FILTER_TINT ||
-    filter->kind==GML_LAYER_FILTER_COLOURISE || filter->kind==GML_LAYER_FILTER_ZOOM_BLUR) &&
+    filter->kind==GML_LAYER_FILTER_COLOURISE || filter->kind==GML_LAYER_FILTER_ZOOM_BLUR ||
+    filter->kind==GML_LAYER_FILTER_LARGE_BLUR) &&
     !r->classic_phase_scene_target &&
     gml_render_layer_capture_prepare(r,r->fbw,r->fbh,filter->affects_below);
   /* The CPU capture and final composite must observe the current target, even

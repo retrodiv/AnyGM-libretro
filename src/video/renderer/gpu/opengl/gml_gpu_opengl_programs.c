@@ -4,6 +4,7 @@
 /* Existing OpenGL program and content-shader pipeline. */
 #include "gml_gpu_opengl_internal.h"
 #include "gml_gpu_opengl_shaders.h"
+#include "gml_gpu_opengl_layer_pass_shaders.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -1113,6 +1114,31 @@ static GLuint link_content(GmlGpuBackend *backend,const char *vertex,const char 
     return 0;
   }
   return program;
+}
+
+/* Neighbourhood filters share one bounded whole-image pass program. */
+int gml_gpu_opengl_layer_pass_program(GmlGpuBackend *backend,char *error,size_t capacity){
+  GlLayerPass *pass=&backend->scene.layer_pass;
+  if(pass->program)return 1;
+  if(pass->failed)return 0;
+  pass->failed=1;
+  const char *prefix=backend->api==GML_GPU_API_OPENGLES3?
+    GML_GPU_OPENGL_PREFIX_ES:GML_GPU_OPENGL_PREFIX_DESKTOP;
+  char vertex[sizeof GML_LAYER_PASS_VERTEX+256u];
+  char fragment[sizeof GML_LAYER_PASS_FRAGMENT+256u];
+  snprintf(vertex,sizeof vertex,"%s%s",prefix,GML_LAYER_PASS_VERTEX);
+  snprintf(fragment,sizeof fragment,"%s%s",prefix,GML_LAYER_PASS_FRAGMENT);
+  pass->program=link_content(backend,vertex,fragment,error,capacity);
+  if(!pass->program)return 0;
+  pass->source=backend->gl.GetUniformLocation(pass->program,"u_source");
+  pass->prefix=backend->gl.GetUniformLocation(pass->program,"u_prefix");
+  pass->size=backend->gl.GetUniformLocation(pass->program,"u_size");
+  pass->axis=backend->gl.GetUniformLocation(pass->program,"u_axis");
+  pass->mode=backend->gl.GetUniformLocation(pass->program,"u_mode");
+  pass->step=backend->gl.GetUniformLocation(pass->program,"u_step");
+  pass->radius=backend->gl.GetUniformLocation(pass->program,"u_radius");
+  pass->flip=backend->gl.GetUniformLocation(pass->program,"u_flip");
+  pass->failed=0;return 1;
 }
 
 /* Compile the content's program for this context, or return the cached one. Returns NULL with the

@@ -243,6 +243,14 @@ typedef struct GlEffectSampleImage {
   int valid;
 } GlEffectSampleImage;
 
+/* Disposable whole-image neighbourhood-pass resources, shared by layer filters. */
+typedef struct GlLayerPass {
+  GLuint program;
+  GLint source,prefix,size,axis,mode,step,radius,flip;
+  int failed;
+  GlEffectSampleImage images[6];
+} GlLayerPass;
+
 typedef struct GlScene {
   GlSceneImage images[GL_SCENE_MAX_IMAGES];
   /* One bounded baseline for each owned frame-target class, then numbered surfaces, least
@@ -287,6 +295,7 @@ typedef struct GlScene {
   GLuint snapshot_texture,copy_framebuffer,rgb_query;
   /* Disposable sampling images; public resources keep their actual byte format. */
   GlEffectSampleImage effect_sampler,effect_capture;
+  GlLayerPass layer_pass;
   /* Two reusable reduction planes and two independent final predicates. No host observation. */
   GLuint rgb_reduce_program,rgb_reduce_framebuffer,rgb_reduce_texture[4];
   uint32_t rgb_reduce_width[4],rgb_reduce_height[4];
@@ -428,6 +437,10 @@ int gml_gpu_opengl_read_back_target_pipelined(GmlGpuBackend *backend,GmlRenderPl
                                                char *error,size_t error_capacity);
 void gml_gpu_opengl_scene_forget(GmlGpuBackend *backend);
 void gml_gpu_opengl_scene_destroy(GmlGpuBackend *backend,int context_is_current);
+int gml_gpu_opengl_layer_pass_program(GmlGpuBackend *backend,char *error,size_t capacity);
+void gml_gpu_opengl_effect_images_release(GmlGpuBackend *backend,GlEffectSampleImage *images,
+                                         unsigned count);
+
 void gml_gpu_opengl_scene_reset(GmlGpuBackend *backend,const GmlGpuContext *context);
 void gml_gpu_opengl_scene_prepare_uploads(GmlGpuBackend *backend);
 int gml_gpu_opengl_scene_capabilities(const GmlGpuBackend *backend,GmlRenderDeviceCaps *caps);

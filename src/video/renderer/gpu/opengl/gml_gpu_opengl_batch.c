@@ -1652,6 +1652,8 @@ static int layer_effect_float_supported(const GmlGpuBackend *backend){
     layer_effect_extension(extensions,"GL_EXT_color_buffer_float");
 }
 
+#include "gml_gpu_opengl_layer_pass.h"
+
 static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batch){
   GmlRenderImageRef cleared[GL_SCENE_MAX_IMAGES];
   uint32_t clear_count=0;
@@ -1830,8 +1832,15 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
           op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_RGB_NOISE &&
           op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_CLOUDS &&
           op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_BOXES &&
-          op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_UNDERWATER && !inline_effect) ||
+          op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_UNDERWATER &&
+          op->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_LARGE_BLUR && !inline_effect) ||
          !isfinite(op->payload.effect.intensity)) return 0;
+      if(op->payload.effect.kind==GML_RENDER_LAYER_EFFECT_LARGE_BLUR &&
+         (!layer_pass_supported(backend,target->width,target->height,op->payload.effect.blur.radius) ||
+          op->payload.effect.intensity!=1.0 || op->payload.effect.colour!=0xffffffffu ||
+          op->payload.effect.centre[0]!=0.0 || op->payload.effect.centre[1]!=0.0 ||
+          op->payload.effect.focus_radius!=0.0 || op->payload.effect.linear ||
+          op->payload.effect.phase_seed))return 0;
       if(op->payload.effect.kind==GML_RENDER_LAYER_EFFECT_UNDERWATER &&
          (!layer_effect_float_supported(backend) || (op->payload.effect.linear &&
           (target->width>4096u || target->height>4096u))))return 0;
@@ -3621,6 +3630,17 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
   int inline_effect=effect && gml_render_layer_effect_is_inline(effect->kind);
   GLuint sampler_texture=0;
   if(auxiliary){
+    uint64_t sampled=(uint64_t)effect->sampler.width*effect->sampler.height*
+      (effect->kind==GML_RENDER_LAYER_EFFECT_UNDERWATER?16u:4u);
+    int linear_capture=effect->kind==GML_RENDER_LAYER_EFFECT_UNDERWATER && effect->linear;
+    uint64_t capture=linear_capture?(uint64_t)source->width*source->height*16u:
+      layer_pass_image_bytes(&scene->effect_capture);
+    uint64_t neighbourhood=layer_pass_retained_bytes(&scene->layer_pass,0u);
+    if(!linear_capture && sampled+capture+neighbourhood>512u*1024u*1024u){
+      gml_gpu_opengl_effect_images_release(backend,&scene->effect_capture,1u);capture=0;
+    }
+    if(sampled+capture+neighbourhood>512u*1024u*1024u)
+      gml_gpu_opengl_effect_images_release(backend,scene->layer_pass.images,6u);
     sampler_texture=layer_effect_sampler_prepare(backend,auxiliary,&effect->sampler,
       effect->kind==GML_RENDER_LAYER_EFFECT_UNDERWATER?GL_RGBA32F:GL_RGBA8,
       &scene->effect_sampler);
@@ -3972,8 +3992,15 @@ int gml_render_gpu_opengl_apply_effect(GmlGpuBackend *backend,
       operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_RGB_NOISE &&
       operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_CLOUDS &&
       operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_BOXES &&
-      operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_UNDERWATER && !inline_effect)) return 0;
+      operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_UNDERWATER &&
+      operation->payload.effect.kind!=GML_RENDER_LAYER_EFFECT_LARGE_BLUR && !inline_effect)) return 0;
   if(inline_effect)source=target;
+  GlSceneImage blurred={0};GmlRenderLayerEffect composite=operation->payload.effect;
+  if(composite.kind==GML_RENDER_LAYER_EFFECT_LARGE_BLUR){
+    if(!layer_pass_blur(backend,source,composite.blur.radius,3u,&blurred,error,error_capacity))return 0;
+    source=&blurred;composite.kind=GML_RENDER_LAYER_EFFECT_TINT;
+    backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
+  }
   memset(shape,0,sizeof *shape);
   quad.opcode=GML_RENDER_OP_TEXTURED_QUAD;
   shape->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
@@ -3986,7 +4013,7 @@ int gml_render_gpu_opengl_apply_effect(GmlGpuBackend *backend,
   shape->v[2]=shape->v[3]=1.0;
   for(int corner=0;corner<4;corner++) shape->corner_colour[corner]=0xFFFFFFFFu;
   return draw_exact_quad(backend,&quad,state,target,source,1u,
-                         &operation->payload.effect,operation->source_count==2u?
+                         &composite,operation->source_count==2u?
                            gml_gpu_opengl_scene_image(backend,operation->sources[1]):NULL,
                          error,error_capacity);
 }

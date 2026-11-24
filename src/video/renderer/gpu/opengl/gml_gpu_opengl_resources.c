@@ -230,6 +230,17 @@ static void scene_delete_image(GmlGpuBackend *backend,GlSceneImage *image){
   memset(image,0,sizeof *image);
 }
 
+void gml_gpu_opengl_effect_images_release(GmlGpuBackend *backend,GlEffectSampleImage *images,
+                                         unsigned count){
+  for(unsigned i=0;i<count;i++){
+    GlEffectSampleImage *image=&images[i];
+    if(image->texture)backend->gl.DeleteTextures(1,&image->texture);
+    if(image->framebuffer)backend->gl.DeleteFramebuffers(1,&image->framebuffer);
+    if(image->read_framebuffer)backend->gl.DeleteFramebuffers(1,&image->read_framebuffer);
+    memset(image,0,sizeof *image);
+  }
+}
+
 void gml_gpu_opengl_scene_forget(GmlGpuBackend *backend){
   GlScene *scene=&backend->scene;
   memset(scene->images,0,sizeof scene->images);
@@ -262,6 +273,7 @@ void gml_gpu_opengl_scene_forget(GmlGpuBackend *backend){
   memset(scene->exact_programs,0,sizeof scene->exact_programs);
   memset(&scene->effect_sampler,0,sizeof scene->effect_sampler);
   memset(&scene->effect_capture,0,sizeof scene->effect_capture);
+  memset(&scene->layer_pass,0,sizeof scene->layer_pass);
   scene->snapshot_texture=scene->copy_framebuffer=scene->rgb_query=0;
   scene->rgb_reduce_program=scene->rgb_reduce_framebuffer=0;
   scene->recovery_indirect_program=scene->recovery_indirect_buffer=0;
@@ -309,12 +321,9 @@ void gml_gpu_opengl_scene_destroy(GmlGpuBackend *backend,int context_is_current)
       if(scene->exact_programs[index].exact_program)
         backend->gl.DeleteProgram(scene->exact_programs[index].exact_program);
     GlEffectSampleImage *sample_images[]={&scene->effect_sampler,&scene->effect_capture};
-    for(unsigned i=0;i<2u;i++){
-      GlEffectSampleImage *image=sample_images[i];
-      if(image->texture)backend->gl.DeleteTextures(1,&image->texture);
-      if(image->framebuffer)backend->gl.DeleteFramebuffers(1,&image->framebuffer);
-      if(image->read_framebuffer)backend->gl.DeleteFramebuffers(1,&image->read_framebuffer);
-    }
+    for(unsigned i=0;i<2u;i++)gml_gpu_opengl_effect_images_release(backend,sample_images[i],1u);
+    gml_gpu_opengl_effect_images_release(backend,scene->layer_pass.images,6u);
+    if(scene->layer_pass.program)backend->gl.DeleteProgram(scene->layer_pass.program);
     if(scene->snapshot_texture) backend->gl.DeleteTextures(1,&scene->snapshot_texture);
     if(scene->copy_framebuffer) backend->gl.DeleteFramebuffers(1,&scene->copy_framebuffer);
     if(scene->rgb_query && backend->gl.DeleteQueries)

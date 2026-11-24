@@ -1036,6 +1036,53 @@ static int sampled_effect_namespace_case(void){
   return 1;
 }
 
+static int layer_pass_namespace_case(void){
+  for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++)
+  for(unsigned explicit_loss=0;explicit_loss<2u;explicit_loss++){
+    anygm_test_graphics_reset();GmlGpuContext context=fake_context(api);
+    GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"neighbourhood context adopted");
+    GlLayerPass *pass=&gpu->backend->scene.layer_pass;
+    uint64_t epoch=gpu->backend->scene.context_epoch;
+    GLuint old[6],fresh[6];
+    for(unsigned i=0;i<6u;i++){
+      gpu->backend->gl.GenTextures(1,&pass->images[i].texture);
+      gpu->backend->gl.GenFramebuffers(1,&pass->images[i].framebuffer);
+      old[i]=pass->images[i].texture;
+      pass->images[i].width=17u;pass->images[i].height=13u;
+      pass->images[i].format=i<2u?GL_RGBA8:GL_RGBA32F;
+      pass->images[i].valid=1;
+    }
+    pass->program=gpu->backend->gl.CreateProgram();pass->failed=1;pass->axis=7;
+    if(explicit_loss){
+      anygm_test_graphics_forbid_calls();gml_gpu_context_lost(gpu);
+      REQUIRE(!anygm_test_graphics_calls_after_forget(),"neighbourhood loss issues no GL calls");
+      anygm_test_graphics_allow_calls();
+      REQUIRE(gpu->backend->scene.context_epoch==epoch,"neighbourhood loss keeps epoch");
+    }
+    anygm_test_graphics_reset();
+    GmlGpuProc proc=anygm_test_graphics_proc(NULL,"glGenTextures");
+    void (*generate)(GLsizei,GLuint*)=NULL;memcpy(&generate,&proc,sizeof generate);
+    REQUIRE(generate,"successor neighbourhood namespace has texture allocator");
+    for(unsigned i=0;i<6u;i++){
+      GLuint foreign=0;
+      REQUIRE(anygm_test_graphics_reuse_name(old[i]),"successor can reuse old neighbourhood name");
+      generate(1,&foreign);REQUIRE(foreign==old[i],"foreign neighbourhood name was reused");
+    }
+    REQUIRE(gml_gpu_context_reset(gpu,&context),"neighbourhood successor adopted");
+    GlLayerPass empty;memset(&empty,0,sizeof empty);
+    REQUIRE(!memcmp(pass,&empty,sizeof empty),"all neighbourhood names,program,uniforms and failures forgotten");
+    REQUIRE(gpu->backend->scene.context_epoch==epoch+1u,"neighbourhood successor advances epoch");
+    for(unsigned i=0;i<6u;i++){
+      gpu->backend->gl.GenTextures(1,&pass->images[i].texture);fresh[i]=pass->images[i].texture;
+    }
+    gml_gpu_destroy(gpu,1);
+    for(unsigned i=0;i<6u;i++)REQUIRE(anygm_test_graphics_texture_deleted(fresh[i]) &&
+      !anygm_test_graphics_texture_deleted(old[i]),"only current neighbourhood textures are deleted");
+  }
+  return 1;
+}
+
 static int lifecycle_loss_case(void){
   GmlGpu *gpu;
   GmlGpuContext context;
@@ -1722,6 +1769,112 @@ static int scene_service_contract_case(void){
   gml_gpu_device_services(gpu,&services);
   REQUIRE(!services.context && !services.submit,"a lost context offers no service");
   gml_gpu_destroy(gpu,0);
+  return 1;
+}
+
+/* Typed neighbourhood metadata must refuse the entire batch before a valid
+ * clear prefix writes. Fake storage tests ownership/admission, never pixels. */
+static int scene_layer_blur_case(void){
+  for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++){
+    anygm_test_graphics_reset();GmlGpuContext context=fake_context(api);
+    GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context) && gml_gpu_prepare_scene(gpu,8u,8u),
+      "neighbourhood contract context prepared");
+    gml_gpu_device_services(gpu,&device);
+    uint32_t pixels[64];for(unsigned i=0;i<64u;i++)pixels[i]=0xA5315779u;
+    GmlRenderImageRef source={GML_RENDER_RESOURCE_SCRATCH,19u,1u,1u};
+    GmlRenderImageUpload upload={.image=source,.storage_width=8u,.storage_height=8u,
+      .region={0,0,8u,8u},.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+      .stride_bytes=32u,.byte_capacity=sizeof pixels,.bytes=pixels};
+    REQUIRE(device.upload(device.context,&upload),"neighbourhood source is independently versioned");
+    GmlRenderDrawStateSnapshot states[2]={
+      {.write_mask=15u,.colour=0xffffffffu,.alpha=255u},
+      {.write_mask=15u,.colour=0xffffffffu,.alpha=255u,.sampler_count=1u}};
+    states[1].samplers[0]=(GmlRenderSamplingPolicy){.filter=GML_RENDER_FILTER_NEAREST,
+      .edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE,.source_region={0,0,8u,8u}};
+    GmlRenderDrawOp ops[2]={0};
+    ops[0].opcode=GML_RENDER_OP_CLEAR;ops[0].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+    ops[0].target=(GmlRenderTargetRef){{GML_RENDER_RESOURCE_SURFACE,7u,1u,1u},1u,8u,8u,
+      GML_RENDER_PIXEL_ARGB8888,{0,0,8u,8u}};ops[0].payload.clear_colour=0xA5315779u;
+    GmlRenderDrawBatch seed={ops,1u,states,1u};
+    REQUIRE(device.submit(device.context,&seed).status==GML_RENDER_EXEC_ACCEPTED,
+      "neighbourhood target exists before metadata refusals");
+    GmlRenderImageRef alias=ops[0].target.image;
+    ops[0].target.image.content_version=2u;
+    ops[1].opcode=GML_RENDER_OP_LAYER_EFFECT;ops[1].state_index=1u;
+    ops[1].scene_family=GML_RENDER_SCENE_EFFECT;ops[1].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    ops[1].target=ops[0].target;ops[1].target.image.content_version=3u;
+    ops[1].source_count=1u;ops[1].sources=&source;
+    ops[1].payload.effect=(GmlRenderLayerEffect){.kind=GML_RENDER_LAYER_EFFECT_LARGE_BLUR,
+      .colour=0xffffffffu,.intensity=1.0,.blur={.radius=1.25}};
+    GmlRenderDrawBatch batch={ops,2u,states,2u};
+    int clears=anygm_test_graphics_clear_calls(),draws=anygm_test_graphics_scene_draw_calls();
+    for(unsigned bad=0;bad<17u;bad++){
+      GmlRenderDrawOp wrong[2]={ops[0],ops[1]};
+      GmlRenderDrawStateSnapshot state[2]={states[0],states[1]};
+      GmlRenderDrawBatch refused={wrong,2u,state,2u};
+      switch(bad){
+        case 0:wrong[1].payload.effect.blur.radius=NAN;break;
+        case 1:wrong[1].payload.effect.blur.radius=INFINITY;break;
+        case 2:wrong[1].payload.effect.blur.radius=-INFINITY;break;
+        case 3:wrong[1].payload.effect.blur.radius=1000001.0;break;
+        case 4:wrong[1].payload.effect.blur.radius=-1000001.0;break;
+        case 5:wrong[1].payload.effect.intensity=.5;break;
+        case 6:wrong[1].payload.effect.colour=0x7fffffffu;break;
+        case 7:wrong[1].payload.effect.linear=1u;break;
+        case 8:wrong[1].payload.effect.focus_radius=1;break;
+        case 9:wrong[1].payload.effect.phase_seed=1;break;
+        case 10:wrong[1].payload.effect.centre[0]=1;break;
+        case 11:state[1].clip=(GmlRenderRect){0,0,1u,1u};break;
+        case 12:state[1].sampler_count=0u;break;
+        case 13:wrong[1].source_count=0u;break;
+        case 14:wrong[1].sources=&alias;break;
+        case 15:wrong[1].target.region.width=7u;break;
+        case 16:wrong[1].scene_family=GML_RENDER_SCENE_SPRITE;break;
+      }
+      GmlRenderExecutionResult result=device.submit(device.context,&refused);
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+        !result.uncertain_target_count && !result.all_destinations_uncertain &&
+        anygm_test_graphics_clear_calls()==clears && anygm_test_graphics_scene_draw_calls()==draws,
+        "invalid neighbourhood suffix never executes its valid clear prefix");
+    }
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,
+      "small native neighbourhood does not require a float-colour extension");
+    GlLayerPass *pass=&gpu->backend->scene.layer_pass;
+    GLuint warm[2]={pass->images[0].texture,pass->images[1].texture};
+    REQUIRE(warm[0] && warm[1] && !pass->images[2].texture && !pass->images[4].texture,
+      "small native neighbourhood allocates byte planes only");
+    GlEffectSampleImage *sampled[2]={&gpu->backend->scene.effect_sampler,&gpu->backend->scene.effect_capture};
+    GLuint names[2];
+    for(unsigned i=0;i<2u;i++){
+      gpu->backend->gl.GenTextures(1,&sampled[i]->texture);names[i]=sampled[i]->texture;
+      sampled[i]->width=sampled[i]->height=4u;sampled[i]->format=GL_RGBA32F;
+    }
+    ops[0].target.image.content_version+=2u;ops[1].target.image.content_version+=2u;
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED &&
+      pass->images[0].texture==warm[0] && pass->images[1].texture==warm[1] &&
+      sampled[0]->texture==names[0] && sampled[1]->texture==names[1],
+      "fitting sampled and neighbourhood images keep their warmed names");
+    /* Simulate accounted storage extents without allocating large fake inputs. */
+    for(unsigned i=0;i<2u;i++)sampled[i]->width=sampled[i]->height=4096u;
+    ops[0].target.image.content_version+=2u;ops[1].target.image.content_version+=2u;
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED &&
+      anygm_test_graphics_texture_deleted(names[0]) && anygm_test_graphics_texture_deleted(names[1]) &&
+      pass->images[0].texture==warm[0] && pass->images[1].texture==warm[1],
+      "an incoming neighbourhood evicts accounted sampled storage when the shared budget is full");
+    ops[0].target.image.content_version+=2u;ops[1].target.image.content_version+=2u;
+    ops[1].payload.effect.blur.radius=7.5;
+    clears=anygm_test_graphics_clear_calls();
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    if(api==GML_GPU_API_OPENGLES3){
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+        !result.uncertain_target_count && anygm_test_graphics_clear_calls()==clears,
+        "a large kernel without float-colour support refuses before its clear prefix");
+    }else REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED &&
+      pass->images[2].format==GL_RGBA32F && pass->images[4].format==GL_RGBA32F,
+      "rounded radius eight selects reduced float-prefix planes");
+    gml_gpu_destroy(gpu,1);
+  }
   return 1;
 }
 
@@ -9687,6 +9840,7 @@ int main(int argc,char **argv){
     {"reset",lifecycle_reset_case},
     {"context_loss",lifecycle_loss_case},
     {"sampled_effect_namespace",sampled_effect_namespace_case},
+    {"layer_pass_namespace",layer_pass_namespace_case},
     {"scene_preparation",scene_preparation_case},
     {"scene_region_overwrite",scene_region_overwrite_case},
     {"unbound_context_access",unbound_context_access_case},
@@ -9699,6 +9853,7 @@ int main(int argc,char **argv){
     {"program_failure",program_failure_case},
     {"scene_service_contract",scene_service_contract_case},
     {"scene_inline_effect",scene_inline_effect_case},
+    {"scene_layer_blur",scene_layer_blur_case},
     {"scene_unit_texel_magnification",scene_unit_texel_magnification_case},
     {"scene_native_triangles",scene_native_triangle_batch_case},
     {"scene_source_alpha_triangles",scene_source_alpha_triangle_case},
