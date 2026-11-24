@@ -2664,11 +2664,11 @@ static int selected_configuration_cases(const AnygmHostServices *services,const 
   return 1;
 }
 
-static void fixture_sample_key(const uint8_t *bytes,size_t size,char key[112]){
+static void fixture_sample_key(const char *scope,const uint8_t *bytes,size_t size,char key[112]){
   uint8_t digest[16];char hex[33];
   if(!gml_imohash(bytes,size,digest)) abort();
   for(unsigned i=0;i<16;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
-  snprintf(key,112,"imohash:%zu:%s",size,hex);
+  snprintf(key,112,"imohash:%s:%s",scope,hex);
 }
 
 static int fast_configuration_cases(const AnygmHostServices *services,const char *root){
@@ -2683,8 +2683,8 @@ static int fast_configuration_cases(const AnygmHostServices *services,const char
   executable[0]='M';executable[1]='Z';memcpy(executable+24,form,sizeof form);
   if(!write_file(payload,form,sizeof form) || !write_file(exe,executable,sizeof executable)) return 0;
   AnygmContentRouter router={0};router.host=services;router.cache_directory=directory;router.system_directory=directory;
-  char key[112],decoy[112],text[2048];fixture_sample_key(form,sizeof form,key);
-  fixture_sample_key(executable,sizeof executable,decoy);
+  char key[112],decoy[112],text[2048];fixture_sample_key("payload",form,sizeof form,key);
+  fixture_sample_key("payload",executable,sizeof executable,decoy);
   snprintf(text,sizeof text,"[overrides]\n$base=1\n[%s.overrides]\n$selected=2\n"
     "[%s.overrides]\n$wrong=3\n",key,decoy);
   if(!write_file(ini,text,strlen(text))) return 0;
@@ -2696,11 +2696,20 @@ static int fast_configuration_cases(const AnygmHostServices *services,const char
   Buffer archive={0};
   int ok=build_zip(&entry,1,&archive) && write_file(archive_path,archive.data,archive.size);
   free(archive.data);if(!ok) return 0;
-  /* Keep the exact loose/embedded declaration: packaging adds no selector. */
   for(unsigned warm=0;warm<2;warm++){
     if(anygm_content_resolve_path(&router,archive_path,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides)!=ANYGM_CONTENT_RESOLVE_OK ||
        strcmp(overrides,"$base=1\n$selected=2\n")) return fail("archived and loose payloads did not share their sampled identity");
   }
+  archive=(Buffer){0};
+  if(!build_zip(&entry,1,&archive)) return 0;
+  fixture_sample_key("zip",archive.data,archive.size,decoy);
+  free(archive.data);
+  snprintf(text,sizeof text,"[overrides]\n$base=1\n[%s.overrides]\n$selected=2\n"
+    "[%s.overrides]\n$selected=3\n",key,decoy);
+  if(!write_file(ini,text,strlen(text)) ||
+     anygm_content_resolve_path(&router,archive_path,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides)!=ANYGM_CONTENT_RESOLVE_OK ||
+     strcmp(overrides,"$base=1\n$selected=2\n$selected=3\n"))
+    return fail("ZIP configuration did not follow and override payload configuration");
   static const uint8_t extra[]="unrelated archive member";
   ZipEntry repacked[2]={entry,
     {(const uint8_t *)"extra.bin",9,extra,sizeof extra-1,sizeof extra-1,0,0,0,0}};
@@ -2713,14 +2722,14 @@ static int fast_configuration_cases(const AnygmHostServices *services,const char
   Fixture project={{0},0};
   if(!build_project_fixture(701,&project)) return 0;
   snprintf(payload,sizeof payload,"%s/project.gmk",directory);
-  fixture_sample_key(project.data,project.size,key);
+  fixture_sample_key("payload",project.data,project.size,key);
   snprintf(text,sizeof text,"[%s.overrides]\n$classic=5\n",key);
   if(!write_file(payload,project.data,project.size) || !write_file(ini,text,strlen(text)) ||
      anygm_content_resolve_path(&router,payload,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides)!=ANYGM_CONTENT_RESOLVE_OK ||
      strcmp(overrides,"$classic=5\n")) return fail("Classic identity did not follow the original project");
   Fixture classic={{0},0};
   if(!build_gm6_executable_fixture(&classic)) return 0;
-  fixture_sample_key(classic.data,classic.size,key);
+  fixture_sample_key("payload",classic.data,classic.size,key);
   snprintf(text,sizeof text,"[%s.overrides]\n$classic_executable=6\n",key);
   if(!write_file(exe,classic.data,classic.size) || !write_file(ini,text,strlen(text)) ||
      anygm_content_resolve_path(&router,exe,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides)!=ANYGM_CONTENT_RESOLVE_OK ||

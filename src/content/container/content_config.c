@@ -8,12 +8,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <inttypes.h>
 
 typedef struct {
   int transforms;
   size_t begin,end;
-  char key[112];
+  uint64_t size;
+  char key[49];
 } ConfigSection;
 
 struct AnygmContentConfig {
@@ -33,22 +33,28 @@ static int section_name(const char *name,size_t length,ConfigSection *section){
   if(length>=8 && !memcmp(name,"imohash:",8)){
     const char *dot=memchr(name,'.',length);
     if(!dot || (size_t)(dot-name)>=sizeof section->key) return -1;
-    size_t at=8u;
-    uint64_t size=0;
-    if(at>=length || name[at]<'1' || name[at]>'9') return -1;
-    while(at<length && name[at]>='0' && name[at]<='9'){
-      unsigned digit=(unsigned)(name[at++]-'0');
-      if(size>(UINT64_MAX-digit)/10u) return -1;
-      size=size*10u+digit;
-    }
-    if(at>=length || name[at++]!=':') return -1;
-    size_t digits=32u;
-    if((size_t)(dot-name)!=at+digits) return -1;
-    for(size_t i=0;i<at+digits;i++){
+    size_t at=length>=12 && !memcmp(name+8,"zip:",4)?12u:
+      length>=16 && !memcmp(name+8,"payload:",8)?16u:0u;
+    if(!at || (size_t)(dot-name)!=at+32u) return -1;
+    memcpy(section->key,name,at);
+    for(size_t i=at;i<at+32u;i++){
       unsigned char c=(unsigned char)name[i];
-      if(i>=at && !((c>='0' && c<='9') || (c>='a' && c<='f') || (c>='A' && c<='F')))
+      if(!((c>='0' && c<='9') || (c>='a' && c<='f') || (c>='A' && c<='F')))
         return -1;
       section->key[i]=(char)(c>='A' && c<='F'?c+('a'-'A'):c);
+    }
+    /* Standard imohash stores the file size as unsigned LEB128. */
+    for(unsigned i=0;i<10u;i++){
+      const char *pair=section->key+at+2u*i;
+      unsigned high=(unsigned)(pair[0]<='9'?pair[0]-'0':pair[0]-'a'+10);
+      unsigned low=(unsigned)(pair[1]<='9'?pair[1]-'0':pair[1]-'a'+10);
+      unsigned byte=(high<<4)|low;
+      if(i==9u && byte>1u) return -1;
+      section->size|=(uint64_t)(byte&127u)<<(7u*i);
+      if(!(byte&128u)){
+        if(!byte) return -1;
+        break;
+      }
     }
     length-=(size_t)(dot+1-name); name=dot+1;
   }else if(memchr(name,':',length)) return -1;
@@ -204,12 +210,12 @@ int anygm_content_config_apply(const AnygmContentConfig *config,
   return anygm_content_config_select(config,"",transforms,priority,overrides,capacity,error,error_size);
 }
 
-int anygm_content_config_candidate(const AnygmContentConfig *config,uint64_t size){
-  char prefix[64];
-  snprintf(prefix,sizeof prefix,"imohash:%" PRIu64 ":",size);
-  if(!size) snprintf(prefix,sizeof prefix,"imohash:");
-  for(size_t i=0;config && i<config->count;i++)
-    if(!strncmp(config->sections[i].key,prefix,strlen(prefix))) return 1;
+int anygm_content_config_candidate(const AnygmContentConfig *config,int zip,uint64_t size){
+  const char *prefix=zip?"imohash:zip:":"imohash:payload:";
+  for(size_t i=0;config && i<config->count;i++){
+    const ConfigSection *section=&config->sections[i];
+    if((!size || section->size==size) && !strncmp(section->key,prefix,strlen(prefix))) return 1;
+  }
   return 0;
 }
 

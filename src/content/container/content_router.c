@@ -45,6 +45,8 @@ typedef struct ContentConfigResolution {
   int input_adapted;
   AnygmContentTransforms *selection_base;
   char specific[ANYGM_CONFIG_OVERRIDE_BYTES];
+  char zip_specific[ANYGM_CONFIG_OVERRIDE_BYTES];
+  char zip_key[49];
   char identity_path[1536];
   char selected_path[1536];
   char defaults[ANYGM_CONFIG_OVERRIDE_BYTES];
@@ -530,6 +532,14 @@ static int router_read_at(const AnygmContentRouter *router,void *file,uint64_t s
   return 1;
 }
 
+static void select_zip_key(ContentConfigResolution *config,uint64_t size,CacheFingerprint digest){
+  if(!anygm_content_config_candidate(config->ini,1,size)) return;
+  char hex[33];
+  cache_fingerprint_hex(digest,hex);
+  snprintf(config->zip_key,sizeof config->zip_key,"imohash:zip:%s",hex);
+  if(!anygm_content_config_matches(config->ini,config->zip_key)) config->zip_key[0]=0;
+}
+
 /* Standard imohash is a bounded recognition hint.
  * This intentionally does not certify unsampled bytes or replace integrity checks. */
 static int select_fast_configuration(const AnygmContentRouter *router,const char *path){
@@ -539,7 +549,7 @@ static int select_fast_configuration(const AnygmContentRouter *router,const char
   char key[112]="",error[256]={0};
   uint64_t size=0;
   if(!file_size64(router,path,&size)) return 0;
-  if(anygm_content_config_candidate(config->ini,size)){
+  if(anygm_content_config_candidate(config->ini,0,size)){
     void *file=router->host->file_open(router->host->userdata,path,ANYGM_FILE_READ);
     if(!file) return 0;
     uint8_t digest[16];
@@ -549,19 +559,22 @@ static int select_fast_configuration(const AnygmContentRouter *router,const char
     if(!ok) return 0;
     char hex[33];
     for(unsigned i=0;i<16;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
-    snprintf(key,sizeof key,"imohash:%llu:%s",(unsigned long long)size,hex);
+    snprintf(key,sizeof key,"imohash:payload:%s",hex);
   }
-  if(!key[0] && !config->selection_base) return 1;
+  if(!key[0] && !config->zip_key[0] && !config->selection_base) return 1;
   if(!config->selection_base){
     config->selection_base=anygm_content_transforms_create();
     if(!config->selection_base || !anygm_content_transforms_copy(config->selection_base,router->transforms)) return 0;
   }
   if(!anygm_content_transforms_copy(router->transforms,config->selection_base)) return 0;
   config->specific[0]=0;
-  int ok=!key[0] || anygm_content_config_select(config->ini,key,router->transforms,UINT_MAX,
+  int ok=!key[0] || anygm_content_config_select(config->ini,key,router->transforms,UINT_MAX-1u,
     config->specific,sizeof config->specific,error,sizeof error);
   if(key[0]) content_log(router,ANYGM_CONTENT_LOG_INFO,"configuration: recognition %s (%s) for %s",
     key,anygm_content_config_matches(config->ini,key)?"matched":"unmatched",path);
+  if(ok && config->zip_key[0])
+    ok=anygm_content_config_select(config->ini,config->zip_key,router->transforms,UINT_MAX,
+      config->zip_specific,sizeof config->zip_specific,error,sizeof error);
   if(!ok) content_log(router,ANYGM_CONTENT_LOG_ERROR,"configuration: %s",error);
   if(ok) snprintf(config->selected_path,sizeof config->selected_path,"%s",path);
   return ok;
@@ -1480,6 +1493,8 @@ static int load_archive_content_depth(const AnygmContentRouter *router,const cha
   if(!base) base=zdir;
   uint64_t zsz=0;CacheFingerprint zhash;
   if(!file_size64(router,zpath,&zsz) || !file_imohash(router,zpath,&zhash)) return 0;
+  ContentConfigResolution *config=router->configuration;
+  if(depth==0 && !config->input_adapted) select_zip_key(config,zsz,zhash);
   char outdir[1400];
   if(!cache_directory(router,base,stem,"anygm-archive",ANYGM_CACHE_ARCHIVE,
        zhash,zsz,0,outdir,sizeof outdir)) return 0;
@@ -1690,6 +1705,11 @@ static int load_input_pipeline(const AnygmContentRouter *router,const char *path
   uint8_t identity[72];char hex[33];
   if(!gml_imohash(original,original_size,original_fingerprint.bytes) ||
      !gml_imohash(image,image_size,image_fingerprint.bytes)) goto done;
+  if(depth==0 && original_size>=4u && !memcmp(original,"PK\003\004",4))
+    select_zip_key(config,original_size,original_fingerprint);
+  if(kind==3 && (!select_fast_configuration(router,path) ||
+     !anygm_content_transforms_copy(selected,router->transforms) ||
+     !bind_patch_resources(router,path,selected,error,sizeof error))) goto done;
   memcpy(identity,original_fingerprint.bytes,16);
   anygm_content_transforms_hash(selected,identity+16);
   memcpy(identity+48,image_fingerprint.bytes,16);
@@ -1728,8 +1748,7 @@ static int load_input_pipeline(const AnygmContentRouter *router,const char *path
     if(!load_archive_content_depth(router,output,content_path,content_size,asset_root,asset_root_size,
                                    overrides,overrides_size,depth)) goto done;
   } else {
-    if(kind==3 || (original_size>=4 && !memcmp(original,"FORM",4)))
-      snprintf(config->identity_path,sizeof config->identity_path,"%s",path);
+    snprintf(config->identity_path,sizeof config->identity_path,"%s",path);
     if(snprintf(content_path,content_size,"%s",output)>=(int)content_size) goto done;
     if(asset_root && asset_root_size)
       anygm_content_path_parent(path,asset_root,asset_root_size);
@@ -1831,6 +1850,7 @@ static int load_source_project_content(const AnygmContentRouter *router,const ch
                        &stored_hash,&stored_size,marker_data,sizeof marker_data) &&
      file_size64(router,outwin,&actual_size) && actual_size==stored_size &&
      file_imohash(router,outwin,&actual_hash) && cache_fingerprint_equal(actual_hash,stored_hash)){
+    snprintf(router->configuration->identity_path,sizeof router->configuration->identity_path,"%s",srcpath);
     snprintf(content_path,cpsz,"%s",outwin);
     content_log(router,ANYGM_CONTENT_LOG_INFO,"source: reusing cached package at %s",outwin);
     return 1;
@@ -1871,6 +1891,7 @@ static int load_source_project_content(const AnygmContentRouter *router,const ch
                          actual_hash,actual_size,NULL))
     content_log(router,ANYGM_CONTENT_LOG_WARN,"source: could not publish cache marker");
   snprintf(content_path,cpsz,"%s",outwin);
+  snprintf(router->configuration->identity_path,sizeof router->configuration->identity_path,"%s",srcpath);
   content_log(router,ANYGM_CONTENT_LOG_INFO,"source: compiled %s -> %s",srcpath,outwin);
   return 1;
 }
@@ -1970,7 +1991,7 @@ static AnygmContentResolveResult content_resolve_path_direct(
   resolved_path[0]=0;
   if(asset_root && asset_root_size) asset_root[0]=0;
   if(!path_ext_is(input_path,".anygm")){
-    if(anygm_content_config_candidate(router->configuration->ini,0) &&
+    if(anygm_content_config_candidate(router->configuration->ini,0,0) &&
        file_magic_kind(router,input_path)==1 && !select_fast_configuration(router,input_path))
       return ANYGM_CONTENT_RESOLVE_INVALID;
     int adapted=load_input_pipeline(router,input_path,resolved_path,resolved_path_size,
@@ -2151,6 +2172,7 @@ static int collect_override_layers(const AnygmContentRouter *router,char *out,si
   }
   return append_override_text(out,capacity,router->inherited_overrides) &&
     append_override_text(out,capacity,config->specific) &&
+    append_override_text(out,capacity,config->zip_specific) &&
     append_override_text(router->anchor_overrides,router->anchor_overrides_size,router->inherited_overrides);
 }
 

@@ -27,7 +27,8 @@ Priority runs from lowest to highest:
 3. Archive anchors, from the innermost to the outermost archive.
 4. The explicitly opened anchor.
 5. Inherited launch-anchor overrides during an internal content replacement.
-6. Matching fast payload sections in `AnyGM.ini`.
+6. Matching payload sections in `AnyGM.ini`.
+7. Matching outer ZIP sections in `AnyGM.ini`.
 
 Section names and transform keys are case-sensitive. Duplicate recognized sections
 reject the INI. Unknown selector prefixes also reject the INI rather
@@ -55,20 +56,23 @@ last override for a destination wins; duplicate transform keys remain invalid.
 ## Preparation and cache identity
 
 Complete-file SHA-256 selectors remain unsupported. Their full input reads were
-removed from ordinary startup. Fast recognition supports one section prefix,
+removed from ordinary startup. Fast recognition supports two section prefixes,
 followed by `.overrides`, `.transforms`, `.pipelines` or `.patches`:
 
-`imohash:<size>:<digest>` identifies a path-backed payload using standard-default
-[imohash](https://github.com/kalafut/imohash). The digest is 32 hexadecimal digits. Sizes are positive
-decimal integers without leading zeroes; hexadecimal digits are case insensitive.
+`imohash:payload:<digest>` identifies the selected payload using standard-default
+[imohash](https://github.com/kalafut/imohash). For Studio this is the actual data
+image, including an adjacent or embedded image reached through a launcher.
+Classic projects and executables identify their original input before conversion.
+Loose and archived copies of the same payload share a selector. Nested archives
+identify the final payload member.
 
-For Studio, selection follows the actual data image, including an adjacent or
-extracted embedded image reached through a launcher. Classic projects and
-executables identify their original input before conversion. Loose and archived
-copies of the same payload share one key and one INI rule. Archive payloads are
-sampled from their extracted files, including with a warm cache. The archive itself,
-its compression and unrelated members do not contribute to the key. Nested archives
-select the final payload member. No archive-specific selector exists.
+`imohash:zip:<digest>` identifies the original outer ZIP-compatible archive.
+Container bytes, including compression and auxiliary files, contribute to its
+identity. A matching ZIP section takes precedence over a matching payload section
+for settings both declare. Both selectors use 32 case-insensitive hexadecimal
+digits. The core reads the size from the digest. To migrate a section named
+`imohash:<size>:<digest>`, replace the size field with `payload` and keep the
+digest and section suffix.
 
 Selection first filters declared candidates by size; with no candidate, no hash
 is calculated. Standard imohash reads the entire payload below 131072 bytes.
@@ -117,14 +121,14 @@ the first load. Cabinet installation manifests retain their separate verificatio
 contract. Reading or converting content may still require the complete input even
 though computing its cache identity takes only the samples described above.
 
-Payload selectors cannot declare pre-routing `input`, `input.probe` or `input.final`
-adapters: those must be available before payload selection and belong in defaults
+Scoped selectors cannot declare pre-routing `input`, `input.probe` or `input.final`
+adapters: those must be available before routing and belong in defaults
 or anchors. Other selected transforms and patches retain their ordinary contracts.
 
 An illustrative sampled key can select runtime directives:
 
 ```ini
-[imohash:123456:0123456789abcdef0123456789abcdef.overrides]
+[imohash:payload:c0c4076789abcdef0123456789abcdef.overrides]
 ostype|0
 ```
 
@@ -235,10 +239,10 @@ def imohash(source: BinaryIO, size: int) -> str:
             return digest.hex()
 
 
-def _sample_key(source: BinaryIO, size: int) -> str:
+def _sample_key(source: BinaryIO, size: int, scope: str = "payload") -> str:
     if not size:
         raise ValueError("payload is empty")
-    return f"imohash:{size}:{imohash(source, size)}"
+    return f"imohash:{scope}:{imohash(source, size)}"
 
 
 def make_key(path: Path, member: str | None = None) -> str:
@@ -250,12 +254,11 @@ def make_key(path: Path, member: str | None = None) -> str:
             entry = matches[0]
             with archive.open(entry) as source:
                 return _sample_key(source, entry.file_size)
-    if zipfile.is_zipfile(path):
-        raise ValueError("archives require --member naming the actual payload")
+    scope = "zip" if zipfile.is_zipfile(path) else "payload"
     with path.open("rb") as source:
         source.seek(0, 2)
         size = source.tell()
-        key = _sample_key(source, size)
+        key = _sample_key(source, size, scope)
         source.seek(0, 2)
         if source.tell() != size:
             raise ValueError("payload size changed during sampling")
@@ -263,7 +266,7 @@ def make_key(path: Path, member: str | None = None) -> str:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Print an imohash payload INI section")
+    parser = argparse.ArgumentParser(description="Print an imohash INI section")
     parser.add_argument("path", type=Path)
     parser.add_argument("--member", help="Exact payload member path inside a ZIP")
     args = parser.parse_args()
@@ -273,10 +276,11 @@ if __name__ == "__main__":
         parser.error(str(error))
 ```
 
-For ZIP-compatible content, first list the member paths and then name the actual
-payload, preserving its spelling and any directory prefix:
+Pass an archive by itself to generate a ZIP selector. For a payload selector,
+list the member paths and name the exact member, including its directory prefix:
 
 ```sh
+python3 content_selector.py "Content.zip"
 python3 -m zipfile -l "Content.zip"
 python3 content_selector.py "Content.zip" --member "data.win"
 python3 content_selector.py "Content.apk" --member "assets/game.droid"
@@ -286,8 +290,8 @@ This mode samples the selected member's uncompressed bytes and produces the same
 `imohash` key as the loose payload. Python may need to decompress that member to
 reach the samples; this is a one-time authoring operation, not an extra core load
 pass. Other members are not decompressed. For nested archives, run it on the
-innermost archive that contains the selected payload. Do not hash the outer
-archive or an executable that merely launches a Studio data image.
+innermost archive that contains the selected payload. Pass the outer archive
+without `--member` when the rule should apply to that specific package.
 
 For loose content, select the actual Studio data image or the original Classic
 project/executable:
@@ -310,7 +314,7 @@ Copy the printed header into the frontend system directory's `AnyGM.ini`, then a
 the desired directives below it. For example, an illustrative output and directive:
 
 ```ini
-[imohash:123456:0123456789abcdef0123456789abcdef.overrides]
+[imohash:payload:c0c4076789abcdef0123456789abcdef.overrides]
 ostype|0
 ```
 

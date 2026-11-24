@@ -424,13 +424,16 @@ static void sampled_configuration(void){
   source.system_directory=fixture.directory;source.cache_directory=fixture.directory;
   assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
   size_t baseline=observed_bytes;anygm_unload(engine);
-  snprintf(text,sizeof text,"[imohash:%zu:%s.overrides]\n$count_marker=31\n",size,hex);
+  snprintf(text,sizeof text,"[imohash:payload:%s.overrides]\n$count_marker=31\n",hex);
   write_text(ini,text);observed_bytes=0;
   assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
   /* Four bytes classify the source; imohash then reads its standard budget. */
   assert(observed_bytes==baseline+4+(size<131072?size:49152));frame(engine);
   assert(gml_global_num(&engine->vm,"count_marker")==31);anygm_unload(engine);
-  snprintf(text,sizeof text,"[imohash:%zu:%s.overrides]\n$count_marker=31\n",size+1,hex);
+  assert(gml_imohash(fixture.path,strlen(fixture.path),digest));
+  assert(strlen(fixture.path)!=size);
+  for(unsigned i=0;i<16;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
+  snprintf(text,sizeof text,"[imohash:payload:%s.overrides]\n$count_marker=31\n",hex);
   write_text(ini,text);observed_bytes=0;
   assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
   assert(observed_bytes==baseline+4);frame(engine);

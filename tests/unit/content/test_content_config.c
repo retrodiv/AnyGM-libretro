@@ -8,8 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define DIGEST "0123456789abcdef0123456789abcdef"
-#define DIGEST_UPPER "0123456789ABCDEF0123456789ABCDEF"
+#define DIGEST "7b23456789abcdef7b23456789abcdef"
+#define DIGEST_UPPER "7B23456789ABCDEF7B23456789ABCDEF"
 
 static void layers(void){
   const char text[]="\xef\xbb\xbf[overrides]\r\nostype|0\r\n"
@@ -88,45 +88,45 @@ static void rejection(void){
 
 static void fast_selectors(void){
   const char text[]="[overrides]\n$x=1\n"
-    "[imohash:123:" DIGEST_UPPER ".overrides]\n$x=2\n"
-    "[imohash:456:" DIGEST ".overrides]\n$x=3\n"
-    "[imohash:123:" DIGEST ".transforms]\ncopy=buffer f(){return slice(0,input_size);}\n"
-    "[imohash:124:" DIGEST ".transforms]\ncopy=buffer f(){return slice(0,input_size);}\n";
+    "[imohash:payload:" DIGEST_UPPER ".overrides]\n$x=2\n"
+    "[imohash:zip:" DIGEST ".overrides]\n$x=3\n"
+    "[imohash:payload:" DIGEST ".transforms]\ncopy=buffer f(){return slice(0,input_size);}\n"
+    "[imohash:payload:7c23456789abcdef7b23456789abcdef.transforms]\ncopy=buffer f(){return slice(0,input_size);}\n";
   char error[256],out[4096];
   AnygmContentConfig *config=anygm_content_config_parse(text,sizeof text-1,error,sizeof error);
   AnygmContentTransforms *set=anygm_content_transforms_create();
   assert(config && set);
-  assert(anygm_content_config_candidate(config,123));
-  assert(!anygm_content_config_candidate(config,125));
-  assert(anygm_content_config_candidate(config,456));
-  assert(!anygm_content_config_candidate(config,455));
+  assert(anygm_content_config_candidate(config,0,123));
+  assert(!anygm_content_config_candidate(config,0,125));
+  assert(anygm_content_config_candidate(config,1,123));
+  assert(!anygm_content_config_candidate(config,1,124));
   assert(anygm_content_config_apply(config,set,0,out,sizeof out,error,sizeof error));
   assert(!strcmp(out,"$x=1\n") && !anygm_content_transforms_has(set,"copy"));
-  assert(anygm_content_config_select(config,"imohash:123:" DIGEST,set,100,out,sizeof out,error,sizeof error));
+  assert(anygm_content_config_select(config,"imohash:payload:" DIGEST,set,100,out,sizeof out,error,sizeof error));
   assert(!strcmp(out,"$x=2\n") && anygm_content_transforms_has(set,"copy"));
-  assert(anygm_content_config_select(config,"imohash:125:" DIGEST,set,100,out,sizeof out,error,sizeof error));
+  assert(anygm_content_config_select(config,"imohash:payload:7d23456789abcdef7b23456789abcdef",set,100,out,sizeof out,error,sizeof error));
   assert(!out[0]);
-  assert(anygm_content_config_select(config,"imohash:456:" DIGEST,set,100,out,sizeof out,error,sizeof error));
+  assert(anygm_content_config_select(config,"imohash:zip:" DIGEST,set,100,out,sizeof out,error,sizeof error));
   assert(!strcmp(out,"$x=3\n"));
   anygm_content_config_destroy(config);anygm_content_transforms_destroy(set);
   const char *invalid[]={
     "[zip:123:1234abcd.overrides]\n[zip:123:1234ABCD.overrides]\n",
     "[zip:0:1234abcd.overrides]\n", "[zip:01:1234abcd.overrides]\n",
     "[zip:18446744073709551616:1234abcd.overrides]\n",
-    "[zip:123:1234abcg.overrides]\n", "[imohash:123:1234abcd.overrides]\n",
+    "[zip:123:1234abcg.overrides]\n", "[imohash:payload:1234abcd.overrides]\n",
     "[zip:123:1234abcd.unknown]\n",
     "[zip:123:1234abcd.transforms]\ninput=buffer f(){return slice(0,input_size);}\n",
     "[zip:123:1234abcd.transforms]\nx=buffer bad(){unknown();}\n",
     "[zip:123:1234abcd.pipelines]\nx=builtin.byteswap16\n",
     "[zip:123:1234abcd.patches]\n",
-    "[imohash:123:" DIGEST ".overrides]\n[imohash:123:" DIGEST_UPPER ".overrides]\n",
-    "[imohash:0:" DIGEST ".overrides]\n",
-    "[imohash:01:" DIGEST ".overrides]\n",
-    "[imohash:18446744073709551616:" DIGEST ".overrides]\n",
-    "[imohash:123:g123456789abcdef0123456789abcdef.overrides]\n",
-    "[imohash:123:" DIGEST ".unknown]\n",
-    "[imohash:123:" DIGEST ".transforms]\ninput=buffer f(){return slice(0,input_size);}\n",
-    "[imohash:123:" DIGEST ".transforms]\nx=buffer bad(){unknown();}\n"};
+    "[imohash:payload:" DIGEST ".overrides]\n[imohash:payload:" DIGEST_UPPER ".overrides]\n",
+    "[imohash:payload:0023456789abcdef0123456789abcdef.overrides]\n",
+    "[imohash:payload:8100456789abcdef0123456789abcdef.overrides]\n",
+    "[imohash:payload:ffffffffffffffffffff456789abcdef.overrides]\n",
+    "[imohash:payload:g123456789abcdef7b23456789abcdef.overrides]\n",
+    "[imohash:payload:" DIGEST ".unknown]\n",
+    "[imohash:payload:" DIGEST ".transforms]\ninput=buffer f(){return slice(0,input_size);}\n",
+    "[imohash:payload:" DIGEST ".transforms]\nx=buffer bad(){unknown();}\n"};
   for(size_t i=0;i<sizeof invalid/sizeof invalid[0];i++)
     assert(!anygm_content_config_parse(invalid[i],strlen(invalid[i]),error,sizeof error));
 }
