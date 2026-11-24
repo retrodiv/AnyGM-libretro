@@ -489,6 +489,13 @@ GlSceneImage *gml_gpu_opengl_scene_image(GmlGpuBackend *backend,GmlRenderImageRe
   return NULL;
 }
 
+/* The image's own derived certificate at exactly this version; no pixel is read. */
+int gml_gpu_opengl_scene_alpha_nonzero(GmlGpuBackend *backend,GmlRenderImageRef image){
+  const GlSceneImage *found=gml_gpu_opengl_scene_image(backend,image);
+  return found && found->pixel_format==GML_RENDER_PIXEL_ARGB8888 &&
+    (found->alpha_opaque || found->alpha_nonzero);
+}
+
 /* Reduce actual RGB bytes to one exact flag, entirely in this context. Intermediate allocations
  * may be larger than the written level: the shader's explicit extent excludes stale border data.
  * Separate final flags keep SCREEN alive while APPLICATION reuses both scratch planes.
@@ -832,6 +839,7 @@ static uint32_t scene_completion_advance(GmlGpuBackend *backend,GlSceneImage *im
   image->source_region=(GmlRenderRect){0,0,full->storage_width,full->storage_height};
   image->content_source_version=0;
   image->alpha_opaque=0;
+  image->alpha_nonzero=0;
   image->alpha_bounds_known=0;
   return rows;
 }
@@ -897,6 +905,7 @@ static int scene_upload_image(GmlGpuBackend *backend,const GmlRenderImageUpload 
       transfer->region.height!=transfer->storage_height)) return 0;
   slot->content_source_version=0;
   slot->alpha_opaque=0;
+  slot->alpha_nonzero=0;
   slot->alpha_bounds_known=0;
   slot->opaque_white_known=0;
   first=!slot->texture;
@@ -990,6 +999,7 @@ static int scene_upload_image(GmlGpuBackend *backend,const GmlRenderImageUpload 
     backend->gl.BindTexture(GL_TEXTURE_2D,0);
     slot->valid=0;
     slot->alpha_opaque=0;
+    slot->alpha_nonzero=0;
     slot->alpha_bounds_known=0;
     return 0;
   }
@@ -1195,13 +1205,14 @@ GlSceneImage *gml_gpu_opengl_scene_target(GmlGpuBackend *backend,const GmlRender
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
     slot->valid=0;
     slot->alpha_opaque=0;
+    slot->alpha_nonzero=0;
     slot->alpha_bounds_known=0;
   }
   backend->gl.BindTexture(GL_TEXTURE_2D,0);
   if(!slot->framebuffer){
     backend->gl.GenFramebuffers(1,&slot->framebuffer);
     if(!slot->framebuffer){
-      slot->valid=slot->alpha_opaque=slot->alpha_bounds_known=0;return NULL;
+      slot->valid=slot->alpha_opaque=slot->alpha_nonzero=slot->alpha_bounds_known=0;return NULL;
     }
   }
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,slot->framebuffer);
@@ -1212,13 +1223,13 @@ GlSceneImage *gml_gpu_opengl_scene_target(GmlGpuBackend *backend,const GmlRender
                                      slot->texture,0);
     if(backend->gl.CheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE ||
        backend->gl.GetError()!=GL_NO_ERROR){
-      slot->valid=slot->alpha_opaque=slot->alpha_bounds_known=0;return NULL;
+      slot->valid=slot->alpha_opaque=slot->alpha_nonzero=slot->alpha_bounds_known=0;return NULL;
     }
     slot->framebuffer_complete=1;
     backend->target_attachments++;
   }else{
     if(backend->gl.GetError()!=GL_NO_ERROR){
-      slot->framebuffer_complete=slot->valid=slot->alpha_opaque=slot->alpha_bounds_known=0;
+      slot->framebuffer_complete=slot->valid=slot->alpha_opaque=slot->alpha_nonzero=slot->alpha_bounds_known=0;
       return NULL;
     }
     backend->target_reuses++;
@@ -2240,7 +2251,7 @@ int gml_render_gpu_opengl_depth_triangle(GmlGpuBackend *backend,const GmlRenderD
   image->triangle_texture=old_texture;image->triangle_framebuffer=old_fbo;
   image->raw_depth_front^=1u;image->raw_depth_version=triangle->next_depth_version;
   image->ref=op->target.image;image->target=image->valid=image->rendered_origin=image->framebuffer_complete=1;
-  image->alpha_opaque=image->alpha_bounds_known=image->opaque_white_known=0;
+  image->alpha_opaque=image->alpha_nonzero=image->alpha_bounds_known=image->opaque_white_known=0;
   image->content_source_version=0;
   return 1;
 }
@@ -2270,6 +2281,7 @@ void gml_gpu_opengl_scene_retire(GmlGpuBackend *backend,GmlRenderImageRef image)
       candidate->retired=1;
       candidate->valid=0;
       candidate->alpha_opaque=0;
+      candidate->alpha_nonzero=0;
       candidate->alpha_bounds_known=0;
       return;
     }

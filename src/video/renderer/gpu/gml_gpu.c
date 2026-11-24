@@ -259,6 +259,11 @@ static int scene_has_rgb(void *context,GmlRenderImageRef image,int *has_rgb){
   return 1;
 }
 
+static int scene_alpha_nonzero(void *context,GmlRenderImageRef image){
+  GmlGpu *gpu=(GmlGpu*)context;
+  return context_accessible(gpu) && gml_gpu_opengl_scene_alpha_nonzero(gpu->backend,image);
+}
+
 static int scene_observe_on_demand(void *context){
   return gml_gpu_context_is_current((GmlGpu*)context);
 }
@@ -305,6 +310,7 @@ void gml_gpu_device_services(GmlGpu *gpu,GmlRenderDeviceServices *out_services){
   out_services->clear_depth=scene_clear_depth;
   out_services->upload_depth=scene_depth_upload;
   out_services->readback_depth=scene_depth_readback;
+  out_services->alpha_nonzero=scene_alpha_nonzero;
 }
 
 int gml_gpu_execute_plan(GmlGpu *gpu,GmlRenderPlan *plan){

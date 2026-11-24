@@ -4029,6 +4029,61 @@ static int scene_partial_opaque_rectangle_keeps_opacity_case(void){
   return 1;
 }
 
+/* A partial opaque target-alpha rectangle is written by the unblended direct-colour overwrite,
+ * whose corners carry unit alpha: a target without a zero alpha byte stays proven, which the
+ * opacity rule alone would have dropped. A partial clear of zero alpha, a target that had a zero
+ * byte, or a query of an older version proves nothing. */
+static int scene_nonzero_alpha_rectangle_case(void){
+  for(unsigned embedded=0;embedded<2u;embedded++)
+  for(unsigned initial_nonzero=0;initial_nonzero<2u;initial_nonzero++)
+  for(unsigned zero_clear=0;zero_clear<2u;zero_clear++){
+    anygm_test_graphics_reset();
+    GmlGpu *gpu=gml_gpu_create();
+    GmlGpuContext context=fake_context(embedded?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    GmlRenderDeviceServices device={0};
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"nonzero rectangle context");
+    gml_gpu_device_services(gpu,&device);
+    REQUIRE(device.alpha_nonzero,"the device answers nonzero-alpha queries");
+    GmlRenderDrawOp ops[2]={0};
+    ops[0].opcode=GML_RENDER_OP_CLEAR;
+    ops[0].target=(GmlRenderTargetRef){
+      .image={GML_RENDER_RESOURCE_SURFACE,5u,1u,1u},
+      .storage_version=1u,.width=12u,.height=8u,
+      .pixel_format=GML_RENDER_PIXEL_ARGB8888,.region={0,0,12u,8u}};
+    ops[0].payload.clear_colour=initial_nonzero?0x80112233u:0x00112233u;
+    ops[1]=ops[0];ops[1].target.image.content_version++;
+    if(zero_clear){
+      ops[1].target.region=(GmlRenderRect){2,1,5u,4u};
+      ops[1].payload.clear_colour=0x00445566u;
+    } else {
+      ops[1].opcode=GML_RENDER_OP_COLOURED_PRIMITIVE;
+      ops[1].scene_family=GML_RENDER_SCENE_PRIMITIVE;
+      ops[1].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+      ops[1].payload.primitive=(GmlRenderPrimitiveRect){.kind=GML_RENDER_PRIMITIVE_RECTANGLE,
+        .region={1,0,11u,8u},.authored_region={-2,-3,16u,14u},
+        .colour=0xFF000000u,.alpha=1.0,.alpha_blend=1u,
+        .rectangle_flags=GML_RENDER_RECTANGLE_TARGET_ALPHA,
+        .corner_colour={0xFF000000u,0xFF000000u,0xFF000000u,0xFF000000u}};
+    }
+    GmlRenderDrawBatch batch={ops,1u,NULL,0u};
+    GmlRenderExecutionResult result=device.submit(device.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED &&
+      device.alpha_nonzero(device.context,ops[0].target.image)==(int)initial_nonzero,
+      "a complete clear proves nonzero alpha exactly when its alpha byte is not zero");
+    batch=(GmlRenderDrawBatch){ops+1,1u,NULL,0u};
+    result=device.submit(device.context,&batch);
+    REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==1u &&
+      (zero_clear || anygm_test_graphics_scene_sampler()==31),
+      "a partial opaque target-alpha rectangle uses the direct-colour overwrite");
+    REQUIRE(device.alpha_nonzero(device.context,ops[1].target.image)==(int)(initial_nonzero && !zero_clear),
+      "a unit-alpha overwrite keeps the proof, a zero-alpha clear loses it, neither creates it");
+    REQUIRE(!device.alpha_nonzero(device.context,ops[0].target.image),
+      "an older version is never answered");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int scene_rectangle_function_batch_case(void){
   enum { QUADS=2049 };
   static const unsigned expected_factors[13][4]={
@@ -9609,6 +9664,7 @@ int main(int argc,char **argv){
     {"scene_alpha_mask_rectangle",scene_alpha_mask_rectangle_case},
     {"scene_full_opaque_rectangle_clear",scene_full_opaque_rectangle_clear_case},
     {"scene_partial_opaque_rectangle_keeps_opacity",scene_partial_opaque_rectangle_keeps_opacity_case},
+    {"scene_nonzero_alpha_rectangle",scene_nonzero_alpha_rectangle_case},
     {"uniform_clear_checkpoint",uniform_clear_checkpoint_case},
     {"scene_classic_inverse_rect_batch",scene_classic_inverse_rect_batch_case},
     {"scene_hardware_additive_batch",scene_hardware_additive_batch_case},

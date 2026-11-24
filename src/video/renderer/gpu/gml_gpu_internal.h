@@ -69,6 +69,7 @@ void gml_gpu_opengl_scene_begin_frame(GmlGpuBackend *backend,uint64_t *completio
                                       uint64_t *completion_bytes);
 int gml_gpu_opengl_scene_readback(GmlGpuBackend *backend,const GmlRenderImageReadback *transfer);
 int gml_gpu_opengl_scene_has_rgb(GmlGpuBackend *backend,GmlRenderImageRef image,int *has_rgb);
+int gml_gpu_opengl_scene_alpha_nonzero(GmlGpuBackend *backend,GmlRenderImageRef image);
 int gml_gpu_opengl_scene_clear_depth(GmlGpuBackend *backend,
                                      const GmlRenderTargetRef *target,double depth);
 int gml_gpu_opengl_depth_upload(GmlGpuBackend *backend,const GmlRenderDepthUpload *transfer);

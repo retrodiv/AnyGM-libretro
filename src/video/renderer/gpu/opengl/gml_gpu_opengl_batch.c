@@ -2535,11 +2535,14 @@ int gml_render_gpu_opengl_copy_image(GmlGpuBackend *backend,const GmlRenderDrawO
   const GmlRenderCopyRegion *copy=&op->payload.copy;
   uint32_t sp=copy->source_pitch?copy->source_pitch:source->width;
   uint32_t dp=copy->destination_pitch?copy->destination_pitch:target->width;
+  int whole=dp==target->width && !copy->destination.x && !copy->destination.y &&
+    copy->destination.width==target->width && copy->destination.height==target->height;
   int opaque=source->valid && source->alpha_opaque &&
-    ((target->valid && target->alpha_opaque) ||
-     (dp==target->width && !copy->destination.x && !copy->destination.y &&
-      copy->destination.width==target->width && copy->destination.height==target->height));
+    ((target->valid && target->alpha_opaque) || whole);
+  int nonzero=source->valid && source->alpha_nonzero &&
+    ((target->valid && target->alpha_nonzero) || whole);
   target->alpha_opaque=0;
+  target->alpha_nonzero=0;
   target->alpha_bounds_known=0;
   GmlRenderTargetRef source_target={source->ref,1u,source->width,source->height,
     source->pixel_format,{0,0,source->width,source->height}};
@@ -2583,6 +2586,7 @@ int gml_render_gpu_opengl_copy_image(GmlGpuBackend *backend,const GmlRenderDrawO
   }
   int ok=backend->gl.GetError()==GL_NO_ERROR;
   target->alpha_opaque=ok && opaque;
+  target->alpha_nonzero=ok && (opaque || nonzero);
   return ok;
 }
 
@@ -2891,6 +2895,27 @@ unsigned gml_gpu_opengl_alpha_regions(const GlSceneImage *source,GmlRenderRect r
   return count;
 }
 
+/* Records the alpha factors of the blend a scene pass selects, so that the pass can say
+ * whether a target with no zero alpha byte keeps that property. */
+static void scene_blend_func(GmlGpuBackend *backend,GLenum alpha_factors[2],GLenum source,
+                             GLenum destination,GLenum alpha_source,GLenum alpha_destination){
+  backend->gl.BlendFuncSeparate(source,destination,alpha_source,alpha_destination);
+  alpha_factors[0]=alpha_source;
+  alpha_factors[1]=alpha_destination;
+}
+
+/* An added term of the kept destination alpha d >= 1/255 leaves a stored byte of at least one:
+ * s+d(1-s) >= d, and s*s+d(1-s) stays above 0.99/255 for every source alpha s, which rounds
+ * to a byte of one; a maximum never falls below d. Other alpha rules can reach zero and lose
+ * the proof. */
+static int nonzero_alpha_blend(GLenum equation,const GLenum alpha_factors[2]){
+  if(equation==GL_MAX) return 1;
+  if(equation!=GL_FUNC_ADD) return 0;
+  if(alpha_factors[1]==GL_ONE) return 1;
+  return alpha_factors[1]==GL_ONE_MINUS_SRC_ALPHA &&
+    (alpha_factors[0]==GL_ONE || alpha_factors[0]==GL_SRC_ALPHA);
+}
+
 static int flush_quads_target(GmlGpuBackend *backend,GlSceneImage *target,GlSceneImage *source,
                        uint32_t filter,int blend,uint32_t count,uint32_t write_mask,int alpha_test,
                        uint32_t source_alpha_key,const GmlRenderSourcePalette *palette,int reflected){
@@ -3012,6 +3037,7 @@ static int flush_quads_target(GmlGpuBackend *backend,GlSceneImage *target,GlScen
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,wrap);
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,wrap);
   }
+  GLenum alpha_factors[2]={GL_ONE,GL_ZERO},blended_alpha_equation=0;
   if(blend && blend!=8 && filter!=15u && filter!=17u){
     GLenum rgb_equation=GL_FUNC_ADD,alpha_equation=GL_FUNC_ADD;
     if(blend>=GL_SCENE_BLEND_SURFACE_DEST_BASE && blend<=GL_SCENE_BLEND_SURFACE_DEST_LIMIT){
@@ -3019,12 +3045,12 @@ static int flush_quads_target(GmlGpuBackend *backend,GlSceneImage *target,GlScen
       unsigned mode=encoded/25u,rgb=(encoded%25u)/5u,alpha=encoded%5u;
       static const GLenum equations[]={GL_FUNC_ADD,GL_MAX,GL_FUNC_REVERSE_SUBTRACT,GL_FUNC_SUBTRACT,GL_MIN};
       int preserve=(blend&1)!=0;
-      backend->gl.BlendFuncSeparate(mode==2u?GL_DST_ALPHA:GL_DST_COLOR,
+      scene_blend_func(backend,alpha_factors,mode==2u?GL_DST_ALPHA:GL_DST_COLOR,
         mode==0u?GL_SRC_COLOR:GL_DST_COLOR,preserve?GL_DST_ALPHA:GL_ONE,
         preserve?(mode==0u?GL_SRC_ALPHA:GL_DST_ALPHA):GL_ZERO);
       rgb_equation=equations[rgb];alpha_equation=preserve?equations[alpha]:GL_FUNC_ADD;
     }else if(blend&GL_SCENE_BLEND_NATIVE_FACTORS){
-      backend->gl.BlendFuncSeparate(gml_gpu_opengl_native_factor((unsigned)blend&15u),
+      scene_blend_func(backend,alpha_factors,gml_gpu_opengl_native_factor((unsigned)blend&15u),
         gml_gpu_opengl_native_factor(((unsigned)blend>>4u)&15u),
         gml_gpu_opengl_native_factor(((unsigned)blend>>8u)&15u),
         gml_gpu_opengl_native_factor(((unsigned)blend>>12u)&15u));
@@ -3032,17 +3058,17 @@ static int flush_quads_target(GmlGpuBackend *backend,GlSceneImage *target,GlScen
       alpha_equation=gml_gpu_opengl_native_equation(((unsigned)blend>>19u)&7u);
     }else if(blend>=22 && blend<=25){
       int multiply=blend<=23,preserve=(blend&1)==0;
-      backend->gl.BlendFuncSeparate(multiply?GL_DST_COLOR:GL_SRC_ALPHA,
+      scene_blend_func(backend,alpha_factors,multiply?GL_DST_COLOR:GL_SRC_ALPHA,
         multiply?GL_ZERO:GL_ONE_MINUS_SRC_COLOR,
         preserve?(multiply?GL_ZERO:GL_SRC_ALPHA):GL_ONE,
         preserve?(multiply?GL_ONE:GL_ONE_MINUS_SRC_ALPHA):GL_ZERO);
     }else if(blend==GL_SCENE_BLEND_RECTANGLE_ADD_BYTES ||
        blend==GL_SCENE_BLEND_RECTANGLE_ADD_BYTES+1){
-      backend->gl.BlendFuncSeparate(GL_ONE,GL_ONE,GL_ONE,
+      scene_blend_func(backend,alpha_factors,GL_ONE,GL_ONE,GL_ONE,
         blend==GL_SCENE_BLEND_RECTANGLE_ADD_BYTES+1?GL_ONE:GL_ZERO);
     }else if(blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_PRESERVE ||
              blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE){
-      backend->gl.BlendFuncSeparate(GL_SRC_COLOR,GL_SRC_ALPHA,
+      scene_blend_func(backend,alpha_factors,GL_SRC_COLOR,GL_SRC_ALPHA,
         blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_PRESERVE?GL_SRC_ALPHA:GL_ONE,
         blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_PRESERVE?GL_SRC_ALPHA:GL_ZERO);
     } else if(blend>=GL_SCENE_BLEND_RECTANGLE_BASE && blend<=GL_SCENE_BLEND_RECTANGLE_LIMIT){
@@ -3061,35 +3087,36 @@ static int flush_quads_target(GmlGpuBackend *backend,GlSceneImage *target,GlScen
         dst=mode==9u?GL_SRC_COLOR:GL_DST_COLOR;
         alpha_src=GL_DST_ALPHA;alpha_dst=mode==9u?GL_SRC_ALPHA:GL_DST_ALPHA;}
       if(!preserve){alpha_src=GL_ONE;alpha_dst=GL_ZERO;}
-      backend->gl.BlendFuncSeparate(src,dst,alpha_src,alpha_dst);
+      scene_blend_func(backend,alpha_factors,src,dst,alpha_src,alpha_dst);
     } else if(blend>=18 && blend<=21){
       int colour=(blend&1)!=0,preserve=blend<20;
-      backend->gl.BlendFuncSeparate(colour?GL_ONE_MINUS_DST_COLOR:GL_ONE_MINUS_DST_ALPHA,
+      scene_blend_func(backend,alpha_factors,colour?GL_ONE_MINUS_DST_COLOR:GL_ONE_MINUS_DST_ALPHA,
         colour?GL_ZERO:GL_DST_ALPHA,preserve?GL_ONE_MINUS_DST_ALPHA:GL_ONE,
         preserve && !colour?GL_DST_ALPHA:GL_ZERO);
     } else if(blend==15)
-      backend->gl.BlendFuncSeparate(GL_ZERO,GL_ONE_MINUS_SRC_COLOR,GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+      scene_blend_func(backend,alpha_factors,GL_ZERO,GL_ONE_MINUS_SRC_COLOR,GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
     else if(blend==16)
-      backend->gl.BlendFuncSeparate(GL_SRC_ALPHA,GL_ONE,GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+      scene_blend_func(backend,alpha_factors,GL_SRC_ALPHA,GL_ONE,GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
     else if(blend==17)
-      backend->gl.BlendFuncSeparate(GL_ONE,GL_ZERO,GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+      scene_blend_func(backend,alpha_factors,GL_ONE,GL_ZERO,GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
     else if(blend==GL_SCENE_BLEND_DEST_ALPHA_MASK)
-      backend->gl.BlendFuncSeparate(GL_DST_ALPHA,GL_ONE_MINUS_DST_ALPHA,
+      scene_blend_func(backend,alpha_factors,GL_DST_ALPHA,GL_ONE_MINUS_DST_ALPHA,
                                     GL_DST_ALPHA,GL_ONE_MINUS_DST_ALPHA);
     else if(blend==GL_SCENE_BLEND_DEST_ALPHA_MASK_OPAQUE)
-      backend->gl.BlendFuncSeparate(GL_DST_ALPHA,GL_ONE_MINUS_DST_ALPHA,GL_ONE,GL_ZERO);
+      scene_blend_func(backend,alpha_factors,GL_DST_ALPHA,GL_ONE_MINUS_DST_ALPHA,GL_ONE,GL_ZERO);
     else if(blend==13)
-      backend->gl.BlendFuncSeparate(GL_ZERO,GL_ONE_MINUS_SRC_COLOR,GL_ZERO,GL_ONE_MINUS_SRC_ALPHA);
+      scene_blend_func(backend,alpha_factors,GL_ZERO,GL_ONE_MINUS_SRC_COLOR,GL_ZERO,GL_ONE_MINUS_SRC_ALPHA);
     else if(blend==14)
-      backend->gl.BlendFuncSeparate(GL_ONE,GL_ONE,GL_ONE,GL_ONE);
+      scene_blend_func(backend,alpha_factors,GL_ONE,GL_ONE,GL_ONE,GL_ONE);
     else if(blend==GL_SCENE_BLEND_INVERSE_RECT)
-      backend->gl.BlendFuncSeparate(GL_ZERO,GL_ONE_MINUS_SRC_COLOR,GL_ONE,GL_ZERO);
-    else backend->gl.BlendFuncSeparate(blend==9 || blend==10?GL_ONE:GL_SRC_ALPHA,
+      scene_blend_func(backend,alpha_factors,GL_ZERO,GL_ONE_MINUS_SRC_COLOR,GL_ONE,GL_ZERO);
+    else scene_blend_func(backend,alpha_factors,blend==9 || blend==10?GL_ONE:GL_SRC_ALPHA,
                                   blend==9?GL_ONE:GL_ONE_MINUS_SRC_ALPHA,
                                   blend==3 || blend==9 || blend==10?GL_SRC_ALPHA:GL_ONE,
                                   GL_ONE_MINUS_SRC_ALPHA);
     backend->gl.BlendEquationSeparate(rgb_equation,alpha_equation);
     backend->gl.Enable(GL_BLEND);
+    blended_alpha_equation=alpha_equation;
   } else backend->gl.Disable(GL_BLEND);
   int stamp_alpha=(blend&GL_SCENE_BLEND_NATIVE_OPAQUE)!=0 || native_texture_stamp || blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE || filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==133u || filter==130u || filter==104u || filter==107u || filter==99u || filter==77u || filter==75u || filter==9u || filter==12u || filter==21u || filter==23u ||
                   filter==25u || (filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER) || filter==35u || filter==39u || filter==40u ||
@@ -3099,7 +3126,12 @@ static int flush_quads_target(GmlGpuBackend *backend,GlSceneImage *target,GlScen
                   filter==138u || filter==141u || filter==143u || filter==148u || filter==152u ||
                   filter==156u || filter==158u || filter==161u || filter==162u || filter==168u || filter==GL_SCENE_VIEW_SDF_OPAQUE_FILTER;
   int skip_alpha=opaque && (native_texture_stamp || blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE || filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==40u || filter==21u || filter==25u || (filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER) || filter==35u || filter==66u || filter==80u);
+  int prior_nonzero=target->valid && target->alpha_nonzero;
+  int keep_nonzero=prior_nonzero &&
+    (!((!stamp_alpha || filter==110u) && (write_mask&8u)) ||
+     nonzero_alpha_blend(blended_alpha_equation,alpha_factors));
   target->alpha_opaque=0;
+  target->alpha_nonzero=0;
   backend->gl.ColorMask((write_mask&1u)!=0u,(write_mask&2u)!=0u,(write_mask&4u)!=0u,
                         (!stamp_alpha || filter==110u) && (write_mask&8u)!=0u);
   backend->gl.UseProgram(program->program);
@@ -3231,6 +3263,12 @@ restore_stream_state:
   target->alpha_opaque=opaque && filter!=110u &&
     (!(write_mask&8u) || stamp_alpha || filter==149u || filter==153u || blend==22 || blend==24 ||
      (blend==1 && filter!=15u && filter!=17u) || unit_alpha_overwrite);
+  /* The same writer stores an interpolation of the corner alphas. When no corner falls below
+   * one byte, no written alpha byte is zero, so a target without one keeps that property. */
+  int nonzero_alpha_overwrite=prior_nonzero && filter==31u && blend==0;
+  for(size_t vertex=0;nonzero_alpha_overwrite && vertex<(size_t)count*6u;vertex++)
+    if(!(scene->vertices[vertex*GL_SCENE_VERTEX_FLOATS+7u]>=1.0f/255.0f)) nonzero_alpha_overwrite=0;
+  target->alpha_nonzero=target->alpha_opaque || keep_nonzero || nonzero_alpha_overwrite;
   /* Constant RGB programs cannot change selector for the separate alpha stamp.
    * Submit that existing kernel through the same stream with complete state. */
   if(rectangle_alpha_stamp && !skip_alpha && (write_mask&8u) &&
@@ -3578,6 +3616,7 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
   if(qualified_blend(state)==6)
     font_mode=op->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_FONT_MODERN?3:2;
   target->alpha_opaque=0;
+  target->alpha_nonzero=0;
   target->alpha_bounds_known=0;
   if(!exact_rect(op,&left,&bottom,&width,&height,
                  qualified_blend(state)==4 || qualified_blend(state)==6 ||
@@ -3893,6 +3932,7 @@ static void mark_uncertain(GmlRenderExecutionResult *result,GlSceneImage *target
   if(target){
     target->valid=0;
     target->alpha_opaque=0;
+    target->alpha_nonzero=0;
     target->alpha_bounds_known=0;
     result->uncertain_targets[0]=target->ref;
     result->uncertain_target_count=1;
@@ -4273,6 +4313,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     }
     if(op->opcode==GML_RENDER_OP_CONTENT_SHADER_DRAW){
       target->alpha_opaque=0;
+      target->alpha_nonzero=0;
       target->alpha_bounds_known=0;
       GlSceneImage *source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
       GlSceneImage *samplers[GML_PLAN_MAX_SAMPLERS]={0};

@@ -38,6 +38,7 @@ static int fill_region(GmlGpuBackend *backend,GlSceneImage *target,
     ?1.0f:(GLfloat)((colour>>24)&255u)/255.0f;
   int complete=region->x==0 && region->y==0 && region->width==target->width &&
     region->height==target->height;
+  int nonzero=alpha!=0.0f && (complete || (target->valid && target->alpha_nonzero));
   int outcome=0,ok;
   if(!complete){
     /* A clipped clear can invoke an unprepared driver shader. Reuse the ordinary unblended
@@ -81,6 +82,7 @@ static int fill_region(GmlGpuBackend *backend,GlSceneImage *target,
     ((target->valid && target->alpha_opaque) ||
      (region->x==0 && region->y==0 && region->width==target->width &&
       region->height==target->height));
+  target->alpha_nonzero=ok && nonzero;
   return ok;
 }
 

@@ -238,6 +238,22 @@ static void scene_remove_target(GmlRenderPendingSceneBatch *pending,GmlRenderIma
   if(!kept) pending->state_count=pending->source_count=0u;
 }
 
+/* Queued work whose every target byte the next draw replaces can never be seen. Retire it before
+ * that draw takes its version, only while the queue holds nothing but the current target, so no
+ * other image can still read an intermediate version of it. */
+static void scene_discard_replaced_target(GmlRender *r){
+  GmlRenderPendingSceneBatch *pending=r?r->pending_scene_batch:NULL;
+  if(!pending || !pending->count || pending->preparing || pending->phase_count ||
+     r->rotated_scene_building || r->rotated_scene_flushing ||
+     (r->rotated_scene_batch && r->rotated_scene_batch->count)) return;
+  GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+  if(!target) return;
+  GmlRenderImageRef image=gml_render_resource_image_ref(target);
+  for(uint32_t index=0;index<pending->count;index++)
+    if(!same_scene_image(pending->operations[index].target.image,image)) return;
+  scene_remove_target(pending,image);
+}
+
 int gml_render_application_scene_flush(GmlRender *r){
   GmlRenderPendingSceneBatch *pending=r?r->pending_scene_batch:NULL;
   GmlRenderDrawOp *group=NULL;
@@ -3284,6 +3300,27 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
      !r->interp && !r->blendmode && r->color_write_mask==15u &&
      (surface_known_opaque(r,0) || !r->alphablend) && alpha>=1.0 &&
      (colour&0xFFFFFFu)==0xFFFFFFu && !r->app_draw_enable) return 0;
+  /* A disabled-blend white unit copy over the whole target writes the sampled bytes of every
+   * source texel whose alpha is not zero. When the device proves the source has no such texel,
+   * every target byte is replaced: the deferred application presentation, full fill and queued
+   * draws in front of it can never be seen, exactly as for an opaque rectangle. */
+  if((r->pending_underlay || r->pending_fill ||
+      (r->pending_scene_batch && r->pending_scene_batch->count)) &&
+     unit && !feedback && !selection &&
+     !resolved_canvas && !automatic && !r->classic && left==0.0 && top==0.0 &&
+     sw==r->fbw && sh==r->fbh && !r->alphablend && !r->blendmode &&
+     r->color_write_mask==15u && alpha>=1.0 && (colour&0xFFFFFFu)==0xFFFFFFu &&
+     (!r->alpha_test_enable || !r->alpha_test_ref) && device->alpha_nonzero){
+    GmlRenderResource *replacing=surf==0?(borrowed?borrowed:gml_render_application_resource_ensure(r)):
+      gml_render_surface_resource_ensure(r,surf);
+    GmlRenderResourceSource proven={0};
+    if(replacing && gml_render_resource_device_source_view(replacing,device,&proven) &&
+       proven.pixel_format==GML_RENDER_PIXEL_ARGB8888 &&
+       device->alpha_nonzero(device->context,proven.image)){
+      gml_render_prepare_opaque_rect(r,0,0,r->fbw,r->fbh);
+      scene_discard_replaced_target(r);
+    }
+  }
   /* The queued application prefix precedes any ordinary surface suffix,
    * regardless of which independent source that suffix samples. */
   if(r->pending_underlay &&

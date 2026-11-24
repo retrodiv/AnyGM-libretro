@@ -64,6 +64,9 @@ typedef struct GmlRenderDeviceServices {
    * colour authority. Resize, retirement and context loss invalidate the plane. */
   int (*upload_depth)(void *context,const GmlRenderDepthUpload *transfer);
   int (*readback_depth)(void *context,const GmlRenderDepthReadback *transfer);
+  /* Optional derived proof that no alpha byte of this exact current image is zero. It reads no
+   * pixels; zero means unproven, not that a zero byte exists. */
+  int (*alpha_nonzero)(void *context,GmlRenderImageRef image);
 } GmlRenderDeviceServices;
 
 #endif

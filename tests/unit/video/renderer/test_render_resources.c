@@ -37,6 +37,7 @@ typedef struct FakeDevice {
   int on_demand;
   uint64_t textured_families[GML_RENDER_SCENE_FAMILY_COUNT];
   int uploads,submits,shader_submits,readbacks,retires;
+  int nonzero_proof,nonzero_queries,point_quads;
   int rgb_queries,fail_rgb_query,rgb_query_result;
   int forbid_calls,forbidden_calls;
   int fail_upload,fail_upload_at,fail_readback,shader_failure,prewrite_refusal;
@@ -124,6 +125,9 @@ static GmlRenderExecutionResult fake_submit(void *context,const GmlRenderDrawBat
       if(op->opcode==GML_RENDER_OP_TEXTURED_QUAD &&
          op->scene_family<GML_RENDER_SCENE_FAMILY_COUNT)
         fake->textured_families[op->scene_family]++;
+      if(op->opcode==GML_RENDER_OP_TEXTURED_QUAD &&
+         op->payload.quad.sampling.filter==GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT)
+        fake->point_quads++;
     }
     fake->last_batch_operations=batch->operation_count;
     fake->last_batch_states=batch->state_count;
@@ -261,6 +265,13 @@ static int fake_content_program_failed(void *context,const GmlPlanShader *shader
 
 static int fake_observe_on_demand(void *context){
   return ((FakeDevice*)context)->on_demand;
+}
+
+static int fake_alpha_nonzero(void *context,GmlRenderImageRef image){
+  FakeDevice *fake=(FakeDevice*)context;
+  (void)image;
+  fake->nonzero_queries++;
+  return fake->nonzero_proof;
 }
 
 static GmlRenderDeviceServices service(FakeDevice *fake){
@@ -8846,6 +8857,50 @@ static int resident_manual_point_surface(void){
       fake.last_opcode==GML_RENDER_OP_RECOVER_EMPTY_SCREEN && !fake.rgb_queries && !fake.readbacks);
     gml_render_application_surface_bind(r,screen,16,12,(int)opaque);
     CHECK(!gml_render_recover_empty_screen(r,screen,16,12,0,0,16,12,0));
+    gml_render_free(r);free(r);
+  }
+  return 1;
+}
+
+/* A GUI copy of the application surface is queued in front of a whole-target copy of an overlay.
+ * When the device proves the overlay has no zero alpha byte, the disabled-blend copy replaces
+ * every screen byte, so the queued copy is retired unsubmitted; any other answer, or a copy that
+ * leaves a border, keeps it. */
+static int resident_proven_replacement_retires_queued_copy(void){
+  for(unsigned proven=0;proven<2u;proven++)
+  for(unsigned inset=0;inset<2u;inset++){
+    GmlRender *r=calloc(1,sizeof *r);GmlWin content={.bytecode=17};
+    FakeDevice fake={.on_demand=1,.nonzero_proof=(int)proven};
+    GmlRenderDeviceServices device=service(&fake);
+    uint32_t world[16*12]={0},screen[16*12]={0};
+    CHECK(r && !gml_render_init(r,NULL));r->win=&content;r->app_draw_enable=0;
+    device.observe_on_demand=fake_observe_on_demand;device.alpha_nonzero=fake_alpha_nonzero;
+    gml_render_bind_device(r,&device);gml_render_set_scene_device(r,1);
+    gml_render_application_surface_bind(r,world,16,12,1);
+    CHECK(gml_render_begin_resident_base(r,world,16,12,0,0));
+    gml_render_set_pending_fill(r,0xFF315779u);
+    gml_render_flush_pending_fill(r);
+    int overlay=gml_surface_create(r,16,12);
+    CHECK(overlay>0 && gml_surface_set_target(r,overlay));
+    gml_render_clear(r,0x405060u,.5);
+    gml_render_flush_pending_fill(r);
+    gml_surface_reset_target(r);
+    CHECK(gml_render_scene_submit_pending(r));
+    CHECK(gml_render_begin_resident_base(r,screen,16,12,0,0));
+    gml_render_set_pending_fill(r,0xFF112233u);
+    gml_render_application_surface_publish(r);gml_render_gui_begin(r,16,12);r->alphablend=0;
+    r->alpha_test_enable=1;r->alpha_test_ref=0;
+    CHECK(gml_render_cpu_backend_resident_surface_stretched(r,0,0,0,16,12,0xFFFFFFu,1.0));
+    int submits=fake.submits,points=fake.point_quads;
+    gml_draw_surface_stretched(r,overlay,inset,0,16,12,0xFFFFFFu,1.0);
+    CHECK(gml_render_scene_submit_pending(r));
+    int retired=proven && !inset;
+    CHECK(fake.submits>submits && !fake.readbacks &&
+      fake.point_quads==points+(retired?0:1) &&
+      fake.last_filter!=GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT &&
+      fake.last_target_image.resource_class==GML_RENDER_RESOURCE_SCREEN);
+    CHECK(inset || fake.nonzero_queries>0);
+    gml_render_gui_end(r);r->alphablend=1;
     gml_render_free(r);free(r);
   }
   return 1;
@@ -22864,6 +22919,8 @@ int main(void){
     else if(!strcmp(selected,"borrowed-screen-handoff")) passed=resident_borrowed_application_screen_handoff();
     else if(!strcmp(selected,"deferred-borrowed-screen")) passed=resident_deferred_borrowed_screen_materialization();
     else if(!strcmp(selected,"manual-point-surface")) passed=resident_manual_point_surface();
+    else if(!strcmp(selected,"proven-replacement-retires-copy"))
+      passed=resident_proven_replacement_retires_queued_copy();
     else if(!strcmp(selected,"palette-grid-glyph")) passed=resident_palette_grid_glyph();
     else if(!strcmp(selected,"disabled-blend-gui-presentation")) passed=resident_disabled_blend_gui_presentation();
     else if(!strcmp(selected,"surface-capture-pending-fill")) passed=runtime_surface_capture_observes_pending_fill();
@@ -23068,6 +23125,7 @@ int main(void){
   passed+=resident_borrowed_application_screen_handoff();
   passed+=resident_deferred_borrowed_screen_materialization();
   passed+=resident_manual_point_surface();
+  passed+=resident_proven_replacement_retires_queued_copy();
   passed+=resident_disabled_blend_gui_presentation();
   passed+=resident_palette_grid_glyph();
   passed+=resident_outline_coverage_public_order();
@@ -23304,7 +23362,7 @@ int main(void){
   passed+=resident_runtime_native_rotations();
   passed+=runtime_sprite_deferred_clear();
   passed+=resident_runtime_native_boundaries();
-  enum { total=369 };
+  enum { total=370 };
   printf("render resource cases: passed=%d failed=%d\n",passed,total-passed);
   return passed==total?EXIT_SUCCESS:EXIT_FAILURE;
 }
