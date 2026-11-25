@@ -4236,7 +4236,7 @@ static int resident_surface_repeat(GmlRender *r,int surf,int sw,int sh,
   int flip_x,int flip_y,uint32_t colour,double alpha){
   /* The caller selects the presets that use the generic cell's source-over
    * accumulation. Keep the unit and full-source special cases at that seam. */
-  if(surf<=0 || !r->alphablend || resident_surface_shader_selected(r) ||
+  if(!r->alphablend || resident_surface_shader_selected(r) ||
      (r->interp && (sw>8*lround(width) || sh>8*lround(height))) ||
      (lround(width)>=sw && lround(height)>=sh)) return 0;
   if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
@@ -4244,7 +4244,10 @@ static int resident_surface_repeat(GmlRender *r,int surf,int sw,int sh,
   if(r->pending_fill || !r->resident_application_pass) return 0;
   const GmlRenderDeviceServices *device=gml_render_device(r);
   GmlRenderResourceSource source={0};
-  if(!surface_feedback_source(r,device,gml_render_surface_resource_ensure(r,surf),0,&source))return 0;
+  GmlRenderResource *resource=surf?gml_render_surface_resource_ensure(r,surf):
+    r->app_surface==r->app_surface_owned?gml_render_application_resource_ensure(r):
+    resident_surface_borrowed_application(r);
+  if(!surface_feedback_source(r,device,resource,0,&source))return 0;
   GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
   if(!target)return 0;
   GmlRenderImageRef image=gml_render_application_scene_next_image_ref(r,target);

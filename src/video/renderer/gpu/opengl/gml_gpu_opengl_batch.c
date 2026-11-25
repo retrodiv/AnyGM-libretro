@@ -570,7 +570,9 @@ static int repeat_quad_valid(const GmlRenderDrawOp *op,
   int blend=qualified_blend(state);
   if(!source || source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
      source->width>4096u || source->height>4096u ||
-     op->sources[0].resource_class!=GML_RENDER_RESOURCE_SURFACE ||
+     (op->sources[0].resource_class!=GML_RENDER_RESOURCE_SURFACE &&
+      op->sources[0].resource_class!=GML_RENDER_RESOURCE_APPLICATION &&
+      op->sources[0].resource_class!=GML_RENDER_RESOURCE_SCREEN) ||
      op->scene_family!=GML_RENDER_SCENE_SURFACE ||
      op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
      q->shape!=GML_RENDER_QUAD_AXIS_ALIGNED || q->span_active || q->font_sdf_width ||
