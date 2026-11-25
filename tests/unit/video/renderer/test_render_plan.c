@@ -1669,6 +1669,51 @@ static int resident_host_box_case(void){
 }
 
 /* A content-program draw carries names and text the plan cannot check, and indices it can. */
+static int completed_host_crop_case(void){
+  const GmlPlanRect whole={0,0,11u,9u},canvas={2,1,5u,4u};
+  const GmlPlanImage completed={
+    .image_class=GML_PLAN_IMAGE_COMPLETED_FRAME,.content_generation=3u,.pixel_generation=3u,
+    .width=13u,.height=7u,.pitch_pixels=17u,.pixel_format=GML_PLAN_PIXEL_XRGB8888,
+    .opaque=1u,.device_completed=1u,.resident_crop_x=2u,.resident_crop_y=1u,
+    .resident_storage_width=17u,.resident_storage_height=11u,
+  };
+  GmlRenderPlan plan;
+  uint32_t untouched[11u*9u];
+  gml_render_plan_reset(&plan,GML_PLAN_TARGET_HOST_FRAMEBUFFER,11u,9u);
+  uint32_t index=gml_render_plan_add_image(&plan,&completed);
+  REQUIRE(index!=GML_PLAN_NO_IMAGE && gml_render_plan_add_clear(&plan,whole,0u) &&
+          gml_render_plan_add_blit_box(&plan,index,canvas,0xFFu),"completed crop reduction recorded");
+  REQUIRE(gml_render_plan_validate(&plan) && gml_render_plan_gpu_eligible(&plan),
+          "opaque completed crop reduction is device eligible");
+
+  for(size_t i=0;i<99u;i++) untouched[i]=0x12345678u;
+  REQUIRE(!gml_render_cpu_plan_execute(&plan,untouched,11u),"completed crop has no CPU borrow");
+  for(size_t i=0;i<99u;i++) REQUIRE(untouched[i]==0x12345678u,"CPU refusal precedes clear");
+
+  GmlPlanImage *image=&plan.images[index];
+  image->resident_image=(GmlRenderImageRef){GML_RENDER_RESOURCE_SCREEN,0u,1u,2u};
+  REQUIRE(!gml_render_plan_validate(&plan),"conflicting device owners refused");
+  *image=completed;
+  image->cpu_pixels=untouched;
+  REQUIRE(!gml_render_plan_validate(&plan),"CPU borrow cannot accompany a completed crop");
+  *image=completed;
+  image->resident_crop_x=5u;
+  REQUIRE(!gml_render_plan_validate(&plan),"crop cannot extend past the physical right edge");
+  *image=completed;
+  image->resident_storage_height=0u;
+  REQUIRE(!gml_render_plan_validate(&plan),"both physical extents must be present");
+  *image=completed;
+  plan.operations[1].alpha_write=0u;
+  REQUIRE(!gml_render_plan_gpu_eligible(&plan) &&
+          plan.fallback_reason==GML_PLAN_FALLBACK_BOX_REDUCTION,"unqualified alpha reduction refused");
+  plan.operations[1].alpha_write=0xFFu;
+  plan.target=GML_PLAN_TARGET_READBACK;
+  plan.readback_pixels=untouched;
+  plan.readback_pitch_pixels=11u;
+  REQUIRE(!gml_render_plan_validate(&plan),"completed cache cannot become a readback plan");
+  return 1;
+}
+
 static int shader_draw_validation_case(void){
   uint32_t source[8*8];
   uint32_t target[8*8];
@@ -1942,6 +1987,7 @@ int main(int argc,char **argv){
     {"composed_leading_nearest",composed_leading_nearest_case},
     {"validation",plan_validation_case},
     {"resident_host_box",resident_host_box_case},
+    {"completed_host_crop",completed_host_crop_case},
     {"shader_draw_validation",shader_draw_validation_case},
     {"dispatch_host_plan",dispatch_host_plan_case},
     {"dispatch_device_plan",dispatch_device_plan_case},

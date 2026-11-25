@@ -53,7 +53,7 @@ typedef struct GmlPlanImage {
   /* A current, context-local scene image may replace the CPU borrow for an opaque nearest or box
    * presentation. Its full version prevents a stale texture from being mistaken for this frame. */
   GmlRenderImageRef resident_image;
-  /* A resident SCREEN crop retains the physical texture while width and
+  /* A screen or completed-device crop retains the physical texture while width and
    * height describe its logical sample domain. Zero storage denotes the full image. */
   uint32_t resident_crop_x,resident_crop_y,resident_storage_width,resident_storage_height;
 } GmlPlanImage;

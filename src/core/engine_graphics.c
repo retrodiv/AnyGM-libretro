@@ -724,6 +724,11 @@ static int engine_present_completed_device_canvas(AnygmEngine *engine,
   source->identity=0u;
   source->content_generation=source->pixel_generation=(uint32_t)generation;
   source->device_completed=1u;
+  if(engine_present_crop_rect(engine,engine->output_width,engine->output_height,
+                             &source->resident_crop_x,&source->resident_crop_y,NULL,NULL)){
+    source->resident_storage_width=engine->output_width;
+    source->resident_storage_height=engine->output_height;
+  }
   engine->host_plan.operations[1].alpha_write=0xFFu;
   if(!gml_render_plan_validate(&engine->host_plan) ||
      !engine_execute_host_plan(engine,&engine->host_plan,host_width,host_height)) return 0;

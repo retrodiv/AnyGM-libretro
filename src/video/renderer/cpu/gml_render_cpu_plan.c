@@ -421,7 +421,8 @@ int gml_render_cpu_plan_execute_pooled(const GmlRenderPlan *plan,uint32_t *targe
   if(target_pitch_pixels<plan->target_width) return 0;
   if(!gml_render_plan_validate(plan)) return 0;
   for(uint32_t image=0;image<plan->image_count;image++)
-    if(plan->images[image].resident_image.resource_class) return 0;
+    if(plan->images[image].resident_image.resource_class ||
+       plan->images[image].device_completed) return 0;
   unsigned reason=pool_owner && pool_owner->dispatch_metrics.enabled
     ?gml_render_dispatch_cpu_reason(pool_owner):GML_RENDER_DISPATCH_UNQUALIFIED;
   for(uint32_t index=0;index<plan->operation_count;index++){

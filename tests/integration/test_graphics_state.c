@@ -5699,7 +5699,7 @@ static int completed_frame_capacity_case(void){
  * proves device-only completion, ownership and transport; the software plan cases own pixels. */
 static int crt_terminal_program_extent(unsigned source_w,unsigned source_h,
                                        unsigned host_w,unsigned host_h,int native_padding,
-                                       int area_filter,unsigned rotation){
+                                       int area_filter,unsigned rotation,int cropped){
   Session session;
   CurrentContextWitness witness={1u,0u};
   AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
@@ -5719,6 +5719,10 @@ static int crt_terminal_program_extent(unsigned source_w,unsigned source_h,
   engine->host_crt_active=engine->host_canvas_active=1;
   engine->host_crt_area_filter=area_filter;
   engine->host_rotation=rotation;
+  if(cropped){
+    engine->present_crop_left=5;engine->present_crop_right=7;
+    engine->present_crop_top=3;engine->present_crop_bottom=9;
+  }
   engine->host_canvas_width=native_padding?(int)source_w:(int)host_w;
   engine->host_canvas_height=native_padding?(int)source_h:(int)host_h;
   engine->host_canvas_x=((int)host_w-engine->host_canvas_width)/2;
@@ -5750,6 +5754,13 @@ static int crt_terminal_program_extent(unsigned source_w,unsigned source_h,
   GmlGpuCounters counters={0};
   gml_gpu_counters(engine->gpu,&counters);
   ok=ok && counters.completed_frame_copies==1u && counters.scene_readbacks==0u;
+  if(cropped){
+    const GmlPlanImage *image=&engine->host_plan.images[0];
+    ok=ok && image->device_completed==1u && !image->cpu_pixels &&
+      image->resident_crop_x==5u && image->resident_crop_y==3u &&
+      image->resident_storage_width==source_w && image->resident_storage_height==source_h &&
+      image->width==source_w-12u && image->height==source_h-12u;
+  }
   int x=0,y=0,w=0,h=0;
   anygm_test_graphics_viewport(&x,&y,&w,&h);
   if(rotation) ok=ok && x==0 && y==0 && w==(int)width && h==(int)height;
@@ -5765,15 +5776,17 @@ static int crt_terminal_program_extent(unsigned source_w,unsigned source_h,
   return 1;
 }
 static int crt_terminal_program_case(void){
-  return crt_terminal_program_extent(400,300,640,480,0,0,ANYGM_IMAGE_ROTATION_NONE) &&
-         crt_terminal_program_extent(320,180,320,240,1,0,ANYGM_IMAGE_ROTATION_NONE) &&
-         crt_terminal_program_extent(240,240,320,240,1,0,ANYGM_IMAGE_ROTATION_NONE) &&
-         crt_terminal_program_extent(400,300,320,240,0,1,ANYGM_IMAGE_ROTATION_RIGHT);
+  return crt_terminal_program_extent(400,300,640,480,0,0,ANYGM_IMAGE_ROTATION_NONE,0) &&
+         crt_terminal_program_extent(320,180,320,240,1,0,ANYGM_IMAGE_ROTATION_NONE,0) &&
+         crt_terminal_program_extent(240,240,320,240,1,0,ANYGM_IMAGE_ROTATION_NONE,0) &&
+         crt_terminal_program_extent(400,300,320,240,0,1,ANYGM_IMAGE_ROTATION_RIGHT,0) &&
+         crt_terminal_program_extent(400,300,640,480,0,0,ANYGM_IMAGE_ROTATION_NONE,1) &&
+         crt_terminal_program_extent(400,300,320,240,0,1,ANYGM_IMAGE_ROTATION_RIGHT,1);
 }
 
 /* An ordinary deferred final draw has to finish at the logical raster before CRT fitting too.
  * Neither stage needs to expose the completed image to the processor. */
-static int crt_deferred_presentation_case(void){
+static int crt_deferred_presentation_extent(int cropped){
   Session session;
   CurrentContextWitness witness={1u,0u};
   AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
@@ -5790,6 +5803,10 @@ static int crt_deferred_presentation_case(void){
   engine->host_crt_active=engine->host_canvas_active=1;
   engine->host_canvas_width=640; engine->host_canvas_height=480;
   engine->host_canvas_x=engine->host_canvas_y=0;
+  if(cropped){
+    engine->present_crop_left=7;engine->present_crop_right=3;
+    engine->present_crop_top=5;engine->present_crop_bottom=1;
+  }
   for(unsigned i=0;i<16;i++) source[i]=0xFF336699u;
   gml_render_application_surface_bind(render,source,4,4,1);
   gml_render_application_surface_set_draw_enabled(render,0);
@@ -5812,11 +5829,21 @@ static int crt_deferred_presentation_case(void){
   gml_gpu_counters(engine->gpu,&counters);
   ok=ok && counters.completed_frame_copies==1u && counters.scene_readbacks==0u &&
            counters.cpu_upload_frames==0u && counters.passes_replayed==0u;
+  if(cropped){
+    const GmlPlanImage *image=&engine->host_plan.images[0];
+    ok=ok && image->resident_crop_x==7u && image->resident_crop_y==5u &&
+      image->resident_storage_width==400u && image->resident_storage_height==300u &&
+      image->width==390u && image->height==294u;
+  }
   gml_render_gui_end(render);
   gml_render_application_surface_bind(render,engine->fb,engine->width,engine->height,1);
   session_close(&session);
   REQUIRE(ok,"deferred final draw and CRT fit stay device-resident");
   return 1;
+}
+
+static int crt_deferred_presentation_case(void){
+  return crt_deferred_presentation_extent(0) && crt_deferred_presentation_extent(1);
 }
 
 /* A surface's vertex coordinates belong to the draw's authored space, not a local shader tile. */

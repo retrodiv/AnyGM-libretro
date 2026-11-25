@@ -289,7 +289,7 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
         resident_source=1;
       } else if(image->device_completed){
         if(image->device_completed!=1u || !backend->completed.valid ||
-           backend->completed.width!=image->width || backend->completed.height!=image->height ||
+           backend->completed.width!=source_width || backend->completed.height!=source_height ||
            backend->completed.generation!=image->content_generation){
           gml_gpu_opengl_record_error(error,error_capacity,
                                       "completed graphics source unavailable");
