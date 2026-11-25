@@ -628,7 +628,7 @@ static int repeat_quad_valid(const GmlRenderDrawOp *op,
        (full_source && lround(span[1])>=target_extent)) return 0;
   }
   return q->span_x[3]*q->span_y[3]<=8192.0 &&
-    (lround(q->span_x[1])<source->width || lround(q->span_y[1])<source->height);
+    (full_source || lround(q->span_x[1])<source->width || lround(q->span_y[1])<source->height);
 }
 
 /* Full-source surface packets carry integral destination-loop sampling and

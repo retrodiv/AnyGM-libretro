@@ -4234,14 +4234,20 @@ static int resident_surface_part(GmlRender *r,int surf,double sx,double sy,doubl
 static int resident_surface_repeat(GmlRender *r,int surf,int sw,int sh,
   double phase_x,double phase_y,double width,double height,double columns,double rows,
   int flip_x,int flip_y,uint32_t colour,double alpha,int full_source){
-  /* Reserve non-reducing draws and full-target axis ownership for their existing paths. */
+  long dw=lround(width),dh=lround(height);
+  int magnified=dw>=sw && dh>=sh;
+  /* The full-source normal path keeps leading-edge point sampling on enlarged axes.
+   * Classic aspect presentation and filtered application magnification use different owners. */
+  int classic_magnification=r->classic &&
+    ((r->interp && surf==0) ||
+     (anygm_policy_classic_modern_presentation(r->win) && r->win->classic_scaling<0));
   if((!r->alphablend && r->blendmode) || resident_surface_shader_selected(r) ||
      ((full_source || !r->alphablend) && r->interp && !flip_x && !flip_y &&
        !r->target_sp && r->fb==r->base_fb &&
        r->classic_interp_phase[0] && r->classic_interp_phase[1] && r->classic_interp_phase[2]) ||
-     (full_source && (lround(width)>=r->fbw || lround(height)>=r->fbh)) ||
-     (r->interp && (sw>8*lround(width) || sh>8*lround(height))) ||
-     (lround(width)>=sw && lround(height)>=sh)) return 0;
+     (full_source && (dw>=r->fbw || dh>=r->fbh)) ||
+     (r->interp && (sw>8*dw || sh>8*dh)) ||
+     (magnified && (!full_source || classic_magnification))) return 0;
   if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
   gml_render_flush_pending_fill(r);
   if(r->pending_fill || !r->resident_application_pass) return 0;
