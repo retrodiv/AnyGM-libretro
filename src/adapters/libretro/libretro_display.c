@@ -52,19 +52,23 @@ static AnygmResult native_request(uint32_t hz){
 }
 #endif
 
-uint32_t libretro_display_frequency(void *userdata){
-  (void)userdata;
-#ifdef _WIN32
-  DEVMODEA mode;
-  return current_mode(&mode) && mode.dmDisplayFrequency>1?mode.dmDisplayFrequency:0;
-#else
+float libretro_target_refresh_rate(void){
   float frequency=0;
   if(!g_libretro.environment ||
      !g_libretro.environment(RETRO_ENVIRONMENT_GET_TARGET_REFRESH_RATE,&frequency) ||
      !isfinite(frequency) || frequency<2 || (double)frequency>UINT32_MAX) return 0;
   /* The frontend may answer with its configured target rather than a physical measurement.
    * Do not replace it with this core's requested cadence. */
-  return (uint32_t)floor((double)frequency+0.5);
+  return frequency;
+}
+
+uint32_t libretro_display_frequency(void *userdata){
+  (void)userdata;
+#ifdef _WIN32
+  DEVMODEA mode;
+  return current_mode(&mode) && mode.dmDisplayFrequency>1?mode.dmDisplayFrequency:0;
+#else
+  return (uint32_t)floor((double)libretro_target_refresh_rate()+0.5);
 #endif
 }
 

@@ -327,7 +327,15 @@ static double frontend_cadence(void){
    * so the existing scheduler keeps logical steps independent of the frontend's audio clock. */
   if(g_libretro.config.adjust_crt_tv && fps<50.0){
     double refresh=ceil(50.0/fps)*fps;
-    if(refresh<=60.0) return refresh;
+    if(refresh>60.0) return fps;
+    double target=libretro_target_refresh_rate();
+    /* A frontend on a lower fixed refresh can accept the AV request without being able to
+     * deliver it. Prefer its reported standard CRT target and pace the steps against that. */
+    if(target>0.0 && refresh>target*1.01) return target>=49.5?target:fps;
+    double held=g_libretro.presented_fps;
+    if(held>refresh && held<=60.0 && (!target || held<=target*1.01) &&
+       fabs(held-round(held/fps)*fps)<0.000001) return held;
+    return refresh;
   }
   return fps;
 }
@@ -365,13 +373,15 @@ void retro_get_system_av_info(struct retro_system_av_info *info){
    * creates the requested context. The prepared runtime cannot run authored boot code yet, so the
    * fallback answer is provisional and the exact result is published from the first frame. */
   if(g_libretro.prepared) g_libretro.provisional_av_exposed=true;
-  /* A frontend asking afresh adopts the content's current cadence. */
-  g_libretro.presented_fps=0.0;
+  /* A fresh AV answer adopts the current cadence unless an explicit display request owns it. */
+  bool base_cadence=!g_libretro.display_active_hz && !g_libretro.display_notification_pending;
+  if(base_cadence) g_libretro.presented_fps=0.0;
   fill_av_info(info);
   g_libretro.announced_aspect=info->geometry.aspect_ratio;
-  g_libretro.presented_crt_adjustment=g_libretro.config.adjust_crt_tv!=0;
-  if(!g_libretro.display_active_hz && !g_libretro.display_notification_pending)
+  if(base_cadence){
     g_libretro.presented_fps=info->timing.fps;
+    g_libretro.presented_crt_adjustment=g_libretro.config.adjust_crt_tv!=0;
+  }
   /* The initial AV answer is the frontend's startup cadence, not a SET_SYSTEM_AV_INFO call
    * outside retro_run. Subsequent requests still require that callback. */
   if(!g_libretro.frame_completed && g_libretro.display_notification_pending &&
@@ -765,6 +775,11 @@ static void update_display_request(void){
   if(g_libretro.display_notification_pending){
     struct retro_system_av_info av;
     fill_av_info(&av);
+    bool crt_adjustment=g_libretro.config.adjust_crt_tv!=0;
+    bool restore_crt_cadence=!g_libretro.display_requested_hz &&
+      (crt_adjustment!=g_libretro.presented_crt_adjustment ||
+       (crt_adjustment && g_libretro.presented_fps<=0.0));
+    if(restore_crt_cadence) av.timing.fps=frontend_cadence();
     bool accepted=g_libretro.environment &&
       g_libretro.environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO,&av);
     libretro_log(RETRO_LOG_INFO,
@@ -774,6 +789,10 @@ static void update_display_request(void){
     if(accepted){
       g_libretro.display_active_hz=g_libretro.display_requested_hz;
       g_libretro.announced_aspect=av.geometry.aspect_ratio;
+      if(restore_crt_cadence){
+        g_libretro.presented_crt_adjustment=crt_adjustment;
+        g_libretro.presented_fps=av.timing.fps;
+      }
     }
     g_libretro.display_notification_pending=false;
   }
@@ -1047,7 +1066,7 @@ void retro_run(void){
   bool room_started=(g_libretro.frame.flags&ANYGM_FRAME_ROOM_STARTED)!=0;
   bool crt_adjustment=g_libretro.config.adjust_crt_tv!=0;
   bool crt_adjustment_changed=crt_adjustment!=g_libretro.presented_crt_adjustment;
-  g_libretro.presented_crt_adjustment=crt_adjustment;
+  if(!display_cadence) g_libretro.presented_crt_adjustment=crt_adjustment;
   if((geometry_changed || timing_changed || room_started || crt_adjustment_changed) &&
      g_libretro.environment){
     if(!av_refreshed) libretro_update_av();

@@ -199,6 +199,7 @@ void libretro_input_snapshot(AnygmInputFrame *input,uint32_t width,uint32_t heig
 void libretro_input_text_acknowledge(uint32_t count);
 void libretro_update_av(void);
 uint32_t libretro_display_frequency(void *userdata);
+float libretro_target_refresh_rate(void);
 AnygmResult libretro_display_request(void *userdata,uint32_t hz);
 void libretro_display_release(void);
 

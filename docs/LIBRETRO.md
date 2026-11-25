@@ -65,9 +65,12 @@ step per tick.
 
 Automatic CRT adjustment requests the lowest whole multiple of a slow game's
 cadence in the 50–60 Hz range when one exists. A game running at 25 or 30 FPS
-therefore runs one step per two refreshes at 50 or 60 Hz. A rate without such
-a multiple keeps its usual cadence. Room changes that use the same refresh
-keep the current mode. Ordinary display output uses the content cadence.
+can run one step per two refreshes at 50 or 60 Hz. When the frontend reports a
+lower standard CRT target, the adapter uses that target and schedules the same
+logical cadence across its refreshes. The frontend supplies its target and
+controls the actual display mode and callback rate. A rate without a suitable
+multiple keeps its usual cadence. A room change can keep the current refresh
+when it remains a whole multiple. Ordinary display output uses the content cadence.
 
 A [declared CRT mode](CONTENT_CONFIGURATION.md#declared-crt-mode) supplies its
 own refresh ahead of the automatic rule. Its refresh is in the startup answer

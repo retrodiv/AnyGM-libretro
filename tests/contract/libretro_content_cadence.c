@@ -19,6 +19,7 @@ static bool running,invalid_callback,refuse_av;
 static unsigned videos,av_calls,silent_ticks;
 static size_t samples,tick_samples;
 static double announced_fps;
+static float target_refresh;
 static unsigned announced_width,geometry_calls,video_width,video_height;
 static int crt_on,options_changed,overrides_on=1,negotiation,mouse_delta;
 
@@ -37,6 +38,9 @@ static bool environment(unsigned command,void *data){
     return !refuse_av;
   }
   if(command==RETRO_ENVIRONMENT_SET_GEOMETRY){ geometry_calls++; return true; }
+  if(command==RETRO_ENVIRONMENT_GET_TARGET_REFRESH_RATE && target_refresh>0){
+    *(float*)data=target_refresh; return true;
+  }
   if(command==RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE){
     *(bool*)data=options_changed!=0; options_changed=0; return true;
   }
@@ -167,7 +171,7 @@ static void options(int crt,int overrides){
 }
 static int enter_room(int room){
   go_to_room(room);
-  for(int i=0;i<4 && room_now()!=room;i++) tick();
+  for(int i=0;i<8 && room_now()!=room;i++) tick();
   return room_now()==room;
 }
 static int snapshot(void *ring,size_t capacity){
@@ -175,10 +179,11 @@ static int snapshot(void *ring,size_t capacity){
   return answer && answer<=capacity && retro_serialize(ring,capacity);
 }
 
-static int automatic_crt_case(int boot_speed,int refresh){
+static int automatic_crt_case(int boot_speed,int refresh,float target){
   AnygmSyntheticContent fixture={0};
   int ok=1;
   negotiation=0; crt_on=1; overrides_on=1; options_changed=0;
+  target_refresh=target;
   invalid_callback=false;
   REQUIRE(anygm_synthetic_cold_room_content_create(&fixture,boot_speed),"create automatic CRT source");
   retro_set_environment(environment); retro_set_video_refresh(video);
@@ -213,7 +218,7 @@ static int automatic_crt_case(int boot_speed,int refresh){
   tick();
   REQUIRE(av_calls==calls+2*multiplied && (!multiplied || announced_fps==refresh),
           "turning CRT adjustment back on restores the repeat cadence when needed");
-  if(boot_speed==30){
+  if(boot_speed==30 && !target){
     calls=av_calls;
     speed(60);
     REQUIRE(enter_room(1),"enter a full-rate room with the same CRT refresh");
@@ -221,6 +226,12 @@ static int automatic_crt_case(int boot_speed,int refresh){
     for(int i=0;i<8;i++) tick();
     REQUIRE(frame_now()==frame+8 && av_calls==calls,
             "a new room keeping the same CRT refresh does not rebuild the frontend");
+    speed(10);
+    REQUIRE(enter_room(0),"enter a ten-FPS room compatible with the held refresh");
+    frame=frame_now();
+    for(int i=0;i<60;i++) tick();
+    REQUIRE(av_calls==calls && frame_now()==frame+10,
+            "another exact multiple keeps the held refresh at a room change");
     retro_reset();
     for(int i=0;i<4;i++) tick();
     REQUIRE(av_calls==calls && g_libretro.av.frames_per_second==30,
@@ -235,10 +246,28 @@ static int automatic_crt_case(int boot_speed,int refresh){
     for(int i=0;i<8;i++) tick();
     REQUIRE(av_calls==calls+1 && frame_now()==frame+8,
             "a refused CRT transition schedules against the preceding frontend clock");
+
+    refuse_av=false;
+    options(0,1);
+    tick();
+    /* Model a frontend which already accepted an independent display request. */
+    GmlVM *vm=&g_libretro.engine->vm;
+    *gml_varmap_put(&vm->globals,"__display_request_hz")=vreal(50);
+    g_libretro.display_active_hz=g_libretro.display_requested_hz=g_libretro.display_source_hz=50;
+    calls=av_calls;
+    options(1,1);
+    tick();
+    retro_get_system_av_info(&av);
+    REQUIRE(av.timing.fps==50 && av_calls==calls,"an active display request keeps its refresh");
+    *gml_varmap_put(&vm->globals,"__display_request_hz")=vreal(0);
+    tick();
+    REQUIRE(!g_libretro.display_active_hz && av_calls==calls+1 && announced_fps==60,
+            "releasing the display request applies the pending CRT cadence once");
   }
   REQUIRE(!invalid_callback,"automatic CRT updates run inside retro_run");
 done:
   refuse_av=false;
+  target_refresh=0;
   retro_unload_game(); retro_deinit(); anygm_synthetic_content_destroy(&fixture);
   return ok;
 }
@@ -427,8 +456,9 @@ done:
 
 int main(void){
   if(!held_cadence_case()) return EXIT_FAILURE;
-  if(!automatic_crt_case(25,50) || !automatic_crt_case(30,60) ||
-     !automatic_crt_case(48,48) || !automatic_crt_case(60,60)) return EXIT_FAILURE;
+  if(!automatic_crt_case(25,50,0) || !automatic_crt_case(30,60,0) ||
+     !automatic_crt_case(30,60,60) || !automatic_crt_case(30,50,50) ||
+     !automatic_crt_case(48,48,0) || !automatic_crt_case(60,60,0)) return EXIT_FAILURE;
   for(int response=-1;response<=1;response++)
     if(!declared_mode_case(response,"") || !declared_mode_case(response,"$fixture_marker=7\n"))
       return EXIT_FAILURE;
