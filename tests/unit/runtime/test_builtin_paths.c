@@ -89,6 +89,20 @@ static int speeds_case(void){
     ok &= expect(value.t==V_REAL && value.d==100,"closed endpoint reaches first speed");
     args[1]=vreal(NAN); value=call(&vm,"path_get_speed",args,2,cached,&ok);
     ok &= expect(value.t==V_REAL && value.d==0,"nonfinite query is rejected");
+
+    /* The product rounds to one before the addition cancels it. A fused operation or
+     * extended-precision intermediate would instead leave a negative speed. */
+    GmlVal rounding_path=call(&vm,"path_add",NULL,0,cached,&ok);
+    GmlVal open_args[]={rounding_path,vreal(0)};
+    GmlVal start_args[]={rounding_path,vreal(0),vreal(0),vreal(-1)};
+    GmlVal end_args[]={rounding_path,vreal(1),vreal(0),vreal(0x1p-27)};
+    call(&vm,"path_set_closed",open_args,2,cached,&ok);
+    call(&vm,"path_add_point",start_args,4,cached,&ok);
+    call(&vm,"path_add_point",end_args,4,cached,&ok);
+    GmlVal rounding_args[]={rounding_path,vreal(0x1.ffffffcp-1)};
+    value=call(&vm,"path_get_speed",rounding_args,2,cached,&ok);
+    ok &= expect(value.t==V_REAL && value.d==0 && !signbit(value.d),
+                 "path interpolation rounds the product before adding the endpoint");
     gml_vm_free(&vm);
   }
   return ok;

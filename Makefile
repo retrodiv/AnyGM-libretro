@@ -105,6 +105,17 @@ CFLAGS += -O2
 CXXFLAGS += -O2
 endif
 
+# Keep separate rounding for multiply and add in runtime arithmetic. Query the effective
+# target so a compiler invoked with -m32 selects the same policy as an i686 cross compiler.
+ANYGM_X86_32 := $(shell $(CC) $(CPPFLAGS) $(CFLAGS) -dM -E -x c /dev/null 2>/dev/null | \
+	grep -q '^\#define __i386__ ' && printf 1)
+ANYGM_FP_FLAGS := -ffp-contract=off
+ifeq ($(ANYGM_X86_32),1)
+ANYGM_FP_FLAGS += -msse2 -mfpmath=sse
+endif
+CFLAGS += $(ANYGM_FP_FLAGS)
+CXXFLAGS += $(ANYGM_FP_FLAGS)
+
 CORE_BASENAME := $(TARGET_NAME)_libretro
 CORE_EXTENSION := so
 # The Android library keeps the libretro buildbot's platform-specific filename, which is how the

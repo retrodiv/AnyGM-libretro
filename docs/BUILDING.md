@@ -171,6 +171,12 @@ The root `Makefile` selects a platform shape with `platform` and the toolchain
 with `CROSS_COMPILE` or with an explicit `CC`/`CXX`/`AR`. The name of the
 published library follows the libretro buildbot's per-platform convention.
 
+Default builds disable implicit floating-point contraction in C and C++.
+The 32-bit x86 targets use SSE2 scalar arithmetic and require an SSE2-capable
+processor. These choices keep multiply/add rounding consistent for a given
+operation. Results can still vary across math libraries, host services, or
+graphics devices.
+
 ```sh
 # Linux x86-64 (default) and Linux i686
 make -j4 platform=unix core
