@@ -472,8 +472,10 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
        (quad->sampling.quantisation==0u ||
         quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SURFACE_LEADING ||
         quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_FILTERED ||
-        quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_LEADING) &&
-       state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
+        quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_LEADING ||
+        quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_FILTERED_CUTOFF) &&
+       (state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
+        quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_FILTERED_CUTOFF) &&
        source_width<=16384u && source_height<=16384u &&
        quad->x[1]-quad->x[0]<=16384.0 && quad->y[2]-quad->y[0]<=16384.0){
       vertex[19]=(float)quad->x[0];vertex[20]=(float)quad->y[0];

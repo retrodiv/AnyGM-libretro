@@ -2,10 +2,21 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "anygm_host.h"
+#include "anygm_development_settings.h"
 
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+
+const char *const *anygm_development_setting_names(size_t *count){
+  static const char *const names[ANYGM_DEVELOPMENT_COUNT]={
+#define ANYGM_DEVELOPMENT_SETTING(name,purpose,retention) "GML_" #name,
+#include "anygm_development_settings.def"
+#undef ANYGM_DEVELOPMENT_SETTING
+  };
+  if(count) *count=sizeof names/sizeof names[0];
+  return names;
+}
 
 const char *anygm_host_development_setting(const AnygmHostServices *host,const char *name){
   if(!host || !host->development_setting || !name || !name[0]) return NULL;

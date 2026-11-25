@@ -5132,7 +5132,7 @@ static int scene_modern_filtered_surface_case(void){
     GML_RENDER_RESOURCE_SURFACE,GML_RENDER_RESOURCE_SCRATCH};
   for(unsigned api=0;api<2u;api++)for(unsigned kind=0;kind<4u;kind++)
   for(unsigned target_kind=0;target_kind<2u;target_kind++)
-  for(unsigned feedback=0;feedback<2u;feedback++){
+  for(unsigned feedback=0;feedback<2u;feedback++)for(unsigned typed=0;typed<2u;typed++){
     anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
     REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"modern filtered surface context");
@@ -5151,7 +5151,8 @@ static int scene_modern_filtered_surface_case(void){
       .rgb_equation=GML_RENDER_BLEND_ADD,.alpha_equation=GML_RENDER_BLEND_ADD};
     state.samplers[0]=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_HARDWARE_BILINEAR,
       GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,2u,2u},
-      feedback?GML_RENDER_QUANTISE_SURFACE_TILED_FILTERED:0u,0u};
+      typed?GML_RENDER_QUANTISE_SURFACE_FILTERED_CUTOFF:
+        feedback?GML_RENDER_QUANTISE_SURFACE_TILED_FILTERED:0u,0u};
     GmlRenderDrawOp ops[2]={0};
     for(unsigned i=0;i<2u;i++)ops[i].target=(GmlRenderTargetRef){
       {target_kind?GML_RENDER_RESOURCE_APPLICATION:GML_RENDER_RESOURCE_SURFACE,186u,1u,i+1u},
@@ -5167,9 +5168,30 @@ static int scene_modern_filtered_surface_case(void){
     }
     GmlRenderDrawBatch batch={ops,2u,&state,1u};
     state.alpha_test_enabled=1u;state.alpha_test_reference=127u;
-    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_UNSUPPORTED &&
-      !anygm_test_graphics_clear_calls(),"unqualified filtered cutoff refuses before the prefix clear");
-    state.alpha_test_enabled=0u;state.alpha_test_reference=0u;
+    if(!typed){
+      REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_UNSUPPORTED &&
+        !anygm_test_graphics_clear_calls(),"unqualified filtered cutoff refuses before the prefix clear");
+      state.alpha_test_enabled=0u;state.alpha_test_reference=0u;
+    }else{
+      for(unsigned malformed=0;malformed<5u;malformed++){
+        GmlRenderDrawStateSnapshot invalid=state;
+        GmlRenderDrawOp candidate[2]={ops[0],ops[1]};
+        switch(malformed){
+          case 0:invalid.alpha_test_enabled=0u;break;
+          case 1:invalid.alpha_test_reference=0u;break;
+          case 2:invalid.alpha_test_reference=256u;break;
+          case 3:candidate[1].payload.quad.sampling.filter=GML_RENDER_FILTER_NEAREST;
+                 invalid.samplers[0]=candidate[1].payload.quad.sampling;break;
+          case 4:candidate[1].payload.quad.x[1]=candidate[1].payload.quad.x[2]=16384.0;break;
+        }
+        GmlRenderDrawBatch refused={candidate,2u,&invalid,1u};
+        GmlRenderExecutionResult result=device.submit(device.context,&refused);
+        REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+          !result.uncertain_target_count && !anygm_test_graphics_clear_calls() &&
+          !anygm_test_graphics_scene_draw_calls(),
+          "malformed cutoff surface cannot publish its clear prefix");
+      }
+    }
     REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED &&
       anygm_test_graphics_scene_draw_calls()==1 && !anygm_test_graphics_scene_mask_draws(8u) &&
       !anygm_test_graphics_read_pixels(),"modern filtered source-over draws once without opaque stamp or readback");

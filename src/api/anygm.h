@@ -15,7 +15,7 @@ extern "C" {
  * runtime library version, and every publishable metadata file declares the literal "Git" instead
  * of a number, so no copy can promise a value that has gone stale. CONTRIBUTING.md owns the single
  * increment step. */
-#define ANYGM_VERSION "0.1.1029"
+#define ANYGM_VERSION "0.1.1030"
 #define ANYGM_API_VERSION 12u
 #define ANYGM_HOST_SERVICES_VERSION 4u
 #define ANYGM_STATE_SCHEMA 70u
@@ -645,6 +645,9 @@ typedef struct AnygmAvInfo {
 } AnygmAvInfo;
 
 uint32_t anygm_api_version(void);
+/* Borrow the immutable, sorted names understood by the development-setting
+ * service. Hosts can use this list to snapshot settings before loading content. */
+const char *const *anygm_development_setting_names(size_t *count);
 AnygmResult anygm_create(const AnygmHostServices *services,AnygmEngine **engine);
 void anygm_destroy(AnygmEngine *engine);
 /* Prepare and validate content without running extension, room or instance events. The renderer's

@@ -219,7 +219,9 @@ enum {
   GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_TRUNC=32u,
   GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_ROUND=33u,
   /* Continuous source coverage retains a positive binary64 draw opacity. */
-  GML_RENDER_QUANTISE_FILTERED_RAW_POSITIVE_ALPHA=34u
+  GML_RENDER_QUANTISE_FILTERED_RAW_POSITIVE_ALPHA=34u,
+  /* Complete magnified surface quad with unquantized alpha testing. */
+  GML_RENDER_QUANTISE_SURFACE_FILTERED_CUTOFF=35u
 };
 
 /* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors

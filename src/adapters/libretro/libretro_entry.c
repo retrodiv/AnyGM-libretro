@@ -563,7 +563,7 @@ bool retro_load_game(const struct retro_game_info *info){
   g_libretro.provisional_av_exposed=false;
   g_libretro.startup_av_notification_pending=false;
   g_libretro.announced_aspect=0.0f;
-  libretro_development_settings_capture();
+  if(!libretro_development_settings_capture()) return false;
   update_directories();
   update_locale();
   libretro_options_apply(true);

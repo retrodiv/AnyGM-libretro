@@ -260,27 +260,29 @@ static uint64_t host_random_seed(void *userdata){
   return value^(value>>31);
 }
 
-static const char *const development_names[ANYGM_DEVELOPMENT_COUNT]={
-#define ANYGM_DEVELOPMENT_SETTING(name,purpose,retention) "GML_" #name,
-#include "anygm_development_settings.def"
-#undef ANYGM_DEVELOPMENT_SETTING
-};
-
 void libretro_development_settings_clear(void){
-  for(size_t i=0;i<ANYGM_DEVELOPMENT_COUNT;i++){
+  for(size_t i=0;i<g_libretro.development_setting_count;i++)
     free(g_libretro.development_settings[i]);
-    g_libretro.development_settings[i]=NULL;
-  }
-  g_libretro.development_settings_captured=false;
+  free(g_libretro.development_settings);
+  g_libretro.development_settings=NULL;
+  g_libretro.development_setting_names=NULL;
+  g_libretro.development_setting_count=0;
 }
 
-void libretro_development_settings_capture(void){
+bool libretro_development_settings_capture(void){
   libretro_development_settings_clear();
-  for(size_t i=0;i<ANYGM_DEVELOPMENT_COUNT;i++){
-    const char *value=getenv(development_names[i]);
-    if(value) g_libretro.development_settings[i]=strdup(value);
+  size_t count=0;
+  const char *const *names=anygm_development_setting_names(&count);
+  char **settings=calloc(count,sizeof *settings);
+  if(!settings) return false;
+  for(size_t i=0;i<count;i++){
+    const char *value=getenv(names[i]);
+    if(value) settings[i]=strdup(value);
   }
-  g_libretro.development_settings_captured=true;
+  g_libretro.development_setting_names=names;
+  g_libretro.development_settings=settings;
+  g_libretro.development_setting_count=count;
+  return true;
 }
 
 static const char *host_development_setting(void *userdata,const char *name){
@@ -300,11 +302,11 @@ static const char *host_development_setting(void *userdata,const char *name){
              g_libretro.language,g_libretro.region[0]?g_libretro.region:"US");
     return g_libretro.locale_variable;
   }
-  if(g_libretro.development_settings_captured){
-    size_t first=0,last=ANYGM_DEVELOPMENT_COUNT;
+  if(g_libretro.development_settings){
+    size_t first=0,last=g_libretro.development_setting_count;
     while(first<last){
       size_t middle=first+(last-first)/2;
-      int order=strcmp(name,development_names[middle]);
+      int order=strcmp(name,g_libretro.development_setting_names[middle]);
       if(!order) return g_libretro.development_settings[middle];
       if(order<0) last=middle;
       else first=middle+1;

@@ -508,6 +508,9 @@ static uint32_t scene_filter(const GmlRenderQuad *quad,
        quad->shape==GML_RENDER_QUAD_AXIS_ALIGNED)) &&
      quad->sampling.filter==GML_RENDER_FILTER_NEAREST &&
      state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) return 25u;
+  if(quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_FILTERED_CUTOFF)
+    return qualified_blend(state)==3?GL_SCENE_SURFACE_CUTOFF_PRESERVING_FILTER:
+                                     GL_SCENE_SURFACE_CUTOFF_FILTER;
   if(family==GML_RENDER_SCENE_SURFACE &&
      quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
      (quad->sampling.quantisation==0u ||
@@ -1158,15 +1161,16 @@ static int hardware_surface_quad_valid(const GmlRenderDrawOp *op,
   const GmlRenderQuad *quad=&op->payload.quad;
   int destination_blend=qualified_blend(state)==11;
   int point=quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT;
+  int cutoff=quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_FILTERED_CUTOFF;
   int preserving=qualified_blend(state)==3 && !state->coverage_policy &&
     quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
     (quad->sampling.quantisation==0u ||
-     quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_FILTERED) &&
-    !state->alpha_test_enabled &&
+     quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_FILTERED || cutoff) &&
+    (!state->alpha_test_enabled || cutoff) &&
     state->write_mask==15u && op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN;
   int leading=quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SURFACE_LEADING ||
     quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_LEADING;
-  int tiled=quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_FILTERED ||
+  int tiled=cutoff || quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_FILTERED ||
     quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_LEADING;
   int integer_screen=source && source->width && source->height &&
     op->sources[0].resource_class==GML_RENDER_RESOURCE_SURFACE &&
@@ -1198,6 +1202,11 @@ static int hardware_surface_quad_valid(const GmlRenderDrawOp *op,
      (quad->sampling.quantisation && !leading && !tiled) ||
      (tiled && quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR) ||
      (tiled && (state->alpha_test_enabled>1u || state->alpha_test_reference>255u)) ||
+     (cutoff && (state->alpha_test_enabled!=1u || !state->alpha_test_reference ||
+                state->source_alpha_key || state->source_palette.enabled || destination_blend ||
+                source->width>16384u || source->height>16384u ||
+                fabs(quad->x[0])>65536.0 || fabs(quad->y[0])>65536.0 ||
+                quad->x[1]-quad->x[0]>16384.0 || quad->y[2]-quad->y[0]>16384.0)) ||
      quad->sampling.logical_margin_mask || quad->span_active ||
      quad->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
      !full_region(quad->sampling.source_region,source->width,source->height) ||
@@ -2301,7 +2310,8 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
            sampling->quantisation==GML_RENDER_QUANTISE_INTEGER_FLAT_RGB) && !integer_function && !physical_sprite) ||
          state->colour!=0xFFFFFFFFu || (state->alpha_test_enabled && !integer_function && !physical_sprite && !stretched_box && !screen_axis_sprite &&
            !(hardware_surface && (sampling->quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_FILTERED ||
-                                 sampling->quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_LEADING))) ||
+                                 sampling->quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_LEADING ||
+                                 sampling->quantisation==GML_RENDER_QUANTISE_SURFACE_FILTERED_CUTOFF))) ||
          blend<0 || ((blend==13 || blend==14 || (blend>=18 && blend<=21)) && !integer_function && !physical_sprite) ||
          ((blend==15 || blend==16 || blend==17) && !physical_sprite) ||
          (blend==11 && (!hardware_surface || !backend->gl.CopyTexSubImage2D)) ||
@@ -2519,7 +2529,8 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                sampling->filter==GML_RENDER_FILTER_NEAREST)))) return 0;
         if((colour>>24)!=255u && !integer_function && !physical_sprite && !stretched_box &&
            !(hardware_surface && (sampling->quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_FILTERED ||
-                                 sampling->quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_LEADING)) &&
+                                 sampling->quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_LEADING ||
+                                 sampling->quantisation==GML_RENDER_QUANTISE_SURFACE_FILTERED_CUTOFF)) &&
            blend!=1 && blend!=3 && blend!=9 && blend!=10 && blend!=11) return 0;
         if((blend==4 || blend==5 ||
             (sampling->quantisation && !stretched_box && !hardware_surface && blend!=6 && blend!=8 && !modern_numbered_sprite && !integer_function && !physical_sprite)) &&
@@ -3048,6 +3059,11 @@ static int flush_quads_target(GmlGpuBackend *backend,GlSceneImage *target,GlScen
   if(positive_byte) filter-=GL_SCENE_BYTE_POSITIVE_FILTER_OFFSET;
   if(positive_raw) filter-=GL_SCENE_RAW_POSITIVE_FILTER_OFFSET;
   if(unit_background) filter-=GL_SCENE_UNIT_BACKGROUND_FILTER_OFFSET;
+  int surface_cutoff=requested_filter>=GL_SCENE_SURFACE_CUTOFF_FILTER &&
+    requested_filter<=GL_SCENE_SURFACE_CUTOFF_PRESERVING_FILTER;
+  if(surface_cutoff)
+    filter=requested_filter==GL_SCENE_SURFACE_CUTOFF_FILTER?21u:
+      requested_filter==GL_SCENE_SURFACE_CUTOFF_STAMP_FILTER?22u:79u;
   GLfloat extent[2]={(GLfloat)target->width,(reflected?-1.0f:1.0f)*(GLfloat)target->height};
   int native_texture=filter>=GL_SCENE_NATIVE_TEXTURE_NEAREST_FILTER &&
                      filter<=GL_SCENE_NATIVE_TEXTURE_SURFACE_LINEAR_FILTER;
@@ -3145,7 +3161,8 @@ static int flush_quads_target(GmlGpuBackend *backend,GlSceneImage *target,GlScen
       if(!equal) native_flags&=~GL_SCENE_NATIVE_EQUAL_EXTENT;
     }
   }
-  program=gml_gpu_opengl_scene_draw_program(backend,positive_byte || positive_raw?requested_filter:filter,native_flags,NULL,0);
+  program=gml_gpu_opengl_scene_draw_program(backend,positive_byte || positive_raw || surface_cutoff
+    ?requested_filter:filter,native_flags,NULL,0);
   if(!program) return 0;
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
   backend->gl.Viewport(0,0,(GLsizei)target->width,(GLsizei)target->height);
@@ -3421,7 +3438,7 @@ restore_stream_state:
      !flush_quads_target(backend,target,source,48u,0,count,8u,alpha_test,
                   source_alpha_key,palette,reflected)) return 0;
   if(!skip_alpha && ((filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==GL_SCENE_AFFINE_SURFACE_POINT_OPAQUE_FILTER) || filter==23u || filter==35u || filter==39u || filter==40u || filter==53u || filter==66u || filter==21u || filter==25u || (filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER) || filter==80u) && (write_mask&8u))
-    if(!flush_quads_target(backend,target,source,filter==GL_SCENE_AFFINE_SURFACE_POINT_OPAQUE_FILTER?GL_SCENE_AFFINE_SURFACE_POINT_STAMP_FILTER:filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER?GL_SCENE_NATIVE_POINT_STAMP_FILTER:filter==23u?24u:filter==35u?36u:(filter==39u || filter==40u)?41u:filter==53u?55u:filter==21u?22u:filter==25u?26u:(filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER)?33u:filter==80u?(positive_raw?GL_SCENE_RAW_POSITIVE_FILTER_OFFSET+82u:82u):(unit_background?GL_SCENE_UNIT_BACKGROUND_FILTER_OFFSET+72u:72u),0,count,8u,alpha_test,
+    if(!flush_quads_target(backend,target,source,filter==GL_SCENE_AFFINE_SURFACE_POINT_OPAQUE_FILTER?GL_SCENE_AFFINE_SURFACE_POINT_STAMP_FILTER:filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER?GL_SCENE_NATIVE_POINT_STAMP_FILTER:filter==23u?24u:filter==35u?36u:(filter==39u || filter==40u)?41u:filter==53u?55u:filter==21u?(surface_cutoff?GL_SCENE_SURFACE_CUTOFF_STAMP_FILTER:22u):filter==25u?26u:(filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER)?33u:filter==80u?(positive_raw?GL_SCENE_RAW_POSITIVE_FILTER_OFFSET+82u:82u):(unit_background?GL_SCENE_UNIT_BACKGROUND_FILTER_OFFSET+72u:72u),0,count,8u,alpha_test,
                     source_alpha_key,palette,reflected)) return 0;
   if(full_opaque_point)target->alpha_opaque=target->alpha_nonzero=1;
   if(surface_bounded && program->identity_surface_body && filter!=55u) backend->bounded_surface_draws++;

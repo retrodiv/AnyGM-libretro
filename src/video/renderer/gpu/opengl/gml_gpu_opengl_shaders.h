@@ -742,6 +742,81 @@
   "#endif\n" \
   "}\n" \
   "#endif\n" \
+  "#ifdef GML_SCENE_SURFACE_CUTOFF\n" \
+  GML_GPU_OPENGL_BINARY64_BODY \
+  "uvec2 surface_alpha_scale(uint weight,uint value){\n" \
+  "  uint low=(weight&65535u)*value;\n" \
+  "  uint high=(weight>>16u)*value;\n" \
+  "  uint result=low+(high<<16u);\n" \
+  "  return uvec2(result,(high>>16u)+uint(result<low));\n" \
+  "}\n" \
+  "uvec2 surface_alpha_add(uvec2 a,uvec2 b){\n" \
+  "  uint low=a.x+b.x;\n" \
+  "  return uvec2(low,a.y+b.y+uint(low<a.x));\n" \
+  "}\n" \
+  "// Diagnostic for the strict threshold only. Operands are finite and nonnegative.\n" \
+  "uvec2 surface_round_float(uvec2 value){\n" \
+  "  uint tail=value.x&0x1fffffffu;\n" \
+  "  bool odd=(value.x&0x20000000u)!=0u;\n" \
+  "  if(tail>0x10000000u || (tail==0x10000000u && odd))\n" \
+  "    value=limb_add(value,uvec2(0x20000000u,0u));\n" \
+  "  value.x&=~0x1fffffffu;\n" \
+  "  return value;\n" \
+  "}\n" \
+  "uvec2 surface_float_phase(int pixel,int size,int denominator,int low,bool leading){\n" \
+  "  uint numerator=uint((leading?pixel:2*pixel+1)*size);\n" \
+  "  uvec2 point=d64_div(d64_uint(numerator),d64_uint(uint(denominator)));\n" \
+  "  if(!leading)point=d64_sub(point,uvec2(0u,0x3fe00000u));\n" \
+  "  return surface_round_float(d64_sub(point,d64_int(low)));\n" \
+  "}\n" \
+  "bool surface_float_cutoff(ivec2 pixel,ivec2 size,ivec2 den,ivec2 low,\n" \
+  "                          bool leading,uvec4 alpha){\n" \
+  "  uvec2 one=uvec2(0u,0x3ff00000u);\n" \
+  "  uvec2 fx=surface_float_phase(pixel.x,size.x,den.x,low.x,leading);\n" \
+  "  uvec2 fy=surface_float_phase(pixel.y,size.y,den.y,low.y,leading);\n" \
+  "  uvec2 ix=surface_round_float(d64_sub(one,fx));\n" \
+  "  uvec2 iy=surface_round_float(d64_sub(one,fy));\n" \
+  "  uvec2 sum=uvec2(0u);\n" \
+  "  for(int y=0;y<2;y++)for(int x=0;x<2;x++){\n" \
+  "    uvec2 weight=surface_round_float(d64_mul(x==0?ix:fx,y==0?iy:fy));\n" \
+  "    uvec2 term=surface_round_float(d64_mul(d64_uint(alpha[2*y+x]),weight));\n" \
+  "    sum=surface_round_float(d64_add(sum,term));\n" \
+  "  }\n" \
+  "  return limb_less(d64_uint(uint(u_alpha_test)),sum);\n" \
+  "}\n" \
+  "\n" \
+  "bool surface_cutout_alpha(out float alpha){\n" \
+  "  ivec2 size=textureSize(u_image,0),extent=ivec2(v_span_x.zw);\n" \
+  "  ivec2 pixel=ivec2(floor(vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y)-v_span_x.xy));\n" \
+  "  bool leading=v_span_y.y!=0.0;\n" \
+  "  ivec2 den=leading?extent:2*extent;\n" \
+  "  ivec2 numerator=leading?pixel*size:(2*pixel+ivec2(1))*size-extent;\n" \
+  "  ivec2 low=numerator/den,remainder=numerator-low*den;\n" \
+  "  if(remainder.x<0){low.x--;remainder.x+=den.x;}\n" \
+  "  if(remainder.y<0){low.y--;remainder.y+=den.y;}\n" \
+  "  uvec2 numerator_alpha=uvec2(0u);\n" \
+  "  uvec4 taps;\n" \
+  "  for(int y=0;y<2;y++)for(int x=0;x<2;x++){\n" \
+  "    ivec2 at=clamp(low+ivec2(x,y),ivec2(0),size-ivec2(1));\n" \
+  "    if(v_span_y.x!=0.0)at.y=size.y-1-at.y;\n" \
+  "    uint a=uint(floor(source_texel(at,0).a*255.0+0.5));\n" \
+  "    taps[2*y+x]=a;\n" \
+  "    uint weight=uint(x==0?den.x-remainder.x:remainder.x)*uint(y==0?den.y-remainder.y:remainder.y);\n" \
+  "    numerator_alpha=surface_alpha_add(numerator_alpha,surface_alpha_scale(weight,a));\n" \
+  "  }\n" \
+  "  uint area=uint(den.x)*uint(den.y);\n" \
+  "  uvec2 cutoff=surface_alpha_scale(area,uint(u_alpha_test));\n" \
+  "  bool above=limb_less(cutoff,numerator_alpha);\n" \
+  "  uvec2 delta=above?limb_sub(numerator_alpha,cutoff):limb_sub(cutoff,numerator_alpha);\n" \
+  "  // Conservative maximum alpha error for four positive byte-weight products\n" \
+  "  // and sequential float32 additions, expressed in numerator units.\n" \
+  "  if(delta.y==0u && delta.x<=(area+2047u)/2048u){\n" \
+  "    if(!surface_float_cutoff(pixel,size,den,low,leading,taps))return false;\n" \
+  "  }else if(!above)return false;\n" \
+  "  alpha=(float(numerator_alpha.y)*4294967296.0+float(numerator_alpha.x))/(255.0*float(area));\n" \
+  "  return true;\n" \
+  "}\n" \
+  "#endif\n" \
   "vec4 hardware_background_tap(ivec2 at){\n" \
   "  ivec2 extent=textureSize(u_image,0);\n" \
   "  if(any(lessThan(at,ivec2(0))) || any(greaterThanEqual(at,extent))) return vec4(0.0);\n" \
@@ -1290,12 +1365,14 @@
   "    vec4 sampled=unit_texel?source_texel(ivec2(floor(uv*extent)),0):\n" \
   "      margin!=0?hardware_physical_sprite_sample(v_texcoord,\n" \
   "        ivec2(v_clamp.xy),ivec2(v_clamp.zw),margin):source_texture(uv);\n" \
-  "#if !defined(GML_SCENE_ZERO_ALPHA_BLEND) && !defined(GML_SCENE_RAW_POSITIVE_ALPHA)\n" \
+  "#if !defined(GML_SCENE_ZERO_ALPHA_BLEND) && !defined(GML_SCENE_RAW_POSITIVE_ALPHA) && !defined(GML_SCENE_SURFACE_CUTOFF)\n" \
   "    if(!covered_row && physical_filter<112 && u_alpha_test>=0 && sampled.a*255.0<=float(u_alpha_test)) discard;\n" \
   "#endif\n" \
   "    if(physical_filter>=79){\n" \
   "      float alpha=sampled.a*v_colour.a;\n" \
-  "#ifdef GML_SCENE_RAW_POSITIVE_ALPHA\n" \
+  "#ifdef GML_SCENE_SURFACE_CUTOFF\n" \
+  "      float raw; if(!surface_cutout_alpha(raw)) discard; alpha=raw*v_colour.a;\n" \
+  "#elif defined(GML_SCENE_RAW_POSITIVE_ALPHA)\n" \
   "      // Visibility uses raw alpha taps; fixed UNORM filtering can lose the subnormal tie.\n" \
   "      // Colour keeps the device sample. One affine quad supplies the support coordinates.\n" \
   "      int cutout_alpha_byte;\n" \
@@ -1353,7 +1430,12 @@
   "    }\n" \
   "    float alpha=sampled.a*v_colour.a;\n" \
   "#ifndef GML_SCENE_ZERO_ALPHA_BLEND\n" \
+  "#ifdef GML_SCENE_SURFACE_CUTOFF\n" \
+  "    float raw; if(!surface_cutout_alpha(raw)) discard;\n" \
+  "    support=raw; alpha=raw*v_colour.a;\n" \
+  "#else\n" \
   "    if(u_alpha_test>=0 && (u_alpha_test==0?support<=0.0:sampled.a*255.0<=float(u_alpha_test))) discard;\n" \
+  "#endif\n" \
   "    if(support<=0.0 || v_colour.a<=0.0) discard;\n" \
   "#endif\n" \
   "#ifndef GML_SCENE_WHITE_TINT\n" \

@@ -3628,13 +3628,14 @@ static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,do
    * alpha. Other old owners keep their cutoff fence; the ordinary function
    * executor below carries and tests its raw surface alpha explicitly. */
   if(r->alpha_test_enable && !point_presentation && resolved_canvas!=2) return 0;
-  /* The CPU float band can overshoot an all-255 alpha by a rounding ULP.
-   * Its inclusive maximum cutoff therefore has no natural hardware coverage. */
-  if(resolved_canvas==2 && r->alpha_test_enable && r->alpha_test_ref==255u) return 0;
-  /* Fixed sampler precision at a nonopaque cutoff can change fragment
-   * admission,not just colour. Keep that measured coverage boundary explicit. */
-  if(resolved_canvas==2 && r->alpha_test_enable && r->alpha_test_ref>0u &&
-     !surface_known_opaque(r,surf)) return 0;
+  /* A filtered cutoff is evaluated in source-alpha space, before the
+   * device's normalized colour sample. The packet carries one integer box. */
+  int filtered_cutoff=resolved_canvas==2 && r->alpha_test_enable && r->alpha_test_ref &&
+    !classic_filter && r->interp && !r->blendmode && width>source_width && height>source_height &&
+    source_width>0 && source_height>0 && source_width<=16384 && source_height<=16384 &&
+    width<=16384.0 && height<=16384.0 && fabs(left)<=65536.0 && fabs(top)<=65536.0;
+  if(resolved_canvas==2 && r->alpha_test_enable && r->alpha_test_ref && !filtered_cutoff &&
+     (r->alpha_test_ref==255u || !surface_known_opaque(r,surf))) return 0;
   /* Partial-alpha composition uses the ordinary leading-edge unit kernel,
    * not the opaque GUI leaf's pixel-centre geometry. Admit only its corrected
    * 1:1 extent; all nonunit point blends retain their existing owner. */
@@ -3763,7 +3764,9 @@ static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,do
       quad->u[corner]+=u;quad->v[corner]+=v;
     }
   }
-  else if(resolved_canvas==2) quad->sampling.quantisation=GML_RENDER_QUANTISE_SURFACE_TILED_FILTERED;
+  else if(resolved_canvas==2)
+    quad->sampling.quantisation=filtered_cutoff?GML_RENDER_QUANTISE_SURFACE_FILTERED_CUTOFF:
+                                                GML_RENDER_QUANTISE_SURFACE_TILED_FILTERED;
   if(unit_gui_blend && unit) quad->source_opaque=1u;
   if(point_presentation){
     quad->source_opaque=1u;
