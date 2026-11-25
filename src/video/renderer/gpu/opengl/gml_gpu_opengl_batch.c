@@ -1419,11 +1419,6 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
      quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_TRUNC ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_ROUND);
-  int background_blend=byte_background && (blend==0 || blend==1 || blend==3 || blend==9 ||
-    ((text_axis_row || text_quad) && blend==15) ||
-    (blend>=18 && blend<=21) || blend==24 || blend==25 ||
-    (blend>=GL_SCENE_BLEND_SURFACE_DEST_BASE && blend<=GL_SCENE_BLEND_SURFACE_DEST_LIMIT &&
-     state->rgb_equation==GML_RENDER_BLEND_ADD && state->alpha_equation==GML_RENDER_BLEND_ADD));
   int positive_background=
     quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_TRUNC ||
     quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_ROUND;
@@ -1433,6 +1428,12 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
     !quad->span_active && byte_background &&
     gml_gpu_opengl_clamped_background_valid(op,state,source->width,source->height) &&
     valid_cutoff && (positive_background || !state->alpha_test_reference);
+  int cutoff_inverse=native_background_quad && positive_background && state->alpha_test_enabled;
+  int background_blend=byte_background && (blend==0 || blend==1 || blend==3 || blend==9 ||
+    ((text_axis_row || text_quad || cutoff_inverse) && blend==15) ||
+    (blend>=18 && blend<=21) || blend==24 || blend==25 ||
+    (blend>=GL_SCENE_BLEND_SURFACE_DEST_BASE && blend<=GL_SCENE_BLEND_SURFACE_DEST_LIMIT &&
+     state->rgb_equation==GML_RENDER_BLEND_ADD && state->alpha_equation==GML_RENDER_BLEND_ADD));
   int raw_background=quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_RAW_POSITIVE_ALPHA;
   if(raw_background && (!source ||
      !gml_gpu_opengl_clamped_background_valid(op,state,source->width,source->height) ||
