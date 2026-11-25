@@ -1077,18 +1077,16 @@ void engine_update_host_canvas(AnygmEngine *engine){
   engine->host_display_aspect=0.0;
   if(engine->config.present_logical_raster && engine->config.adjust_crt_tv &&
      source_width && source_height){
-    /* Select limits in source coordinates. Either quarter turn swaps the scanout axes.
+    /* Select the scanline axis in source coordinates. Either quarter turn swaps the axes.
      * Frontend rotation only determines how the fitted frame is delivered. */
     bool vertical=engine_crt_is_vertical(engine);
-    unsigned limit_width=vertical?244u:364u,limit_height=vertical?364u:244u;
     unsigned aspect_width=vertical?3u:4u,aspect_height=vertical?4u:3u;
     if(engine->crt_mode_width && source_width<=engine->crt_mode_width &&
        source_height<=engine->crt_mode_height){
       host_width=engine->crt_mode_width; host_height=engine->crt_mode_height;
       native_padding=declared=1;
       engine->host_crt_active=1;
-    } else if(source_width<=limit_width && source_height<=limit_height &&
-       !aspect_fraction_within_tolerance(source_width,source_height,aspect_width,aspect_height)){
+    } else if(!aspect_fraction_within_tolerance(source_width,source_height,aspect_width,aspect_height)){
       /* Add pixels on one axis only, never resample the native image. A fractional extent
        * rounds up; the centred integer margins can differ by one pixel. */
       if((uint64_t)source_width*aspect_height>(uint64_t)source_height*aspect_width)
@@ -1098,8 +1096,9 @@ void engine_update_host_canvas(AnygmEngine *engine){
       native_padding=1;
       engine->host_crt_active=1;
     }
-    /* A declared mode states its own extent; the automatic limits size only undeclared rasters. */
-    if(!declared && (host_width>limit_width || host_height>limit_height)){
+    /* Check the automatic canvas after padding. An oversize fit samples the original raster. */
+    unsigned scanlines=vertical?host_width:host_height;
+    if(!declared && scanlines>244u){
       unsigned canvas_width=engine->config.crt_canvas_width;
       unsigned canvas_height=engine->config.crt_canvas_height;
       engine->host_crt_area_filter=canvas_height==224u || canvas_height==240u ||

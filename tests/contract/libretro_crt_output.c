@@ -72,7 +72,9 @@ static int geometry_cases(void){
     unsigned host_width,host_height; int x,y,width_fit,height_fit;
   } cases[]={
     {320,240,"None",320,320,240,0,0,320,240},
-    /* The dimension boundary alone is no longer enough: padding this wide raster crosses it. */
+    /* The upper aspect tolerance endpoint at the maximum native line count. */
+    {357,244,"None",357,357,244,0,0,357,244},
+    {358,244,"None",358,640,480,0,22,640,436},
     {364,244,"None",364,640,480,0,25,640,429},
     {365,244,"None",365,640,480,0,26,640,427},
     {320,245,"None",320,640,480,7,0,626,480},
@@ -320,9 +322,14 @@ done:
 }
 
 static int vertical_native_cases(void){
-  static const struct { unsigned width,height,expected_width,expected_height; } cases[]={
-    {244,320,244,320}, {245,320,240,320}, {240,365,240,320},
-    {180,320,240,320}, {180,326,240,320}, {240,348,240,348}
+  static const struct {
+    unsigned width,height,expected_width,expected_height;
+    bool area_filter;
+  } cases[]={
+    {244,320,244,320,false}, {245,320,240,320,true}, {240,365,240,320,true},
+    {180,320,240,320,false}, {180,326,240,320,true}, {240,348,240,348,false},
+    /* Relative tolerance is measured against 3:4 in this orientation. */
+    {244,358,244,358,false}, {244,361,244,361,false}, {244,362,240,320,true}
   };
   for(size_t i=0;i<sizeof cases/sizeof cases[0];i++){
     AnygmSyntheticContent fixture={0};
@@ -337,7 +344,7 @@ static int vertical_native_cases(void){
     retro_run();
     REQUIRE(video_width==cases[i].expected_width && video_height==cases[i].expected_height,
             "vertical threshold and native padding");
-    REQUIRE(g_libretro.engine->host_crt_area_filter==(i==1 || i==2 || i==4),
+    REQUIRE(g_libretro.engine->host_crt_area_filter==cases[i].area_filter,
             "a native-size image keeps its pixels unless post-padding overflows");
 done:
     vertical=0; canvas_width="640px"; canvas_height="480px";

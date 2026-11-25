@@ -31,10 +31,9 @@ static struct retro_core_option_v2_definition g_definitions[]={
    {{"None",NULL},{"Light",NULL},{"Medium",NULL},{"High",NULL},{"Maximum",NULL},{NULL,NULL}},
    "High"},
   {"anygm_adjust_crt_tv","Adjust for 4:3 CRT TV",NULL,
-   "Enables Render at game resolution and hides its selector. Applies CRT size limits after aspect "
-   "forcing and crop. Fits oversized images into the selected CRT canvas with centered black margins. "
-   "Smaller images outside the CRT aspect tolerance receive native-pixel padding and are checked again. "
-   "The frontend controls the TV video mode.",
+   "Enables Render at game resolution and hides its selector. Adds native-pixel padding outside "
+   "the CRT aspect tolerance after aspect forcing and crop. Images that need more than 244 lines "
+   "use the selected oversize canvas. The frontend controls the TV video mode.",
    NULL,"video",
    {{"Off",NULL},{"On",NULL},{NULL,NULL}},
    "Off"},
@@ -56,7 +55,7 @@ static struct retro_core_option_v2_definition g_definitions[]={
   {"anygm_os_screen_orientation","OS Screen Orientation",NULL,
    "Match the screen orientation already set in the operating system. This option only selects "
    "the axes for CRT fitting. The operating system controls its own rotation. Vertical swaps "
-   "the 364x244 limits and canvas axes. Left or Right Image Rotation swaps them again.",
+   "the scanline and canvas axes. Left or Right Image Rotation swaps them again.",
    NULL,"video",
    {{"Horizontal",NULL},{"Vertical",NULL},{NULL,NULL}},
    "Horizontal"},

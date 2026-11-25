@@ -92,24 +92,23 @@ display the canvas with the intended proportions.
 | **CRT Oversize Canvas Width** | Selects **Keep Game Width**, **320px**, **512px**, or **640px** (default). |
 | **CRT Oversize Canvas Height** | Selects **Keep Game Height**, **224px**, **240px**, **360px**, **384px**, **448px** (default), or **480px**. |
 
-CRT adjustment exposes the OS orientation and oversize controls. AnyGM checks the CRT limits
-after aspect forcing and presentation cropping. Left and Right swap
-the limits and canvas axes before fitting. None and Upside Down use the axes selected by
+CRT adjustment exposes the OS orientation and oversize controls. After aspect forcing and
+presentation cropping, AnyGM allows up to 244 lines on the CRT scanline axis. Left and Right swap
+the scanline and canvas axes before fitting. None and Upside Down use the axes selected by
 **OS Screen Orientation**.
 
-| OS Screen Orientation | Image Rotation | Width × height limit in game coordinates | Canvas aspect |
+| OS Screen Orientation | Image Rotation | Axis with the 244-line limit in game coordinates | Canvas aspect |
 | --- | --- | --- | --- |
-| Horizontal | None or Upside Down | 364×244 | 4:3 |
-| Horizontal | Left or Right | 244×364 | 3:4 |
-| Vertical | None or Upside Down | 244×364 | 3:4 |
-| Vertical | Left or Right | 364×244 | 4:3 |
+| Horizontal | None or Upside Down | Height | 4:3 |
+| Horizontal | Left or Right | Width | 3:4 |
+| Vertical | None or Upside Down | Width | 3:4 |
+| Vertical | Left or Right | Height | 4:3 |
 
-The limits are inclusive. An image within the limits and within the CRT aspect tolerance keeps
-its original dimensions and pixels. Outside the aspect tolerance, AnyGM tries to add centered
-black margins along one axis. It uses the oversize fit if either the original image or the padded
-canvas exceeds the limits. For example, a horizontal 320×180 image can pad to 320×240, while
-padding 360×180 to 360×270 would exceed the 244-line limit. A content-declared CRT mode supplies
-its own native canvas when the picture fits it.
+A content-declared CRT mode supplies its own native canvas when the picture fits it. Otherwise,
+AnyGM keeps the image within the CRT aspect tolerance of ±10%, or calculates centered black margins
+to reach the target aspect. If that canvas needs more than 244 lines, the oversize fit uses the
+original picture. For example, a horizontal 320×180 image can pad to 320×240, while a 360×180
+image would need 270 lines and uses the oversize fit.
 
 ### Oversize modes
 
