@@ -1487,10 +1487,22 @@ static int d3_native_line(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,const GmlD3Te
   }
   if((float)primitive.vertex[0][0]==(float)primitive.vertex[1][0] &&
      (float)primitive.vertex[0][1]==(float)primitive.vertex[1][1]){
-    if(g_d3.lighting || g_d3.fog)return 0;
-
     primitive.topology=GML_RENDER_DEPTH_TOPOLOGY_POINT_PAIR;
     GmlRenderDepthPrimitive pair=primitive;
+    pair.shading_flags=(g_d3.lighting?1u:0u)|(g_d3.fog?2u:0u);
+    if(g_d3.lighting){
+      const double factors[3]={g_d3.shade_r,g_d3.shade_g,g_d3.shade_b};
+      for(unsigned c=0;c<3u;c++){
+        if(!isfinite(factors[c]) || factors[c]<0 || factors[c]>1e6)return 0;
+        /* Smaller positive factors truncate every source byte to zero. */
+        pair.point_pair_shading.shade[c]=factors[c]<0x1p-32?0:factors[c];
+      }
+    }
+    double fog_span=g_d3.fog_end-g_d3.fog_start;
+    if(g_d3.fog){
+      if(!isfinite(g_d3.fog_start) || !isfinite(g_d3.fog_end) || !isfinite(fog_span))return 0;
+      pair.point_pair_shading.fog_colour=g_d3.fog_color&0xffffffu;
+    }
     unsigned count=0;
     for(unsigned v=0;v<2u;v++){
       double amount=v;
@@ -1518,6 +1530,13 @@ static int d3_native_line(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,const GmlD3Te
 #undef D3_SAMPLE
       if(sample[7]<=0.0)continue;
       sample[7]=fmin(sample[7],1.0);
+      if(g_d3.fog){
+        double distance=g_d3.ortho?distances[0]+(distances[1]-distances[0])*amount:1.0/inverse;
+        double fog=fog_span>1e-9?(distance-g_d3.fog_start)/fog_span:(distance>=g_d3.fog_end?1:0);
+        if(!isfinite(fog))return 0;
+        /* Below this bound fog changes no rounded source byte. */
+        pair.point_pair_shading.fog_weight[count]=fog<0x1p-64?0:fmin(1,fog);
+      }
       count++;
     }
     if(!count)return 1;
@@ -1525,6 +1544,7 @@ static int d3_native_line(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,const GmlD3Te
       memcpy(pair.vertex[1],pair.vertex[0],sizeof pair.vertex[1]);
       pair.vertex[1][7]=0;
       memcpy(pair.uv[1],pair.uv[0],sizeof pair.uv[1]);
+      pair.point_pair_shading.fog_weight[1]=pair.point_pair_shading.fog_weight[0];
     }
     GmlRenderDepthPlaneRef published;
     if(!gml_render_cpu_backend_depth_triangle(R,&pair,target->gpu_current?NULL:target->pixels,

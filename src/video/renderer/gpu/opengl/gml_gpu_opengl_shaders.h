@@ -172,7 +172,7 @@
   "uniform vec4 u_shade,u_fog_colour;uniform vec2 u_fog_range;\n#endif\n" \
   GML_GPU_OPENGL_BINARY64_BODY \
   "uniform ivec4 u_input_alpha,u_alpha_coordinates,u_alpha_fraction;\n" \
-  "uniform ivec4 u_alpha_weights[4];\n" \
+  "uniform ivec4 u_alpha_weights[6];\n" \
   "// Exact positive binary64 product versus half the least binary64 subnormal.\n" \
   "// Equality rounds to zero (ties to even); neither operand uses float arithmetic.\n" \
   "bool positive_alpha_product(uvec2 a,uvec2 b){\n" \
@@ -228,8 +228,8 @@
   "if(u_flags.x==0||u_flags.y==0||!alpha_positive)discard;result_depth=floatBitsToUint(z);\n" \
   "#else\n" \
   "if(!alpha_positive&&u_policy.y==0)discard;" \
-  "if(u_shade.w!=0.0)source.rgb=clamp(source.rgb*u_shade.rgb,0.0,1.0);" \
-  "if(u_fog_colour.w!=0.0){float distance=(u_fog_colour.w==2.0||u_fog_colour.w==4.0)?v_distance:1.0/v_reciprocal;" \
+  "if((u_policy.x&4)==0&&u_shade.w!=0.0)source.rgb=clamp(source.rgb*u_shade.rgb,0.0,1.0);" \
+  "if((u_policy.x&4)==0&&u_fog_colour.w!=0.0){float distance=(u_fog_colour.w==2.0||u_fog_colour.w==4.0)?v_distance:1.0/v_reciprocal;" \
   "float amount=u_fog_colour.w>=3.0?(distance-u_fog_range.x)*u_fog_range.y:step(u_fog_range.y,distance);" \
   "source.rgb=mix(source.rgb,u_fog_colour.rgb,clamp(amount,0.0,1.0));}" \
   "vec4 old_colour=texelFetch(u_colour,ivec2(gl_FragCoord.xy),0);" \
@@ -243,6 +243,16 @@
   " ivec4 src=ivec4(floor(source*255.0+0.5)),dst=ivec4(floor(old_colour*255.0+0.5));\n" \
   " if(u_policy.w!=0)for(int c=0;c<3;c++)src[c]=clamp(d64_lround(d64_div(\n" \
   "    d64_mul(depth_state_sample(c),uvec2(c==0?u_alpha_weights[2].xy:c==1?u_alpha_weights[2].zw:u_alpha_weights[3].xy)),d64_uint(255u))),0,255);\n" \
+  " if((u_policy.x&8)!=0)for(int c=0;c<3;c++){\n" \
+  "  uvec2 shade=uvec2(c==0?u_alpha_weights[4].xy:c==1?u_alpha_weights[4].zw:u_alpha_weights[5].xy);\n" \
+  "  src[c]=min(255,d64_floor(d64_mul(d64_uint(uint(src[c])),shade)));\n" \
+  " }\n" \
+  " if((u_policy.x&16)!=0){\n" \
+  "  uvec2 fog=uvec2(u_alpha_weights[5].zw),unfogged=d64_sub(one,fog);\n" \
+  "  ivec3 rgb=ivec3(floor(u_fog_colour.rgb*255.0+0.5));\n" \
+  "  for(int c=0;c<3;c++)src[c]=d64_lround(d64_add(d64_mul(d64_uint(uint(src[c])),unfogged),\n" \
+  "      d64_mul(d64_uint(uint(rgb[c])),fog)));\n" \
+  " }\n" \
   " int a=clamp(d64_lround(d64_mul(input_alpha,d64_uint(255u))),0,255);\n" \
   " ivec4 result=ivec4(src.rgb,255);\n" \
   " if(any(notEqual(input_alpha,one))){\n" \

@@ -1959,9 +1959,9 @@ int gml_gpu_opengl_depth_triangle_valid(GmlGpuBackend *backend,const GmlRenderDr
      triangle->blend>GML_RENDER_DEPTH_BLEND_OPAQUE_ALPHA_INPUT || triangle->stamp_alpha>1u || triangle->zero_alpha_writes>1u ||
      triangle->alpha_source_squared>1u) return 0;
   if(triangle->shading_flags>15u) return 0;
-  if(triangle->shading_flags&1u)for(unsigned c=0;c<3u;c++)
+  if(!pair && (triangle->shading_flags&1u))for(unsigned c=0;c<3u;c++)
     if(!isfinite(triangle->shade[c]) || triangle->shade[c]<0 || triangle->shade[c]>1e6f) return 0;
-  if(triangle->shading_flags&2u){
+  if(!pair && (triangle->shading_flags&2u)){
     if(!isfinite(triangle->fog_start) || !isfinite(triangle->fog_scale) ||
        fabsf(triangle->fog_start)>1e20f || fabsf(triangle->fog_scale)>1e20f) return 0;
     for(unsigned c=0;c<3u;c++)
@@ -2024,10 +2024,21 @@ int gml_gpu_opengl_depth_triangle_valid(GmlGpuBackend *backend,const GmlRenderDr
       (float)triangle->vertex[0][1]!=(float)triangle->vertex[1][1];
   }
   if(pair){
-    if((triangle->textured && !triangle->alpha_sample_policy) || triangle->shading_flags || triangle->blend!=1u ||
+    if((triangle->textured && !triangle->alpha_sample_policy) || triangle->shading_flags>3u || triangle->blend!=1u ||
        !triangle->alpha_source_squared || state->clip.width ||
        fabs(triangle->vertex[0][0]-triangle->vertex[1][0])>1 ||
        fabs(triangle->vertex[0][1]-triangle->vertex[1][1])>1)return 0;
+    if(triangle->shading_flags){
+      for(unsigned c=0;c<3u;c++){
+        double shade=triangle->point_pair_shading.shade[c];
+        if(!isfinite(shade) || shade<0 || shade>1e6)return 0;
+      }
+      for(unsigned endpoint=0;endpoint<2u;endpoint++){
+        double weight=triangle->point_pair_shading.fog_weight[endpoint];
+        if(!isfinite(weight) || weight<0 || weight>1)return 0;
+      }
+      if(triangle->point_pair_shading.fog_colour>0xffffffu)return 0;
+    }
     for(unsigned v=0;v<2u;v++){
       double x=triangle->vertex[v][0],y=triangle->vertex[v][1];
       if(x<0.5 || x>=op->target.width || x!=floor(x)+0.5 ||
@@ -2092,7 +2103,7 @@ static int depth_candidate_draw(GmlGpuBackend *backend,const GmlRenderDrawOp *op
   GLint policy[4]={native?0:(GLint)triangle->stamp_alpha,(GLint)triangle->zero_alpha_writes,
                    (GLint)triangle->alpha_source_squared,(GLint)triangle->textured};
   if(point || line)policy[0]|=2;
-  if(exact_point)policy[0]|=4;
+  if(exact_point)policy[0]|=4|((GLint)triangle->shading_flags<<3);
   if(triangle->textured){
     int constant=1;
     for(unsigned v=1;v<vertex_count;v++)for(unsigned c=0;c<2u;c++)
@@ -2100,7 +2111,7 @@ static int depth_candidate_draw(GmlGpuBackend *backend,const GmlRenderDrawOp *op
     if(constant)policy[3]=2;
   }
   float constant_uv[2]={(float)triangle->uv[0][0],(float)triangle->uv[0][1]};
-  GLint alpha_coordinates[4]={0},alpha_fraction[4]={0},alpha_weights[16]={0},alpha_mode;
+  GLint alpha_coordinates[4]={0},alpha_fraction[4]={0},alpha_weights[24]={0},alpha_mode;
   if(!depth_triangle_alpha_setup(backend,op,alpha_coordinates,alpha_fraction,alpha_weights,&alpha_mode,exact_point))return 0;
   /* The first two vec4s carry filter weights. Exact colour additionally
    * carries the three binary64 tint words in the same captured uniform array. */
@@ -2111,6 +2122,18 @@ static int depth_candidate_draw(GmlGpuBackend *backend,const GmlRenderDrawOp *op
       memcpy(&bits,&triangle->vertex[0][4u+c],sizeof bits);
       alpha_weights[8u+c*2u]=(GLint)(uint32_t)bits;
       alpha_weights[9u+c*2u]=(GLint)(uint32_t)(bits>>32u);
+    }
+  }
+  int exact_shade=exact_point && triangle->shading_flags;
+  if(exact_shade){
+    /* Pack RGB shade and this endpoint's fog weight after the tint words. */
+    for(unsigned c=0;c<4u;c++){
+      uint64_t bits;
+      double factor=c<3u?triangle->point_pair_shading.shade[c]:
+                         triangle->point_pair_shading.fog_weight[0];
+      memcpy(&bits,&factor,sizeof bits);
+      alpha_weights[16u+c*2u]=(GLint)(uint32_t)bits;
+      alpha_weights[17u+c*2u]=(GLint)(uint32_t)(bits>>32u);
     }
   }
   GLint input_alpha[4]={0};double scalar_alpha;
@@ -2191,13 +2214,16 @@ static int depth_candidate_draw(GmlGpuBackend *backend,const GmlRenderDrawOp *op
     backend->gl.Uniform4iv(program->input_alpha,1,input_alpha);
     backend->gl.Uniform4iv(program->alpha_coordinates,1,alpha_coordinates);
     backend->gl.Uniform4iv(program->alpha_fraction,1,alpha_fraction);
-    backend->gl.Uniform4iv(program->alpha_weights,!pass && exact_texture?4:2,alpha_weights);
+    backend->gl.Uniform4iv(program->alpha_weights,pass?2:exact_shade?6:exact_texture?4:2,alpha_weights);
     if(!pass){
       float shade[4]={triangle->shade[0],triangle->shade[1],triangle->shade[2],
         (triangle->shading_flags&1u)?1.0f:0.0f};
       float fog[4]={triangle->fog_colour[0],triangle->fog_colour[1],triangle->fog_colour[2],
         (triangle->shading_flags&2u)?((triangle->shading_flags&4u)?2.0f:1.0f)+
           ((triangle->shading_flags&8u)?2.0f:0.0f):0.0f};
+      if(exact_shade)
+        for(unsigned c=0;c<3u;c++)
+          fog[c]=(float)(((triangle->point_pair_shading.fog_colour>>(8u*c))&255u)/255.0);
       float range[2]={triangle->fog_start,triangle->fog_scale};
       backend->gl.Uniform4fv(program->shade,1,shade);backend->gl.Uniform4fv(program->fog_colour,1,fog);
       backend->gl.Uniform2fv(program->fog_range,1,range);
@@ -2295,6 +2321,8 @@ static int depth_point_pair_candidate(GmlGpuBackend *backend,const GmlRenderDraw
   for(unsigned endpoint=0;endpoint<2u;endpoint++){
     double *v=point.payload.depth_primitive.vertex[0];
     memcpy(v,pair->vertex[endpoint],sizeof pair->vertex[endpoint]);
+    point.payload.depth_primitive.point_pair_shading.fog_weight[0]=
+      pair->point_pair_shading.fog_weight[endpoint];
     memcpy(point.payload.depth_primitive.uv[0],pair->uv[endpoint],sizeof pair->uv[endpoint]);
     v[0]-=left;v[1]-=top;
     if(!depth_candidate_draw(backend,&point,state,tile,1,sample_texture,error,error_capacity))

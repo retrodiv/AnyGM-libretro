@@ -699,6 +699,11 @@ typedef struct GmlRenderDepthPrimitive {
   /* Prepared fragment policy; flags: light=1, fog=2, orthographic=4, linear fog=8. */
   float shade[3],fog_colour[3],fog_start,fog_scale,fog_distance[3];
   uint32_t shading_flags;
+  /* Ordered pairs use binary64 light factors and one fog weight per endpoint. */
+  struct {
+    double shade[3],fog_weight[2];
+    uint32_t fog_colour;
+  } point_pair_shading;
 } GmlRenderDepthPrimitive;
 
 typedef struct GmlRenderDrawOp {
