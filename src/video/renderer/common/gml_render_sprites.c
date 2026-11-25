@@ -3180,10 +3180,9 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(clamped_window) resident_classify_clamped_page(r,page,atlas);
   else resident_classify_page(r,page,atlas);
   /* First-generation cutout with variable alpha and fractional magnification
-   * on both axes is not qualified: hardware filtering exceeded the individual
-   * channel budget. Keep the whole semantic boundary on ordered CPU, not a
-   * driver-specific pixel exception or an emulation of CPU float products. */
-  if(selected_physical_atlas && !hardware_physical_font && !r->classic &&
+   * can exceed the per-channel filtering budget at ordinary opacity. The tiny
+   * background packet evaluates byte positivity and the raw cutoff separately. */
+  if(selected_physical_atlas && !hardware_physical_font && !native_tiny_background && !r->classic &&
      !anygm_policy_has_modern_layer_semantics(r->win) &&
      r->alpha_test_enable && r->alpha_test_ref && !page->scene_fully_opaque &&
      fabs(xs)>1.0 && fabs(ys)>1.0 &&
