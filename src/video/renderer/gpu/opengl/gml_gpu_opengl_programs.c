@@ -298,6 +298,12 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
 }
 
 static GlSceneProgramVariant scene_program_variant(uint32_t filter,int native_flags){
+  if(filter>=GL_SCENE_UNIT_BACKGROUND_FILTER_FIRST && filter<=GL_SCENE_UNIT_BACKGROUND_FILTER_LAST)
+    filter-=GL_SCENE_UNIT_BACKGROUND_FILTER_OFFSET;
+  if(filter>=GL_SCENE_RAW_POSITIVE_FILTER_FIRST && filter<=GL_SCENE_RAW_POSITIVE_FILTER_LAST)
+    return GL_SCENE_PROGRAM_FILTERED_RAW_POSITIVE;
+  if(filter>=GL_SCENE_BYTE_POSITIVE_FILTER_FIRST && filter<=GL_SCENE_BYTE_POSITIVE_FILTER_LAST)
+    return GL_SCENE_PROGRAM_FILTERED_BYTE_POSITIVE;
   if(filter==GL_SCENE_NATIVE_POINT_FILTER || filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER) filter=79u;
   if(filter==GL_SCENE_NATIVE_POINT_STAMP_FILTER) filter=82u;
   int plain=native_flags&GL_SCENE_NATIVE_PLAIN;

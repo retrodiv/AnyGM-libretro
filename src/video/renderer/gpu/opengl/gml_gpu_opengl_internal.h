@@ -44,11 +44,33 @@ enum {
   GL_SCENE_AFFINE_SURFACE_POINT_FILTER=186,
   GL_SCENE_AFFINE_SURFACE_POINT_OPAQUE_FILTER=187,
   GL_SCENE_AFFINE_SURFACE_POINT_STAMP_FILTER=188,
+  GL_SCENE_BYTE_POSITIVE_FILTER_FIRST=189,
+  GL_SCENE_BYTE_POSITIVE_FILTER_LAST=200,
+  GL_SCENE_BYTE_POSITIVE_FILTER_OFFSET=42,
+  GL_SCENE_RAW_POSITIVE_FILTER_FIRST=201,
+  GL_SCENE_RAW_POSITIVE_FILTER_LAST=204,
+  GL_SCENE_RAW_POSITIVE_FILTER_OFFSET=122,
+  GL_SCENE_UNIT_BACKGROUND_FILTER_FIRST=205,
+  GL_SCENE_UNIT_BACKGROUND_FILTER_LAST=214,
+  GL_SCENE_UNIT_BACKGROUND_FILTER_OFFSET=140,
   GL_SCENE_VERTEX_FLOATS=28,
   GL_SCENE_INSTANCE_FLOATS=52,
   GL_SCENE_INSTANCE_SPANS=128,
   GL_SCENE_STREAM_BYTES=20*GL_SCENE_MAX_QUADS*GL_SCENE_INSTANCE_FLOATS*sizeof(float)
 };
+
+_Static_assert(GL_SCENE_BYTE_POSITIVE_FILTER_FIRST==GL_SCENE_AFFINE_SURFACE_POINT_STAMP_FILTER+1 &&
+               GL_SCENE_BYTE_POSITIVE_FILTER_FIRST-147==GL_SCENE_BYTE_POSITIVE_FILTER_OFFSET &&
+               GL_SCENE_BYTE_POSITIVE_FILTER_LAST-158==GL_SCENE_BYTE_POSITIVE_FILTER_OFFSET,
+               "Byte-positive selectors append a separate hardware byte range");
+_Static_assert(GL_SCENE_RAW_POSITIVE_FILTER_FIRST==GL_SCENE_BYTE_POSITIVE_FILTER_LAST+1 &&
+               GL_SCENE_RAW_POSITIVE_FILTER_FIRST-79==GL_SCENE_RAW_POSITIVE_FILTER_OFFSET &&
+               GL_SCENE_RAW_POSITIVE_FILTER_LAST-82==GL_SCENE_RAW_POSITIVE_FILTER_OFFSET,
+               "Raw-positive selectors append a continuous hardware range");
+_Static_assert(GL_SCENE_UNIT_BACKGROUND_FILTER_FIRST==GL_SCENE_RAW_POSITIVE_FILTER_LAST+1 &&
+               GL_SCENE_UNIT_BACKGROUND_FILTER_FIRST-65==GL_SCENE_UNIT_BACKGROUND_FILTER_OFFSET &&
+               GL_SCENE_UNIT_BACKGROUND_FILTER_LAST-74==GL_SCENE_UNIT_BACKGROUND_FILTER_OFFSET,
+               "Unit background selectors preserve the established colour programs");
 
 _Static_assert(GL_SCENE_NATIVE_POINT_STAMP_FILTER<GL_SCENE_VIEW_SDF_FILTER &&
                GL_SCENE_VIEW_SDF_FILTER==174 && GL_SCENE_VIEW_SDF_OPAQUE_FILTER==175 &&
@@ -481,7 +503,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
                                              uint32_t source_width,uint32_t source_height,
                                              int rendered_source_origin,
                                              float *vertices);
-int gml_gpu_opengl_clamped_point_valid(const GmlRenderDrawOp *op,
+int gml_gpu_opengl_clamped_background_valid(const GmlRenderDrawOp *op,
                                         const GmlRenderDrawStateSnapshot *state,
                                         uint32_t width,uint32_t height);
 int gml_gpu_opengl_clamped_atlas_valid(const GmlRenderDrawOp *op,

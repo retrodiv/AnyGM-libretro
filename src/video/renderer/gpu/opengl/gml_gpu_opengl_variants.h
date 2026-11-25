@@ -147,7 +147,11 @@ enum {
   X(CONSTANT_187, "#define GML_SCENE_CONSTANT_FILTER 187\n", \
     0, "u_filter",GL_SCENE_REQUIRE_COLOUR|GL_SCENE_REQUIRE_IMAGE) \
   X(CONSTANT_188, "#define GML_SCENE_CONSTANT_FILTER 188\n", \
-    0, "u_filter",GL_SCENE_REQUIRE_COLOUR|GL_SCENE_REQUIRE_IMAGE)
+    0, "u_filter",GL_SCENE_REQUIRE_COLOUR|GL_SCENE_REQUIRE_IMAGE) \
+  X(FILTERED_BYTE_POSITIVE, "#define GML_SCENE_FILTERED_ONLY 1\n#define GML_SCENE_BYTE_POSITIVE_ALPHA 1\n", \
+    0, "u_filter",GL_SCENE_REQUIRE_COLOUR|GL_SCENE_REQUIRE_IMAGE|GL_SCENE_REQUIRE_FILTER) \
+  X(FILTERED_RAW_POSITIVE, "#define GML_SCENE_FILTERED_ONLY 1\n#define GML_SCENE_RAW_POSITIVE_ALPHA 1\n", \
+    0, "u_filter",GL_SCENE_REQUIRE_COLOUR|GL_SCENE_REQUIRE_IMAGE|GL_SCENE_REQUIRE_FILTER)
 
 typedef enum {
 #define GML_OPENGL_SCENE_VARIANT_ID(name,defines,surface,uniform,requirements) GL_SCENE_PROGRAM_##name,
@@ -162,4 +166,8 @@ _Static_assert(GL_SCENE_PROGRAM_GENERAL==0 && GL_SCENE_PROGRAM_FILTERED_ONLY==1 
                "General and filtered owners precede compact program storage");
 _Static_assert(GL_SCENE_PROGRAM_CONSTANT_185-GL_SCENE_PROGRAM_CONSTANT_180==5,
                "Native texture program variants remain contiguous");
+_Static_assert(GL_SCENE_PROGRAM_FILTERED_BYTE_POSITIVE==GL_SCENE_PROGRAM_CONSTANT_188+1,
+               "Byte-positive sampling appends after the established program cache");
+_Static_assert(GL_SCENE_PROGRAM_FILTERED_RAW_POSITIVE==GL_SCENE_PROGRAM_FILTERED_BYTE_POSITIVE+1,
+               "Continuous positive sampling preserves existing program indices");
 #endif

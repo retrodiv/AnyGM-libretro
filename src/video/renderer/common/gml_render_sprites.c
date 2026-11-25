@@ -1548,6 +1548,25 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
       state.alpha_test_enabled=1u;
       state.alpha_test_reference=large_unit_cutoff;
     }
+    if(integer_background && r->classic && r->blendmode!=2 && r->blendmode!=6 &&
+       !(r->alphablend && gml_render_blend_uses_destination_colour(r->blendmode)) &&
+       draw_alpha>0.0 && draw_alpha<0x1p-1022 &&
+       !(whole_background && !r->blendmode && xs==1.0 && ys==1.0 &&
+         (colour&0xFFFFFFu)==0xFFFFFFu && !r->alpha_test_enable)){
+      /* The general point writer discards a binary64 zero product. The
+       * canonical unit-white cache instead retains raw source coverage.
+       * Prepare one scalar cutoff, never source pixels or coverage rows. */
+      unsigned low=0u,high=255u;
+      while(low<high){
+        unsigned middle=(low+high+1u)/2u;
+        if(((double)middle/255.0)*draw_alpha<=0.0) low=middle;
+        else high=middle-1u;
+      }
+      if(low && (!state.alpha_test_enabled || low>state.alpha_test_reference)){
+        state.alpha_test_enabled=1u;
+        state.alpha_test_reference=low;
+      }
+    }
     if(integer_background &&
        (!r->classic_phase_scene_preparing || r->classic_phase_scene_background_normalised) &&
        !r->interp && (r->blendmode==0 || ((selected_background || whole_background) && r->blendmode!=2 &&
@@ -1997,10 +2016,14 @@ static int resident_selected_part_page(GmlRender *r,GmlTpag *page,
   GmlRenderSceneFamily family,int whole_page){
   if(!r || !page || !r->resident_application_pass) return 0;
   /* Classic backgrounds keep their integer point owner under the interpolation
-   * hint. Filtered ports retain their separately measured numerical fence. */
+   * hint. Filtered ports keep their numerical fence outside the native
+   * non-cutout tiny-opacity background domain. */
   int classic_background_point=r->classic && family==GML_RENDER_SCENE_BACKGROUND &&
     r->active_shader<0;
-  if(family!=GML_RENDER_SCENE_TILE && !classic_background_point &&
+  int tiny_filtered_background=!r->classic && family==GML_RENDER_SCENE_BACKGROUND &&
+    filtered_page>=0 && r->interp && r->active_shader<0 && !r->alpha_test_enable &&
+    alpha>0.0 && alpha<0x1p-32;
+  if(family!=GML_RENDER_SCENE_TILE && !classic_background_point && !tiny_filtered_background &&
      r->interp && r->blendmode!=0 && r->blendmode!=2 &&
      alpha>0.0 && alpha<0x1p-32) return 0;
   if(r->blendmode!=6 || !r->alphablend ||
@@ -2008,7 +2031,7 @@ static int resident_selected_part_page(GmlRender *r,GmlTpag *page,
     return resident_selected_part_execute(r,page,left,top,xs,ys,colour,alpha,filtered_page,family,whole_page);
   GmlRenderRect region={0};GmlSprite geometry={0};
   if(((page->tx || page->ty) && family!=GML_RENDER_SCENE_TEXT && !whole_page &&
-      !(classic_background_point && alpha>0.0 && alpha<0x1p-32)) ||
+      !((classic_background_point && alpha>0.0 && alpha<0x1p-32) || tiny_filtered_background)) ||
      page->tx<0 || page->ty<0 || page->bw<=0 || page->bh<=0 ||
      !isfinite(xs) || !isfinite(ys) ||
      page->bw*fabs(xs)>16384.0 || page->bh*fabs(ys)>16384.0 ||
@@ -2910,10 +2933,20 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      * rows,not to replace an ordinary hardware blend with extra preparation. */
     (!hardware_axis_sprite || r->blendmode!=1 || r->alpha_test_enable ||
      fabs(xs)<.125 || fabs(ys)<.125);
-  /* Tiny draw opacity can underflow in the hardware preset while the
-   * CPU still changes destination-colour factors. Keep that numerical
-   * domain on the counted CPU path rather than relaxing individual D2. */
-  if(selected_preset && !hardware_physical_tile && alpha>0.0 && alpha<0x1p-32) return 0;
+  /* Tiny draw opacity can underflow while destination-colour factors still
+   * write. Native background quads preserve the selected byte-alpha support;
+   * other unqualified domains keep their counted numerical fence. */
+  int native_tiny_normal=selected_physical_background && family==GML_RENDER_SCENE_BACKGROUND &&
+    !r->blendmode && anygm_policy_has_modern_layer_semantics(r->win) &&
+    r->active_shader<0 && !r->alpha_test_enable && alpha>0.0 && alpha<0x1p-32;
+  int native_tiny_byte_normal=selected_physical_background && family==GML_RENDER_SCENE_BACKGROUND &&
+    !r->classic && !r->blendmode && !anygm_policy_has_modern_layer_semantics(r->win) &&
+    r->active_shader<0 && !r->alpha_test_enable && alpha>0.0 && alpha<0x1p-32;
+  int native_tiny_background=selected_physical_background && family==GML_RENDER_SCENE_BACKGROUND &&
+    !r->classic && r->interp && r->active_shader<0 && !r->alpha_test_enable &&
+    (selected_preset || native_tiny_normal || native_tiny_byte_normal) && alpha>0.0 && alpha<0x1p-32;
+  if(selected_preset && !hardware_physical_tile && !native_tiny_background &&
+     alpha>0.0 && alpha<0x1p-32) return 0;
   double minimum_physical_scale=hardware_physical_font || hardware_axis_sprite || (hardware_physical_tile && hardware_physical_rotation)
     ?0x1p-14:selected_physical_atlas?.0625:.125;
   int large_unit_texel=hardware_axis_sprite && r && page_index>=0 && page_index<r->n_tpag &&
@@ -3173,6 +3206,13 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
    * than emulate its intermediate products or relax the image contract. */
   if(clamped_window && !selected_preset && r->alphablend && r->blendmode==1 &&
      (margin_mask || !page->scene_fully_opaque)) return 0;
+  int native_unit_background=selected_physical_background &&
+    family==GML_RENDER_SCENE_BACKGROUND && !r->classic && !r->alphablend &&
+    r->blendmode!=2 && r->active_shader<0 && !r->alpha_test_enable &&
+    !clamped_window && alpha==1.0 && (colour&0xFFFFFFu)==0xFFFFFFu &&
+    xs==1.0 && ys==1.0 && left==floor(left) && top==floor(top) &&
+    (!anygm_policy_has_modern_layer_semantics(r->win) || r->blendmode ||
+     !gml_render_target_preserves_alpha(r) || page->scene_binary_alpha);
   /* Disabled blending replaces full RGB after the CPU's positive-alpha
    * decision. A hardware filter can cross that decision at a transparent
    * edge or with sub-byte draw opacity. Non-preserving alpha stamps have
@@ -3182,14 +3222,17 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     !gml_render_target_preserves_alpha(r) &&
     (margin_mask || !page->scene_fully_opaque) &&
     (!r->fb_opaque_known || !r->fb_all_opaque);
-  int positive_part=(hardware_physical_part || hardware_physical_background || hardware_axis_sprite) && !r->blendmode &&
+  /* Native tiny backgrounds carry their positive-source decision in one
+   * hardware quad instead of the older prepared support rows. */
+  int positive_part=!native_tiny_normal && !native_unit_background &&
+    (hardware_physical_part || hardware_physical_background || hardware_axis_sprite) && !r->blendmode &&
     (!r->alpha_test_enable || !r->alpha_test_ref) &&
     anygm_policy_has_modern_layer_semantics(r->win) &&
     (margin_mask || !page->scene_fully_opaque) &&
     (!r->alphablend || (!gml_render_target_preserves_alpha(r) &&
       (!r->fb_opaque_known || !r->fb_all_opaque)));
   if(positive_part && !hardware_physical_tile && alpha<0x1p-32) return 0;
-  if(!positive_rotation && !selected_preset && !hardware_physical_tile && (hardware_physical_rotation || clamped_window) &&
+  if(!positive_rotation && !selected_preset && !native_tiny_normal && !hardware_physical_tile && (hardware_physical_rotation || clamped_window) &&
      ((!r->alphablend && r->blendmode!=2 &&
        (margin_mask || !page->scene_fully_opaque || alpha<1.0/255.0)) ||
       ((margin_mask || !page->scene_fully_opaque) && r->alphablend &&
@@ -3226,15 +3269,16 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   int selected_cutout=r->alpha_test_enable;
   /* A glyph is one placed quad. Device filtering owns its interior coverage;
    * CPU support rows must not turn text into thousands of tiny packets. */
-  int background_coverage=!large_unit_texel && !hardware_physical_font && selected_physical_atlas &&
+  int background_coverage=!native_tiny_background && !native_unit_background && !large_unit_texel && !hardware_physical_font && selected_physical_atlas &&
     (selected_preset || reduced_part_coverage || selected_cutout || positive_part ||
       (hardware_physical_tile && (hardware_physical_rotation || alpha<0x1p-32)) || fabs(xs)<.125 || fabs(ys)<.125) &&
     r->active_shader<0 && (((r->blendmode==0 || r->blendmode==2) && (alpha>=0x1p-32 || hardware_physical_tile)) ||
       (selected_preset && (alpha>=0x1p-32 || hardware_physical_tile || (r->alphablend &&
         (r->blendmode==6 || gml_render_blend_uses_destination_colour(r->blendmode))))));
   if(reduced_part_coverage && !background_coverage) return 0;
-  /* Sub-eighth axes need prepared rows,not an unsupported scalar packet. */
-  if(hardware_physical_background && !background_coverage && (fabs(xs)<.125 || fabs(ys)<.125))
+  /* Other sub-eighth axes retain their existing prepared-row owner. */
+  if(hardware_physical_background && !background_coverage && !native_tiny_background &&
+     (fabs(xs)<.125 || fabs(ys)<.125))
     return 0;
   if(hardware_physical_sprite && !hardware_physical_font && !hardware_physical_part && !background_coverage && r->alpha_test_enable &&
      (margin_mask || (!page->scene_fully_opaque && page->scene_ax1>=0))) return 0;
@@ -3551,6 +3595,13 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     modern_numbered_sprite?GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST:0u;
   if(selected_preset) operation.payload.quad.sampling.quantisation=anygm_policy_has_modern_layer_semantics(r->win)
     ?GML_RENDER_QUANTISE_INTEGER_TINT_ROUND:GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC;
+  if(native_tiny_background && (selected_preset || native_tiny_byte_normal) && (!r->alphablend || !r->blendmode || r->blendmode==1 ||
+     r->blendmode==3 || r->blendmode==4 || r->blendmode==5 ||
+     r->blendmode==7 || r->blendmode==8))
+    operation.payload.quad.sampling.quantisation=anygm_policy_has_modern_layer_semantics(r->win)
+      ?GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_ROUND:GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_TRUNC;
+  if(native_tiny_normal)
+    operation.payload.quad.sampling.quantisation=GML_RENDER_QUANTISE_FILTERED_RAW_POSITIVE_ALPHA;
   if(modern_numbered_sprite) operation.payload.quad.filtered_draw_alpha=alpha;
   operation.payload.quad.sampling.logical_margin_mask=box_stretched?0u:
     (operation.payload.quad.sampling.filter==GML_RENDER_FILTER_BILINEAR ||
@@ -3877,6 +3928,22 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     state.rgb_equation=GML_RENDER_BLEND_ADD;
     state.alpha_equation=GML_RENDER_BLEND_ADD;
   }
+  if(native_unit_background){
+    /* A disabled white identity is one ordinary point-sampled rectangle.
+     * Logical margins cannot contribute at these contained texel centres. */
+    operation.payload.quad.sampling.filter=GML_RENDER_FILTER_NEAREST;
+    operation.payload.quad.sampling.edge_rule=GML_RENDER_EDGE_CLAMP_SUBIMAGE;
+    operation.payload.quad.sampling.logical_margin_mask=0u;
+    operation.payload.quad.sampling.quantisation=anygm_policy_has_modern_layer_semantics(r->win)
+      ?GML_RENDER_QUANTISE_INTEGER_TINT_ROUND:GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC;
+    /* The disabled point recipe writes opaque alpha atomically. The modern
+     * normal source-over alpha is equivalent here only for binary source
+     * alpha: transparent texels discard and every surviving texel is opaque. */
+    state.rgb_source_factor=state.rgb_destination_factor=0u;
+    state.alpha_source_factor=state.alpha_destination_factor=0u;
+    state.rgb_equation=state.alpha_equation=0u;
+    state.coverage_policy=0u;
+  }
   state.sampler_count=1u;
   state.samplers[0]=operation.payload.quad.sampling;
   /* A reduced axis can have valid centre samples while its extrapolated vertices
@@ -3936,7 +4003,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   }
   if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
   r->fb_all_transparent=0;
-  if(hardware_physical_font && (state.write_mask&8u) &&
+  if((hardware_physical_font || native_tiny_background || native_unit_background) && (state.write_mask&8u) &&
      (state.coverage_policy==0u || state.coverage_policy==GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA))
     r->fb_opaque_known=0;
   return 1;

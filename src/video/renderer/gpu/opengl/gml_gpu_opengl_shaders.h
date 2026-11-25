@@ -680,6 +680,19 @@
   "  if(any(lessThan(at,ivec2(0))) || any(greaterThanEqual(at,extent))) return vec4(0.0);\n" \
   "  return floor(source_texel(at,0)*255.0+0.5);\n" \
   "}\n" \
+  "#if defined(GML_SCENE_RAW_POSITIVE_ALPHA) || defined(GML_SCENE_BYTE_POSITIVE_ALPHA)\n" \
+  "float background_alpha_support(int mask){\n" \
+  "  vec2 centre=vec2(gl_FragCoord.x,u_extent.y<0.0?gl_FragCoord.y:u_extent.y-gl_FragCoord.y);\n" \
+  "  vec2 p=v_map.zw+(centre-v_map.xy)*(v_step+vec2(1.0))-vec2(0.5);\n" \
+  "  ivec2 base=ivec2(floor(p)),first=ivec2(v_clamp.xy),last=ivec2(v_clamp.zw)-first;\n" \
+  "  vec2 f=fract(p);\n" \
+  "  float a00=margin_tap(base,first,last,mask).a;\n" \
+  "  float a10=margin_tap(base+ivec2(1,0),first,last,mask).a;\n" \
+  "  float a01=margin_tap(base+ivec2(0,1),first,last,mask).a;\n" \
+  "  float a11=margin_tap(base+ivec2(1),first,last,mask).a;\n" \
+  "  return mix(mix(a00,a10,f.x),mix(a01,a11,f.x),f.y);\n" \
+  "}\n" \
+  "#endif\n" \
   "vec4 hardware_background_tap(ivec2 at){\n" \
   "  ivec2 extent=textureSize(u_image,0);\n" \
   "  if(any(lessThan(at,ivec2(0))) || any(greaterThanEqual(at,extent))) return vec4(0.0);\n" \
@@ -1179,7 +1192,9 @@
   "  }\n" \
   "  // R03_SHADER_HARDWARE_FILTERED_SURFACE: hardware sampling and batched coverage.\n" \
   "  if(u_filter>=147 && u_filter<=158){\n" \
+  "#ifndef GML_SCENE_BYTE_POSITIVE_ALPHA\n" \
   "    if(u_filter==150 || u_filter==154){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
+  "#endif\n" \
   "    vec2 extent=vec2(textureSize(u_image,0));\n" \
   "    vec2 uv=clamp(v_texcoord,(v_clamp.xy+vec2(0.5))/extent,(v_clamp.zw+vec2(0.5))/extent);\n" \
   "#ifdef GML_SCENE_PLAIN_NATIVE\n" \
@@ -1190,6 +1205,10 @@
   "#endif\n" \
   "    if(u_alpha_test>=0 && sampled.a*255.0<=float(u_alpha_test)) discard;\n" \
   "    uvec4 bytes=uvec4(floor(clamp(sampled,0.0,1.0)*255.0+vec4(0.5)));\n" \
+  "#ifdef GML_SCENE_BYTE_POSITIVE_ALPHA\n" \
+  "    if(background_alpha_support(margin)<0.5) discard;\n" \
+  "    if(u_filter==150 || u_filter==154){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
+  "#endif\n" \
   "#ifdef GML_SCENE_WHITE_TINT\n" \
   "    uvec3 tinted=bytes.rgb;\n" \
   "#else\n" \
@@ -1221,8 +1240,15 @@
   "#endif\n" \
   "    if(physical_filter>=79){\n" \
   "      float alpha=sampled.a*v_colour.a;\n" \
+  "#ifdef GML_SCENE_RAW_POSITIVE_ALPHA\n" \
+  "      // Visibility uses raw alpha taps; fixed UNORM filtering can lose the subnormal tie.\n" \
+  "      // Colour keeps the device sample. One affine quad supplies the support coordinates.\n" \
+  "      float support=background_alpha_support(margin);\n" \
+  "      if(support<=0.0 || support<v_span_x.x*255.0) discard;\n" \
+  "#else\n" \
   "#ifndef GML_SCENE_ZERO_ALPHA_BLEND\n" \
   "      if(alpha<=0.0 && physical_filter<112) discard;\n" \
+  "#endif\n" \
   "#endif\n" \
   "      vec3 rgb=sampled.rgb*v_colour.rgb;\n" \
   "      if(unit_texel){\n" \

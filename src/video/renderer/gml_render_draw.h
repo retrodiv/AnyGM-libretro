@@ -214,7 +214,12 @@ enum {
   GML_RENDER_QUANTISE_VIEW_TILE=29u,
   GML_RENDER_QUANTISE_VIEW_TEXT=30u,
   /* Full affine surfaces derive point coordinates on the device. */
-  GML_RENDER_QUANTISE_AFFINE_SURFACE_POINT=31u
+  GML_RENDER_QUANTISE_AFFINE_SURFACE_POINT=31u,
+  /* Native filtered colour with rounded raw-alpha visibility. */
+  GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_TRUNC=32u,
+  GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_ROUND=33u,
+  /* Continuous source coverage retains a positive binary64 draw opacity. */
+  GML_RENDER_QUANTISE_FILTERED_RAW_POSITIVE_ALPHA=34u
 };
 
 /* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors

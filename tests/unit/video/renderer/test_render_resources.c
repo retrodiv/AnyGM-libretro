@@ -20876,7 +20876,13 @@ static int resident_background_part_trim_function(void){
       submitted=fake.submits;int reads=fake.readbacks;
       gml_render_draw_state_get(r,&before);
       gml_draw_background_part_ext(r,0,0,0,8,9,12,12,1,1,0x70B0D0u,1e-100);
-      CHECK(!r->resident_application_pass && fake.readbacks==reads+1 && fake.submits==submitted);
+      /* The typed byte-positive sampler supersedes the broad numerical CPU
+       * fence without changing the authored draw or its readable state. */
+      CHECK(r->resident_application_pass && fake.readbacks==reads && fake.submits==submitted);
+      CHECK(gml_render_scene_submit_pending(r) && fake.readbacks==reads &&
+            fake.submits==submitted+1 && fake.last_quad.shape==GML_RENDER_QUAD_AXIS_ALIGNED &&
+            !fake.last_quad.span_active && fake.last_filtered_draw_alpha==1e-100 &&
+            fake.last_quantisation==GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_ROUND);
       gml_render_draw_state_get(r,&after);CHECK(!memcmp(&before,&after,sizeof before));
     }
     if(filtered && r->classic && owner==3u && !gui && !transformed){

@@ -335,6 +335,75 @@ static int scene_clamped_atlas_window_case(void){
   return 1;
 }
 
+/* The real-context matrix owns pixel arithmetic; this guard owns the bounded
+ * source extrapolation used by one complete tiny-opacity background packet. */
+static int scene_tiny_filtered_background_case(void){
+  const unsigned modes[]={GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC,
+    GML_RENDER_QUANTISE_INTEGER_TINT_ROUND,
+    GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_TRUNC,
+    GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_ROUND,
+    GML_RENDER_QUANTISE_FILTERED_RAW_POSITIVE_ALPHA};
+  GmlRenderImageRef source={GML_RENDER_RESOURCE_ATLAS,1u,1u,1u};
+  GmlRenderDrawOp op={0};GmlRenderDrawStateSnapshot state={0};
+  op.opcode=GML_RENDER_OP_TEXTURED_QUAD;op.scene_family=GML_RENDER_SCENE_BACKGROUND;
+  op.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;op.source_count=1u;op.sources=&source;
+  GmlRenderQuad *q=&op.payload.quad;
+  q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;q->filtered_draw_alpha=1e-100;
+  q->sampling.filter=GML_RENDER_FILTER_HARDWARE_BILINEAR;
+  q->sampling.edge_rule=GML_RENDER_EDGE_LOGICAL_TPAG;
+  q->sampling.source_region=(GmlRenderRect){0,0,8u,15u};
+  q->sampling.logical_margin_mask=15u;
+  for(unsigned c=0;c<4u;c++){
+    q->u[c]=((c==1u || c==2u)?16.0:-8.0)/32.0;
+    q->v[c]=(c>=2u?23.0:-8.0)/32.0;
+  }
+  for(unsigned mode=0;mode<sizeof modes/sizeof modes[0];mode++){
+    q->sampling.quantisation=modes[mode];
+    REQUIRE(gml_gpu_opengl_clamped_background_valid(&op,&state,32u,32u),
+            "bounded reflected filtered rectangle admits each source-alpha policy");
+    for(unsigned bad=0;bad<16u;bad++){
+      GmlRenderDrawOp changed=op;GmlRenderDrawStateSnapshot invalid=state;
+      GmlRenderImageRef other=source;changed.sources=&other;
+      GmlRenderQuad *cq=&changed.payload.quad;
+      switch(bad){
+        case 0:cq->u[0]=-8.01/32.0;break;
+        case 1:cq->v[3]=23.01/32.0;break;
+        case 2:cq->u[1]=NAN;break;
+        case 3:cq->filtered_draw_alpha=0.0;break;
+        case 4:cq->filtered_draw_alpha=0x1p-32;break;
+        case 5:cq->span_active=GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW;break;
+        case 6:cq->shape=GML_RENDER_QUAD_GENERAL;break;
+        case 7:cq->sampling.logical_margin_mask=16u;break;
+        case 8:cq->sampling.quantisation=0u;break;
+        case 9:cq->sampling.source_region.width=33u;break;
+        case 10:other.resource_class=GML_RENDER_RESOURCE_SURFACE;break;
+        case 11:changed.scene_family=GML_RENDER_SCENE_TEXT;break;
+        case 12:invalid.source_alpha_key=1u;break;
+        case 13:invalid.source_palette.enabled=1u;break;
+        case 14:changed.reconstruction_mode=GML_RENDER_REPLAY_EXACT;break;
+        default:cq->filtered_draw_alpha=NAN;break;
+      }
+      REQUIRE(!gml_gpu_opengl_clamped_background_valid(&changed,&invalid,32u,32u),
+              "other source, state, footprint or opacity cannot borrow extrapolation");
+    }
+  }
+  const double opacities[]={1e-100,0x1p-1022,0x1p-1074,0x1p-1073,0x1p-1069};
+  const float floors[]={0.0f,0x1p-53f,.5f,.25f,0x1p-6f};
+  float vertices[6u*GL_SCENE_VERTEX_FLOATS];
+  for(unsigned c=0;c<4u;c++){
+    q->x[c]=(c==1u || c==2u)?8.0:0.0;q->y[c]=c>=2u?8.0:0.0;
+  }
+  for(unsigned i=0;i<sizeof opacities/sizeof opacities[0];i++){
+    q->filtered_draw_alpha=opacities[i];
+    REQUIRE(gml_render_gpu_opengl_draw_textured_quad(&op,&state,32u,32u,0,vertices),
+            "positive binary64 opacity packs one native filtered rectangle");
+    for(unsigned v=0;v<6u;v++)
+      REQUIRE(vertices[v*GL_SCENE_VERTEX_FLOATS+19u]==floors[i],
+              "one per-draw scalar retains the normal kernel's positive-product boundary");
+  }
+  return 1;
+}
+
 /* A plan that magnifies a small opaque source into a larger target with black margins: the shape
  * the host-canvas pass produces. */
 static int build_canvas_plan(GmlRenderPlan *plan,const uint32_t *pixels,
@@ -10361,6 +10430,7 @@ int main(int argc,char **argv){
     {"scene_gui_tinted_text",scene_gui_tinted_text_case},
     {"scene_gui_filtered_background_batch",scene_gui_filtered_background_batch_case},
     {"scene_clamped_atlas_window",scene_clamped_atlas_window_case},
+    {"scene_tiny_filtered_background",scene_tiny_filtered_background_case},
     {"scene_raw_depth_transport",scene_raw_depth_transport_case},
     {"scene_depth_triangle_transaction",scene_depth_triangle_transaction_case},
     {"scene_gui_half_point",scene_gui_half_point_case},

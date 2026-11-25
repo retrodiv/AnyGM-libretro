@@ -49,9 +49,9 @@ int gml_gpu_opengl_clamped_atlas_valid(const GmlRenderDrawOp *op,
      (uint64_t)(uint32_t)region.y+region.height>source_height);
 }
 
-/* A tiny positive background point keeps its affine UVs across crop edges.
+/* Tiny positive background points and filtered quads keep affine crop-edge UVs.
  * The fragment sampler clamps to the declared immutable source rectangle. */
-int gml_gpu_opengl_clamped_point_valid(const GmlRenderDrawOp *op,
+int gml_gpu_opengl_clamped_background_valid(const GmlRenderDrawOp *op,
                                         const GmlRenderDrawStateSnapshot *state,
                                         uint32_t width,uint32_t height){
   if(!op || !state || !width || !height || width>16384u || height>16384u ||
@@ -63,11 +63,21 @@ int gml_gpu_opengl_clamped_point_valid(const GmlRenderDrawOp *op,
      state->source_alpha_key || state->source_palette.enabled) return 0;
   const GmlRenderQuad *q=&op->payload.quad;
   GmlRenderRect region=q->sampling.source_region;
+  int filtered=q->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR;
+  int tint_quant=q->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
+    (filtered && (q->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND ||
+      q->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_TRUNC ||
+      q->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_ROUND ||
+      q->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_RAW_POSITIVE_ALPHA));
   if(q->shape!=GML_RENDER_QUAD_AXIS_ALIGNED || q->span_active ||
-     q->sampling.filter!=GML_RENDER_FILTER_NEAREST ||
-     q->sampling.quantisation!=GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
-     q->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
-     q->sampling.logical_margin_mask ||
+     (q->sampling.filter!=GML_RENDER_FILTER_NEAREST &&
+      q->sampling.filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR) ||
+     !tint_quant ||
+     (q->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE &&
+      (q->sampling.filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR ||
+       q->sampling.edge_rule!=GML_RENDER_EDGE_LOGICAL_TPAG)) ||
+     (q->sampling.filter==GML_RENDER_FILTER_NEAREST?q->sampling.logical_margin_mask!=0u:
+       q->sampling.logical_margin_mask>15u) ||
      !isfinite(q->filtered_draw_alpha) || q->filtered_draw_alpha<=0.0 ||
      q->filtered_draw_alpha>=0x1p-32 ||
      region.x<0 || region.y<0 || !region.width || !region.height ||
@@ -149,6 +159,17 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
   int rotated,warped,native_uv,stretched_float,stretched_blend,automatic_surface,destination_surface,half_gui;
   if(!op || !state || !vertices || !source_width || !source_height) return 0;
   quad=&op->payload.quad;
+  double raw_source_floor=0.0;
+  if(quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_RAW_POSITIVE_ALPHA){
+    if(rendered_source_origin || state->alpha_test_enabled || state->alpha_test_reference ||
+       !gml_gpu_opengl_clamped_background_valid(op,state,source_width,source_height)) return 0;
+    /* For faa*alpha/255 to round positive,its first product must reach
+     * 127.5 minimum subnormal units. Only this per-draw scalar is prepared;
+     * device filtering owns the source alpha and every fragment decision. */
+    int exponent=0;
+    double mantissa=frexp(quad->filtered_draw_alpha,&exponent);
+    raw_source_floor=ldexp(0.5/mantissa,-1074-exponent);
+  }
   half_gui=!rendered_source_origin &&
     gml_gpu_opengl_half_gui_point_valid(op,state,source_width,source_height);
   native_uv=quad->shape==GML_RENDER_QUAD_GENERAL &&
@@ -272,7 +293,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
        quad->x[corner]<-10000000.0 || quad->x[corner]>10000000.0 ||
        quad->y[corner]<-10000000.0 || quad->y[corner]>10000000.0 ||
        (!rotated && !warped && !half_gui &&
-        !gml_gpu_opengl_clamped_point_valid(op,state,source_width,source_height) &&
+        !gml_gpu_opengl_clamped_background_valid(op,state,source_width,source_height) &&
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN &&
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN &&
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SURFACE_LEADING &&
@@ -366,6 +387,9 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     for(uint32_t span=0;span<4;span++){
       vertex[19+span]=(float)quad->span_x[span];
       vertex[23+span]=(float)quad->span_y[span];
+    }
+    if(quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_RAW_POSITIVE_ALPHA){
+      vertex[19]=(float)raw_source_floor;
     }
     if(quad->sampling.quantisation==GML_RENDER_QUANTISE_AFFINE_SURFACE_POINT){
       vertex[12]=(float)quad->x[0];vertex[13]=(float)quad->y[0];
