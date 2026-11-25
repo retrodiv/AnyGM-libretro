@@ -637,7 +637,6 @@ static int repeat_quad_valid(const GmlRenderDrawOp *op,
        (span[2]!=0.0 && fabs(span[2])<0x1p-900) ||
        span[3]!=ceil((target_extent-span[0])/span[1])+1 || span[3]>8192.0 ||
        ((q->sampling.filter==GML_RENDER_FILTER_BOX) && source_extent>8*lround(span[1])) ||
-       (full_source && lround(span[1])>=target_extent) ||
        (classic_aspect && lround(span[1])<source_extent) ||
        (classic_linear && lround(span[1])<=source_extent)) return 0;
   }

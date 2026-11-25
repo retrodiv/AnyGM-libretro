@@ -4245,7 +4245,6 @@ static int resident_surface_repeat(GmlRender *r,int surf,int sw,int sh,
      ((full_source || !r->alphablend) && r->interp && !flip_x && !flip_y &&
        !r->target_sp && r->fb==r->base_fb &&
        r->classic_interp_phase[0] && r->classic_interp_phase[1] && r->classic_interp_phase[2]) ||
-     (full_source && (dw>=r->fbw || dh>=r->fbh)) ||
      (r->interp && (sw>8*dw || sh>8*dh)) ||
      (magnified && (!full_source || (classic_filtered_application && !classic_linear))) ||
      (classic_linear && dw==2*sw && dh==2*sh &&
