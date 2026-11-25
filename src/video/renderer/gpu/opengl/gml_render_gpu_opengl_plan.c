@@ -133,6 +133,9 @@ static void begin_plan_state(GmlGpuBackend *backend,uint32_t target_height){
   backend->gl.Uniform1i(backend->u_source,0);
   backend->gl.Uniform1i(backend->u_rgb_query,0);
   backend->gl.Uniform1i(backend->u_rotation,0);
+  const GLint full_source[2]={0,0};
+  backend->gl.Uniform2iv(backend->u_source_crop_origin,1,full_source);
+  backend->gl.Uniform2iv(backend->u_source_crop_extent,1,full_source);
   backend->gl.Uniform1i(backend->u_area_filter,0);
   backend->gl.Uniform1i(backend->u_map_x,1);
   backend->gl.Uniform1i(backend->u_map_y,2);
@@ -271,9 +274,12 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
       /* Keep the existing map cache and bindings; only the shader lookup is redundant.
        * Zero selects maps, positive values are box extents, and this tag selects identity. */
       if(identity)filter_destination[0]=filter_destination[1]=GL_PLAN_IDENTITY_AXES;
+      const int cropped=image->resident_storage_width!=0;
+      uint32_t source_width=cropped?image->resident_storage_width:image->width;
+      uint32_t source_height=cropped?image->resident_storage_height:image->height;
       if(image->resident_image.resource_class){
         GlSceneImage *scene=gml_gpu_opengl_scene_image(backend,image->resident_image);
-        if(!scene || scene->width!=image->width || scene->height!=image->height ||
+        if(!scene || scene->width!=source_width || scene->height!=source_height ||
            scene->pixel_format!=GML_RENDER_PIXEL_ARGB8888 || !scene->rendered_origin){
           gml_gpu_opengl_record_error(error,error_capacity,"resident graphics source unavailable");
           failed=1;
@@ -307,7 +313,11 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
       gml_gpu_opengl_set_rect(backend,&op->destination,plan->target_height);
       backend->gl.Uniform1i(backend->u_dest_x,op->destination.x);
       backend->gl.Uniform1i(backend->u_dest_y,op->destination.y);
-      backend->gl.Uniform1i(backend->u_source_height,(GLint)image->height);
+      backend->gl.Uniform1i(backend->u_source_height,(GLint)source_height);
+      const GLint crop_origin[2]={(GLint)image->resident_crop_x,(GLint)image->resident_crop_y};
+      const GLint crop_extent[2]={cropped?(GLint)image->width:0,cropped?(GLint)image->height:0};
+      backend->gl.Uniform2iv(backend->u_source_crop_origin,1,crop_origin);
+      backend->gl.Uniform2iv(backend->u_source_crop_extent,1,crop_extent);
       backend->gl.Uniform1i(backend->u_resident_source,resident_source);
       backend->gl.Uniform1i(backend->u_sharp_scale,
                             sharp?(GLint)gml_plan_sharp_scale(&op->destination,image):0);

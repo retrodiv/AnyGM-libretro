@@ -354,6 +354,7 @@
   "uniform int u_dest_y;\n" \
   "uniform int u_target_height;\n" \
   "uniform int u_source_height;\n" \
+  "uniform ivec2 u_source_crop_origin,u_source_crop_extent;\n" \
   "uniform int u_resident_source;\n" \
   "uniform int u_rgb_query;\n" \
   "uniform ivec2 u_filter_destination;\n" \
@@ -381,8 +382,10 @@
   "      rgb=texelFetch(u_source,ivec2(p.x,size.y-1-p.y),0).rgb;\n" \
   "    o_color=vec4(rgb,1.0); return;\n" \
   "  }\n" \
+  "  ivec2 storage=textureSize(u_source,0);\n" \
+  "  ivec2 view_size=u_source_crop_extent.x>0?u_source_crop_extent:storage;\n" \
   "  if(u_area_filter!=0){\n" \
-  "    ivec2 size=textureSize(u_source,0),extent=u_filter_destination;\n" \
+  "    ivec2 size=view_size,extent=u_filter_destination;\n" \
   "    ivec2 lo=ivec2(dx,dy)*size,hi=lo+size;\n" \
   "    ivec2 first=lo/extent,last=(hi-1)/extent;\n" \
   "    vec3 total=vec3(0.0);\n" \
@@ -390,26 +393,28 @@
   "      int wy=min(hi.y,(y+1)*extent.y)-max(lo.y,y*extent.y);\n" \
   "      for(int x=first.x;x<=last.x;x++){\n" \
   "        int wx=min(hi.x,(x+1)*extent.x)-max(lo.x,x*extent.x);\n" \
-  "        total+=texelFetch(u_source,ivec2(x,size.y-1-y),0).rgb*float(wx*wy);\n" \
+  "        ivec2 sample_pos=ivec2(x,y)+u_source_crop_origin;\n" \
+  "        total+=texelFetch(u_source,ivec2(sample_pos.x,storage.y-1-sample_pos.y),0).rgb*float(wx*wy);\n" \
   "      }\n" \
   "    }\n" \
   "    o_color=vec4(total/float(size.x*size.y),1.0); return;\n" \
   "  }\n" \
   "  if(u_sharp_scale>0){\n" \
   "    // Adjacent virtual texels map to equal or adjacent source texels.\n" \
-  "    vec2 size=vec2(textureSize(u_source,0)),scale=vec2(float(u_sharp_scale));\n" \
+  "    vec2 size=vec2(view_size),scale=vec2(float(u_sharp_scale));\n" \
   "    vec2 virtual_size=size*scale;\n" \
   "    vec2 pos=clamp((vec2(dx,dy)+0.5)*virtual_size/vec2(u_filter_destination)-0.5,\n" \
   "                   vec2(0.0),virtual_size-1.0);\n" \
   "    vec2 lo=floor(pos);\n" \
   "    vec2 first=floor(lo/scale),last=min(size-1.0,floor((lo+1.0)/scale));\n" \
   "    vec2 centre=mix(first,last,fract(pos))+0.5;\n" \
-  "    vec2 uv=vec2(centre.x,size.y-centre.y)/size;\n" \
+  "    centre+=vec2(u_source_crop_origin);\n" \
+  "    vec2 uv=vec2(centre.x,float(storage.y)-centre.y)/vec2(storage);\n" \
   "    o_color=vec4(textureLod(u_source,uv,0.0).rgb,1.0); return;\n" \
   "  }\n" \
   "  // R03_SHADER_HOST_BOX: the same integer footprint, hardware-averaged in 2x2 cells.\n" \
   "  if(u_filter_destination.x>0){\n" \
-  "    ivec2 size=textureSize(u_source,0),p=ivec2(dx,dy);\n" \
+  "    ivec2 size=view_size,p=ivec2(dx,dy);\n" \
   "    ivec2 first=p*size/u_filter_destination;\n" \
   "    ivec2 last=min(size,max((p+ivec2(1))*size/u_filter_destination,first+ivec2(1)));\n" \
   "    vec3 total=vec3(0.0);\n" \
@@ -418,7 +423,8 @@
   "      for(int x=first.x;x<last.x;x+=2){\n" \
   "        int columns=min(2,last.x-x);\n" \
   "        vec2 centre=vec2(float(x)+float(columns)*0.5,float(y)+float(rows)*0.5);\n" \
-  "        vec2 uv=vec2(centre.x,float(size.y)-centre.y)/vec2(size);\n" \
+  "        centre+=vec2(u_source_crop_origin);\n" \
+  "        vec2 uv=vec2(centre.x,float(storage.y)-centre.y)/vec2(storage);\n" \
   "        row+=textureLod(u_source,uv,0.0).rgb*float(columns);\n" \
   "      }\n" \
   "      total+=row/float(last.x-first.x)*float(rows);\n" \
@@ -431,8 +437,8 @@
   "    sy=int(texelFetch(u_map_y,ivec2(dy,0),0).r);\n" \
   "  }\n" \
   "  // R03_SHADER_RESIDENT_PRESENT: use the current scene image without upload.\n" \
-  "  int source_y=u_resident_source!=0 ? u_source_height-1-sy : sy;\n" \
-  "  vec4 texel=texelFetch(u_source,ivec2(sx,source_y),0);\n"
+  "  int source_y=u_resident_source!=0 ? u_source_height-1-sy-u_source_crop_origin.y : sy;\n" \
+  "  vec4 texel=texelFetch(u_source,ivec2(sx+u_source_crop_origin.x,source_y),0);\n"
 
 /* A CPU source arrives as raw XRGB words uploaded as bytes, so the sampler sees machine byte
  * order. A resident scene texture is already RGBA with bottom-up rows. Both branches select

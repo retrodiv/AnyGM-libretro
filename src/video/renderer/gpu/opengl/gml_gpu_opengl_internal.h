@@ -384,7 +384,7 @@ struct GmlGpuBackend {
   GLint u_dest_x;
   GLint u_dest_y;
   GLint u_target_height;
-  GLint u_source_height,u_resident_source,u_rgb_query;
+  GLint u_source_height,u_source_crop_origin,u_source_crop_extent,u_resident_source,u_rgb_query;
   GLint u_filter_destination;
   GLint u_sharp_scale,u_area_filter,u_rotation;
   GlSourceTexture sources[GML_PLAN_MAX_IMAGES];

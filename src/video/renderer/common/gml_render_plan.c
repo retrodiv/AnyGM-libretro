@@ -296,6 +296,16 @@ int gml_render_plan_validate(const GmlRenderPlan *plan){
     if(image->pixel_format!=GML_PLAN_PIXEL_XRGB8888) return 0;
     if(!extent_ok(image->width) || !extent_ok(image->height)) return 0;
     if(image->pitch_pixels<image->width || !extent_ok(image->pitch_pixels)) return 0;
+    if(image->resident_storage_width || image->resident_storage_height ||
+       image->resident_crop_x || image->resident_crop_y){
+      if(image->image_class!=GML_PLAN_IMAGE_COMPLETED_FRAME ||
+         image->resident_image.resource_class!=GML_RENDER_RESOURCE_SCREEN ||
+         image->cpu_pixels || image->device_completed ||
+         !extent_ok(image->resident_storage_width) || !extent_ok(image->resident_storage_height) ||
+         image->width>image->resident_storage_width || image->height>image->resident_storage_height ||
+         image->resident_crop_x>image->resident_storage_width-image->width ||
+         image->resident_crop_y>image->resident_storage_height-image->height) return 0;
+    }
     /* height * pitch must stay inside the addressable range the executor will walk. */
     if((uint64_t)image->pitch_pixels*(uint64_t)image->height >
        (uint64_t)GML_PLAN_MAX_EXTENT*(uint64_t)GML_PLAN_MAX_EXTENT) return 0;

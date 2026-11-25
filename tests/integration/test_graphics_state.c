@@ -4271,13 +4271,57 @@ static int scene_canvas_resident_identity_crop_case(void){
   for(unsigned family=0;family<GML_RENDER_SCENE_FAMILY_COUNT;family++)
     for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)
       REQUIRE(!dispatch.cpu[family][reason],"resident crop runs no CPU raster operation");
-  /* Scaling, CRT, shift and an invalid crop remain pre-submission refusals. */
-  for(unsigned exclusion=0;exclusion<5u;exclusion++){
-    selected.engine->host_canvas_width=exclusion==0u?55:56;
-    selected.engine->host_canvas_height=exclusion==1u?37:38;
-    selected.engine->host_crt_active=exclusion==2u;
-    selected.engine->present_shift_x=exclusion==3u;
-    selected.engine->present_crop_left=exclusion==4u?64:3;
+  size_t state_before_size=0,state_after_size=0;
+  uint8_t *state_before=serialize(selected.engine,&state_before_size);
+  REQUIRE(state_before,"resident crop saves its canonical logical SCREEN before scaling");
+  const struct {int width,height,crt,area;uint32_t opcode;} scaled[]={
+    {85,63,0,0,GML_PLAN_OP_BLIT_OPAQUE_NEAREST},
+    {55,38,0,0,GML_PLAN_OP_BLIT_OPAQUE_BOX},
+    {56,37,0,0,GML_PLAN_OP_BLIT_OPAQUE_BOX},
+    {72,26,0,0,GML_PLAN_OP_BLIT_OPAQUE_BOX},
+    {67,54,1,0,GML_PLAN_OP_BLIT_OPAQUE_SHARP_BILINEAR},
+    {37,29,1,1,GML_PLAN_OP_BLIT_OPAQUE_AREA},
+  };
+  for(unsigned i=0;i<sizeof scaled/sizeof scaled[0];i++){
+    selected.engine->host_canvas_width=scaled[i].width;
+    selected.engine->host_canvas_height=scaled[i].height;
+    selected.engine->host_output_width=(unsigned)scaled[i].width+6u;
+    selected.engine->host_output_height=(unsigned)scaled[i].height+8u;
+    selected.engine->host_crt_active=scaled[i].crt;
+    selected.engine->host_crt_area_filter=scaled[i].area;
+    gml_gpu_counters(selected.engine->gpu,&before);
+    gml_render_resource_metrics(&selected.engine->render,&resources_before);
+    int rendered=scaled[i].crt?engine_present_hardware_screen(selected.engine,&width,&height):
+                              engine_present_hardware_canvas(selected.engine,&width,&height);
+    REQUIRE(rendered,"scaled crop presents the current SCREEN without CPU fitting");
+    gml_gpu_counters(selected.engine->gpu,&after);
+    gml_render_resource_metrics(&selected.engine->render,&resources_after);
+    REQUIRE(width==selected.engine->host_output_width && height==selected.engine->host_output_height &&
+            selected.engine->output_width==64u && selected.engine->output_height==48u &&
+            plan->image_count==1u && plan->operation_count==2u &&
+            !plan->images[0].cpu_pixels && plan->images[0].width==56u &&
+            plan->images[0].height==38u && plan->images[0].resident_storage_width==64u &&
+            plan->images[0].resident_storage_height==48u && plan->images[0].resident_crop_x==3u &&
+            plan->images[0].resident_crop_y==4u &&
+            plan->images[0].resident_image.content_version==image.content_version &&
+            plan->operations[1].opcode==scaled[i].opcode &&
+            after.passes_accepted==before.passes_accepted+1u &&
+            after.cpu_upload_frames==before.cpu_upload_frames &&
+            after.full_uploads==before.full_uploads &&
+            after.scene_readbacks==before.scene_readbacks &&
+            resources_after.completed_screen_cpu_reads==resources_before.completed_screen_cpu_reads,
+            "scaled crop retains the original screen version and logical raster");
+  }
+  selected.engine->host_crt_area_filter=0;
+  selected.engine->host_output_width=64u;selected.engine->host_output_height=48u;
+  /* A CRT call to the ordinary canvas entry, an unavailable transform and
+   * an invalid crop still refuse before attempting writes or observations. */
+  for(unsigned exclusion=0;exclusion<3u;exclusion++){
+    selected.engine->host_canvas_width=56;
+    selected.engine->host_canvas_height=38;
+    selected.engine->host_crt_active=exclusion==0u;
+    selected.engine->present_shift_x=exclusion==1u;
+    selected.engine->present_crop_left=exclusion==2u?64:3;
     gml_gpu_counters(selected.engine->gpu,&before);
     gml_render_resource_metrics(&selected.engine->render,&resources_before);
     REQUIRE(!engine_present_hardware_canvas(selected.engine,NULL,NULL),
@@ -4290,6 +4334,16 @@ static int scene_canvas_resident_identity_crop_case(void){
             "crop exclusions preserve ordinary counters and source authority");
   }
   selected.engine->present_shift_x=0;selected.engine->present_crop_left=3;
+  uint8_t *state_after=serialize(selected.engine,&state_after_size);
+  int identical=state_after && state_before_size==state_after_size &&
+                memcmp(state_before,state_after,state_before_size)==0;
+  free(state_before);
+  REQUIRE(identical,"scaled device crop preserves exact canonical save bytes");
+  int restored=anygm_state_load(selected.engine,state_after,state_after_size)==ANYGM_OK;
+  free(state_after);
+  REQUIRE(restored && selected.engine->state_frame_width==64u &&
+          selected.engine->state_frame_height==48u,
+          "restore retains the logical completed frame instead of a fitted crop");
   session_close(&selected);
   return 1;
 }

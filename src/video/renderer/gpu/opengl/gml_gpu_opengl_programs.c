@@ -88,6 +88,8 @@ int gml_gpu_opengl_build_program(GmlGpuBackend *backend,char *error,size_t error
   backend->u_dest_y=backend->gl.GetUniformLocation(backend->program,"u_dest_y");
   backend->u_target_height=backend->gl.GetUniformLocation(backend->program,"u_target_height");
   backend->u_source_height=backend->gl.GetUniformLocation(backend->program,"u_source_height");
+  backend->u_source_crop_origin=backend->gl.GetUniformLocation(backend->program,"u_source_crop_origin");
+  backend->u_source_crop_extent=backend->gl.GetUniformLocation(backend->program,"u_source_crop_extent");
   backend->u_resident_source=backend->gl.GetUniformLocation(backend->program,"u_resident_source");
   backend->u_rgb_query=backend->gl.GetUniformLocation(backend->program,"u_rgb_query");
   backend->u_filter_destination=backend->gl.GetUniformLocation(backend->program,"u_filter_destination");
@@ -96,7 +98,8 @@ int gml_gpu_opengl_build_program(GmlGpuBackend *backend,char *error,size_t error
   backend->u_rotation=backend->gl.GetUniformLocation(backend->program,"u_rotation");
   if(backend->u_source<0 || backend->u_map_x<0 || backend->u_map_y<0 ||
      backend->u_dest_x<0 || backend->u_dest_y<0 || backend->u_target_height<0 ||
-     backend->u_source_height<0 || backend->u_resident_source<0 || backend->u_rgb_query<0 ||
+     backend->u_source_height<0 || backend->u_source_crop_origin<0 || backend->u_source_crop_extent<0 ||
+     backend->u_resident_source<0 || backend->u_rgb_query<0 ||
      backend->u_filter_destination<0 || backend->u_sharp_scale<0 ||
      backend->u_area_filter<0 || backend->u_rotation<0){
     gml_gpu_opengl_record_error(error,error_capacity,"graphics program is missing a required uniform");

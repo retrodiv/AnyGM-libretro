@@ -1015,21 +1015,21 @@ static int engine_present_hardware_canvas_plan(AnygmEngine *engine,
   unsigned crop_x=0,crop_y=0,crop_width=0,crop_height=0;
   int crop_requested=engine->present_crop_left || engine->present_crop_top ||
                      engine->present_crop_right || engine->present_crop_bottom;
-  /* A contained 1:1 crop changes only the source indices, not sampling or
-   * logical frame ownership. Deferred pictures and scaled crops retain their owner. */
-  int identity_crop=scene && engine->host_canvas_active && !resident_crt &&
+  int valid_crop=scene && engine->host_canvas_active &&
     !gml_render_deferred_presentation(&engine->render,NULL) &&
     engine_present_crop_rect(engine,engine->output_width,engine->output_height,
-                              &crop_x,&crop_y,&crop_width,&crop_height) &&
+                              &crop_x,&crop_y,&crop_width,&crop_height);
+  /* Preserve the existing zero-offset index map for an ordinary identity copy. */
+  int identity_crop=valid_crop && !resident_crt &&
     engine->host_canvas_width==(int)crop_width &&
     engine->host_canvas_height==(int)crop_height;
   /* A current logical SCREEN is already complete. Host fitting must not observe its CPU shadow
    * or replace the saved logical raster with the host-sized filtered picture. The CRT caller
    * has already ruled out a deferred terminal program. It may only borrow the complete raster. */
-  if(resident_crt && (crop_requested || engine->present_shift_x || engine->present_shift_y))
-    return 0;
+  if(resident_crt && ((crop_requested && !valid_crop) ||
+      engine->present_shift_x || engine->present_shift_y)) return 0;
   if(scene && (resident_crt || !engine->host_crt_active) &&
-     (!crop_requested || identity_crop))
+     (!crop_requested || valid_crop))
     resident=gml_render_completed_screen_image(&engine->render,engine->screen,
                 (int)engine->output_width,(int)engine->output_height,&completed);
   /* A restored CPU-current picture needs only a logical upload and the already qualified nearest
@@ -1081,8 +1081,13 @@ static int engine_present_hardware_canvas_plan(AnygmEngine *engine,
       blit->axis_y=(GmlPlanAxis){.rule=GML_PLAN_AXIS_PIXEL_CENTRE,
         .source_extent=source->height,.destination_extent=source->height,
         .destination_first=(int32_t)crop_y,.extent=source->height};
-      if(!gml_render_plan_validate(&engine->host_plan)) return 0;
+    }else if(valid_crop){
+      source->resident_crop_x=crop_x;
+      source->resident_crop_y=crop_y;
+      source->resident_storage_width=engine->output_width;
+      source->resident_storage_height=engine->output_height;
     }
+    if(valid_crop && !gml_render_plan_validate(&engine->host_plan)) return 0;
   }
   if(!engine_execute_host_plan(engine,&engine->host_plan,host_width,host_height)) return 0;
   if(resident) engine->frame_authority=ENGINE_FRAME_GPU_PRESENTED_CPU_RECONSTRUCTIBLE;
