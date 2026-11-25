@@ -3179,13 +3179,11 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(margin_bottom) margin_mask|=GML_RENDER_MARGIN_BOTTOM;
   if(clamped_window) resident_classify_clamped_page(r,page,atlas);
   else resident_classify_page(r,page,atlas);
-  int native_fractional_cutout=selected_physical_background &&
+  int native_ordinary_cutout=hardware_physical_sprite && selected_physical_background &&
     family==GML_RENDER_SCENE_BACKGROUND && anygm_policy_uses_first_generation_studio(r->win) &&
     r->active_shader<0 && r->blendmode>=0 && r->blendmode<=11 && alpha>=0x1p-32 &&
-    r->alpha_test_enable && r->alpha_test_ref && !page->scene_fully_opaque &&
-    fabs(xs)>1.0 && fabs(ys)>1.0 &&
-    floor(fabs(xs))!=fabs(xs) && floor(fabs(ys))!=fabs(ys);
-  int native_background=native_tiny_background || native_fractional_cutout;
+    r->alpha_test_enable && !page->scene_fully_opaque;
+  int native_background=native_tiny_background || native_ordinary_cutout;
   /* First-generation cutout with variable alpha and fractional magnification
    * can exceed the per-channel filtering budget. The native background
    * packet checks the raw cutoff before drawing the complete rectangle. */
@@ -3604,7 +3602,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     modern_numbered_sprite?GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST:0u;
   if(selected_preset) operation.payload.quad.sampling.quantisation=anygm_policy_has_modern_layer_semantics(r->win)
     ?GML_RENDER_QUANTISE_INTEGER_TINT_ROUND:GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC;
-  if(native_tiny_byte || native_fractional_cutout)
+  if(native_tiny_byte || native_ordinary_cutout)
     operation.payload.quad.sampling.quantisation=anygm_policy_has_modern_layer_semantics(r->win)
       ?GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_ROUND:GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_TRUNC;
   if(native_tiny_normal)
