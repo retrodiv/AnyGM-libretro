@@ -89,7 +89,7 @@ display the canvas with the intended proportions.
 | **Adjust for 4:3 CRT TV** (`adjust_crt_tv`) | Off by default. On forces game-resolution rendering, hides **Render at game resolution** and enables CRT fitting. |
 | **OS Screen Orientation** (`crt_vertical`) | Set **Horizontal** (default) for a system rotation of 0° or 180°, and **Vertical** for a system rotation of 90° or 270°. This supplies the CRT axes. The system setting determines its own rotation angle. |
 | **Image Rotation** (`image_rotation`) | Turns the picture and GUI **Left** or **Right** by 90°, or **Upside Down** by 180°. **None** (default) applies zero extra rotation. This option also works with CRT adjustment off. Pointer coordinates follow the displayed picture. |
-| **CRT Oversize Canvas Width** | Selects **Keep Game Width**, **320px**, **512px**, or **640px** (default). |
+| **CRT Oversize Canvas Width** | Selects **Keep Game Width** (default), **320px**, **512px**, or **640px**. |
 | **CRT Oversize Canvas Height** | Selects **Keep Game Height**, **224px**, **240px**, **360px**, **384px**, **448px** (default), or **480px**. |
 
 CRT adjustment exposes the OS orientation and oversize controls. After aspect forcing and
@@ -113,13 +113,13 @@ image would need 270 lines and uses the oversize fit.
 ### Oversize modes
 
 A numeric selection fixes the canvas extent on its CRT axis. The display aspect describes the
-canvas independently of its raster dimensions, so a 640×448 canvas still displays at 4:3.
+canvas independently of its raster dimensions, so a 512×360 canvas still displays at 4:3.
 The picture keeps its visual aspect and is centered with black margins. This example uses a
 1920×1080 game raster, a horizontal screen and no image rotation.
 
 | Canvas width | Canvas height | Frame sent to the frontend | Picture inside the frame | Black lines at the top and bottom |
 | --- | --- | --- | --- | --- |
-| 640px | 448px (default) | 640×448 | 640×336 | 56 each |
+| Keep Game Width (default) | 448px (default) | 1920×448 | 1920×336 | 56 each |
 | 640px | 480px | 640×480 | 640×360 | 60 each |
 | Keep Game Width | 480px | 1920×480 | 1920×360 | 60 each |
 | 320px | 224px | 320×224 | 320×168 | 28 each |

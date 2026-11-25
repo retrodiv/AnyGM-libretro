@@ -43,7 +43,7 @@ static struct retro_core_option_v2_definition g_definitions[]={
    "Use the core's aspect ratio in the frontend.",
    NULL,"video",
    {{"Keep Game Width",NULL},{"320px",NULL},{"512px",NULL},{"640px",NULL},{NULL,NULL}},
-   "640px"},
+   "Keep Game Width"},
   {"anygm_crt_oversize_canvas_height","CRT Oversize Canvas Height",NULL,
    "Sets the vertical extent of the CRT canvas for oversized images. Keep Game Height preserves "
    "native samples on that axis and allows black margins. The canvas axes follow CRT orientation. "
@@ -428,13 +428,16 @@ static struct retro_core_option_v2_definition *definition_for(const char *key){
 static uint32_t option_crt_canvas_extent(const char *key){
   const struct retro_core_option_v2_definition *definition=definition_for(key);
   const char *value=option_value(key);
-  if(value){
-    /* Both declarations list their Keep choice first. */
-    if(!strcmp(value,definition->values[0].value)) return ANYGM_CRT_CANVAS_KEEP;
-    for(size_t i=1;definition->values[i].value;i++)
-      if(!strcmp(value,definition->values[i].value)) return (uint32_t)strtoul(value,NULL,10);
+  const char *selected=definition->default_value;
+  for(size_t i=0;value && definition->values[i].value;i++){
+    if(!strcmp(value,definition->values[i].value)){
+      selected=definition->values[i].value;
+      break;
+    }
   }
-  return (uint32_t)strtoul(definition->default_value,NULL,10);
+  /* Both declarations list their Keep choice first. */
+  return !strcmp(selected,definition->values[0].value)?ANYGM_CRT_CANVAS_KEEP:
+    (uint32_t)strtoul(selected,NULL,10);
 }
 
 static char **g_page_choice_text;

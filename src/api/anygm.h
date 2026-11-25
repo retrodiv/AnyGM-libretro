@@ -15,7 +15,7 @@ extern "C" {
  * runtime library version, and every publishable metadata file declares the literal "Git" instead
  * of a number, so no copy can promise a value that has gone stale. CONTRIBUTING.md owns the single
  * increment step. */
-#define ANYGM_VERSION "0.1.1044"
+#define ANYGM_VERSION "0.1.1045"
 #define ANYGM_API_VERSION 13u
 #define ANYGM_HOST_SERVICES_VERSION 4u
 #define ANYGM_STATE_SCHEMA 70u
@@ -446,9 +446,9 @@ typedef struct AnygmConfig {
 } AnygmConfig;
 
 enum {
-  ANYGM_CRT_CANVAS_DEFAULT_WIDTH=640,
-  ANYGM_CRT_CANVAS_DEFAULT_HEIGHT=448,
-  ANYGM_CRT_CANVAS_KEEP=1
+  ANYGM_CRT_CANVAS_KEEP=1,
+  ANYGM_CRT_CANVAS_DEFAULT_WIDTH=ANYGM_CRT_CANVAS_KEEP,
+  ANYGM_CRT_CANVAS_DEFAULT_HEIGHT=448
 };
 
 enum {

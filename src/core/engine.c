@@ -3380,7 +3380,7 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
   }
   if(f&ANYGM_CONFIG_CRT_CANVAS_WIDTH){
     uint32_t width=delta->values.crt_canvas_width;
-    if(width!=ANYGM_CRT_CANVAS_KEEP && width!=320u && width!=512u)
+    if(width!=ANYGM_CRT_CANVAS_KEEP && width!=320u && width!=512u && width!=640u)
       width=ANYGM_CRT_CANVAS_DEFAULT_WIDTH;
     if(engine->config.adjust_crt_tv && engine->config.crt_canvas_width!=width)
       engine->fps_room=-1;

@@ -568,7 +568,7 @@ static void crt_adjustment_forces_the_logical_raster(void){
           strcmp(width->desc,"CRT Oversize Canvas Width") ||
           strcmp(height->desc,"CRT Oversize Canvas Height") ||
           strcmp(orientation->desc,"OS Screen Orientation") || strcmp(rotation->desc,"Image Rotation") ||
-          strcmp(width->default_value,"640px") || strcmp(height->default_value,"448px") ||
+          strcmp(width->default_value,"Keep Game Width") || strcmp(height->default_value,"448px") ||
           strcmp(orientation->default_value,"Horizontal") || strcmp(rotation->default_value,"None"))
     complain("CRT and rotation labels, categories and defaults must match their menu");
   static const char *const widths[]={"Keep Game Width","320px","512px","640px"};
@@ -585,7 +585,7 @@ static void crt_adjustment_forces_the_logical_raster(void){
   if(!menu_time_visibility){ complain("CRT visibility callback missing"); return; }
   libretro_options_apply(true);
   expect("CRT default",applied_config.values.adjust_crt_tv,0u);
-  expect("CRT canvas width default",applied_config.values.crt_canvas_width,640u);
+  expect("CRT canvas width default",applied_config.values.crt_canvas_width,ANYGM_CRT_CANVAS_KEEP);
   expect("CRT canvas height default",applied_config.values.crt_canvas_height,448u);
   expect("OS orientation default",applied_config.values.crt_vertical,0u);
   expect("image rotation default",applied_config.values.image_rotation,ANYGM_IMAGE_ROTATION_NONE);
@@ -627,7 +627,7 @@ static void crt_adjustment_forces_the_logical_raster(void){
   if(!flat || strcmp(flat,"Adjust for 4:3 CRT TV; Off|On"))
     complain("legacy CRT option declaration differs");
   flat=flat_text("anygm_crt_oversize_canvas_width");
-  if(!flat || strcmp(flat,"CRT Oversize Canvas Width; 640px|Keep Game Width|320px|512px"))
+  if(!flat || strcmp(flat,"CRT Oversize Canvas Width; Keep Game Width|320px|512px|640px"))
     complain("legacy CRT canvas width declaration differs");
   flat=flat_text("anygm_crt_oversize_canvas_height");
   if(!flat || strcmp(flat,"CRT Oversize Canvas Height; 448px|Keep Game Height|224px|240px|360px|384px|480px"))

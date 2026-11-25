@@ -3835,7 +3835,8 @@ static int presentation_filter_variant(
   presentation.values.present_logical_raster=variant!=2;
   presentation.values.adjust_crt_tv=variant!=2;
   if(selected_crt_height){
-    presentation.fields|=ANYGM_CONFIG_CRT_CANVAS_HEIGHT;
+    presentation.fields|=ANYGM_CONFIG_CRT_CANVAS_WIDTH|ANYGM_CONFIG_CRT_CANVAS_HEIGHT;
+    presentation.values.crt_canvas_width=640;
     presentation.values.crt_canvas_height=selected_crt_height;
   }
   if(variant==2){
@@ -3890,7 +3891,7 @@ static int presentation_filter_variant(
     if(frame==0){
       unsigned source_width=variant==0?64u:variant==1?400u:128u;
       unsigned source_height=variant==0?32u:variant==1?300u:96u;
-      unsigned host_width=variant==0?64u:variant==1?640u:64u;
+      unsigned host_width=variant==1?(selected_crt_height?640u:400u):64u;
       unsigned crt_height=selected_crt_height?selected_crt_height:448u;
       unsigned host_height=variant==0?48u:variant==1?crt_height:64u;
       unsigned fallback=variant==2?GML_PLAN_FALLBACK_BOX_REDUCTION:

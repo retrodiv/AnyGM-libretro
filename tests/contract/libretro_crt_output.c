@@ -423,7 +423,7 @@ static int canvas_selector_cases(void){
     unsigned width,height,top,picture_height;
     bool area_filter,keep_width,keep_height,vertical;
   } cases[]={
-    {NULL,NULL,640,448,56,336,false,false,false,false},
+    {NULL,NULL,640,448,56,336,false,true,false,false},
     {"320px","224px",320,224,28,168,true,false,false,false},
     {"640px","240px",640,240,30,180,true,false,false,false},
     {"512px","360px",512,360,45,270,false,false,false,false},
@@ -628,13 +628,13 @@ static int live_state_case(int response,unsigned source_width,unsigned source_he
           "live CRT geometry notification");
   REQUIRE(snapshot(&ring,&capacity,initial),"CRT snapshot");
   if(source_width==1920 && source_height==1080){
-    canvas_width="Keep Game Width"; changed=1; retro_run();
-    REQUIRE(video_width==1920 && video_height==448 && snapshot(&ring,&capacity,initial),
-            "the original ring accepts a Keep frame");
-    REQUIRE(retro_unserialize(native,state_size),"restore the original frame under Keep");
+    canvas_width="640px"; changed=1; retro_run();
+    REQUIRE(video_width==640 && video_height==448 && snapshot(&ring,&capacity,initial),
+            "the original ring accepts a fixed-width frame");
+    REQUIRE(retro_unserialize(native,state_size),"restore the original frame under fixed width");
     retro_run();
-    REQUIRE(video_width==1920 && video_height==448 &&
-            fabs(geometry_aspect-4.0/3.0)<1e-6,"restored frame uses Keep and its display aspect");
+    REQUIRE(video_width==640 && video_height==448 &&
+            fabs(geometry_aspect-4.0/3.0)<1e-6,"restored frame uses the fixed width and its display aspect");
     canvas_width=NULL; changed=1; retro_run();
   }
   REQUIRE(retro_unserialize(native,state_size),"restore native state while CRT enabled");
@@ -697,10 +697,10 @@ int main(void){
   if(!frontend_portrait_case(false,480) || !frontend_portrait_case(true,480) ||
      !frontend_portrait_case(false,448) || !frontend_portrait_case(true,448)) return 1;
   for(int response=-1;response<=1;response++){
-    if(!live_state_case(response,1920,1080,640,448) ||
+    if(!live_state_case(response,1920,1080,1920,448) ||
        !live_state_case(response,320,180,320,240) ||
        !live_state_case(response,240,240,320,240) ||
-       !live_state_case(response,360,180,640,448)) return 1;
+       !live_state_case(response,360,180,360,448)) return 1;
   }
   puts("CRT output: thresholds, aspect, margins, live options, state and Reset passed");
   return 0;
