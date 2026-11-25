@@ -497,12 +497,23 @@ the picture. An anchor can name the mode instead:
 
 `crtmode|width|height|hz` defines a canvas of exactly `width` by `height` before image rotation,
 with the picture centred at its own pixel size between black margins. It asks the host to present at
-`hz`. Width
-is 16 to 640, height 16 to 480 and refresh 2 to 300, all integers. A picture larger than the
-declared extent keeps the automatic CRT policy at the declared refresh. Logical steps and game
-speed are unchanged: a slower game holds pictures on some refreshes and a faster one runs several
-steps on some. Content keeps its window, GUI and camera geometry. The frame is a request; physical
-resolution and timings remain the host's.
+`hz`. Numeric width is 16 to 640, height 16 to 480 and refresh 2 to 300, all integers.
+A picture larger than a fixed dimension keeps the automatic CRT sizing policy at the declared
+refresh.
+
+Use `window_w` or `window_h` in the corresponding field to follow that axis of the game's
+current raster as resolved by **Render at game resolution**, before CRT fitting and rotation.
+Use `window_fps` in the refresh field to follow the normal room cadence, including any active
+`roomspeed` override. In-room speed changes keep the normal frontend cadence policy.
+
+```ini
+?crt crtmode|window_w|window_h|60
+?crt crtmode|320|240|window_fps
+```
+
+Logical steps and game speed are unchanged by `crtmode`. A slower game holds pictures on some
+refreshes and a faster one runs several steps on some. Content keeps its window, GUI and camera
+geometry. Physical resolution and timings remain the host's.
 
 `roomspeed|rooms|fps` gives the listed room indices an integer cadence of 1 to 300 steps per
 second in place of the room's, `room_speed`'s or `game_set_speed`'s. Rooms use the list syntax of

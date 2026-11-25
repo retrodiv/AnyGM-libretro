@@ -376,6 +376,8 @@ struct AnygmEngine {
   int host_crt_active,host_crt_area_filter;
   unsigned host_rotation;
   /* Live host policy resolved from CRT-scoped declarations. None of it is serialized. */
+  bool crt_mode_declared;
+  /* Zero fields in a declared mode follow the content's raster or cadence. */
   unsigned crt_mode_width,crt_mode_height;
   uint32_t crt_mode_hz,published_crt_mode_hz;
   uint16_t room_speed_overrides[ENGINE_ROOM_RULE_LIMIT];

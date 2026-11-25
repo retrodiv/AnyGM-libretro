@@ -34,6 +34,16 @@ static int parse_nonnegative_index(const char **cursor,int *value){
   return 1;
 }
 
+static int parse_crt_mode_field(const char **cursor,const char *follow,int min,int max,int *value){
+  size_t length=strlen(follow);
+  if(!strncmp(*cursor,follow,length)){
+    *cursor+=length;
+    *value=0;
+    return 1;
+  }
+  return parse_nonnegative_index(cursor,value) && *value>=min && *value<=max;
+}
+
 static bool parse_room_list(const char **cursor,uint8_t *rooms){
   const char *scan=*cursor;
   for(;;){
@@ -108,6 +118,7 @@ int core_opt_redirect_room_order(AnygmEngine *engine) {
  *   surface_canvas|obj|var|W|H  centred native HUD and full-width application composition
  *   monitorview|H|MIN|MAX       declare a monitor-derived logical view (ratios use W:H)
  *   ?crt crtmode|W|H|HZ         declare the padded raster and refresh handed to a CRT host
+ *                              window_w, window_h and window_fps follow the content
  *   ?crt windowraster|W|H       select the effective content window without changing its request
  *   ?crt roomspeed|rooms|FPS    replace the cadence of the listed rooms without writing content
  *   roomskip|rooms|trigger|next     advance in play order or to an explicit room
@@ -356,10 +367,9 @@ static void cheat_parse_body(const char *code, CheatAct *a){
     if(s[0]=='c'){
       int width,height,hz;
       s+=8;
-      if(!parse_nonnegative_index(&s,&width) || *s++!='|' ||
-         !parse_nonnegative_index(&s,&height) || *s++!='|' ||
-         !parse_nonnegative_index(&s,&hz) || *s ||
-         width<16 || width>640 || height<16 || height>480 || hz<2 || hz>300) return;
+      if(!parse_crt_mode_field(&s,"window_w",16,640,&width) || *s++!='|' ||
+         !parse_crt_mode_field(&s,"window_h",16,480,&height) || *s++!='|' ||
+         !parse_crt_mode_field(&s,"window_fps",2,300,&hz) || *s) return;
       a->crt_width=width; a->crt_height=height; a->val.lit=hz;
       a->kind=CK_CRT_MODE; return;
     }
@@ -1712,6 +1722,7 @@ bool engine_overrides_window_raster(const AnygmEngine *engine,int *width,int *he
  * enter states and outlive the option, so the runtime borrows a lookup table instead. Runtime
  * slots are read last and therefore take precedence over boot declarations. */
 void engine_overrides_host_policy_refresh(AnygmEngine *engine){
+  engine->crt_mode_declared=false;
   engine->crt_mode_width=engine->crt_mode_height=0;
   engine->crt_mode_hz=0;
   engine->vm.room_speed_override=NULL;
@@ -1724,6 +1735,7 @@ void engine_overrides_host_policy_refresh(AnygmEngine *engine){
     const CheatSlot *slot=&tables[table][i];
     if(!slot->enabled) continue;
     if(slot->act.kind==CK_CRT_MODE){
+      engine->crt_mode_declared=true;
       engine->crt_mode_width=(unsigned)slot->act.crt_width;
       engine->crt_mode_height=(unsigned)slot->act.crt_height;
       engine->crt_mode_hz=(uint32_t)slot->act.val.lit;

@@ -315,6 +315,39 @@ static int declared_mode_case(int response,const char *earlier){
           "small declaration");
   for(int i=0;i<4;i++) tick();
   REQUIRE(video_width==64 && video_height==48,"a picture that cannot fit keeps automatic policy");
+
+  REQUIRE(anygm_set_runtime_override(engine,0,1,"?crt crtmode|window_w|window_h|60")==ANYGM_OK,
+          "follow both raster dimensions");
+  for(int i=0;i<4;i++) tick();
+  REQUIRE(video_width==64 && video_height==48 && av_calls==4,"raster starts at the game's size");
+  unsigned prior_geometry=geometry_calls;
+  GmlVal window_size[]={vreal(96),vreal(48)};
+  gml_builtin_call(&engine->vm,"window_set_size",window_size,2);
+  gml_builtin_call(&engine->vm,"display_set_gui_size",window_size,2);
+  for(int i=0;i<4;i++) tick();
+  retro_get_system_av_info(&av);
+  REQUIRE(video_width==96 && video_height==48 && av.geometry.base_width==96 &&
+          av.geometry.base_height==48 && geometry_calls>prior_geometry &&
+          av.timing.fps==60 && av_calls==4,"the live raster changes while the refresh stays held");
+  REQUIRE(snapshot(ring,capacity),"ring accepts the new live raster");
+  REQUIRE(retro_unserialize(in_mode,capacity),"rewind to the smaller live raster");
+  tick();
+  REQUIRE(video_width==64 && video_height==48 && av_calls==4,
+          "the restored frame uses its own dimensions at the same refresh");
+
+  REQUIRE(anygm_set_runtime_override(engine,0,1,"?crt crtmode|320|240|window_fps")==ANYGM_OK,
+          "fixed raster with game cadence");
+  for(int i=0;i<4;i++) tick();
+  REQUIRE(video_width==320 && video_height==240,"the dynamic cadence keeps fixed geometry");
+  unsigned prior_av=av_calls;
+  REQUIRE(enter_room(0),"return to the room without a cadence override");
+  for(int i=0;i<4;i++) tick();
+  REQUIRE(av_calls==prior_av+1 && announced_fps==36 && announced_width==320,
+          "the fixed CRT canvas follows the game-set speed outside overridden rooms");
+  REQUIRE(enter_room(1),"enter the overridden room with a dynamic CRT cadence");
+  for(int i=0;i<4;i++) tick();
+  REQUIRE(av_calls==prior_av+2 && announced_fps==48 && announced_width==320,
+          "the fixed CRT canvas follows the effective room speed");
   REQUIRE(!invalid_callback,"every AV callback occurs inside retro_run");
   printf("declared CRT mode: negotiation=%d capacity=%zu\n",response,capacity);
 done:

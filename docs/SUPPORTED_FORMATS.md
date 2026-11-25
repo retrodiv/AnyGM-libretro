@@ -248,7 +248,8 @@ crop origin into the compositor's coordinate system.
 ```
 
 `?crt crtmode|width|height|hz` and `?crt roomspeed|rooms|fps` declare a CRT mode and the cadence
-of chosen rooms under effective CRT adjustment. See
+of chosen rooms under effective CRT adjustment. The `crtmode` fields can use `window_w`,
+`window_h` and `window_fps` to follow the game's raster and room cadence. See
 [Content configuration](CONTENT_CONFIGURATION.md#declared-crt-mode).
 
 A scope prefix belongs to the directive that carries it, and a `;` chain fans out into one

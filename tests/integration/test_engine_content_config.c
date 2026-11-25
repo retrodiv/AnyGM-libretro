@@ -56,16 +56,19 @@ static void crt_host_policy_declarations(void){
     "?crt ?global.flag crtmode|320|240|60","?crt sync|crtmode|320|240|60",
     "?crt crtmode|15|240|60","?crt crtmode|641|240|60","?crt crtmode|320|481|60",
     "?crt crtmode|320|240|1","?crt crtmode|320|240|301","?crt crtmode|320|240",
+    "?crt crtmode|0|0|0","?crt crtmode|window_h|window_w|60",
+    "?crt crtmode|window_wide|240|60","?crt crtmode|window_w|240|window_fpsx",
+    "crtmode|window_w|window_h|window_fps",
     "?crt crtmode|320|240|60|1","roomspeed|1|50","?crt roomspeed|1024|50",
     "?crt roomspeed|2-1|50","?crt roomspeed|1|0","?crt roomspeed|1|301",
     "?crt roomspeed|1|50x","?crt roomspeed||50","?crt ?instance.obj roomspeed|1|50"};
   for(size_t i=0;i<sizeof invalid/sizeof invalid[0];i++)
     assert(!engine_boot_overrides_parse(invalid[i],slots,&count,error,sizeof error));
   assert(engine_boot_overrides_parse("?crt crtmode|320|240|60\n?crt roomspeed|4,7|50\n"
-    "?crt roomspeed|1-3|50\n?crt crtmode|384|240|50\n?crt roomspeed|4,7|48\n",
+    "?crt roomspeed|1-3|50\n?crt crtmode|window_w|240|window_fps\n?crt roomspeed|4,7|48\n",
     slots,&count,error,sizeof error));
   assert(count==3 && engine_boot_overrides_text(slots,count,effective,sizeof effective));
-  assert(!strcmp(effective,"?crt roomspeed|1-3|50\n?crt crtmode|384|240|50\n"
+  assert(!strcmp(effective,"?crt roomspeed|1-3|50\n?crt crtmode|window_w|240|window_fps\n"
                            "?crt roomspeed|4,7|48\n"));
 }
 

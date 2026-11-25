@@ -1081,11 +1081,12 @@ void engine_update_host_canvas(AnygmEngine *engine){
      * Frontend rotation only determines how the fitted frame is delivered. */
     bool vertical=engine_crt_is_vertical(engine);
     unsigned aspect_width=vertical?3u:4u,aspect_height=vertical?4u:3u;
-    if(engine->crt_mode_width && source_width<=engine->crt_mode_width &&
-       source_height<=engine->crt_mode_height){
-      host_width=engine->crt_mode_width; host_height=engine->crt_mode_height;
+    unsigned mode_width=engine->crt_mode_width?engine->crt_mode_width:source_width;
+    unsigned mode_height=engine->crt_mode_height?engine->crt_mode_height:source_height;
+    if(engine->crt_mode_declared && source_width<=mode_width && source_height<=mode_height){
+      host_width=mode_width; host_height=mode_height;
       native_padding=declared=1;
-      engine->host_crt_active=1;
+      engine->host_crt_active=engine->crt_mode_width || engine->crt_mode_height;
     } else if(!aspect_fraction_within_tolerance(source_width,source_height,aspect_width,aspect_height)){
       /* Add pixels on one axis only, never resample the native image. A fractional extent
        * rounds up; the centred integer margins can differ by one pixel. */
