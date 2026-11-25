@@ -433,6 +433,30 @@ application script. It runs on the first active instance of that object (includi
 with the real instance as `self`, no arguments and no `other`. A missing instance skips that
 refresh. Both callbacks run only when the numeric setting changes, including its restoration.
 
+### CRT orientation and drawing
+
+`?crt=horizontal` and `?crt=vertical` select the effective CRT axes for `drawhold` and
+`windowraster` directives. Vertical means **OS Screen Orientation** is Horizontal with
+**Image Rotation** Left or Right, or Vertical with rotation None or Upside Down. Both scopes
+follow CRT adjustment, orientation, and Content override directives live.
+
+```ini
+?crt=horizontal drawhold|layout|1
+?crt=horizontal windowraster|320|240
+?crt=vertical drawhold|layout|2
+?crt=vertical windowraster|240|320
+```
+
+A draw hold substitutes a global for the drawing phase and restores its current value before
+the next Step. Use it when content reads a layout setting in its compositor and saves the
+player's choice outside drawing.
+
+`windowraster|width|height` replaces the effective content window used by the presentation
+pipeline. It accepts positive integer dimensions up to 3840 by 2160 and also works with plain
+`?crt`. The last matching declaration wins. The authored window request remains available
+when the scope closes. This sets the input to window-based composition. The normal CRT fit still
+computes the output sent to the frontend.
+
 Some native settings paths also reposition instances or decorative layers outside their common
 application script. A `sync|` prefix on a numeric instance override recomputes the expression
 while its `?crt` or `?gameres` scope is active and once on withdrawal. It recalculates from the

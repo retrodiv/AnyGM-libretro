@@ -801,6 +801,7 @@ static void authored_window_extent(const AnygmEngine *engine,int fallback_width,
  * restores it naturally; fullscreen uses the same monitor even under logical-raster presentation. */
 static void content_window_extent(const AnygmEngine *engine,int fallback_width,int fallback_height,
                                   int *width,int *height){
+  if(engine_overrides_window_raster(engine,width,height)) return;
   int out_width,out_height;
   authored_window_extent(engine,fallback_width,fallback_height,&out_width,&out_height);
   if(engine->vm.window_fullscreen || !engine->config.present_logical_raster){
@@ -1066,7 +1067,7 @@ void engine_update_host_canvas(AnygmEngine *engine){
      source_width && source_height){
     /* Select limits in source coordinates. Either quarter turn swaps the scanout axes.
      * Frontend rotation only determines how the fitted frame is delivered. */
-    int vertical=engine->config.crt_vertical!=((engine->config.image_rotation&1u)!=0);
+    bool vertical=engine_crt_is_vertical(engine);
     unsigned limit_width=vertical?244u:364u,limit_height=vertical?364u:244u;
     unsigned aspect_width=vertical?3u:4u,aspect_height=vertical?4u:3u;
     if(engine->crt_mode_width && source_width<=engine->crt_mode_width &&

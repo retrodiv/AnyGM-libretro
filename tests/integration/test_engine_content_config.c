@@ -69,6 +69,76 @@ static void crt_host_policy_declarations(void){
                            "?crt roomspeed|4,7|48\n"));
 }
 
+static void crt_orientation_declarations(void){
+  AnygmSyntheticContent fixture;assert(anygm_synthetic_content_create(&fixture));
+  char anchor[256],text[1024],error[256];
+  snprintf(anchor,sizeof anchor,"%s/orientation.anygm",fixture.directory);
+  const char *name=strrchr(fixture.path,'/');name=name?name+1:fixture.path;
+  snprintf(text,sizeof text,"[anygm]\npayload=%s\n[overrides]\n"
+    "?crt drawhold|layout|9\n"
+    "?crt=horizontal drawhold|layout|1\n"
+    "?crt=horizontal windowraster|320|240\n"
+    "?crt=vertical drawhold|layout|2\n"
+    "?crt=vertical windowraster|240|320\n",name);
+  write_text(anchor,text);
+  AnygmHostServices host={0};host.struct_size=sizeof host;
+  host.abi_version=ANYGM_HOST_SERVICES_VERSION;anygm_stdio_vfs_services_init(&host);
+  AnygmEngine *engine=NULL;assert(anygm_create(&host,&engine)==ANYGM_OK);
+  const char *invalid[]={"?crt=portrait drawhold|layout|2",
+    "?crt=verticalx drawhold|layout|2","?crt=verticaldrawhold|layout|2",
+    "?crt=vertical crtmode|240|320|60","?crt=horizontal roomspeed|1|60",
+    "?crt=horizontal $layout=1","windowraster|320|240",
+    "?crt ?global.flag windowraster|320|240","?crt windowraster|0|240",
+    "?crt windowraster|3841|240","?crt windowraster|320|2161",
+    "?crt windowraster|320|240|1"};
+  int count=0;
+  for(size_t i=0;i<sizeof invalid/sizeof invalid[0];i++)
+    assert(!engine_boot_overrides_parse(invalid[i],engine->boot_cheats,&count,error,sizeof error));
+  AnygmContentSource source={0};source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;source.path=anchor;
+  source.system_directory=fixture.directory;source.cache_directory=fixture.directory;
+  assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
+  AnygmConfigDelta delta={0};delta.struct_size=sizeof delta;
+  delta.values.struct_size=sizeof delta.values;
+  delta.fields=ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_ADJUST_CRT_TV|
+    ANYGM_CONFIG_IMAGE_ROTATION|ANYGM_CONFIG_CRT_VERTICAL|ANYGM_CONFIG_CONTENT_OVERRIDES;
+  delta.values.present_logical_raster=delta.values.adjust_crt_tv=delta.values.content_overrides=1;
+  const unsigned layout[2][4]={{1,2,1,2},{2,1,2,1}};
+  gml_set_global_scalar(&engine->vm,"layout",3);
+  for(unsigned os=0;os<2;os++){
+    for(unsigned rotation=0;rotation<4;rotation++){
+      delta.values.crt_vertical=os;
+      delta.values.image_rotation=rotation;
+      assert(anygm_set_config(engine,&delta)==ANYGM_OK);
+      int width=0,height=0;
+      unsigned expected=layout[os][rotation];
+      assert(engine_overrides_window_raster(engine,&width,&height));
+      assert(width==(expected==1?320:240) && height==(expected==1?240:320));
+      engine_overrides_draw_hold_begin(engine);
+      assert(gml_global_num(&engine->vm,"layout")==expected);
+      engine_overrides_draw_hold_end(engine);
+      assert(gml_global_num(&engine->vm,"layout")==3);
+    }
+  }
+  GmlVal size[]={vreal(640),vreal(360)};
+  (void)gml_builtin_call(&engine->vm,"window_set_size",size,2);
+  frame(engine);
+  assert(engine->vm.window_w==640 && engine->vm.window_h==360);
+  assert(gml_global_num(&engine->vm,"layout")==3);
+  for(int off=0;off<3;off++){
+    delta.values.present_logical_raster=off!=0;
+    delta.values.adjust_crt_tv=off!=1;
+    delta.values.content_overrides=off!=2;
+    assert(anygm_set_config(engine,&delta)==ANYGM_OK);
+    assert(!engine_overrides_window_raster(engine,NULL,NULL));
+    engine_overrides_draw_hold_begin(engine);
+    assert(gml_global_num(&engine->vm,"layout")==3);
+    engine_overrides_draw_hold_end(engine);
+    assert(engine->vm.window_w==640 && engine->vm.window_h==360);
+  }
+  anygm_destroy(engine);assert(!remove(anchor));anygm_synthetic_content_destroy(&fixture);
+}
+
 static void empty_screen_declarations(void){
   CheatSlot slots[GML_MAX_CHEATS];int count=0;char error[256],effective[4096];
   const char *invalid[]={"emptyscreen|","emptyscreen|draw","emptyscreen|keep|1",
@@ -968,6 +1038,7 @@ int main(void){
   crt_setting_callback();
   crt_setting_layout();
   crt_host_policy_declarations();
+  crt_orientation_declarations();
   empty_screen_declarations();
   state_reserve_declarations();
   roomskip_destination();

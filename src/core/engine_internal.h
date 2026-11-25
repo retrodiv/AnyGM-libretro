@@ -145,8 +145,10 @@ enum {
 typedef enum {
   CK_NONE=0, CK_ROOM, CK_GARR, CK_GSCALAR, CK_INST, CK_INST_SET, CK_ENGINE, CK_ROUTE,
   CK_CAMERA, CK_SURFACE, CK_MONITOR_VIEW, CK_CRT_MODE, CK_ROOM_SPEED, CK_ALARM_PAUSE, CK_SCRIPT, CK_LIST_SET,
-  CK_DRAW_HOLD, CK_SURFACE_CANVAS, CK_AFTER_DRAW, CK_GSCALAR_CALL, CK_LAYER_OFFSET
+  CK_DRAW_HOLD, CK_SURFACE_CANVAS, CK_AFTER_DRAW, CK_GSCALAR_CALL, CK_LAYER_OFFSET,
+  CK_WINDOW_RASTER
 } CheatKind;
+typedef enum { CRT_SCOPE_NONE=0, CRT_SCOPE_ANY, CRT_SCOPE_HORIZONTAL, CRT_SCOPE_VERTICAL } CheatCrtScope;
 typedef enum {
   TK_LIT=0, TK_BASE_W, TK_BASE_H, TK_FORCED_W, TK_FORCED_H, TK_EXTRA_W, TK_EXTRA_H,
   TK_MONITOR_W, TK_MONITOR_H, TK_MONITOR_VIEW_W, TK_MONITOR_VIEW_H,
@@ -166,7 +168,7 @@ typedef struct {
   int scope_aspect;
   int scope_monitor;
   int scope_gameres;
-  int scope_crt;
+  CheatCrtScope scope_crt;
   int scope_sync;
   /* A value scope: the directive applies only while this content global is non-zero. Empty for a
    * directive that carries no such condition. */
@@ -462,6 +464,10 @@ struct AnygmEngine {
 #define ANYGM_ENGINE_GUARD 0x45474E41u
 enum { ENGINE_EMPTY=0,ENGINE_PREPARED=1,ENGINE_LOADED=2 };
 
+static inline bool engine_crt_is_vertical(const AnygmEngine *engine){
+  return (engine->config.crt_vertical!=0)!=((engine->config.image_rotation&1u)!=0);
+}
+
 /* Narrow core-internal interfaces shared by coordinator owners. */
 void engine_logf(AnygmEngine *engine,AnygmLogLevel level,const char *fmt,...);
 void classic_transition_reset(AnygmEngine *engine);
@@ -505,6 +511,7 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
  * of whether those writes still apply, which only the live scope can answer. */
 void engine_overrides_room_scope_apply(AnygmEngine *engine);
 void engine_overrides_host_policy_refresh(AnygmEngine *engine);
+bool engine_overrides_window_raster(const AnygmEngine *engine,int *width,int *height);
 int engine_override_is_host_policy(const char *code);
 void engine_overrides_presentation_apply(AnygmEngine *engine);
 void engine_overrides_draw_hold_begin(AnygmEngine *engine);

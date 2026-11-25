@@ -108,6 +108,7 @@ int core_opt_redirect_room_order(AnygmEngine *engine) {
  *   surface_canvas|obj|var|W|H  centred native HUD and full-width application composition
  *   monitorview|H|MIN|MAX       declare a monitor-derived logical view (ratios use W:H)
  *   ?crt crtmode|W|H|HZ         declare the padded raster and refresh handed to a CRT host
+ *   ?crt windowraster|W|H       select the effective content window without changing its request
  *   ?crt roomspeed|rooms|FPS    replace the cadence of the listed rooms without writing content
  *   roomskip|rooms|trigger|next     advance in play order or to an explicit room
  *   roomalarm|rooms|trigger|obj|i   advance one content-owned alarm
@@ -123,6 +124,7 @@ int core_opt_redirect_room_order(AnygmEngine *engine) {
  *   ?monitor     ...            once, on each live virtual-monitor size change
  *   ?gameres     ...            only while the logical-raster presentation is selected
  *   ?crt         ...            only while effective CRT adjustment is enabled
+ *   ?crt=horizontal / vertical  limit draw holds and window rasters to the effective CRT axes
  * Un-scoped freezes run every frame after the step (god mode, lives, ...). Aspect-scoped writes
  * run from the aspect hook while a force is active (screensizer / view / engine reshaping).
  *
@@ -306,8 +308,15 @@ static void cheat_parse_body(const char *code, CheatAct *a){
   } else if(!strncmp(s,"?gameres",8)){
     a->scope_gameres=1; s+=8;
     while(*s==' '||*s=='\t') s++;
-  } else if(!strncmp(s,"?crt",4) && (s[4]==' ' || s[4]=='\t')){
-    a->scope_crt=1; s+=4;
+  } else if(!strncmp(s,"?crt",4) && (s[4]==' ' || s[4]=='\t' || s[4]=='=')){
+    s+=4;
+    a->scope_crt=CRT_SCOPE_ANY;
+    if(*s=='='){
+      if(!strncmp(s,"=horizontal",11)){ a->scope_crt=CRT_SCOPE_HORIZONTAL; s+=11; }
+      else if(!strncmp(s,"=vertical",9)){ a->scope_crt=CRT_SCOPE_VERTICAL; s+=9; }
+      else return;
+      if(*s!=' ' && *s!='\t') return;
+    }
     while(*s==' '||*s=='\t') s++;
   }
   /* A value scope may follow the first scope. A zero global disables the
@@ -327,10 +336,23 @@ static void cheat_parse_body(const char *code, CheatAct *a){
     while(*s==' ' || *s=='\t') s++;
   }
   if(!strncmp(s,"sync|",5)){ a->scope_sync=1; s+=5; }
+  if(!strncmp(s,"windowraster|",13)){
+    int width,height;
+    s+=13;
+    if(!a->scope_crt || a->scope_sync || a->scope_global[0] || a->scope_instance[0] ||
+       !parse_nonnegative_index(&s,&width) || *s++!='|' ||
+       !parse_nonnegative_index(&s,&height) || *s ||
+       width<1 || width>FB_MAX_W || height<1 || height>FB_MAX_H) return;
+    a->crt_width=width;
+    a->crt_height=height;
+    a->kind=CK_WINDOW_RASTER;
+    return;
+  }
   if(!strncmp(s,"crtmode|",8) || !strncmp(s,"roomspeed|",10)){
     /* Host policy follows the CRT selection alone. A content condition could change the mode in
      * the middle of a room. */
-    if(!a->scope_crt || a->scope_sync || a->scope_global[0] || a->scope_instance[0]) return;
+    if(a->scope_crt!=CRT_SCOPE_ANY || a->scope_sync || a->scope_global[0] ||
+       a->scope_instance[0]) return;
     if(s[0]=='c'){
       int width,height,hz;
       s+=8;
@@ -601,6 +623,8 @@ static void cheat_parse_body(const char *code, CheatAct *a){
 }
 static void cheat_parse(const char *code,CheatAct *a){
   cheat_parse_body(code,a);
+  if(a->scope_crt>CRT_SCOPE_ANY && a->kind!=CK_WINDOW_RASTER && a->kind!=CK_DRAW_HOLD)
+    a->kind=CK_NONE;
   /* Synchronizing layout recomputes on release instead of restoring a stale coordinate.
    * Restrict it to explicit presentation scopes and numeric instance/layer operations. */
   if(a->scope_sync && (!(a->scope_crt || a->scope_gameres) ||
@@ -723,6 +747,10 @@ static int cheat_scope_instance_ok(AnygmEngine *engine,const CheatAct *a){
   int object=gml_object_index_by_name(&engine->vm,a->scope_instance);
   return object>=0 && gml_find_instance(&engine->vm,object)!=NULL;
 }
+static bool cheat_crt_scope_ok(const AnygmEngine *engine,CheatCrtScope scope){
+  return engine->config.present_logical_raster && engine->config.adjust_crt_tv &&
+    (scope==CRT_SCOPE_ANY || (scope==CRT_SCOPE_VERTICAL)==engine_crt_is_vertical(engine));
+}
 /* phase: 0 = normal post-step sticky pass, 1 = aspect reshaping, 2 = monitor-change edge. */
 static int cheat_scope_ok(AnygmEngine *engine,const CheatAct *a,int phase){
   if(!cheat_scope_instance_ok(engine,a)) return 0;
@@ -739,8 +767,7 @@ static int cheat_scope_ok(AnygmEngine *engine,const CheatAct *a,int phase){
   /* Read live rather than latched: the selection can change between two frames, and the pass that
    * gives the content its own numbers back is the same pass that took them. */
   if(a->scope_gameres) return phase==0 && engine->config.present_logical_raster!=0;
-  if(a->scope_crt) return phase==0 && engine->config.present_logical_raster!=0 &&
-                         engine->config.adjust_crt_tv!=0;
+  if(a->scope_crt) return phase==0 && cheat_crt_scope_ok(engine,a->scope_crt);
   return phase==0;
 }
 /* ============================================================================================
@@ -1575,7 +1602,8 @@ static void cheat_sticky_pass(AnygmEngine *engine,CheatSlot *arr, int n, int cha
     if(a->kind==CK_ROOM || a->kind==CK_INST_SET || a->kind==CK_NONE) continue;
     /* A hold belongs to the drawing, not to the post-step pass: writing it here would make it the
      * freeze it exists not to be. */
-    if(a->kind==CK_DRAW_HOLD || a->kind==CK_SURFACE_CANVAS || a->kind==CK_AFTER_DRAW) continue;
+    if(a->kind==CK_DRAW_HOLD || a->kind==CK_SURFACE_CANVAS || a->kind==CK_AFTER_DRAW ||
+       a->kind==CK_WINDOW_RASTER) continue;
     if(room_owned_only && !cheat_slot_is_room_owned(a)) continue;
     int applies=channel_on && slot->enabled && cheat_scope_ok(engine,a,0);
     /* A script override is an edge at fresh startup, not a value to restore when its channel is
@@ -1603,7 +1631,8 @@ static void cheat_sticky_pass(AnygmEngine *engine,CheatSlot *arr, int n, int cha
 static void cheat_gameres_pass(AnygmEngine *engine,CheatSlot *arr,int n,int channel_on){
   for(int i=0;i<n;i++){
     CheatSlot *slot=&arr[i];
-    if((!slot->act.scope_gameres && !slot->act.scope_crt) || slot->act.kind==CK_NONE) continue;
+    if((!slot->act.scope_gameres && !slot->act.scope_crt) ||
+       slot->act.kind==CK_NONE || slot->act.kind==CK_WINDOW_RASTER) continue;
     int applies=channel_on && slot->enabled && cheat_scope_ok(engine,&slot->act,0);
     if(applies){
       if(!slot->saved_valid) cheat_slot_capture(engine,slot);
@@ -1663,6 +1692,22 @@ int engine_override_is_host_policy(const char *code){
   while(*code==' ' || *code=='\t') code++;
   return !strncmp(code,"crtmode|",8) || !strncmp(code,"roomspeed|",10);
 }
+/* Resolve last-wins precedence without writing the game's window request. A native size change
+ * remains available as soon as the CRT window is withdrawn, including after a state restore. */
+bool engine_overrides_window_raster(const AnygmEngine *engine,int *width,int *height){
+  if(!engine->config.present_logical_raster || !engine->config.adjust_crt_tv) return false;
+  const CheatSlot *tables[]={engine->cheats,engine->boot_cheats};
+  const int counts[]={engine->cheat_count,engine_boot_cheats_active(engine)};
+  for(int table=0;table<2;table++) for(int i=counts[table]-1;i>=0;i--){
+    const CheatSlot *slot=&tables[table][i];
+    if(!slot->enabled || slot->act.kind!=CK_WINDOW_RASTER ||
+       !cheat_crt_scope_ok(engine,slot->act.scope_crt)) continue;
+    if(width) *width=slot->act.crt_width;
+    if(height) *height=slot->act.crt_height;
+    return true;
+  }
+  return false;
+}
 /* Resolve both declarations from live options and slots. Holding a room_speed global would
  * enter states and outlive the option, so the runtime borrows a lookup table instead. Runtime
  * slots are read last and therefore take precedence over boot declarations. */
@@ -1717,7 +1762,7 @@ void engine_overrides_presentation_apply(AnygmEngine *engine){
  * of its own to restore and why it never reaches a savestate. */
 static void cheat_draw_hold_pass(AnygmEngine *engine,CheatSlot *arr,int n,int channel_on,int begin){
   for(int i=0;i<n;i++){
-    CheatSlot *slot=&arr[i];
+    CheatSlot *slot=&arr[begin?i:n-1-i];
     if(slot->act.kind!=CK_DRAW_HOLD) continue;
     if(begin){
       slot->held_valid=0;
@@ -1742,8 +1787,8 @@ void engine_overrides_draw_hold_end(AnygmEngine *engine){
   if(!engine) return;
   /* Both tables are walked whole and without the channel gate: this undoes only what begin marked,
    * and a channel switched off between the two would otherwise leave the held value behind. */
-  cheat_draw_hold_pass(engine,engine->cheats,engine->cheat_count,1,0);
   cheat_draw_hold_pass(engine,engine->boot_cheats,engine->boot_cheat_count,1,0);
+  cheat_draw_hold_pass(engine,engine->cheats,engine->cheat_count,1,0);
 }
 /* Reuse the event's target and receiver, not a second global frame pass. Resolve by id because
  * the authored event can destroy its receiver or grow the instance pool. Nested screen_redraw
