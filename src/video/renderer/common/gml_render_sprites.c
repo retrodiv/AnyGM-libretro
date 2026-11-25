@@ -3181,7 +3181,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   else resident_classify_page(r,page,atlas);
   int native_fractional_cutout=selected_physical_background &&
     family==GML_RENDER_SCENE_BACKGROUND && anygm_policy_uses_first_generation_studio(r->win) &&
-    r->active_shader<0 && r->alphablend && !r->blendmode && alpha>=0x1p-32 &&
+    r->active_shader<0 && r->blendmode>=0 && r->blendmode<=11 && alpha>=0x1p-32 &&
     r->alpha_test_enable && r->alpha_test_ref && !page->scene_fully_opaque &&
     fabs(xs)>1.0 && fabs(ys)>1.0 &&
     floor(fabs(xs))!=fabs(xs) && floor(fabs(ys))!=fabs(ys);

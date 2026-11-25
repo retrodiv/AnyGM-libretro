@@ -58,7 +58,7 @@ int gml_gpu_opengl_clamped_atlas_valid(const GmlRenderDrawOp *op,
      (uint64_t)(uint32_t)region.y+region.height>source_height);
 }
 
-/* Tiny positive background points and filtered quads keep affine crop-edge UVs.
+/* Tiny positive background points and qualified filtered cutouts keep affine crop-edge UVs.
  * The fragment sampler clamps to the declared immutable source rectangle. */
 int gml_gpu_opengl_clamped_background_valid(const GmlRenderDrawOp *op,
                                         const GmlRenderDrawStateSnapshot *state,
@@ -74,9 +74,7 @@ int gml_gpu_opengl_clamped_background_valid(const GmlRenderDrawOp *op,
   GmlRenderRect region=q->sampling.source_region;
   int filtered=q->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR;
   int ordinary_cutout=filtered_background_cutout(q,state) &&
-    q->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_TRUNC &&
-    state->rgb_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
-    state->rgb_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
+    q->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_TRUNC;
   int tint_quant=q->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
     (filtered && (q->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND ||
       q->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_TRUNC ||
