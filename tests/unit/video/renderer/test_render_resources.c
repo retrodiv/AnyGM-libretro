@@ -33,6 +33,15 @@
   return 0; \
 } } while(0)
 
+/* Fixtures replacing the initial atlas must release the renderer's built-in font pixels. */
+static void release_initial_atlases(GmlRender *render){
+  for(int i=0;i<render->n_atlas;i++)
+    gml_render_atlas_pixels_release(render,&render->atlas[i]);
+  free(render->atlas);
+  render->atlas=NULL;
+  render->n_atlas=0;
+}
+
 typedef struct FakeDevice {
   int on_demand;
   uint64_t textured_families[GML_RENDER_SCENE_FAMILY_COUNT];
@@ -8960,6 +8969,7 @@ static int resident_palette_grid_glyph(void){
     {111,112,113,255, 141,142,143,255, 90,90,90,255, 0,0,0,0},
     {121,122,123,255, 151,152,153,255, 90,90,90,255, 0,0,0,0}};
   CHECK(r && !gml_render_init(r,NULL));r->win=&content;
+  release_initial_atlases(r);
   r->atlas=calloc(1,sizeof *r->atlas);r->tpag=calloc(1,sizeof *r->tpag);
   r->spr=calloc(2,sizeof *r->spr);r->shader_pal=calloc(1,sizeof *r->shader_pal);
   CHECK(r->atlas && r->tpag && r->spr && r->shader_pal);
@@ -13296,6 +13306,7 @@ static int resident_stretched_unavailable_source(void){
     uint32_t screen[16u*12u];
     CHECK(r && gml_render_init(r,NULL)==0);
     r->win=&content;
+    release_initial_atlases(r);
     r->atlas=calloc(1,sizeof *r->atlas);r->tpag=calloc(1,sizeof *r->tpag);
     r->spr=calloc(1,sizeof *r->spr);
     CHECK(r->atlas && r->tpag && r->spr);
@@ -15112,6 +15123,7 @@ static int resident_nearest_font_pending_underlay(void){
     CHECK(r && gml_render_init(r,NULL)==0);
     device.observe_on_demand=fake_observe_on_demand;
     r->win=&content;r->color_write_mask=15u;
+    release_initial_atlases(r);
     r->atlas=calloc(1,sizeof *r->atlas);CHECK(r->atlas);
     r->n_atlas=1;r->atlas[0].w=r->atlas[0].h=2;
     r->atlas[0].px=malloc(16u);CHECK(r->atlas[0].px);
@@ -16423,6 +16435,7 @@ static int resident_absent_rotated_sprite_boundaries(void){
   FakeDevice fake={.on_demand=1};GmlRenderDeviceServices device=service(&fake);
   uint32_t base[W*H]={0};CHECK(r && !gml_render_init(r,NULL));
   r->win=&content;r->tpag=calloc(1,sizeof *r->tpag);r->spr=calloc(1,sizeof *r->spr);
+  release_initial_atlases(r);
   r->atlas=calloc(1,sizeof *r->atlas);CHECK(r->tpag && r->spr && r->atlas);
   r->n_tpag=r->n_spr=r->n_atlas=1;
   r->tpag[0]=(GmlTpag){.sx=2,.sw=2,.sh=2,.tw=2,.th=2,.bw=4,.bh=4,.tx=1,.ty=1};
@@ -16605,6 +16618,7 @@ static int resident_native_textured_triangles(void){
     uint32_t screen[W*H]={0},shadow[W*H];CHECK(r && graphics);
     CHECK(!gml_render_init(r,NULL));
     r->win=&content;r->color_write_mask=15u;r->active_shader=-1;
+    release_initial_atlases(r);
     r->n_atlas=r->n_tpag=r->n_spr=1;
     r->atlas=calloc(1,sizeof *r->atlas);r->tpag=calloc(1,sizeof *r->tpag);
     r->spr=calloc(1,sizeof *r->spr);CHECK(r->atlas && r->tpag && r->spr);
@@ -20598,6 +20612,7 @@ static int resident_selected_background_function(void){
     GmlRenderDeviceServices device=service(&fake);uint32_t screen[W*H],shadow[W*H];
     CHECK(render && gml_render_init(render,NULL)==0);render->win=&content;
     render->classic=facts.classic_revision!=0;
+    release_initial_atlases(render);
     render->atlas=calloc(1,sizeof *render->atlas);render->tpag=calloc(1,sizeof *render->tpag);
     render->bg=calloc(1,sizeof *render->bg);CHECK(render->atlas && render->tpag && render->bg);
     render->atlas[0].px=malloc(sizeof rgba);CHECK(render->atlas[0].px);
@@ -22981,6 +22996,7 @@ int main(void){
     else if(!strcmp(selected,"extended-rectangle-replay")) passed=extended_rectangle_replay_state();
     else if(!strcmp(selected,"extended-text-dispatch")) passed=resident_extended_text_dispatch_scope();
     else if(!strcmp(selected,"extended-packaged-sprite-dispatch")) passed=resident_extended_packaged_sprite_dispatch_scope();
+    else if(!strcmp(selected,"stretched-unavailable-source")) passed=resident_stretched_unavailable_source();
     else if(!strcmp(selected,"extended-runtime-sprite-dispatch")) passed=resident_extended_runtime_sprite_dispatch_scope();
     else if(!strcmp(selected,"extended-surface-dispatch")) passed=resident_extended_surface_dispatch_scope();
     else if(!strcmp(selected,"source-colour-alpha-dispatch")) passed=resident_source_colour_alpha_dispatch_scope();
