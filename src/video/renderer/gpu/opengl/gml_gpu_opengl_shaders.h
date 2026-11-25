@@ -706,13 +706,15 @@
   "  alpha=d64_add(alpha,d64_mul(c,d64_mul(ix,fy)));\n" \
   "  return d64_add(alpha,d64_mul(d,d64_mul(fx,fy)));\n" \
   "}\n" \
-  "bool background_alpha_passes(int mask){\n" \
+  "bool background_alpha_passes(int mask,out int cutout_alpha_byte){\n" \
+  "  cutout_alpha_byte=-1;\n" \
   "  vec2 centre=vec2(gl_FragCoord.x,u_extent.y<0.0?gl_FragCoord.y:u_extent.y-gl_FragCoord.y);\n" \
   "  if(u_alpha_test>=0){\n" \
   "    uvec2 alpha=background_cutout_alpha(centre,mask);\n" \
   "    if(!limb_less(d64_uint(uint(u_alpha_test)),alpha)) return false;\n" \
   "#ifdef GML_SCENE_BYTE_POSITIVE_ALPHA\n" \
-  "    return v_span_x.y!=0.0 || d64_round(alpha)!=0;\n" \
+  "    cutout_alpha_byte=d64_round(alpha);\n" \
+  "    return v_span_x.y!=0.0 || cutout_alpha_byte!=0;\n" \
   "#else\n" \
   "    uint bits=floatBitsToUint(v_span_x.x*255.0);\n" \
   "    uint exponent=bits>>23u;\n" \
@@ -1251,12 +1253,17 @@
   "    vec4 sampled=margin!=0?hardware_physical_sprite_sample(v_texcoord,ivec2(v_clamp.xy),ivec2(v_clamp.zw),margin):source_texture(uv);\n" \
   "#endif\n" \
   "#ifdef GML_SCENE_BYTE_POSITIVE_ALPHA\n" \
-  "    if(!background_alpha_passes(margin)) discard;\n" \
+  "    int cutout_alpha_byte;\n" \
+  "    if(!background_alpha_passes(margin,cutout_alpha_byte)) discard;\n" \
   "    if(u_filter==150 || u_filter==154){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
   "#else\n" \
   "    if(u_alpha_test>=0 && sampled.a*255.0<=float(u_alpha_test)) discard;\n" \
   "#endif\n" \
   "    uvec4 bytes=uvec4(floor(clamp(sampled,0.0,1.0)*255.0+vec4(0.5)));\n" \
+  "#ifdef GML_SCENE_BYTE_POSITIVE_ALPHA\n" \
+  "    // Ordinary source-over reuses the cutoff sample for its byte alpha.\n" \
+  "    if(cutout_alpha_byte>=0 && v_colour.a>=1.0/4294967296.0) bytes.a=uint(cutout_alpha_byte);\n" \
+  "#endif\n" \
   "#ifdef GML_SCENE_WHITE_TINT\n" \
   "    uvec3 tinted=bytes.rgb;\n" \
   "#else\n" \
@@ -1291,7 +1298,8 @@
   "#ifdef GML_SCENE_RAW_POSITIVE_ALPHA\n" \
   "      // Visibility uses raw alpha taps; fixed UNORM filtering can lose the subnormal tie.\n" \
   "      // Colour keeps the device sample. One affine quad supplies the support coordinates.\n" \
-  "      if(!background_alpha_passes(margin)) discard;\n" \
+  "      int cutout_alpha_byte;\n" \
+  "      if(!background_alpha_passes(margin,cutout_alpha_byte)) discard;\n" \
   "#else\n" \
   "#ifndef GML_SCENE_ZERO_ALPHA_BLEND\n" \
   "      if(alpha<=0.0 && physical_filter<112) discard;\n" \

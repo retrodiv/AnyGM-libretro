@@ -20859,12 +20859,24 @@ static int resident_background_part_trim_function(void){
     }
     if(filtered && !r->classic && !anygm_policy_has_modern_layer_semantics(r->win) &&
        owner==3u && !gui && !transformed){
-      /* Count the unqualified two-axis cutout magnification as ordered CPU,
-       * rather than hiding its measured hardware-filter excess in tolerance. */
+      /* The measured source-over cutout now has one native packet. Verify
+       * dispatch and state here while the real-device probe checks pixels. */
       r->atlas[0].px[4u*(3u*A+4u)+3u]=0u;
       r->tpag[0].scene_opaque_checked=0;
       r->blendmode=0;r->alphablend=1;r->alpha_test_enable=1;r->alpha_test_ref=79u;
       submitted=fake.submits;int reads=fake.readbacks;
+      gml_render_draw_state_get(r,&before);
+      gml_draw_background_part_ext(r,0,0,0,8,9,12,12,1.25,2.5,0xFFFFFFu,1);
+      CHECK(r->resident_application_pass && fake.readbacks==reads && fake.submits==submitted);
+      CHECK(gml_render_scene_submit_pending(r) && fake.readbacks==reads &&
+            fake.submits==submitted+1 && fake.last_quad.shape==GML_RENDER_QUAD_AXIS_ALIGNED &&
+            !fake.last_quad.span_active && fake.last_quad_state.alpha_test_enabled &&
+            fake.last_quad_state.alpha_test_reference==79u &&
+            fake.last_quantisation==GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_TRUNC);
+      gml_render_draw_state_get(r,&after);CHECK(!memcmp(&before,&after,sizeof before));
+      /* The same geometry still requires ordered CPU for ordinary inverse. */
+      r->blendmode=2;
+      submitted=fake.submits;
       gml_render_draw_state_get(r,&before);
       gml_draw_background_part_ext(r,0,0,0,8,9,12,12,1.25,2.5,0xFFFFFFu,1);
       CHECK(!r->resident_application_pass && fake.readbacks==reads+1 && fake.submits==submitted);

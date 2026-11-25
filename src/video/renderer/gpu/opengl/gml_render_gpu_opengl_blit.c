@@ -73,6 +73,10 @@ int gml_gpu_opengl_clamped_background_valid(const GmlRenderDrawOp *op,
   const GmlRenderQuad *q=&op->payload.quad;
   GmlRenderRect region=q->sampling.source_region;
   int filtered=q->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR;
+  int ordinary_cutout=filtered_background_cutout(q,state) &&
+    q->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_TRUNC &&
+    state->rgb_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
+    state->rgb_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
   int tint_quant=q->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
     (filtered && (q->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND ||
       q->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_TRUNC ||
@@ -88,7 +92,7 @@ int gml_gpu_opengl_clamped_background_valid(const GmlRenderDrawOp *op,
      (q->sampling.filter==GML_RENDER_FILTER_NEAREST?q->sampling.logical_margin_mask!=0u:
        q->sampling.logical_margin_mask>15u) ||
      !isfinite(q->filtered_draw_alpha) || q->filtered_draw_alpha<=0.0 ||
-     q->filtered_draw_alpha>=0x1p-32 ||
+     (ordinary_cutout?q->filtered_draw_alpha>1.0:q->filtered_draw_alpha>=0x1p-32) ||
      region.x<0 || region.y<0 || !region.width || !region.height ||
      (uint64_t)(uint32_t)region.x+region.width>width ||
      (uint64_t)(uint32_t)region.y+region.height>height) return 0;

@@ -3179,10 +3179,17 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(margin_bottom) margin_mask|=GML_RENDER_MARGIN_BOTTOM;
   if(clamped_window) resident_classify_clamped_page(r,page,atlas);
   else resident_classify_page(r,page,atlas);
+  int native_fractional_cutout=selected_physical_background &&
+    family==GML_RENDER_SCENE_BACKGROUND && anygm_policy_uses_first_generation_studio(r->win) &&
+    r->active_shader<0 && r->alphablend && !r->blendmode && alpha>=0x1p-32 &&
+    r->alpha_test_enable && r->alpha_test_ref && !page->scene_fully_opaque &&
+    fabs(xs)>1.0 && fabs(ys)>1.0 &&
+    floor(fabs(xs))!=fabs(xs) && floor(fabs(ys))!=fabs(ys);
+  int native_background=native_tiny_background || native_fractional_cutout;
   /* First-generation cutout with variable alpha and fractional magnification
-   * can exceed the per-channel filtering budget at ordinary opacity. The tiny
-   * background packet evaluates byte positivity and the raw cutoff separately. */
-  if(selected_physical_atlas && !hardware_physical_font && !native_tiny_background && !r->classic &&
+   * can exceed the per-channel filtering budget. The native background
+   * packet checks the raw cutoff before drawing the complete rectangle. */
+  if(selected_physical_atlas && !hardware_physical_font && !native_background && !r->classic &&
      !anygm_policy_has_modern_layer_semantics(r->win) &&
      r->alpha_test_enable && r->alpha_test_ref && !page->scene_fully_opaque &&
      fabs(xs)>1.0 && fabs(ys)>1.0 &&
@@ -3269,7 +3276,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   int selected_cutout=r->alpha_test_enable;
   /* A glyph is one placed quad. Device filtering owns its interior coverage;
    * CPU support rows must not turn text into thousands of tiny packets. */
-  int background_coverage=!native_tiny_background && !native_unit_background && !large_unit_texel && !hardware_physical_font && selected_physical_atlas &&
+  int background_coverage=!native_background && !native_unit_background && !large_unit_texel && !hardware_physical_font && selected_physical_atlas &&
     (selected_preset || reduced_part_coverage || selected_cutout || positive_part ||
       (hardware_physical_tile && (hardware_physical_rotation || alpha<0x1p-32)) || fabs(xs)<.125 || fabs(ys)<.125) &&
     r->active_shader<0 && (((r->blendmode==0 || r->blendmode==2) && (alpha>=0x1p-32 || hardware_physical_tile)) ||
@@ -3277,10 +3284,10 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
         (r->blendmode==6 || gml_render_blend_uses_destination_colour(r->blendmode))))));
   if(reduced_part_coverage && !background_coverage) return 0;
   /* Other sub-eighth axes retain their existing prepared-row owner. */
-  if(hardware_physical_background && !background_coverage && !native_tiny_background &&
+  if(hardware_physical_background && !background_coverage && !native_background &&
      (fabs(xs)<.125 || fabs(ys)<.125))
     return 0;
-  if(hardware_physical_sprite && !native_tiny_background && !native_unit_background &&
+  if(hardware_physical_sprite && !native_background && !native_unit_background &&
      !hardware_physical_font && !hardware_physical_part && !background_coverage && r->alpha_test_enable &&
      (margin_mask || (!page->scene_fully_opaque && page->scene_ax1>=0))) return 0;
   /* The continuous modern normal packet does not qualify raw positive
@@ -3597,7 +3604,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     modern_numbered_sprite?GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST:0u;
   if(selected_preset) operation.payload.quad.sampling.quantisation=anygm_policy_has_modern_layer_semantics(r->win)
     ?GML_RENDER_QUANTISE_INTEGER_TINT_ROUND:GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC;
-  if(native_tiny_byte)
+  if(native_tiny_byte || native_fractional_cutout)
     operation.payload.quad.sampling.quantisation=anygm_policy_has_modern_layer_semantics(r->win)
       ?GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_ROUND:GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_TRUNC;
   if(native_tiny_normal)
@@ -4003,7 +4010,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   }
   if(!gml_render_application_scene_enqueue(r,&operation,&state,&source)) return 0;
   r->fb_all_transparent=0;
-  if((hardware_physical_font || native_tiny_background || native_unit_background) && (state.write_mask&8u) &&
+  if((hardware_physical_font || native_background || native_unit_background) && (state.write_mask&8u) &&
      (state.coverage_policy==0u || state.coverage_policy==GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA))
     r->fb_opaque_known=0;
   return 1;
