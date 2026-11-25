@@ -437,7 +437,9 @@ static GmlVal gml_builtin_call_fast_id_impl(GmlVM *vm, int id, const char *nm, G
     case BID_ARRAY_CREATE:{
       int sz=n>0?(int)N(a,n,0):0;
       GmlVal fill=n>1?a[1]:vreal(0);
-      return gml_arr_new(sz,fill); }
+      GmlVal array=gml_arr_new(sz,fill);
+      (void)gml_array_heap_adopt(&vm->array_heap,array);
+      return array; }
     case BID_ARRAY_PUSH:
       for(int i=1;i<n;i++) gml_arr_push(a[0],a[i]);
       return vreal(0);

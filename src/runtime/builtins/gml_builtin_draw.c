@@ -99,7 +99,8 @@ static GmlVal vertex_format_information(GmlVM *vm,GmlVal *arguments,int count){
   if(!info) return vundef();
   GmlVal array=gml_arr_new(elements,vundef());
   GmlVal *slot=gml_varmap_put(&info->vars,"elements");
-  if(gml_val_array_length(array)!=elements || !slot){
+  if(gml_val_array_length(array)!=elements || !slot ||
+     !gml_array_heap_adopt(&vm->array_heap,array)){
     gml_values_release_owned(&array,1);
     return vundef();
   }
@@ -138,7 +139,11 @@ static int sprite_info_value(void *context,const char *key,GmlRenderInfoKind kin
   else if(kind==GML_RENDER_INFO_STRING){
     char *owned=strdup(text?text:"");
     if(!owned) return 0;
-    value=vstr_owned(owned);
+    if(!gml_array_heap_adopt(&builder->vm->array_heap,vstr_owned(owned))){
+      free(owned);
+      return 0;
+    }
+    value=vstr(owned);
   }else if(kind==GML_RENDER_INFO_OBJECT){
     GmlInstance *object=gml_struct_new(builder->vm);
     if(!object) return 0;

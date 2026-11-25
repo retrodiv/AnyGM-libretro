@@ -2596,6 +2596,15 @@ static inline int builtin_hotprof_on(GmlVM *vm){
 static int vm_heap_string(GmlVal v){
   return v.t==V_STR && v.s && v.d!=0;
 }
+/* A persistent store owns its copy. The temporary can still be referenced by
+ * the current operand stack, locals or the caller's arguments. */
+static GmlVal vm_persist_text(GmlVM *vm,GmlVal value){
+  if(!vm_heap_string(value)) return value;
+  char *copy=strdup(value.s);
+  if(!copy) return vstr("");
+  if(!gml_array_heap_adopt(&vm->array_heap,vstr_owned(copy))){ free(copy); return vstr(""); }
+  return vstr(copy);
+}
 static void micro_set_bool_fields(GmlVM *vm, GmlInstance *self,
                                   const GmlInsn *pressed_in, const GmlInsn *held_in, const GmlInsn *released_in,
                                   int pressed, int held, int released){
@@ -3381,13 +3390,6 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
    * Literals/references (data.win STRG, rodata, var pointers via plain vstr) are d==0 and never freed. */
   #define STR_IS_HEAP(vv) ((vv).t==V_STR && (vv).s && (vv).d!=0)
   #define GC_UNTRACK(ss) do{ const void *_p=(const void*)(ss); for(int _i=0;_i<str_gc_n;_i++) if(str_gc[_i]==_p) str_gc[_i]=NULL; }while(0)
-  /* Persisting a V_STR into an instance/global variable transfers it if this run owns it.
-   * An owned string outside this run's tracker belongs to a caller scope and dies when that caller
-   * returns, so store a copy.
-   * d==0 strings are stable refs (STRG/rodata) and need neither. */
-  #define GC_PERSIST(vv) do{ if((vv).t==V_STR && (vv).s && (vv).d!=0){ int _f=0; const void *_p=(const void*)(vv).s; \
-      for(int _i=0;_i<str_gc_n;_i++) if(str_gc[_i]==_p){ str_gc[_i]=NULL; _f=1; } \
-      if(!_f){ char *_c=strdup((vv).s); if(_c) (vv)=vstr_owned(_c); } } }while(0)
   const char *trace_filter = gml_vm_development_text(vm,GML_VM_SETTING_TRACE);
   int trace = trace_filter && strstr(w->code[ci].name, trace_filter);
   int use_cache = !trace && code_cache_ensure(w,ci);
@@ -3485,8 +3487,10 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
       if(handler->catch_offset!=UINT32_MAX){
         GmlInstance *error=gml_struct_new(vm);
         GmlVal *message=error?gml_varmap_put(&error->vars,"message"):NULL;
-        if(!message || sp>=STK) goto vm_run_teardown;
-        *message=vstr_owned(exception_context->state.pending);
+        char *pending=exception_context->state.pending;
+        if(!message || sp>=STK || !gml_array_heap_adopt(&vm->array_heap,vstr_owned(pending)))
+          goto vm_run_teardown;
+        *message=vstr(pending);
         exception_context->state.pending=NULL;
         stk[sp]=vreal((double)error->id);stkt[sp]=DT_VAR;sp++;
       }else{
@@ -3764,7 +3768,7 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
             }
           }
           val=vm_box_stored_value(val,in.type2);
-          GC_PERSIST(val);
+          val=vm_persist_text(vm,val);
           if(classic_implicit_return) ret=val;
           if(t) array_set_inst_field_h(vm,t,nm,nh,idx,val);
           else array_set_h(vm,&locals,(int)asnum(scopev),nm,nh,idx,val);
@@ -3787,7 +3791,7 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
              iv=sp>0?stk[--sp]:vreal(0);
            }
            val=vm_box_stored_value(val,in.type2);
-           GC_PERSIST(val);
+           val=vm_persist_text(vm,val);
            if(classic_implicit_return) ret=val;
            int it=(int)asnum(iv);
            if(iv.t==V_REAL && !GML_IS_STRUCT_ID(iv.d) && it<100000)
@@ -3800,7 +3804,7 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
             GmlVal iv=sp>0?stk[--sp]:vreal(0);
             GmlVal v=sp>0?stk[--sp]:vreal(0);
             v=vm_box_stored_value(v,in.type2);
-            GC_PERSIST(v);
+            v=vm_persist_text(vm,v);
             if(classic_implicit_return) ret=v;
             int it=(int)asnum(iv);
             if(iv.t==V_REAL && !GML_IS_STRUCT_ID(iv.d) && it<100000)
@@ -3812,14 +3816,12 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
           }
           GmlVal v = gml_arr_publish(vm_box_stored_value(
             sp>0?stk[--sp]:vreal(0),in.type2));
-          /* locals/arguments die at scope exit, so their owned strings stay tracked and are freed
-           * then (str_gc). Only instance/global stores persist beyond the run — untrack those so the
-           * var owns the string (else it dangles at scope exit; re-assigning it later leaks it). */
+          /* Local and argument values can borrow temporary strings until scope exit. */
           if(in.inst==IT_LOCAL){ if(!argument_set(vm,nm,v)) *gml_varmap_put_hashed(&locals,nm,nh)=v; }
           else if(in.inst==IT_STACK){   /* `pop.v.v stack.var` — write field on the instance under the value */
-            GmlVal iv=sp>0?stk[--sp]:vreal(0); GC_PERSIST(v);
+            GmlVal iv=sp>0?stk[--sp]:vreal(0); v=vm_persist_text(vm,v);
             GmlInstance *t=vm_inst_from_ref(vm,iv); if(t) inst_set_any_h(vm,t,nm,nh,v); }
-          else { GC_PERSIST(v); var_set_h(vm,in.inst,nm,nh,v); }
+          else { v=vm_persist_text(vm,v); var_set_h(vm,in.inst,nm,nh,v); }
           if(classic_implicit_return) ret=v;
         }
         break;
@@ -4459,10 +4461,8 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
  vm_run_teardown:
   if(parked) goto vm_run_restore;
   while(withsp>0){ withsp--; free(withstk[withsp].list); }  /* free any open with-frames */
-  /* string GC: temporaries (builtin results / concatenations) are owned heap strings. Free every one
-   * that wasn't transferred to a var (those were GC_UNTRACK'd on store, the var owns them now). The
-   * return value is dup'd first so the CALLER owns an independent copy — GM strings are values, and
-   * this also prevents freeing a var's string that a script returned (e.g. `return global.text`). */
+  /* Clean up tracked temporaries after handing a returned temporary to the caller.
+   * Persistent variables already hold copies in the VM heap. */
   if(STR_IS_HEAP(ret)){
     int tracked=0; for(int i=0;i<str_gc_n;i++) if(str_gc[i]==ret.s){tracked=1;break;}
     if(tracked) GC_UNTRACK(ret.s);   /* live temp: hand ownership to the caller, no copy */

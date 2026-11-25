@@ -83,7 +83,6 @@ static int jb_put_json_string(GmlBuiltinJsonWriter *b, const char *s){
   }
   return gml_builtin_json_writer_putc(b,'"');
 }
-GmlVal var_store_clone(GmlVal v);
 static int json_struct_skip_key(const char *key){
   return key && (!strcmp(key,"__fn") || !strcmp(key,"__self") ||
                  !strcmp(key,"__name") || !strcmp(key,"__ctor"));
@@ -268,6 +267,14 @@ static int js_arr_push(GmlArr *A, GmlVal v){
 
 
 static GmlVal json_parse_value(JsonIn *j, int depth);
+/* Published strings must belong to the VM heap so copies returned to game
+ * code remain valid after a DS entry is replaced or destroyed. */
+static int js_adopt_text(JsonIn *j, GmlVal value){
+  if(value.t!=V_STR || gml_array_heap_adopt(&j->vm->array_heap,value)) return 1;
+  gml_values_release_owned(&value,1);
+  j->ok=0;
+  return 0;
+}
 static GmlVal json_parse_array(JsonIn *j, int depth){
   if(!js_consume(j,'[')){ j->ok=0; return vreal(0); }
   GmlArr *A=NULL; int list_id=-1;
@@ -290,7 +297,7 @@ static GmlVal json_parse_array(JsonIn *j, int depth){
     if(j->obj_as_struct){
       if(!js_arr_push(A,v)){ j->ok=0; return vreal(0); }
     } else {
-      if(!gml_ds_list_append_direct(
+      if(!js_adopt_text(j,v) || !gml_ds_list_append_direct(
            j->vm,list_id,v,lead=='['?1:(lead=='{'?2:0))){
         j->ok=0;
         return vreal(0);
@@ -317,13 +324,14 @@ static GmlVal json_parse_object(JsonIn *j, int depth){
       if(!js_consume(j,':')){ free(key); j->ok=0; return vreal(0); }
       GmlVal val=json_parse_value(j,depth+1);
       if(!j->ok){ free(key); return vreal(0); }
+      if(!js_adopt_text(j,val)){ free(key); return vreal(0); }
       const char *interned=gml_win_intern_lookup(j->vm->win,key);
       GmlVal *slot;
       if(interned){
         free(key);
         slot=gml_varmap_put(&st->vars,interned);
       }else slot=gml_varmap_put_owned(&st->vars,key);
-      *slot=var_store_clone(val);
+      *slot=val.t==V_STR?vstr(val.s):var_store_clone(j->vm,val);
       if(js_consume(j,'}')) break;
       if(!js_consume(j,',')){ j->ok=0; return vreal(0); }
       /* Studio JSON compatibility accepts a final comma in objects emitted by Studio tooling. */
@@ -342,6 +350,7 @@ static GmlVal json_parse_object(JsonIn *j, int depth){
     GmlVal val=json_parse_value(j,depth+1);
     if(!j->ok){ free(key); return vreal(0); }
     ds_map_put(j->vm,id,vstr(key),val,1);
+    if(val.t==V_STR) gml_values_release_owned(&val,1);
     ds_map_mark_child(j->vm,id,vstr(key),lead=='['?1:(lead=='{'?2:0));
     free(key);
     if(js_consume(j,'}')) break;
@@ -366,7 +375,12 @@ static GmlVal json_parse_value(JsonIn *j, int depth){
   char c=j->s[j->p];
   if(c=='{') return json_parse_object(j,depth);
   if(c=='[') return json_parse_array(j,depth);
-  if(c=='"'){ char *s=js_string(j); return vstr_owned(s); }
+  if(c=='"'){
+    char *s=js_string(j);
+    if(j->ok) return vstr_owned(s);
+    free(s);
+    return vreal(0);
+  }
   if(c=='t'){ if(js_match(j,"true")) return vreal(1); j->ok=0; return vreal(0); }
   if(c=='f'){ if(js_match(j,"false")) return vreal(0); j->ok=0; return vreal(0); }
   if(c=='n'){ if(js_match(j,"null")) return vundef(); j->ok=0; return vreal(0); }
@@ -382,7 +396,10 @@ static GmlVal json_decode_text_mode(GmlVM *vm, const char *s, int obj_as_struct)
   if(builtin_setting(vm,"GML_DBG_JSON") && (!state || state->json_log_count++<12)){
     anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[json] len=%" PRIu64 " ok=%d consumed=%" PRIu64 "/%" PRIu64 " head='%.60s'\n",
       (uint64_t)(s?strlen(s):0), j.ok, (uint64_t)j.p, (uint64_t)j.n, s?s:""); }
-  if(!j.ok || j.p!=j.n) return obj_as_struct?vundef():vreal(-1);
+  if(!j.ok || j.p!=j.n){
+    gml_values_release_owned(&v,1);
+    return obj_as_struct?vundef():vreal(-1);
+  }
   return v;
 }
 GmlVal gml_builtin_json_decode_ds(GmlVM *vm, const char *s){
@@ -397,9 +414,11 @@ GmlVal gml_builtin_json_decode_ds(GmlVM *vm, const char *s){
   int root=ds_map_create_id(vm);
   if(root<0){
     if(*p=='[' && decoded.t==V_REAL) ds_list_destroy_id(vm,(int)decoded.d);
+    if(decoded.t==V_STR) gml_values_release_owned(&decoded,1);
     return vreal(-1);
   }
   ds_map_put(vm,root,vstr("default"),decoded,1);
+  if(decoded.t==V_STR) gml_values_release_owned(&decoded,1);
   if(*p=='[') ds_map_mark_child(vm,root,vstr("default"),1);
   return vreal(root);
 }

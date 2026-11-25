@@ -687,8 +687,9 @@ int gml_ds_list_append_direct(GmlVM *vm, int id, GmlVal value,
                               int nested_kind){
   GmlDSList *list=ds_list_slot(vm,id);
   if(!list) return 0;
+  int previous_length=list->len;
   ds_list_push_kind(list,value,nested_kind);
-  return 1;
+  return list->len>previous_length;
 }
 
 
@@ -1032,8 +1033,11 @@ static int ds_grid_read_native(GmlVM *vm,int id,const char *text){
         else {
           off=12;
           for(uint32_t x=0;x<w;x++)
-            for(uint32_t y=0;y<h;y++)
-              ds_grid_store(vm,g,(int)x,(int)y,ds_native_take_value(bytes,&off));
+            for(uint32_t y=0;y<h;y++){
+              GmlVal value=ds_native_take_value(bytes,&off);
+              ds_grid_store(vm,g,(int)x,(int)y,value);
+              if(value.t==V_STR) gml_values_release_owned(&value,1);
+            }
         }
       }
     }
@@ -1058,7 +1062,14 @@ static int ds_list_read_native(GmlVM *vm,int id,const char *text){
         else {
           ds_list_clear_owned(vm,list);
           off=8;
-          for(uint32_t i=0;i<count;i++) ds_list_push(list,ds_native_take_value(bytes,&off));
+          for(uint32_t i=0;i<count;i++){
+            GmlVal value=ds_native_take_value(bytes,&off);
+            if(value.t==V_STR && !gml_array_heap_adopt(&vm->array_heap,value)){
+              gml_values_release_owned(&value,1);
+              value=vstr("");
+            }
+            ds_list_push(list,value);
+          }
         }
       }
     }

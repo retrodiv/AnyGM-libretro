@@ -3193,7 +3193,11 @@ static int room_info_numbers(GmlVM *vm,GmlVal record,const char *const *names,
 }
 static int room_info_text(GmlVM *vm,GmlVal record,const char *name,const char *text){
   char *owned=strdup(text?text:"");
-  return owned && room_info_value(vm,record,name,vstr_owned(owned));
+  if(!owned) return 0;
+  if(gml_array_heap_adopt(&vm->array_heap,vstr_owned(owned)))
+    return room_info_value(vm,record,name,vstr(owned));
+  free(owned);
+  return 0;
 }
 static GmlVal room_info_array(GmlVM *vm,GmlVal record,const char *name,int count){
   GmlVal array=gml_arr_new(count,vundef());

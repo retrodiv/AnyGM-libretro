@@ -867,10 +867,13 @@ static int varmap_delete_key(GmlVarMap *m, const char *key){
   *m=nm;
   return 1;
 }
-GmlVal var_store_clone(GmlVal v){
+GmlVal var_store_clone(GmlVM *vm,GmlVal v){
   if(v.t==V_STR){
     char *c=v.s?strdup(v.s):NULL;
-    return c?vstr(c):vstr("");
+    if(!c) return vstr("");
+    if(gml_array_heap_adopt(&vm->array_heap,vstr_owned(c))) return vstr(c);
+    free(c);
+    return vstr("");
   }
   if(v.t==V_ARR){ gml_arr_mark_escaped(v); return gml_arr_publish(v); }
   if(v.t==V_UNDEF) return vundef();
@@ -1251,7 +1254,7 @@ GmlVal gml_builtin_try_values_variables(GmlVM *vm, const char *nm, GmlVal *a, in
     return ok?out:vreal(0);
   }
   if(!strcmp(nm,"variable_local_set")){
-    if(n>1) gml_inst_var_set_val(vm,vreal(IT_SELF),S(vm,a,n,0),var_store_clone(a[1]));
+    if(n>1) gml_inst_var_set_val(vm,vreal(IT_SELF),S(vm,a,n,0),var_store_clone(vm,a[1]));
     return vreal(0);
   }
   if(!strcmp(nm,"variable_clone")) return gml_variable_clone(vm,a,n);
@@ -1273,10 +1276,10 @@ GmlVal gml_builtin_try_values_variables(GmlVM *vm, const char *nm, GmlVal *a, in
       const char *key=S(vm,a,n,0);
       if(!strcmp(key,"event_data")) return vreal(0);
       GmlVal *p=gml_varmap_get(&vm->globals,key);
-      if(p) *p=var_store_clone(a[1]);
+      if(p) *p=var_store_clone(vm,a[1]);
       else {
         char *owned=strdup(key?key:"");
-        if(owned) *gml_varmap_put(&vm->globals,owned)=var_store_clone(a[1]);
+        if(owned) *gml_varmap_put_owned(&vm->globals,owned)=var_store_clone(vm,a[1]);
       }
     }
     return vreal(0);
@@ -1289,7 +1292,7 @@ GmlVal gml_builtin_try_values_variables(GmlVM *vm, const char *nm, GmlVal *a, in
       int ok=0; GmlVal out=(n>1)?gml_inst_var_get_val(vm,a[0],key,&ok):vundef();
       return ok?out:vundef();
     }
-    if(n>2) gml_inst_var_set_val(vm,a[0],key,var_store_clone(a[2]));
+    if(n>2) gml_inst_var_set_val(vm,a[0],key,var_store_clone(vm,a[2]));
     return vreal(0);
   }
   /* Instance counterparts of the struct-name queries below. Both use the same
@@ -1359,10 +1362,10 @@ GmlVal gml_builtin_try_values_variables(GmlVM *vm, const char *nm, GmlVal *a, in
       if(n>2){
         if(st && key && (!strcmp(key,"__fn") || !strcmp(key,"__self"))) st->method_bound=0;
         GmlVal *p=gml_varmap_get(map,key);
-        if(p) *p=var_store_clone(a[2]);
+        if(p) *p=var_store_clone(vm,a[2]);
         else {
           char *owned=strdup(key?key:"");
-          if(owned) *gml_varmap_put_owned(map,owned)=var_store_clone(a[2]);
+          if(owned) *gml_varmap_put_owned(map,owned)=var_store_clone(vm,a[2]);
         }
       }
       return vreal(0);
@@ -1551,7 +1554,7 @@ GmlVal gml_builtin_try_values_language(GmlVM *vm, const char *nm, GmlVal *a, int
     if(n>0){
       GmlVal message=gml_builtin_try_values_strings(vm,"@@string@@",a,1);
       gml_vm_exception_raise(vm,message.t==V_STR?message.s:"");
-      gml_values_release(&message,1);
+      gml_values_release_owned(&message,1);
     }
     return vundef();
   }

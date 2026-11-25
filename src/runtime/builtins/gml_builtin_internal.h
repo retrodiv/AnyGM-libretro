@@ -516,7 +516,7 @@ GmlVal arr_newv(int count);
 GmlVal arr8(double a0, double a1, double a2, double a3,
             double a4, double a5, double a6, double a7);
 int array_equals_recursive(GmlVM *vm, GmlVal left, GmlVal right);
-GmlVal var_store_clone(GmlVal value);
+GmlVal var_store_clone(GmlVM *vm,GmlVal value);
 double builtin_math_sqrt(GmlVM *vm, double value);
 void builtin_math_set_epsilon(GmlVM *vm, double epsilon);
 double gm_sign(double x);
