@@ -1893,7 +1893,12 @@
   "    if((u_underlay_flags&4)!=0)local.y=extent.y-1-local.y;\n" \
   "    ivec2 lo=local*size/extent,hi=lo+ivec2(1);\n" \
   "    if((u_underlay_flags&1)==0)hi=max(hi,(local+ivec2(1))*size/extent);\n" \
-  "    else if((u_surface_rule.z&1)!=0){lo=((local*2+1)*size-1)/(extent*2);hi=lo+ivec2(1);}\n" \
+  "    else if((u_surface_rule.z&1)!=0){\n" \
+  "      ivec2 centres=((local*2+1)*size-1)/(extent*2);\n" \
+  "      if(extent.x<size.x)lo.x=centres.x;\n" \
+  "      if(extent.y<size.y)lo.y=centres.y;\n" \
+  "      hi=lo+ivec2(1);\n" \
+  "    }\n" \
   "    ivec4 total=ivec4(0);\n" \
   "    for(int y=lo.y;y<hi.y;y++)for(int x=lo.x;x<hi.x;x++){\n" \
   "      int sy=(u_underlay_flags&8)!=0?size.y-1-y:y;\n" \
