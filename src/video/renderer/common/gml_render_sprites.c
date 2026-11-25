@@ -2017,11 +2017,11 @@ static int resident_selected_part_page(GmlRender *r,GmlTpag *page,
   if(!r || !page || !r->resident_application_pass) return 0;
   /* Classic backgrounds keep their integer point owner under the interpolation
    * hint. Filtered ports keep their numerical fence outside the native
-   * non-cutout tiny-opacity background domain. */
+   * tiny-opacity background domain. */
   int classic_background_point=r->classic && family==GML_RENDER_SCENE_BACKGROUND &&
     r->active_shader<0;
   int tiny_filtered_background=!r->classic && family==GML_RENDER_SCENE_BACKGROUND &&
-    filtered_page>=0 && r->interp && r->active_shader<0 && !r->alpha_test_enable &&
+    filtered_page>=0 && r->interp && r->active_shader<0 &&
     alpha>0.0 && alpha<0x1p-32;
   if(family!=GML_RENDER_SCENE_TILE && !classic_background_point && !tiny_filtered_background &&
      r->interp && r->blendmode!=0 && r->blendmode!=2 &&
@@ -2936,15 +2936,16 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   /* Tiny draw opacity can underflow while destination-colour factors still
    * write. Native background quads preserve the selected byte-alpha support;
    * other unqualified domains keep their counted numerical fence. */
-  int native_tiny_normal=selected_physical_background && family==GML_RENDER_SCENE_BACKGROUND &&
-    !r->blendmode && anygm_policy_has_modern_layer_semantics(r->win) &&
-    r->active_shader<0 && !r->alpha_test_enable && alpha>0.0 && alpha<0x1p-32;
-  int native_tiny_byte_normal=selected_physical_background && family==GML_RENDER_SCENE_BACKGROUND &&
-    !r->classic && !r->blendmode && !anygm_policy_has_modern_layer_semantics(r->win) &&
-    r->active_shader<0 && !r->alpha_test_enable && alpha>0.0 && alpha<0x1p-32;
-  int native_tiny_background=selected_physical_background && family==GML_RENDER_SCENE_BACKGROUND &&
-    !r->classic && r->interp && r->active_shader<0 && !r->alpha_test_enable &&
-    (selected_preset || native_tiny_normal || native_tiny_byte_normal) && alpha>0.0 && alpha<0x1p-32;
+  int tiny_background=selected_physical_background && family==GML_RENDER_SCENE_BACKGROUND &&
+    !r->classic && r->interp && r->active_shader<0 && alpha>0.0 && alpha<0x1p-32;
+  int native_tiny_normal=tiny_background && !r->blendmode &&
+    anygm_policy_has_modern_layer_semantics(r->win);
+  int native_tiny_byte=tiny_background && !native_tiny_normal &&
+    (selected_preset || !r->blendmode) &&
+    (!r->alphablend || !r->blendmode || r->blendmode==1 || r->blendmode==3 ||
+     r->blendmode==4 || r->blendmode==5 || r->blendmode==7 || r->blendmode==8);
+  int native_tiny_background=native_tiny_normal || native_tiny_byte ||
+    (tiny_background && selected_preset && !r->alpha_test_enable);
   if(selected_preset && !hardware_physical_tile && !native_tiny_background &&
      alpha>0.0 && alpha<0x1p-32) return 0;
   double minimum_physical_scale=hardware_physical_font || hardware_axis_sprite || (hardware_physical_tile && hardware_physical_rotation)
@@ -3208,7 +3209,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
      (margin_mask || !page->scene_fully_opaque)) return 0;
   int native_unit_background=selected_physical_background &&
     family==GML_RENDER_SCENE_BACKGROUND && !r->classic && !r->alphablend &&
-    r->blendmode!=2 && r->active_shader<0 && !r->alpha_test_enable &&
+    r->blendmode!=2 && r->active_shader<0 &&
     !clamped_window && alpha==1.0 && (colour&0xFFFFFFu)==0xFFFFFFu &&
     xs==1.0 && ys==1.0 && left==floor(left) && top==floor(top) &&
     (!anygm_policy_has_modern_layer_semantics(r->win) || r->blendmode ||
@@ -3280,11 +3281,13 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
   if(hardware_physical_background && !background_coverage && !native_tiny_background &&
      (fabs(xs)<.125 || fabs(ys)<.125))
     return 0;
-  if(hardware_physical_sprite && !hardware_physical_font && !hardware_physical_part && !background_coverage && r->alpha_test_enable &&
+  if(hardware_physical_sprite && !native_tiny_background && !native_unit_background &&
+     !hardware_physical_font && !hardware_physical_part && !background_coverage && r->alpha_test_enable &&
      (margin_mask || (!page->scene_fully_opaque && page->scene_ax1>=0))) return 0;
   /* The continuous modern normal packet does not qualify raw positive
    * cutout: a sub-byte interpolation difference can change whole coverage. */
-  if(hardware_physical_sprite && !hardware_physical_font && (hardware_physical_part || nearest_mode==7 || hardware_physical_rotation || hardware_physical_background) &&
+  if(hardware_physical_sprite && !native_tiny_normal && !native_unit_background && !hardware_physical_font &&
+     (hardware_physical_part || nearest_mode==7 || hardware_physical_rotation || hardware_physical_background) &&
      !r->blendmode && r->alpha_test_enable &&
      r->alpha_test_ref && !background_coverage && anygm_policy_has_modern_layer_semantics(r->win)) return 0;
   /* The established shader truncates tint; modern opaque CPU pixels round it.
@@ -3595,9 +3598,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     modern_numbered_sprite?GML_RENDER_QUANTISE_SPRITE_MODERN_NEAREST:0u;
   if(selected_preset) operation.payload.quad.sampling.quantisation=anygm_policy_has_modern_layer_semantics(r->win)
     ?GML_RENDER_QUANTISE_INTEGER_TINT_ROUND:GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC;
-  if(native_tiny_background && (selected_preset || native_tiny_byte_normal) && (!r->alphablend || !r->blendmode || r->blendmode==1 ||
-     r->blendmode==3 || r->blendmode==4 || r->blendmode==5 ||
-     r->blendmode==7 || r->blendmode==8))
+  if(native_tiny_byte)
     operation.payload.quad.sampling.quantisation=anygm_policy_has_modern_layer_semantics(r->win)
       ?GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_ROUND:GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_TRUNC;
   if(native_tiny_normal)

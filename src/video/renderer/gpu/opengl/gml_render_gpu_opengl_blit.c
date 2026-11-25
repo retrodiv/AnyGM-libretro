@@ -6,6 +6,15 @@
 #include "gml_gpu_opengl_internal.h"
 
 #include <math.h>
+#include <string.h>
+
+static int filtered_background_cutout(const GmlRenderQuad *quad,
+                                      const GmlRenderDrawStateSnapshot *state){
+  return state->alpha_test_enabled &&
+    (quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_RAW_POSITIVE_ALPHA ||
+     quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_TRUNC ||
+     quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_ROUND);
+}
 
 /* R03-ATLAS-CLAMPED-WINDOW: a logical crop may exceed its immutable physical
  * image. Only the already typed hardware axis sampler clamps these taps;
@@ -83,6 +92,14 @@ int gml_gpu_opengl_clamped_background_valid(const GmlRenderDrawOp *op,
      region.x<0 || region.y<0 || !region.width || !region.height ||
      (uint64_t)(uint32_t)region.x+region.width>width ||
      (uint64_t)(uint32_t)region.y+region.height>height) return 0;
+  if(filtered_background_cutout(q,state)){
+    double xs=fabs(q->inverse_x[0]),ys=fabs(q->inverse_y[1]);
+    if(state->alpha_test_enabled!=1u || state->alpha_test_reference>255u ||
+       !(xs>=0.0625 && xs<=64.0 && ys>=0.0625 && ys<=64.0) ||
+       !(fabs(q->inverse_anchor[0])<=65536.0 && fabs(q->inverse_anchor[1])<=65536.0) ||
+       q->inverse_x[1]!=0.0 || q->inverse_y[0]!=0.0 ||
+       q->inverse_offset[0]!=0.0 || q->inverse_offset[1]!=0.0) return 0;
+  }
   for(unsigned c=0;c<4u;c++){
     double u=q->u[c]*width,v=q->v[c]*height;
     if(!isfinite(u) || !isfinite(v) ||
@@ -161,7 +178,8 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
   quad=&op->payload.quad;
   double raw_source_floor=0.0;
   if(quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_RAW_POSITIVE_ALPHA){
-    if(rendered_source_origin || state->alpha_test_enabled || state->alpha_test_reference ||
+    if(rendered_source_origin || state->alpha_test_enabled>1u ||
+       state->alpha_test_reference>(state->alpha_test_enabled?255u:0u) ||
        !gml_gpu_opengl_clamped_background_valid(op,state,source_width,source_height)) return 0;
     /* For faa*alpha/255 to round positive,its first product must reach
      * 127.5 minimum subnormal units. Only this per-draw scalar is prepared;
@@ -387,6 +405,20 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     for(uint32_t span=0;span<4;span++){
       vertex[19+span]=(float)quad->span_x[span];
       vertex[23+span]=(float)quad->span_y[span];
+    }
+    if(filtered_background_cutout(quad,state)){
+      /* Flat map fields carry the authored binary64 operands through both APIs.
+       * Use integer-valued floats so no driver can canonicalize a NaN payload. */
+      const double mapping[]={quad->inverse_anchor[0],quad->inverse_anchor[1],
+                             quad->inverse_x[0],quad->inverse_y[1]};
+      for(unsigned axis=0;axis<4u;axis++){
+        uint64_t bits;
+        memcpy(&bits,&mapping[axis],sizeof bits);
+        float *packed=vertex+(axis<2u?12u+3u*axis:21u+3u*(axis-2u));
+        packed[0]=(float)(bits&0x3fffffu);
+        packed[1]=(float)((bits>>22u)&0x3fffffu);
+        packed[2]=(float)(bits>>44u);
+      }
     }
     if(quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_RAW_POSITIVE_ALPHA){
       vertex[19]=(float)raw_source_floor;

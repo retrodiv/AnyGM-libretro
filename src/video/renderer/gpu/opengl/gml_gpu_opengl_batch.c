@@ -1424,20 +1424,23 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
     (blend>=18 && blend<=21) || blend==24 || blend==25 ||
     (blend>=GL_SCENE_BLEND_SURFACE_DEST_BASE && blend<=GL_SCENE_BLEND_SURFACE_DEST_LIMIT &&
      state->rgb_equation==GML_RENDER_BLEND_ADD && state->alpha_equation==GML_RENDER_BLEND_ADD));
+  int positive_background=
+    quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_TRUNC ||
+    quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_ROUND;
+  int valid_cutoff=state->alpha_test_enabled<=1u &&
+    state->alpha_test_reference<=(state->alpha_test_enabled?255u:0u);
   int native_background_quad=source && op->scene_family==GML_RENDER_SCENE_BACKGROUND &&
     !quad->span_active && byte_background &&
     gml_gpu_opengl_clamped_background_valid(op,state,source->width,source->height) &&
-    (!state->alpha_test_enabled || !state->alpha_test_reference);
+    valid_cutoff && (positive_background || !state->alpha_test_reference);
   int raw_background=quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_RAW_POSITIVE_ALPHA;
   if(raw_background && (!source ||
      !gml_gpu_opengl_clamped_background_valid(op,state,source->width,source->height) ||
-     state->alpha_test_enabled || state->alpha_test_reference ||
+     !valid_cutoff ||
      (blend!=0 && blend!=1 && blend!=3 && blend!=17) ||
      (state->coverage_policy!=0u &&
       state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA))) return 0;
-  if((quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_TRUNC ||
-      quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_ROUND) &&
-     !native_background_quad) return 0;
+  if(positive_background && !native_background_quad) return 0;
   if(byte_background && ((!positive_row && !text_quad && !unit_sprite_quad && !native_background_quad) || !background_blend || state->write_mask>15u ||
      (!text_quad && !native_background_quad && (state->alpha_test_enabled || state->alpha_test_reference)) ||
      (quad->filtered_draw_alpha==0.0 &&
@@ -1488,7 +1491,7 @@ static int hardware_screen_sprite_valid(const GmlRenderDrawOp *op,
     margin=0u;
   }
   if((quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN || raw_background) &&
-     ((!text_quad && state->alpha_test_enabled && state->alpha_test_reference) ||
+     ((!text_quad && !raw_background && state->alpha_test_enabled && state->alpha_test_reference) ||
       (qualified_blend(state)!=0 && qualified_blend(state)!=1 &&
        qualified_blend(state)!=3 && qualified_blend(state)!=17) ||
       state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA)) return 0;

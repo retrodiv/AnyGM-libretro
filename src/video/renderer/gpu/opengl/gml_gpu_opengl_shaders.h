@@ -681,8 +681,50 @@
   "  return floor(source_texel(at,0)*255.0+0.5);\n" \
   "}\n" \
   "#if defined(GML_SCENE_RAW_POSITIVE_ALPHA) || defined(GML_SCENE_BYTE_POSITIVE_ALPHA)\n" \
-  "float background_alpha_support(int mask){\n" \
+  GML_GPU_OPENGL_BINARY64_BODY \
+  "uvec2 background_operand(vec3 packed_words){\n" \
+  "  uvec3 words=uvec3(packed_words);\n" \
+  "  return uvec2(words.x|(words.y<<22u),(words.y>>10u)|(words.z<<12u));\n" \
+  "}\n" \
+  "uvec2 background_cutout_alpha(vec2 centre,int mask){\n" \
+  "  uvec2 one=uvec2(0u,0x3ff00000u),half_unit=uvec2(0u,0x3fe00000u);\n" \
+  "  uvec2 x=d64_add(d64_int(int(centre.x)),half_unit);\n" \
+  "  uvec2 y=d64_add(d64_int(int(centre.y)),half_unit);\n" \
+  "  uvec2 ax=background_operand(v_map.xyz),ay=background_operand(vec3(v_map.w,v_step));\n" \
+  "  uvec2 sx=background_operand(vec3(v_span_x.zw,v_span_y.x)),sy=background_operand(v_span_y.yzw);\n" \
+  "  uvec2 px=d64_sub(d64_div(d64_sub(x,ax),sx),half_unit);\n" \
+  "  uvec2 py=d64_sub(d64_div(d64_sub(y,ay),sy),half_unit);\n" \
+  "  ivec2 base=ivec2(d64_floor(px),d64_floor(py));\n" \
+  "  uvec2 fx=d64_sub(px,d64_int(base.x)),fy=d64_sub(py,d64_int(base.y));\n" \
+  "  uvec2 ix=d64_sub(one,fx),iy=d64_sub(one,fy);\n" \
+  "  ivec2 first=ivec2(v_clamp.xy),last=ivec2(v_clamp.zw)-first;\n" \
+  "  uvec2 a=d64_uint(uint(margin_tap(base,first,last,mask).a));\n" \
+  "  uvec2 b=d64_uint(uint(margin_tap(base+ivec2(1,0),first,last,mask).a));\n" \
+  "  uvec2 c=d64_uint(uint(margin_tap(base+ivec2(0,1),first,last,mask).a));\n" \
+  "  uvec2 d=d64_uint(uint(margin_tap(base+ivec2(1),first,last,mask).a));\n" \
+  "  uvec2 alpha=d64_add(d64_mul(a,d64_mul(ix,iy)),d64_mul(b,d64_mul(fx,iy)));\n" \
+  "  alpha=d64_add(alpha,d64_mul(c,d64_mul(ix,fy)));\n" \
+  "  return d64_add(alpha,d64_mul(d,d64_mul(fx,fy)));\n" \
+  "}\n" \
+  "bool background_alpha_passes(int mask){\n" \
   "  vec2 centre=vec2(gl_FragCoord.x,u_extent.y<0.0?gl_FragCoord.y:u_extent.y-gl_FragCoord.y);\n" \
+  "  if(u_alpha_test>=0){\n" \
+  "    uvec2 alpha=background_cutout_alpha(centre,mask);\n" \
+  "    if(!limb_less(d64_uint(uint(u_alpha_test)),alpha)) return false;\n" \
+  "#ifdef GML_SCENE_BYTE_POSITIVE_ALPHA\n" \
+  "    return d64_round(alpha)!=0;\n" \
+  "#else\n" \
+  "    uint bits=floatBitsToUint(v_span_x.x*255.0);\n" \
+  "    uint exponent=bits>>23u;\n" \
+  "    if(exponent==0u){\n" \
+  "      if(bits==0u) return true;\n" \
+  "      uvec2 subnormal=d64_uint(bits); subnormal.y-=149u<<20u;\n" \
+  "      return !limb_less(alpha,subnormal);\n" \
+  "    }\n" \
+  "    uvec2 minimum=uvec2(bits<<29u,((exponent+896u)<<20u)|((bits&0x7fffffu)>>3u));\n" \
+  "    return !limb_less(alpha,minimum);\n" \
+  "#endif\n" \
+  "  }\n" \
   "  vec2 p=v_map.zw+(centre-v_map.xy)*(v_step+vec2(1.0))-vec2(0.5);\n" \
   "  ivec2 base=ivec2(floor(p)),first=ivec2(v_clamp.xy),last=ivec2(v_clamp.zw)-first;\n" \
   "  vec2 f=fract(p);\n" \
@@ -690,7 +732,12 @@
   "  float a10=margin_tap(base+ivec2(1,0),first,last,mask).a;\n" \
   "  float a01=margin_tap(base+ivec2(0,1),first,last,mask).a;\n" \
   "  float a11=margin_tap(base+ivec2(1),first,last,mask).a;\n" \
-  "  return mix(mix(a00,a10,f.x),mix(a01,a11,f.x),f.y);\n" \
+  "  float support=mix(mix(a00,a10,f.x),mix(a01,a11,f.x),f.y);\n" \
+  "#ifdef GML_SCENE_BYTE_POSITIVE_ALPHA\n" \
+  "  return support>=0.5;\n" \
+  "#else\n" \
+  "  return support>0.0 && support>=v_span_x.x*255.0;\n" \
+  "#endif\n" \
   "}\n" \
   "#endif\n" \
   "vec4 hardware_background_tap(ivec2 at){\n" \
@@ -1203,12 +1250,13 @@
   "    int margin=int(floor(v_margin+0.5));\n" \
   "    vec4 sampled=margin!=0?hardware_physical_sprite_sample(v_texcoord,ivec2(v_clamp.xy),ivec2(v_clamp.zw),margin):source_texture(uv);\n" \
   "#endif\n" \
-  "    if(u_alpha_test>=0 && sampled.a*255.0<=float(u_alpha_test)) discard;\n" \
-  "    uvec4 bytes=uvec4(floor(clamp(sampled,0.0,1.0)*255.0+vec4(0.5)));\n" \
   "#ifdef GML_SCENE_BYTE_POSITIVE_ALPHA\n" \
-  "    if(background_alpha_support(margin)<0.5) discard;\n" \
+  "    if(!background_alpha_passes(margin)) discard;\n" \
   "    if(u_filter==150 || u_filter==154){ o_color=vec4(0.0,0.0,0.0,1.0); return; }\n" \
+  "#else\n" \
+  "    if(u_alpha_test>=0 && sampled.a*255.0<=float(u_alpha_test)) discard;\n" \
   "#endif\n" \
+  "    uvec4 bytes=uvec4(floor(clamp(sampled,0.0,1.0)*255.0+vec4(0.5)));\n" \
   "#ifdef GML_SCENE_WHITE_TINT\n" \
   "    uvec3 tinted=bytes.rgb;\n" \
   "#else\n" \
@@ -1235,7 +1283,7 @@
   "    vec4 sampled=unit_texel?source_texel(ivec2(floor(uv*extent)),0):\n" \
   "      margin!=0?hardware_physical_sprite_sample(v_texcoord,\n" \
   "        ivec2(v_clamp.xy),ivec2(v_clamp.zw),margin):source_texture(uv);\n" \
-  "#ifndef GML_SCENE_ZERO_ALPHA_BLEND\n" \
+  "#if !defined(GML_SCENE_ZERO_ALPHA_BLEND) && !defined(GML_SCENE_RAW_POSITIVE_ALPHA)\n" \
   "    if(!covered_row && physical_filter<112 && u_alpha_test>=0 && sampled.a*255.0<=float(u_alpha_test)) discard;\n" \
   "#endif\n" \
   "    if(physical_filter>=79){\n" \
@@ -1243,8 +1291,7 @@
   "#ifdef GML_SCENE_RAW_POSITIVE_ALPHA\n" \
   "      // Visibility uses raw alpha taps; fixed UNORM filtering can lose the subnormal tie.\n" \
   "      // Colour keeps the device sample. One affine quad supplies the support coordinates.\n" \
-  "      float support=background_alpha_support(margin);\n" \
-  "      if(support<=0.0 || support<v_span_x.x*255.0) discard;\n" \
+  "      if(!background_alpha_passes(margin)) discard;\n" \
   "#else\n" \
   "#ifndef GML_SCENE_ZERO_ALPHA_BLEND\n" \
   "      if(alpha<=0.0 && physical_filter<112) discard;\n" \

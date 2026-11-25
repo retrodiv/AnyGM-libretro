@@ -401,6 +401,26 @@ static int scene_tiny_filtered_background_case(void){
       REQUIRE(vertices[v*GL_SCENE_VERTEX_FLOATS+19u]==floors[i],
               "one per-draw scalar retains the normal kernel's positive-product boundary");
   }
+  state.alpha_test_enabled=1u;state.alpha_test_reference=12u;
+  const double cutoff_mapping[]={12.018,8.25000002,-1.25,2.5};
+  q->inverse_anchor[0]=cutoff_mapping[0];q->inverse_anchor[1]=cutoff_mapping[1];
+  q->inverse_x[0]=cutoff_mapping[2];q->inverse_y[1]=cutoff_mapping[3];
+  REQUIRE(gml_render_gpu_opengl_draw_textured_quad(&op,&state,32u,32u,0,vertices),
+          "bounded filtered cutoff packs one rectangle");
+  const unsigned offsets[]={12u,15u,21u,24u};
+  for(unsigned v=0;v<6u;v++) for(unsigned operand=0;operand<4u;operand++){
+    const float *packed=vertices+v*GL_SCENE_VERTEX_FLOATS+offsets[operand];
+    uint64_t actual=(uint64_t)packed[0]|((uint64_t)packed[1]<<22u)|((uint64_t)packed[2]<<44u);
+    uint64_t expected;
+    memcpy(&expected,&cutoff_mapping[operand],sizeof expected);
+    REQUIRE(actual==expected,"every vertex retains the authored binary64 cutoff operand");
+  }
+  q->inverse_y[1]=0.0;
+  REQUIRE(!gml_gpu_opengl_clamped_background_valid(&op,&state,32u,32u),
+          "a filtered cutoff requires a nonzero inverse scale");
+  q->inverse_y[1]=2.5;q->inverse_anchor[1]=NAN;
+  REQUIRE(!gml_gpu_opengl_clamped_background_valid(&op,&state,32u,32u),
+          "a filtered cutoff requires a finite anchor");
   return 1;
 }
 
