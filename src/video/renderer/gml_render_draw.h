@@ -222,9 +222,10 @@ enum {
   GML_RENDER_QUANTISE_FILTERED_RAW_POSITIVE_ALPHA=34u,
   /* Complete magnified surface quad with unquantized alpha testing. */
   GML_RENDER_QUANTISE_SURFACE_FILTERED_CUTOFF=35u,
-  /* Ordered box sampling over one logical repeat grid. Each span vector carries
-   * the binary64 phase, period, camera and integral cell count for its axis. */
-  GML_RENDER_QUANTISE_SURFACE_REPEAT_BOX=36u
+  /* Ordered point or box sampling over one logical repeat grid. Each span vector carries
+   * the binary64 phase, period, camera and integral cell count for its axis. UV winding
+   * selects the source orientation without changing the destination grid. */
+  GML_RENDER_QUANTISE_SURFACE_REPEAT=36u
 };
 
 /* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors

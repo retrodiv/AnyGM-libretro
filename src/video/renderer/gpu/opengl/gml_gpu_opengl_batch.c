@@ -564,7 +564,7 @@ static int exact_rect(const GmlRenderDrawOp *op,GLint *left,GLint *bottom,
   return 1;
 }
 
-static int repeat_box_quad_valid(const GmlRenderDrawOp *op,
+static int repeat_quad_valid(const GmlRenderDrawOp *op,
                                  const GmlRenderDrawStateSnapshot *state,const GlSceneImage *source){
   const GmlRenderQuad *q=&op->payload.quad;
   int blend=qualified_blend(state);
@@ -574,7 +574,8 @@ static int repeat_box_quad_valid(const GmlRenderDrawOp *op,
      op->scene_family!=GML_RENDER_SCENE_SURFACE ||
      op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
      q->shape!=GML_RENDER_QUAD_AXIS_ALIGNED || q->span_active || q->font_sdf_width ||
-     q->sampling.filter!=GML_RENDER_FILTER_BOX || q->sampling.logical_margin_mask ||
+     (q->sampling.filter!=GML_RENDER_FILTER_BOX && q->sampling.filter!=GML_RENDER_FILTER_NEAREST) ||
+     q->sampling.logical_margin_mask ||
      q->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
      !full_region(q->sampling.source_region,source->width,source->height) ||
      q->x[0]!=0.0 || q->y[0]!=0.0 || q->x[1]!=op->target.width || q->y[2]!=op->target.height ||
@@ -594,8 +595,13 @@ static int repeat_box_quad_valid(const GmlRenderDrawOp *op,
      (blend!=1 && blend!=3) ||
      state->coverage_policy!=(blend==3?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) ||
      q->source_opaque || (q->corner_colour[0]>>24)!=255u) return 0;
-  for(unsigned corner=1;corner<4u;corner++)
-    if(q->corner_colour[corner]!=q->corner_colour[0]) return 0;
+  if((q->u[0]!=0.0 && q->u[0]!=1.0) || (q->v[0]!=0.0 && q->v[0]!=1.0)) return 0;
+  for(unsigned corner=1;corner<4u;corner++){
+    int right=corner==1u || corner==2u,bottom=corner>=2u;
+    if(q->corner_colour[corner]!=q->corner_colour[0] ||
+       q->u[corner]!=(right?1.0-q->u[0]:q->u[0]) ||
+       q->v[corner]!=(bottom?1.0-q->v[0]:q->v[0])) return 0;
+  }
   for(unsigned axis=0;axis<2u;axis++){
     const double *span=axis?q->span_y:q->span_x;
     double target_extent=axis?op->target.height:op->target.width;
@@ -606,7 +612,7 @@ static int repeat_box_quad_valid(const GmlRenderDrawOp *op,
        (span[0]!=0.0 && fabs(span[0])<0x1p-900) ||
        (span[2]!=0.0 && fabs(span[2])<0x1p-900) ||
        span[3]!=ceil((target_extent-span[0])/span[1])+1 || span[3]>8192.0 ||
-       source_extent>8*lround(span[1])) return 0;
+       ((q->sampling.filter==GML_RENDER_FILTER_BOX) && source_extent>8*lround(span[1]))) return 0;
   }
   return q->span_x[3]*q->span_y[3]<=8192.0 &&
     (lround(q->span_x[1])<source->width || lround(q->span_y[1])<source->height);
@@ -2125,10 +2131,10 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       GlSceneImage *source=gml_gpu_opengl_scene_image(backend,op->sources[0]);
       const GmlRenderSamplingPolicy *sampling=&op->payload.quad.sampling;
       int blend=qualified_blend(state);
-      if(sampling->quantisation==GML_RENDER_QUANTISE_SURFACE_REPEAT_BOX){
+      if(sampling->quantisation==GML_RENDER_QUANTISE_SURFACE_REPEAT){
         if(!backend->gl.CopyTexSubImage2D || !backend->gl.Uniform4iv ||
            same_logical(op->sources[0],target->image) ||
-           !repeat_box_quad_valid(op,state,source)) return 0;
+           !repeat_quad_valid(op,state,source)) return 0;
         continue;
       }
       if(op->payload.quad.font_sdf_width!=0.0 &&
@@ -3800,7 +3806,7 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
   GLfloat extent[2]={(GLfloat)target->width,(GLfloat)target->height};
   int outcome,font_mode=0;
   const GmlRenderQuad *q=&op->payload.quad;
-  int repeat=!effect && q->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_REPEAT_BOX;
+  int repeat=!effect && q->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_REPEAT;
   int inline_effect=effect && gml_render_layer_effect_is_inline(effect->kind);
   GLuint sampler_texture=0;
   if(auxiliary){
@@ -3922,7 +3928,9 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
     backend->gl.Uniform4iv(exact->exact_u_repeat_axes,3,axes);
     backend->gl.Uniform2iv(exact->exact_u_repeat_counts,1,count);
     backend->gl.Uniform4iv(exact->exact_u_underlay_size,1,size);
-    backend->gl.Uniform1i(exact->exact_u_underlay_flags,source->rendered_origin?8:0);
+    GLint flags=(q->sampling.filter==GML_RENDER_FILTER_NEAREST?1:0) |
+      (q->u[0]==1.0?2:0) | (q->v[0]==1.0?4:0) | (source->rendered_origin?8:0);
+    backend->gl.Uniform1i(exact->exact_u_underlay_flags,flags);
     backend->gl.Uniform4iv(exact->exact_u_surface_rule,1,rule);
     backend->gl.Uniform4iv(exact->exact_u_surface_tint,1,tint);
     backend->gl.Uniform2iv(exact->exact_u_surface_alpha,1,opacity);
@@ -4419,7 +4427,7 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
        qualified_blend(&batch->states[op->state_index])==5 ||
        qualified_blend(&batch->states[op->state_index])==6 ||
        qualified_blend(&batch->states[op->state_index])==11 ||
-       op->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_REPEAT_BOX ||
+       op->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_REPEAT ||
        operation_filter==15u ||
        operation_filter==17u ||
        operation_filter==29u ||
@@ -4767,9 +4775,9 @@ GmlRenderExecutionResult gml_gpu_opengl_scene_submit(GmlGpuBackend *backend,
     }
     if(pending_blend==2 || pending_blend==4 || pending_blend==5 || pending_blend==6 ||
        pending_blend==7 || pending_blend==11 ||
-       op->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_REPEAT_BOX){
+       op->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_REPEAT){
       uint32_t repetitions=pending_blend>=6 ||
-        op->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_REPEAT_BOX?1u:exact_repetitions(batch,index);
+        op->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_REPEAT?1u:exact_repetitions(batch,index);
       int drawn=draw_exact_quad(backend,op,&batch->states[op->state_index],
                                 target,pending_source,repetitions,NULL,NULL,error,error_capacity);
       if(drawn<0) mark_uncertain(&result,target);

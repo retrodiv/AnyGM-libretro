@@ -256,7 +256,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     region.x==0 && region.y==0 && region.width==source_width && region.height==source_height;
   if(!automatic_surface && !destination_surface &&
      quad->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_BOX_FUNCTION &&
-     quad->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_REPEAT_BOX &&
+     quad->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_REPEAT &&
      quad->sampling.quantisation!=GML_RENDER_QUANTISE_POSITIONED_SAMPLE &&
      (quad->sampling.filter==GML_RENDER_FILTER_BOX || stretched_float ||
       quad->sampling.quantisation==GML_RENDER_QUANTISE_FIXED_STRETCHED)){

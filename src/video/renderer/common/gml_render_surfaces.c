@@ -4231,11 +4231,11 @@ static int resident_surface_part(GmlRender *r,int surf,double sx,double sy,doubl
   return 1;
 }
 
-static int resident_surface_repeat_box(GmlRender *r,int surf,int sw,int sh,
+static int resident_surface_repeat(GmlRender *r,int surf,int sw,int sh,
   double phase_x,double phase_y,double width,double height,double columns,double rows,
-  uint32_t colour,double alpha){
-  if(surf<=0 || !r->interp || !r->alphablend || r->blendmode ||
-     resident_surface_shader_selected(r) || sw>8*lround(width) || sh>8*lround(height) ||
+  int flip_x,int flip_y,uint32_t colour,double alpha){
+  if(surf<=0 || !r->alphablend || r->blendmode || resident_surface_shader_selected(r) ||
+     (r->interp && (sw>8*lround(width) || sh>8*lround(height))) ||
      (lround(width)>=sw && lround(height)>=sh)) return 0;
   if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
   gml_render_flush_pending_fill(r);
@@ -4254,10 +4254,11 @@ static int resident_surface_repeat_box(GmlRender *r,int surf,int sw,int sh,
     {0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
   GmlRenderQuad *q=&op.payload.quad;
   q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
-  q->sampling=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_BOX,GML_RENDER_EDGE_CLAMP_SUBIMAGE,
-    {0,0,(uint32_t)sw,(uint32_t)sh},GML_RENDER_QUANTISE_SURFACE_REPEAT_BOX,0u};
+  q->sampling=(GmlRenderSamplingPolicy){r->interp?GML_RENDER_FILTER_BOX:GML_RENDER_FILTER_NEAREST,
+    GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,(uint32_t)sw,(uint32_t)sh},GML_RENDER_QUANTISE_SURFACE_REPEAT,0u};
   q->x[1]=q->x[2]=r->fbw;q->y[2]=q->y[3]=r->fbh;
-  q->u[1]=q->u[2]=q->v[2]=q->v[3]=1.0;
+  q->u[0]=q->u[3]=flip_x;q->u[1]=q->u[2]=!flip_x;
+  q->v[0]=q->v[1]=flip_y;q->v[2]=q->v[3]=!flip_y;
   q->filtered_draw_alpha=fmin(alpha,1.0);
   q->span_x[0]=phase_x;q->span_x[1]=width;q->span_x[2]=r->cam_x;q->span_x[3]=columns;
   q->span_y[0]=phase_y;q->span_y[1]=height;q->span_y[2]=r->cam_y;q->span_y[3]=rows;
@@ -4277,7 +4278,7 @@ static int resident_surface_repeat_box(GmlRender *r,int surf,int sw,int sh,
   GmlRenderDrawBatch batch={&op,1u,&state,1u};
   if(gml_render_application_scene_submit(r,&batch,&source,1u)!=GML_RENDER_RESOURCE_EXEC_DEVICE)
     return 0;
-  if(!r->app_draw_enable)r->composites_app=1;
+  if(!r->app_draw_enable && r->interp)r->composites_app=1;
   if(preserve_alpha)r->fb_opaque_known=r->fb_all_opaque=0;
   r->fb_all_transparent=0;
   return 1;
@@ -4329,9 +4330,9 @@ int gml_render_resident_surface_tiled(GmlRender *r,int surf,double x,double y,
    * Copies and destination-factor presets do not enter that rounding chain. */
   if(normal && !classic_copy && (!opaque || (r->alphablend && alpha<1.0)) &&
      lround(width)>width && lround(height)>height){
-    return !full_normal && !unit && xs>0 && ys>0 &&
-      resident_surface_repeat_box(r,surf,sw,sh,first_x,first_y,width,height,columns,rows,
-                                  colour,alpha);
+    return !full_normal && !unit &&
+      resident_surface_repeat(r,surf,sw,sh,first_x,first_y,width,height,columns,rows,
+                              xs<0,ys<0,colour,alpha);
   }
   if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
   gml_render_flush_pending_fill(r);if(r->pending_fill) return 0;

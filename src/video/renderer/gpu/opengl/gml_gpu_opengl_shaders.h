@@ -1812,7 +1812,7 @@
   "}\n"
 
 /* Ordered composition over an immutable device snapshot. */
-#define GML_GPU_OPENGL_SCENE_REPEAT_BOX_BODY \
+#define GML_GPU_OPENGL_SCENE_REPEAT_BODY \
   "uniform sampler2D u_image;\n" \
   "uniform sampler2D u_previous;\n" \
   "uniform vec2 u_extent;\n" \
@@ -1854,7 +1854,10 @@
   "  uvec2 one=uvec2(0u,0x3ff00000u),opacity=uvec2(u_surface_alpha);\n" \
   "  for(int row=first.y;row<last.y;row++)for(int col=first.x;col<last.x;col++){\n" \
   "    ivec2 local=p-ivec2(repeat_origin(col,0),repeat_origin(row,1));\n" \
-  "    ivec2 lo=local*size/extent,hi=max(lo+ivec2(1),(local+ivec2(1))*size/extent);\n" \
+  "    if((u_underlay_flags&2)!=0)local.x=extent.x-1-local.x;\n" \
+  "    if((u_underlay_flags&4)!=0)local.y=extent.y-1-local.y;\n" \
+  "    ivec2 lo=local*size/extent,hi=lo+ivec2(1);\n" \
+  "    if((u_underlay_flags&1)==0)hi=max(hi,(local+ivec2(1))*size/extent);\n" \
   "    ivec4 total=ivec4(0);\n" \
   "    for(int y=lo.y;y<hi.y;y++)for(int x=lo.x;x<hi.x;x++){\n" \
   "      int sy=(u_underlay_flags&8)!=0?size.y-1-y:y;\n" \

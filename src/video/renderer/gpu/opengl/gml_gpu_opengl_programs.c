@@ -421,7 +421,7 @@ static GlSceneExactProgram *build_exact_program(GmlGpuBackend *backend,
                          GML_GPU_OPENGL_SCENE_VERTEX_BODY);
   fragment_length=snprintf(fragment_source,sizeof fragment_source,
                            "%s#define GML_EXACT_FONT_MODE %d\n%s",prefix,
-                           shader_font_mode,repeat?GML_GPU_OPENGL_SCENE_REPEAT_BOX_BODY:
+                           shader_font_mode,repeat?GML_GPU_OPENGL_SCENE_REPEAT_BODY:
                                                   GML_GPU_OPENGL_SCENE_EXACT_FRAGMENT_BODY);
   if(vertex_length<0 || (size_t)vertex_length>=sizeof vertex_source ||
      fragment_length<0 || (size_t)fragment_length>=sizeof fragment_source){
