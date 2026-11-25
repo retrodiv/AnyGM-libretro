@@ -10259,7 +10259,7 @@ static int resident_depth_point_topology(void){
         fake.last_depth_state.write_mask==15u && r->color_write_mask==mask &&
         r->alphablend==!replacement && !fake.readbacks && !fake.depth_reads &&
         !memcmp(shadow,r->fb,sizeof shadow));
-      point.topology=GML_RENDER_DEPTH_TOPOLOGY_LINE+1u;
+      point.topology=GML_RENDER_DEPTH_TOPOLOGY_POINT_PAIR+1u;
       unsigned uploads=fake.depth_uploads;submits=(unsigned)fake.submits;
       CHECK(!gml_render_cpu_backend_depth_triangle(r,&point,depth,-1,0,&published));
       CHECK(fake.depth_uploads==uploads && (unsigned)fake.submits==submits && !memcmp(shadow,r->fb,sizeof shadow));
@@ -10306,7 +10306,7 @@ static int resident_depth_line_topology(void){
         fake.last_depth_state.write_mask==15u && r->color_write_mask==mask &&
         r->alphablend==!replacement && !fake.readbacks && !fake.depth_reads &&
         !memcmp(shadow,r->fb,sizeof shadow));
-      line.topology=GML_RENDER_DEPTH_TOPOLOGY_LINE+1u;
+      line.topology=GML_RENDER_DEPTH_TOPOLOGY_POINT_PAIR+1u;
       unsigned uploads=fake.depth_uploads;submits=(unsigned)fake.submits;
       CHECK(!gml_render_cpu_backend_depth_triangle(r,&line,depth,-1,0,&published));
       CHECK(fake.depth_uploads==uploads && (unsigned)fake.submits==submits && !memcmp(shadow,r->fb,sizeof shadow));

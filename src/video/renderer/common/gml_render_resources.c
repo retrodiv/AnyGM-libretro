@@ -589,7 +589,7 @@ static int batch_valid(const GmlRenderResource *resource,const GmlRenderDrawBatc
            !gml_render_blend_snapshot_native(state))return 0;
       }
     } else if(operation->opcode==GML_RENDER_OP_SOFTWARE3D_PASS){
-      if(operation->payload.depth_primitive.topology>GML_RENDER_DEPTH_TOPOLOGY_LINE ||
+      if(operation->payload.depth_primitive.topology>GML_RENDER_DEPTH_TOPOLOGY_POINT_PAIR ||
          operation->payload.depth_primitive.alpha_sample_policy>GML_RENDER_DEPTH_ALPHA_MODERN ||
          operation->payload.depth_primitive.textured>1u ||
          operation->source_count!=operation->payload.depth_primitive.textured ||

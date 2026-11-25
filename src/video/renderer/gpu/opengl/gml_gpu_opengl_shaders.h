@@ -233,6 +233,18 @@
   "float amount=u_fog_colour.w>=3.0?(distance-u_fog_range.x)*u_fog_range.y:step(u_fog_range.y,distance);" \
   "source.rgb=mix(source.rgb,u_fog_colour.rgb,clamp(amount,0.0,1.0));}" \
   "vec4 old_colour=texelFetch(u_colour,ivec2(gl_FragCoord.xy),0);" \
+  "if((u_policy.x&4)!=0){\n" \
+  " uvec2 one=uvec2(0u,0x3ff00000u),inverse=d64_sub(one,input_alpha);\n" \
+  " ivec4 src=ivec4(floor(source*255.0+0.5)),dst=ivec4(floor(old_colour*255.0+0.5));\n" \
+  " int a=clamp(d64_round(d64_mul(input_alpha,d64_uint(255u))),0,255);\n" \
+  " ivec4 result=ivec4(src.rgb,255);\n" \
+  " if(any(notEqual(input_alpha,one))){\n" \
+  "  for(int c=0;c<3;c++)result[c]=d64_floor(d64_add(d64_mul(d64_uint(uint(src[c])),input_alpha),\n" \
+  "      d64_mul(d64_uint(uint(dst[c])),inverse)));\n" \
+  "  if((u_policy.x&1)==0)result.a=(a*a+dst.a*(255-a)+127)/255;\n" \
+  " }\n" \
+  " result_colour=vec4(result)/255.0;return;\n" \
+  "}\n" \
   "result_colour=u_flags.w==1?vec4(source.rgb*source.a+old_colour.rgb*(1.0-source.a)," \
   "source.a*(u_policy.z!=0?source.a:1.0)+old_colour.a*(1.0-source.a)):source;" \
   "if((u_policy.x&1)!=0)result_colour.a=1.0;\n#endif\n}\n"

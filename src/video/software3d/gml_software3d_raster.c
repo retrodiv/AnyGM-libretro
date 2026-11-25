@@ -1466,7 +1466,7 @@ static int d3_native_line(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,const GmlD3Te
     double farz=g_d3.far_clip>nearz?g_d3.far_clip:32000;
     if(!d3_clip_segment_plane(&a,&b,nearz,1) || !d3_clip_segment_plane(&a,&b,farz,0)) return 1;
   }
-  GmlD3Vertex vertices[2]={a,b};double distances[2];
+  GmlD3Vertex vertices[2]={a,b};double distances[2],projected_x[2],projected_y[2];
   GmlRenderDepthPrimitive primitive={.depth_epoch=target->epoch,.depth_version=target->version,
     .hidden=g_d3.hidden!=0,.write_depth=g_d3.zwrite!=0,.normalized=target->normalized!=0,
     .topology=GML_RENDER_DEPTH_TOPOLOGY_LINE,
@@ -1478,20 +1478,58 @@ static int d3_native_line(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,const GmlD3Te
     if(!d3_project_vertex(R,&draw,&vertices[v],&x,&y,&reciprocal,&depth,&distances[v]))return 1;
     if(!isfinite(x) || !isfinite(y) || fabs(x)>65535.0 || fabs(y)>65535.0 ||
        (target->normalized && (!isfinite(depth) || depth<0.0 || depth>1.0)))return 0;
+    projected_x[v]=x;projected_y[v]=y;
     primitive.vertex[v][0]=x+0.5;primitive.vertex[v][1]=y+0.5;
     primitive.vertex[v][2]=reciprocal;primitive.vertex[v][3]=depth;
     primitive.vertex[v][4]=vertices[v].r/255.0;primitive.vertex[v][5]=vertices[v].g/255.0;
     primitive.vertex[v][6]=vertices[v].b/255.0;primitive.vertex[v][7]=vertices[v].alpha;
     if(primitive.textured){primitive.uv[v][0]=vertices[v].u;primitive.uv[v][1]=vertices[v].v;}
   }
+  if((float)primitive.vertex[0][0]==(float)primitive.vertex[1][0] &&
+     (float)primitive.vertex[0][1]==(float)primitive.vertex[1][1]){
+    if(primitive.textured || g_d3.lighting || g_d3.fog)return 0;
+
+    primitive.topology=GML_RENDER_DEPTH_TOPOLOGY_POINT_PAIR;
+    GmlRenderDepthPrimitive pair=primitive;
+    unsigned count=0;
+    for(unsigned v=0;v<2u;v++){
+      double amount=v;
+      double inverse=primitive.vertex[0][2]+(primitive.vertex[1][2]-primitive.vertex[0][2])*amount;
+      double denominator=g_d3.ortho?1:inverse;
+      int x=(int)lround(projected_x[0]+(projected_x[1]-projected_x[0])*amount);
+      int y=(int)lround(projected_y[0]+(projected_y[1]-projected_y[0])*amount);
+      if(x<0 || y<0 || x>=draw.width || y>=draw.height)continue;
+      double *sample=pair.vertex[count];
+      sample[0]=x+0.5;sample[1]=y+0.5;
+      sample[2]=1;
+      sample[3]=primitive.vertex[0][3]+(primitive.vertex[1][3]-primitive.vertex[0][3])*amount;
+#define D3_SAMPLE(field) ((a.field*primitive.vertex[0][2]+(b.field*primitive.vertex[1][2]-a.field*primitive.vertex[0][2])*amount)/denominator)
+      sample[4]=fmin(255,fmax(0,lround(D3_SAMPLE(r))))/255.0;
+      sample[5]=fmin(255,fmax(0,lround(D3_SAMPLE(g))))/255.0;
+      sample[6]=fmin(255,fmax(0,lround(D3_SAMPLE(b))))/255.0;
+      sample[7]=D3_SAMPLE(alpha);
+#undef D3_SAMPLE
+      if(sample[7]<=0.0)continue;
+      sample[7]=fmin(sample[7],1.0);
+      count++;
+    }
+    if(!count)return 1;
+    if(count==1){
+      memcpy(pair.vertex[1],pair.vertex[0],sizeof pair.vertex[1]);
+      pair.vertex[1][7]=0;
+    }
+    GmlRenderDepthPlaneRef published;
+    if(!gml_render_cpu_backend_depth_triangle(R,&pair,target->gpu_current?NULL:target->pixels,-1,0,&published))
+      return 0;
+    target->device_plane=published;target->version=published.version;
+    target->gpu_current=1;target->cpu_current=0;
+    return 1;
+  }
   if((a.alpha>0.0 && a.alpha<0x1p-16) || (b.alpha>0.0 && b.alpha<0x1p-16)){
     if(a.alpha!=b.alpha || primitive.vertex[0][2]!=primitive.vertex[1][2])return 0;
     double alpha=(a.alpha*primitive.vertex[0][2])/primitive.vertex[0][2];
     if(alpha<=0.0)return 1;
   }
-  /* A collapsed device segment cannot preserve the CPU's endpoint samples. */
-  if((float)primitive.vertex[0][0]==(float)primitive.vertex[1][0] &&
-     (float)primitive.vertex[0][1]==(float)primitive.vertex[1][1])return 0;
   if(!d3_native_fragment_policy(R,&primitive,distances,2u))return 0;
   GmlRenderDepthPlaneRef published;
   if(!gml_render_cpu_backend_depth_triangle(R,&primitive,target->gpu_current?NULL:target->pixels,

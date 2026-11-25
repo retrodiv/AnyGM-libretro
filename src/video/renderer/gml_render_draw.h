@@ -666,7 +666,8 @@ typedef enum GmlRenderDepthBlend {
 typedef enum GmlRenderDepthTopology {
   GML_RENDER_DEPTH_TOPOLOGY_TRIANGLE=0,
   GML_RENDER_DEPTH_TOPOLOGY_POINT=1,
-  GML_RENDER_DEPTH_TOPOLOGY_LINE=2
+  GML_RENDER_DEPTH_TOPOLOGY_LINE=2,
+  GML_RENDER_DEPTH_TOPOLOGY_POINT_PAIR=3
 } GmlRenderDepthTopology;
 
 /* State alpha is separate from the device's picture sampler. */

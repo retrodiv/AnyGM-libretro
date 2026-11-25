@@ -354,6 +354,7 @@ typedef struct GlScene {
   int exact_font_split;
   int font_write_flush;
   int available;
+  GlSceneImage depth_pair_tile;
 } GlScene;
 
 enum { GL_SCENE_NATIVE_PLAIN=1,GL_SCENE_NATIVE_WHITE_TINT=2,GL_SCENE_NATIVE_ZERO_ALPHA_BLEND=4,

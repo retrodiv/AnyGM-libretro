@@ -705,9 +705,12 @@ int gml_render_cpu_backend_depth_triangle(GmlRender *r,GmlRenderDepthPrimitive *
   const float *depth_pixels,int texture,int full_atlas,GmlRenderDepthPlaneRef *published){
   const GmlRenderDeviceServices *device=gml_render_device(r);
   if(!resident_depth_triangle_eligible(r)) return 0;
+  if(triangle && triangle->topology==GML_RENDER_DEPTH_TOPOLOGY_POINT_PAIR &&
+     (!r->alphablend || r->blendmode || r->blend_equation!=1 || r->blend_equation_alpha!=1))
+    return 0;
   GmlRenderResourceSource sampled={0};
   if(!triangle) return texture==-1 || vertex_texture_source(r,texture,&sampled,1,1);
-  if(triangle->topology>GML_RENDER_DEPTH_TOPOLOGY_LINE ||
+  if(triangle->topology>GML_RENDER_DEPTH_TOPOLOGY_POINT_PAIR ||
      triangle->alpha_sample_policy>GML_RENDER_DEPTH_ALPHA_MODERN) return 0;
   if((texture!=-1)!=(triangle->textured!=0) ||
      (triangle->textured && !native_vertex_texture_source(r,texture,full_atlas,&sampled))) return 0;
