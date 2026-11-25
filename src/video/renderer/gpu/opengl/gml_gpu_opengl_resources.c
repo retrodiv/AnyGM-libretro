@@ -1901,11 +1901,11 @@ static int depth_primitive_scalar_alpha(const GmlRenderDepthPrimitive *primitive
 /* Scalar state sampling prepares indices/weights only. Actual alpha bytes stay
  * on the device; the picture continues to use its ordinary hardware sampler. */
 static int depth_triangle_alpha_setup(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
-  GLint coordinates[4],GLint fractions[4],GLint weights[8],GLint *mode){
+  GLint coordinates[4],GLint fractions[4],GLint weights[8],GLint *mode,int exact){
   const GmlRenderDepthPrimitive *p=&op->payload.depth_primitive;
   double alpha;*mode=0;
   if(!p->alpha_sample_policy || !p->textured ||
-     !depth_primitive_scalar_alpha(p,&alpha) || alpha>=0x1p-16)return 1;
+     !depth_primitive_scalar_alpha(p,&alpha) || (!exact && alpha>=0x1p-16))return 1;
   unsigned count=p->topology==GML_RENDER_DEPTH_TOPOLOGY_POINT?1u:2u;
   for(unsigned v=1;v<count;v++)for(unsigned c=0;c<2u;c++)
     if(p->uv[v][c]!=p->uv[0][c])return 0;
@@ -2010,10 +2010,11 @@ int gml_gpu_opengl_depth_triangle_valid(GmlGpuBackend *backend,const GmlRenderDr
        triangle->vertex[v][2]<1e-8 || triangle->vertex[v][2]>1e8 ||
        fabs(triangle->vertex[v][3])>1e20) return 0;
     for(unsigned component=4u;component<8u;component++)
-      if(triangle->vertex[v][component]<0 || triangle->vertex[v][component]>1) return 0;
+      if(triangle->vertex[v][component]<0 ||
+         triangle->vertex[v][component]>(pair && triangle->textured && component<7u?255:1))return 0;
   }
   GLint coordinates[4]={0},fractions[4]={0},weights[8]={0},sample_mode;
-  if(!depth_triangle_alpha_setup(backend,op,coordinates,fractions,weights,&sample_mode))return 0;
+  if(!depth_triangle_alpha_setup(backend,op,coordinates,fractions,weights,&sample_mode,0))return 0;
   if(line){
     double alpha;
     if(((triangle->vertex[0][7]>0.0 && triangle->vertex[0][7]<0x1p-16) ||
@@ -2023,7 +2024,7 @@ int gml_gpu_opengl_depth_triangle_valid(GmlGpuBackend *backend,const GmlRenderDr
       (float)triangle->vertex[0][1]!=(float)triangle->vertex[1][1];
   }
   if(pair){
-    if(triangle->textured || triangle->shading_flags || triangle->blend!=1u ||
+    if((triangle->textured && !triangle->alpha_sample_policy) || triangle->shading_flags || triangle->blend!=1u ||
        !triangle->alpha_source_squared || state->clip.width ||
        fabs(triangle->vertex[0][0]-triangle->vertex[1][0])>1 ||
        fabs(triangle->vertex[0][1]-triangle->vertex[1][1])>1)return 0;
@@ -2099,8 +2100,19 @@ static int depth_candidate_draw(GmlGpuBackend *backend,const GmlRenderDrawOp *op
     if(constant)policy[3]=2;
   }
   float constant_uv[2]={(float)triangle->uv[0][0],(float)triangle->uv[0][1]};
-  GLint alpha_coordinates[4]={0},alpha_fraction[4]={0},alpha_weights[8]={0},alpha_mode;
-  if(!depth_triangle_alpha_setup(backend,op,alpha_coordinates,alpha_fraction,alpha_weights,&alpha_mode))return 0;
+  GLint alpha_coordinates[4]={0},alpha_fraction[4]={0},alpha_weights[16]={0},alpha_mode;
+  if(!depth_triangle_alpha_setup(backend,op,alpha_coordinates,alpha_fraction,alpha_weights,&alpha_mode,exact_point))return 0;
+  /* The first two vec4s carry filter weights. Exact colour additionally
+   * carries the three binary64 tint words in the same captured uniform array. */
+  int exact_texture=exact_point && triangle->textured;
+  if(exact_texture){
+    for(unsigned c=0;c<3u;c++){
+      uint64_t bits;
+      memcpy(&bits,&triangle->vertex[0][4u+c],sizeof bits);
+      alpha_weights[8u+c*2u]=(GLint)(uint32_t)bits;
+      alpha_weights[9u+c*2u]=(GLint)(uint32_t)(bits>>32u);
+    }
+  }
   GLint input_alpha[4]={0};double scalar_alpha;
   if(depth_primitive_scalar_alpha(triangle,&scalar_alpha) && (exact_point || scalar_alpha<0x1p-16)){
     uint64_t bits=0;if(scalar_alpha>0.0)memcpy(&bits,&scalar_alpha,sizeof bits);
@@ -2179,7 +2191,7 @@ static int depth_candidate_draw(GmlGpuBackend *backend,const GmlRenderDrawOp *op
     backend->gl.Uniform4iv(program->input_alpha,1,input_alpha);
     backend->gl.Uniform4iv(program->alpha_coordinates,1,alpha_coordinates);
     backend->gl.Uniform4iv(program->alpha_fraction,1,alpha_fraction);
-    backend->gl.Uniform4iv(program->alpha_weights,2,alpha_weights);
+    backend->gl.Uniform4iv(program->alpha_weights,!pass && exact_texture?4:2,alpha_weights);
     if(!pass){
       float shade[4]={triangle->shade[0],triangle->shade[1],triangle->shade[2],
         (triangle->shading_flags&1u)?1.0f:0.0f};
@@ -2283,6 +2295,7 @@ static int depth_point_pair_candidate(GmlGpuBackend *backend,const GmlRenderDraw
   for(unsigned endpoint=0;endpoint<2u;endpoint++){
     double *v=point.payload.depth_primitive.vertex[0];
     memcpy(v,pair->vertex[endpoint],sizeof pair->vertex[endpoint]);
+    memcpy(point.payload.depth_primitive.uv[0],pair->uv[endpoint],sizeof pair->uv[endpoint]);
     v[0]-=left;v[1]-=top;
     if(!depth_candidate_draw(backend,&point,state,tile,1,sample_texture,error,error_capacity))
       return 0;

@@ -680,6 +680,8 @@ typedef enum GmlRenderDepthAlphaSample {
 typedef struct GmlRenderDepthPrimitive {
   GmlRenderImageRef previous_colour;
   uint64_t depth_epoch,depth_version,next_depth_version;
+  /* RGB is normalized except in textured point pairs, which carry the
+   * unrounded 0..255 tint through texture multiplication on the device. */
   double vertex[3][8];
   /* One captured device policy; no source selector or serialized state is replaced. */
   uint32_t hidden,write_depth,normalized,blend,topology;

@@ -1487,7 +1487,7 @@ static int d3_native_line(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,const GmlD3Te
   }
   if((float)primitive.vertex[0][0]==(float)primitive.vertex[1][0] &&
      (float)primitive.vertex[0][1]==(float)primitive.vertex[1][1]){
-    if(primitive.textured || g_d3.lighting || g_d3.fog)return 0;
+    if(g_d3.lighting || g_d3.fog)return 0;
 
     primitive.topology=GML_RENDER_DEPTH_TOPOLOGY_POINT_PAIR;
     GmlRenderDepthPrimitive pair=primitive;
@@ -1504,10 +1504,17 @@ static int d3_native_line(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,const GmlD3Te
       sample[2]=1;
       sample[3]=primitive.vertex[0][3]+(primitive.vertex[1][3]-primitive.vertex[0][3])*amount;
 #define D3_SAMPLE(field) ((a.field*primitive.vertex[0][2]+(b.field*primitive.vertex[1][2]-a.field*primitive.vertex[0][2])*amount)/denominator)
-      sample[4]=fmin(255,fmax(0,lround(D3_SAMPLE(r))))/255.0;
-      sample[5]=fmin(255,fmax(0,lround(D3_SAMPLE(g))))/255.0;
-      sample[6]=fmin(255,fmax(0,lround(D3_SAMPLE(b))))/255.0;
+      sample[4]=pair.textured?fmin(255,fmax(0,D3_SAMPLE(r))):
+        fmin(255,fmax(0,lround(D3_SAMPLE(r))))/255.0;
+      sample[5]=pair.textured?fmin(255,fmax(0,D3_SAMPLE(g))):
+        fmin(255,fmax(0,lround(D3_SAMPLE(g))))/255.0;
+      sample[6]=pair.textured?fmin(255,fmax(0,D3_SAMPLE(b))):
+        fmin(255,fmax(0,lround(D3_SAMPLE(b))))/255.0;
       sample[7]=D3_SAMPLE(alpha);
+      if(pair.textured){
+        pair.uv[count][0]=D3_SAMPLE(u);
+        pair.uv[count][1]=D3_SAMPLE(v);
+      }
 #undef D3_SAMPLE
       if(sample[7]<=0.0)continue;
       sample[7]=fmin(sample[7],1.0);
@@ -1517,9 +1524,11 @@ static int d3_native_line(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,const GmlD3Te
     if(count==1){
       memcpy(pair.vertex[1],pair.vertex[0],sizeof pair.vertex[1]);
       pair.vertex[1][7]=0;
+      memcpy(pair.uv[1],pair.uv[0],sizeof pair.uv[1]);
     }
     GmlRenderDepthPlaneRef published;
-    if(!gml_render_cpu_backend_depth_triangle(R,&pair,target->gpu_current?NULL:target->pixels,-1,0,&published))
+    if(!gml_render_cpu_backend_depth_triangle(R,&pair,target->gpu_current?NULL:target->pixels,
+         pair.textured?texture->handle:-1,texture?texture->full_atlas:0,&published))
       return 0;
     target->device_plane=published;target->version=published.version;
     target->gpu_current=1;target->cpu_current=0;

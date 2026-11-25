@@ -172,7 +172,7 @@
   "uniform vec4 u_shade,u_fog_colour;uniform vec2 u_fog_range;\n#endif\n" \
   GML_GPU_OPENGL_BINARY64_BODY \
   "uniform ivec4 u_input_alpha,u_alpha_coordinates,u_alpha_fraction;\n" \
-  "uniform ivec4 u_alpha_weights[2];\n" \
+  "uniform ivec4 u_alpha_weights[4];\n" \
   "// Exact positive binary64 product versus half the least binary64 subnormal.\n" \
   "// Equality rounds to zero (ties to even); neither operand uses float arithmetic.\n" \
   "bool positive_alpha_product(uvec2 a,uvec2 b){\n" \
@@ -197,29 +197,29 @@
   " if(exponent==0u)return d64_mul(d64_uint(mantissa),uvec2(0u,0x36a00000u));\n" \
   " return uvec2(mantissa<<29u,((exponent+896u)<<20u)|(mantissa>>3u));\n" \
   "}\n" \
-  "uint alpha_state_byte(ivec2 p){return uint(floor(texelFetch(u_source,p,0).a*255.0+0.5));}\n" \
-  "uvec2 alpha_state_sample(){\n" \
+  "uint depth_state_byte(ivec2 p,int c){return uint(floor(texelFetch(u_source,p,0)[c]*255.0+0.5));}\n" \
+  "uvec2 depth_state_sample(int channel){\n" \
   " ivec2 a=u_alpha_coordinates.xy,b=u_alpha_coordinates.zw;\n" \
-  " uint p0=alpha_state_byte(a);\n" \
-  " if(u_input_alpha.w==3)return d64_div(d64_uint(p0),d64_uint(255u));\n" \
-  " uint p1=alpha_state_byte(ivec2(b.x,a.y)),p2=alpha_state_byte(ivec2(a.x,b.y)),p3=alpha_state_byte(b);\n" \
+  " uint p0=depth_state_byte(a,channel);\n" \
+  " if(u_input_alpha.w==3)return d64_uint(p0);\n" \
+  " uint p1=depth_state_byte(ivec2(b.x,a.y),channel),p2=depth_state_byte(ivec2(a.x,b.y),channel),p3=depth_state_byte(b,channel);\n" \
   " if(u_input_alpha.w==1){\n" \
   "  uint ix=uint(u_alpha_fraction.x),iy=uint(u_alpha_fraction.y);\n" \
   "  uint top=(p0*(256u-ix)+p1*ix+128u)>>8u;\n" \
   "  uint bottom=(p2*(256u-ix)+p3*ix+128u)>>8u;\n" \
-  "  return d64_div(d64_uint((top*(256u-iy)+bottom*iy+128u)>>8u),d64_uint(255u));\n" \
+  "  return d64_uint((top*(256u-iy)+bottom*iy+128u)>>8u);\n" \
   " }\n" \
   " uvec2 sum=d64_add(d64_mul(d64_uint(p0),uvec2(u_alpha_weights[0].xy)),d64_mul(d64_uint(p1),uvec2(u_alpha_weights[0].zw)));\n" \
   " sum=d64_add(sum,d64_mul(d64_uint(p2),uvec2(u_alpha_weights[1].xy)));\n" \
   " sum=d64_add(sum,d64_mul(d64_uint(p3),uvec2(u_alpha_weights[1].zw)));\n" \
-  " return d64_div(sum,d64_uint(255u));\n" \
+  " return sum;\n" \
   "}\n" \
   "void main(){vec4 source=clamp(v_colour/v_reciprocal,0.0,1.0);float z=v_depth;" \
   "bool encoded=u_input_alpha.z!=0;uvec2 input_alpha=uvec2(u_input_alpha.xy);" \
   "if((u_policy.x&2)!=0&&(encoded?(input_alpha.x|input_alpha.y)==0u:source.a<=0.0))discard;" \
-  "float sampled_alpha=1.0;if(u_policy.w!=0){vec4 sampled=texture(u_source,u_policy.w==2?u_flat_uv:v_uv/v_reciprocal);" \
+  "float sampled_alpha=1.0;if(u_policy.w!=0&&(u_policy.x&4)==0){vec4 sampled=texture(u_source,u_policy.w==2?u_flat_uv:v_uv/v_reciprocal);" \
   "source*=sampled;sampled_alpha=sampled.a;}" \
-  "uvec2 state_sample=uvec2(0u);if(encoded)state_sample=u_input_alpha.w!=0?alpha_state_sample():alpha_float64(sampled_alpha);" \
+  "uvec2 state_sample=uvec2(0u);if(encoded)state_sample=u_input_alpha.w!=0?d64_div(depth_state_sample(3),d64_uint(255u)):alpha_float64(sampled_alpha);" \
   "bool alpha_positive=encoded?positive_alpha_product(input_alpha,state_sample):source.a>0.0;" \
   "if(u_flags.z!=0&&(isnan(z)||isinf(z)||z<0.0||z>1.0))discard;" \
   "float old=uintBitsToFloat(texelFetch(u_depth,ivec2(gl_FragCoord.xy),0).r);" \
@@ -234,9 +234,16 @@
   "source.rgb=mix(source.rgb,u_fog_colour.rgb,clamp(amount,0.0,1.0));}" \
   "vec4 old_colour=texelFetch(u_colour,ivec2(gl_FragCoord.xy),0);" \
   "if((u_policy.x&4)!=0){\n" \
-  " uvec2 one=uvec2(0u,0x3ff00000u),inverse=d64_sub(one,input_alpha);\n" \
+  " if(u_policy.w!=0&&limb_less(input_alpha,uvec2(0u,0x3bf00000u))){\n" \
+  "  result_colour=old_colour;if((u_policy.x&1)!=0)result_colour.a=1.0;return;\n" \
+  " }\n" \
+  " uvec2 one=uvec2(0u,0x3ff00000u);\n" \
+  " if(u_policy.w!=0){input_alpha=d64_mul(input_alpha,state_sample);if(limb_less(one,input_alpha))input_alpha=one;}\n" \
+  " uvec2 inverse=d64_sub(one,input_alpha);\n" \
   " ivec4 src=ivec4(floor(source*255.0+0.5)),dst=ivec4(floor(old_colour*255.0+0.5));\n" \
-  " int a=clamp(d64_round(d64_mul(input_alpha,d64_uint(255u))),0,255);\n" \
+  " if(u_policy.w!=0)for(int c=0;c<3;c++)src[c]=clamp(d64_lround(d64_div(\n" \
+  "    d64_mul(depth_state_sample(c),uvec2(c==0?u_alpha_weights[2].xy:c==1?u_alpha_weights[2].zw:u_alpha_weights[3].xy)),d64_uint(255u))),0,255);\n" \
+  " int a=clamp(d64_lround(d64_mul(input_alpha,d64_uint(255u))),0,255);\n" \
   " ivec4 result=ivec4(src.rgb,255);\n" \
   " if(any(notEqual(input_alpha,one))){\n" \
   "  for(int c=0;c<3;c++)result[c]=d64_floor(d64_add(d64_mul(d64_uint(uint(src[c])),input_alpha),\n" \
