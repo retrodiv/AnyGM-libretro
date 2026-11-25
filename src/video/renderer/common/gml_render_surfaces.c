@@ -4234,7 +4234,9 @@ static int resident_surface_part(GmlRender *r,int surf,double sx,double sy,doubl
 static int resident_surface_repeat(GmlRender *r,int surf,int sw,int sh,
   double phase_x,double phase_y,double width,double height,double columns,double rows,
   int flip_x,int flip_y,uint32_t colour,double alpha){
-  if(surf<=0 || !r->alphablend || r->blendmode || resident_surface_shader_selected(r) ||
+  /* The caller selects the presets that use the generic cell's source-over
+   * accumulation. Keep the unit and full-source special cases at that seam. */
+  if(surf<=0 || !r->alphablend || resident_surface_shader_selected(r) ||
      (r->interp && (sw>8*lround(width) || sh>8*lround(height))) ||
      (lround(width)>=sw && lround(height)>=sh)) return 0;
   if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
