@@ -712,7 +712,7 @@
   "    uvec2 alpha=background_cutout_alpha(centre,mask);\n" \
   "    if(!limb_less(d64_uint(uint(u_alpha_test)),alpha)) return false;\n" \
   "#ifdef GML_SCENE_BYTE_POSITIVE_ALPHA\n" \
-  "    return d64_round(alpha)!=0;\n" \
+  "    return v_span_x.y!=0.0 || d64_round(alpha)!=0;\n" \
   "#else\n" \
   "    uint bits=floatBitsToUint(v_span_x.x*255.0);\n" \
   "    uint exponent=bits>>23u;\n" \

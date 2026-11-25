@@ -2942,7 +2942,7 @@ static int resident_filtered_atlas_page(GmlRender *r,int page_index,
     anygm_policy_has_modern_layer_semantics(r->win);
   int native_tiny_byte=tiny_background && !native_tiny_normal &&
     (selected_preset || !r->blendmode) &&
-    (!r->alphablend || !r->blendmode || r->blendmode==1 || r->blendmode==3 ||
+    (r->alpha_test_enable || !r->alphablend || !r->blendmode || r->blendmode==1 || r->blendmode==3 ||
      r->blendmode==4 || r->blendmode==5 || r->blendmode==7 || r->blendmode==8);
   int native_tiny_background=native_tiny_normal || native_tiny_byte ||
     (tiny_background && selected_preset && !r->alpha_test_enable);

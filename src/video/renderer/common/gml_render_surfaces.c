@@ -841,7 +841,9 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
       ((operation->payload.quad.sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
         (state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
          operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
-         operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND)) ||
+         operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND ||
+         operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_TRUNC ||
+         operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_BYTE_POSITIVE_ROUND)) ||
        (operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST &&
         (operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
          operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_ROUND)))));

@@ -419,6 +419,14 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
         packed[1]=(float)((bits>>22u)&0x3fffffu);
         packed[2]=(float)(bits>>44u);
       }
+      /* Replacement and destination-colour blending can write after a
+       * positive raw sample rounds to a zero alpha byte. */
+      vertex[20]=state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_SOURCE_ALPHA ||
+        state->coverage_policy==GML_RENDER_COVERAGE_REPLACE_ZERO_ALPHA ||
+        ((state->rgb_source_factor==GML_RENDER_BLEND_DESTINATION_COLOUR ||
+          state->rgb_source_factor==GML_RENDER_BLEND_DESTINATION_ALPHA) &&
+         (state->rgb_destination_factor==GML_RENDER_BLEND_SOURCE_COLOUR ||
+          state->rgb_destination_factor==GML_RENDER_BLEND_DESTINATION_COLOUR));
     }
     if(quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_RAW_POSITIVE_ALPHA){
       vertex[19]=(float)raw_source_floor;
