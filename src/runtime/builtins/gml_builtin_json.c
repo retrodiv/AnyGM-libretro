@@ -7,6 +7,7 @@
 
 #include <ctype.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,9 +29,11 @@ static void json_number_text(double d,char num[64]){
 }
 
 static int json_writer_reserve(GmlBuiltinJsonWriter *b, size_t add){
-  if(b->length+add+1<=b->capacity) return 1;
-  size_t nc=b->capacity?b->capacity*2:128;
-  while(nc<b->length+add+1) nc*=2;
+  if(add>=SIZE_MAX-b->length) return 0;
+  const size_t needed=b->length+add+1;
+  if(needed<=b->capacity) return 1;
+  size_t nc=b->capacity?b->capacity:128;
+  while(nc<needed) nc=nc<=SIZE_MAX/2?nc*2:needed;
   char *ns=realloc(b->text,nc);
   if(!ns) return 0;
   b->text=ns; b->capacity=nc; return 1;
@@ -58,9 +61,7 @@ char *gml_builtin_json_writer_take(GmlBuiltinJsonWriter *b,
                                    const char *fallback){
   if(!b) return strdup(fallback?fallback:"");
   char *text=b->text;
-  b->text=NULL;
-  b->length=0;
-  b->capacity=0;
+  memset(b,0,sizeof(*b));
   return text?text:strdup(fallback?fallback:"");
 }
 static int jb_put_json_string(GmlBuiltinJsonWriter *b, const char *s){
@@ -87,25 +88,44 @@ static int json_struct_skip_key(const char *key){
   return key && (!strcmp(key,"__fn") || !strcmp(key,"__self") ||
                  !strcmp(key,"__name") || !strcmp(key,"__ctor"));
 }
-static int json_encode_struct(GmlVM *vm, GmlBuiltinJsonWriter *b, GmlInstance *st, int depth, int allow_ds){
-  if(depth>16) return gml_builtin_json_writer_puts(b,"null");
-  if(!st) return gml_builtin_json_writer_puts(b,"null");
-  if(!gml_builtin_json_writer_putc(b,'{')) return 0;
+enum { JSON_MAX_DEPTH=128 };
+typedef enum { JSON_ARRAY, JSON_STRUCT, JSON_MAP, JSON_LIST } JsonContainerKind;
+typedef struct JsonAncestor {
+  const struct JsonAncestor *parent;
+  uintptr_t identity;
+  JsonContainerKind kind;
+} JsonAncestor;
+
+static int json_encode_value(GmlVM *vm,GmlBuiltinJsonWriter *b,GmlVal value,
+                             int depth,int allow_ds,const JsonAncestor *parent);
+
+static int json_truncate_depth(GmlVM *vm,GmlBuiltinJsonWriter *b){
+  if(!b->depth_warned){
+    b->depth_warned=1;
+    anygm_host_logf(vm?vm->host:NULL,ANYGM_LOG_WARN,
+                    "JSON encoding exceeded depth %d; nested content was replaced with null\n",
+                    JSON_MAX_DEPTH);
+  }
+  return gml_builtin_json_writer_puts(b,"null");
+}
+
+static int json_encode_struct(GmlVM *vm,GmlBuiltinJsonWriter *b,GmlInstance *st,
+                              int depth,int allow_ds,const JsonAncestor *ancestor){
   int first=1;
   for(int i=0;i<st->vars.cap;i++){
     GmlVarSlot *slot=&st->vars.slots[i];
     if(!slot->key || json_struct_skip_key(slot->key)) continue;
-    if(!first && !gml_builtin_json_writer_putc(b,',')) return 0;
+    if(depth==JSON_MAX_DEPTH) return json_truncate_depth(vm,b);
+    if(!gml_builtin_json_writer_putc(b,first?'{':',')) return 0;
     first=0;
     if(!jb_put_json_string(b,slot->key) || !gml_builtin_json_writer_putc(b,':')) return 0;
-    if(!gml_builtin_json_writer_put_value(vm,b,slot->val,depth+1,allow_ds)) return 0;
+    if(!json_encode_value(vm,b,slot->val,depth+1,allow_ds,ancestor)) return 0;
   }
-  return gml_builtin_json_writer_putc(b,'}');
+  return first?gml_builtin_json_writer_puts(b,"{}"):gml_builtin_json_writer_putc(b,'}');
 }
-static int json_encode_map(GmlVM *vm, GmlBuiltinJsonWriter *b, int id, int depth){
-  if(depth>16) return gml_builtin_json_writer_puts(b,"null");
-  int count=gml_ds_map_view_count(vm,id);
-  if(count<0) return gml_builtin_json_writer_puts(b,"null");
+static int json_encode_map(GmlVM *vm,GmlBuiltinJsonWriter *b,int id,int count,
+                           int depth,const JsonAncestor *ancestor){
+  if(count && depth==JSON_MAX_DEPTH) return json_truncate_depth(vm,b);
   if(!gml_builtin_json_writer_putc(b,'{')) return 0;
   for(int i=0;i<count;i++){
     GmlBuiltinMapItemView item={0};
@@ -115,57 +135,92 @@ static int json_encode_map(GmlVM *vm, GmlBuiltinJsonWriter *b, int id, int depth
     if(item.key.t==V_STR) key=item.key.s?item.key.s:"";
     else { json_number_text(item.key.t==V_REAL?item.key.d:0.0,keybuf); key=keybuf; }
     if(!jb_put_json_string(b,key) || !gml_builtin_json_writer_putc(b,':')) return 0;
-    if(!gml_builtin_json_writer_put_value(
+    if(!json_encode_value(
          vm,b,item.value,depth+1,
-         item.nested_kind==1?2:(item.nested_kind==2?3:0))) return 0;
+         item.nested_kind==1?2:(item.nested_kind==2?3:0),ancestor)) return 0;
   }
   return gml_builtin_json_writer_putc(b,'}');
 }
-static int json_encode_list(GmlVM *vm, GmlBuiltinJsonWriter *b, int id, int depth){
-  if(depth>16) return gml_builtin_json_writer_puts(b,"null");
-  int count=gml_ds_list_view_count(vm,id);
-  if(count<0) return gml_builtin_json_writer_puts(b,"null");
+static int json_encode_list(GmlVM *vm,GmlBuiltinJsonWriter *b,int id,int count,
+                            int depth,const JsonAncestor *ancestor){
+  if(count && depth==JSON_MAX_DEPTH) return json_truncate_depth(vm,b);
   if(!gml_builtin_json_writer_putc(b,'[')) return 0;
   for(int i=0;i<count;i++){
     GmlBuiltinListItemView item={0};
     if(!gml_ds_list_item_view(vm,id,i,&item)) return 0;
     if(i && !gml_builtin_json_writer_putc(b,',')) return 0;
-    if(!gml_builtin_json_writer_put_value(
+    if(!json_encode_value(
          vm,b,item.value,depth+1,
-         item.nested_kind==1?2:(item.nested_kind==2?3:0))) return 0;
+         item.nested_kind==1?2:(item.nested_kind==2?3:0),ancestor)) return 0;
   }
   return gml_builtin_json_writer_putc(b,']');
 }
-static int json_encode_arr(GmlVM *vm, GmlBuiltinJsonWriter *b, GmlArr *A, int depth){
-  if(depth>16) return gml_builtin_json_writer_puts(b,"null");
-  if(!A) return gml_builtin_json_writer_puts(b,"[]");
+static int json_encode_arr(GmlVM *vm,GmlBuiltinJsonWriter *b,GmlArr *array,
+                           int depth,const JsonAncestor *ancestor){
+  if(array->len && depth==JSON_MAX_DEPTH) return json_truncate_depth(vm,b);
   if(!gml_builtin_json_writer_putc(b,'[')) return 0;
-  for(int i=0;i<A->len;i++){
+  for(int i=0;i<array->len;i++){
     if(i && !gml_builtin_json_writer_putc(b,',')) return 0;
-    if(!gml_builtin_json_writer_put_value(vm,b,A->data[i],depth+1,0)) return 0;
+    if(!json_encode_value(vm,b,array->data[i],depth+1,0,ancestor)) return 0;
   }
   return gml_builtin_json_writer_putc(b,']');
 }
-int gml_builtin_json_writer_put_value(GmlVM *vm, GmlBuiltinJsonWriter *b,
-                                      GmlVal v, int depth, int allow_ds){
+
+static int json_encode_container(GmlVM *vm,GmlBuiltinJsonWriter *b,JsonAncestor here,
+                                int depth,int allow_ds,int count){
+  /* Only active ancestors are cycles. Sibling references retain their contents. */
+  for(const JsonAncestor *a=here.parent;a;a=a->parent)
+    if(a->kind==here.kind && a->identity==here.identity)
+      return gml_builtin_json_writer_puts(b,"null");
+  switch(here.kind){
+    case JSON_ARRAY: return json_encode_arr(vm,b,(GmlArr *)here.identity,depth,&here);
+    case JSON_STRUCT: return json_encode_struct(vm,b,(GmlInstance *)here.identity,depth,allow_ds,&here);
+    case JSON_MAP: return json_encode_map(vm,b,(int)here.identity,count,depth,&here);
+    case JSON_LIST: return json_encode_list(vm,b,(int)here.identity,count,depth,&here);
+  }
+  return 0;
+}
+
+static int json_encode_value(GmlVM *vm,GmlBuiltinJsonWriter *b,GmlVal v,
+                             int depth,int allow_ds,const JsonAncestor *parent){
   if(v.t==V_STR) return jb_put_json_string(b,v.s?v.s:"");
   if(v.t==V_UNDEF) return gml_builtin_json_writer_puts(b,"null");
-  if(v.t==V_ARR) return json_encode_arr(vm,b,(GmlArr*)v.arr,depth);
+  if(v.t==V_ARR){
+    if(!v.arr) return gml_builtin_json_writer_puts(b,"[]");
+    JsonAncestor here={parent,(uintptr_t)v.arr,JSON_ARRAY};
+    return json_encode_container(vm,b,here,depth,0,0);
+  }
   if(gml_val_is_number_or_object(v)){
-    int id=(int)v.d;
-    if(GML_IS_STRUCT_ID(v.d)) return json_encode_struct(vm,b,gml_struct_find(vm,(unsigned)v.d),depth,allow_ds);
-    if(fabs(v.d-(double)id)<1e-9){
-      if((allow_ds==1 || allow_ds==3) &&
-         gml_ds_map_view_count(vm,id)>=0)
-        return json_encode_map(vm,b,id,depth);
-      if((allow_ds==1 || allow_ds==2) &&
-         gml_ds_list_view_count(vm,id)>=0)
-        return json_encode_list(vm,b,id,depth);
-    }
     if(!isfinite(v.d)) return gml_builtin_json_writer_puts(b,"null");
+    if(GML_IS_STRUCT_ID(v.d)){
+      GmlInstance *st=gml_struct_find(vm,(unsigned)v.d);
+      if(!st) return gml_builtin_json_writer_puts(b,"null");
+      JsonAncestor here={parent,(uintptr_t)st,JSON_STRUCT};
+      return json_encode_container(vm,b,here,depth,allow_ds,0);
+    }
+    if(allow_ds && v.d>=(double)INT_MIN && v.d<=(double)INT_MAX){
+      int id=(int)v.d;
+      if(fabs(v.d-(double)id)<1e-9){
+        int count;
+        if((allow_ds==1 || allow_ds==3) && (count=gml_ds_map_view_count(vm,id))>=0){
+          JsonAncestor here={parent,(uintptr_t)id,JSON_MAP};
+          return json_encode_container(vm,b,here,depth,0,count);
+        }
+        if((allow_ds==1 || allow_ds==2) && (count=gml_ds_list_view_count(vm,id))>=0){
+          JsonAncestor here={parent,(uintptr_t)id,JSON_LIST};
+          return json_encode_container(vm,b,here,depth,0,count);
+        }
+      }
+    }
     char num[64]; json_number_text(v.d,num); return gml_builtin_json_writer_puts(b,num);
   }
   return gml_builtin_json_writer_puts(b,"null");
+}
+
+int gml_builtin_json_writer_put_value(GmlVM *vm,GmlBuiltinJsonWriter *b,
+                                      GmlVal value,int depth,int allow_ds){
+  if(depth>JSON_MAX_DEPTH) return json_truncate_depth(vm,b);
+  return json_encode_value(vm,b,value,depth,allow_ds,NULL);
 }
 
 typedef struct { const char *s; size_t p, n; GmlVM *vm; int ok, obj_as_struct; } JsonIn;
@@ -301,7 +356,12 @@ static int js_match(JsonIn *j, const char *lit){
   return 0;
 }
 static GmlVal json_parse_value(JsonIn *j, int depth){
-  if(depth>128){ j->ok=0; return vreal(0); }
+  if(depth>JSON_MAX_DEPTH){
+    anygm_host_logf(j->vm?j->vm->host:NULL,ANYGM_LOG_WARN,
+                    "JSON decoding exceeded depth %d\n",JSON_MAX_DEPTH);
+    j->ok=0;
+    return vreal(0);
+  }
   js_ws(j); if(j->p>=j->n){ j->ok=0; return vreal(0); }
   char c=j->s[j->p];
   if(c=='{') return json_parse_object(j,depth);

@@ -473,6 +473,7 @@ typedef struct {
   char *text;
   size_t length;
   size_t capacity;
+  int depth_warned;
 } GmlBuiltinJsonWriter;
 int gml_builtin_json_writer_putc(GmlBuiltinJsonWriter *writer, char value);
 int gml_builtin_json_writer_puts(GmlBuiltinJsonWriter *writer,
