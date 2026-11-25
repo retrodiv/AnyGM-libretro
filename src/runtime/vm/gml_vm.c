@@ -521,6 +521,7 @@ void gml_vm_free(GmlVM *vm){
           free(vm->diagnostics.code_seen); vm->diagnostics.code_seen=NULL; }
   GML_VM_DIAGNOSTIC_DESTROY(vm);
   gml_vm_wait_cancel(vm);   /* a run parked by a blocking input wait owns locals and strings */
+  gml_vm_execution_frames_free(vm);
   gml_vm_input_text_release(vm);
   free(vm->pending_game_load); vm->pending_game_load=NULL;
   gml_colgrid_invalidate(vm);

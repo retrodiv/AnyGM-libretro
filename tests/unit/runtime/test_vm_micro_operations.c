@@ -556,6 +556,47 @@ static int input_action_case(void){
   return ok;
 }
 
+static void recursion_limit_log(void *userdata,AnygmLogLevel level,const char *message){
+  unsigned *warnings=userdata;
+  if(level==ANYGM_LOG_WARN && strstr(message,"script recursion limit reached")) (*warnings)++;
+}
+
+static int recursive_frame_case(void){
+  static const Instruction recursive[]={
+    ARG(0),INTEGER(0),CMP(CMP_EQ),JUMP(OP_BT,14),
+    ARG(0),ARG(0),INTEGER(1),SIMPLE(OP_SUB),CALL("gml_Script_recursive_sum",1),
+    SIMPLE(OP_ADD),ARG(0),SIMPLE(OP_ADD),SIMPLE(OP_RET),SIMPLE(OP_EXIT),
+    INTEGER(1),SIMPLE(OP_RET)
+  };
+  Fixture fixture={0};
+  if(!fixture_init(&fixture)){ fixture_free(&fixture); return 0; }
+  unsigned warnings=0;
+  AnygmHostServices host={.userdata=&warnings,.log=recursion_limit_log};
+  fixture.vm.host=&host;
+  add_code(&fixture,"gml_Script_recursive_sum",recursive,COUNT(recursive));
+
+  GmlVal depth=vreal(299);
+  int ok=expect(invoke(&fixture,&depth,1).d==89701 && !warnings,
+                "nested calls preserve the caller operand and argument up to the limit");
+  depth=vreal(300);
+  ok &= expect(invoke(&fixture,&depth,1).d==90300 && warnings==1,
+               "the recursion limit produces zero for the rejected call and warns once");
+  depth=vreal(301);
+  ok &= expect(invoke(&fixture,&depth,1).d==90900 && warnings==1,
+               "the recursion limit remains quiet on the next rejected call");
+  gml_vm_code_cache_discard(&fixture.code[0]);
+  fixture.code[0].cache_bad=1;
+  depth=vreal(299);
+  ok &= expect(invoke(&fixture,&depth,1).d==89701 && warnings==1,
+               "raw bytecode reaches the limit with the full native resolver on each call");
+  depth=vreal(3);
+  ok &= expect(invoke(&fixture,&depth,1).d==13 && !fixture.vm.execution_depth &&
+               !fixture.vm.active_execution_frame && !fixture.vm.exception_context,
+               "later invocations reuse scratch with the initial frame state restored");
+  fixture_free(&fixture);
+  return ok;
+}
+
 int main(void){
   int ok=map_lookup_case();
   ok &= approach_case();
@@ -564,6 +605,7 @@ int main(void){
   ok &= map_method_loop_case();
   ok &= array_method_loop_case();
   ok &= input_action_case();
+  ok &= recursive_frame_case();
   if(ok) puts("VM micro-operation contracts passed");
   return ok?0:1;
 }

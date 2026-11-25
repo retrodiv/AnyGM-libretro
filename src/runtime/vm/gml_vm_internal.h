@@ -50,9 +50,11 @@ typedef struct GmlExceptionContext {
   struct GmlExceptionContext *parent;
   uint32_t code_length,code_offset;
   const char *direct_fallback_name;
+  int direct_fallback_code;
   int stack_n,with_n,array_reference_n;
 } GmlExceptionContext;
 void gml_vm_exception_state_clear(GmlExceptionState *state);
+void gml_vm_execution_frames_free(GmlVM *vm);
 
 double gml_vm_classic_round_even(double value);
 double gml_vm_value_as_number(GmlVal value);

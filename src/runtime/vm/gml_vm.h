@@ -315,6 +315,7 @@ typedef struct {
   int deferred_n;
 } GmlExceptionState;
 struct GmlExceptionContext;
+struct GmlExecutionFrame;
 
 typedef struct GmlWaitFrame {
   int       ci;                 /* CODE entry this frame is executing */
@@ -408,8 +409,11 @@ typedef struct GmlVM {
   int     *step_free; int step_free_n, step_free_pos, step_free_cap;
   uint32_t step_first_id;     /* Studio fixed snapshot: ids at/above this were created during this step */
   int      step_active;       /* lets alloc reuse only holes that were already free at frame start */
-  struct GmlExceptionContext *exception_context; /* live C frame; never serialized */
+  /* Interpreter scratch retained per active depth and excluded from serialized state. */
+  struct GmlExecutionFrame *execution_frames, *active_execution_frame;
+  struct GmlExceptionContext *exception_context;
   int      execution_depth;   /* per-VM recursion guard for nested script calls */
+  int      execution_depth_reported;
   /* Blocking input wait (see GmlWait). `wait_requested` is raised by the wait builtins and read by
    * the interpreter at the next instruction boundary; `wait_chain` is the depth of the deepest run
    * reachable by direct calls from an event's own code, which is the only chain a park may span;

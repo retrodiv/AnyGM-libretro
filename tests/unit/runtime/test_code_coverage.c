@@ -64,7 +64,7 @@ int main(void){
     build(&win, entries, 3); vm.win = &win;
     gml_vm_run_code(&vm, 0, NULL, NULL, NULL, 0);
     check(vm.diagnostics.code_seen == NULL, "allocated with the setting absent");
-    free(vm.diagnostics.code_seen);
+    gml_vm_free(&vm);
   }
   {
     setenv("GML_LOG_COVERAGE", "1", 1);
@@ -84,7 +84,7 @@ int main(void){
     gml_vm_run_code(&vm, -1, NULL, NULL, NULL, 0);
     check(entries_marked(&vm) == 2, "an index outside the payload was counted");
     check(vm.diagnostics.code_seen[0] == 0, "an entry that never ran was marked");
-    free(vm.diagnostics.code_seen);
+    gml_vm_free(&vm);
     unsetenv("GML_LOG_COVERAGE");
   }
 
