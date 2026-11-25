@@ -424,19 +424,34 @@ static void sampled_configuration(void){
   source.system_directory=fixture.directory;source.cache_directory=fixture.directory;
   assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
   size_t baseline=observed_bytes;anygm_unload(engine);
-  snprintf(text,sizeof text,"[imohash:payload:%s.overrides]\n$count_marker=31\n",hex);
+  const char *section="[%s.transforms]\ninput.probe=buffer decline(){return scratch_slice(0,0);}\n"
+    "[%s.overrides]\n$count_marker=31\n";
+  char key[49];
+  snprintf(key,sizeof key,"imohash:payload:%s",hex);
+  snprintf(text,sizeof text,section,key,key);
   write_text(ini,text);observed_bytes=0;
   assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
-  /* Four bytes classify the source; imohash then reads its standard budget. */
-  assert(observed_bytes==baseline+4+(size<131072?size:49152));frame(engine);
+  size_t sample_bytes=size<131072?size:49152;
+  assert(observed_bytes==baseline+sample_bytes+size);frame(engine);
   assert(gml_global_num(&engine->vm,"count_marker")==31);anygm_unload(engine);
-  assert(gml_imohash(fixture.path,strlen(fixture.path),digest));
-  assert(strlen(fixture.path)!=size);
-  for(unsigned i=0;i<16;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
-  snprintf(text,sizeof text,"[imohash:payload:%s.overrides]\n$count_marker=31\n",hex);
+
+  /* Changing a digest byte outside its encoded size samples once but does
+   * not read the original into the preparation pipeline. */
+  key[47]=key[47]=='0'?'1':'0';
+  snprintf(text,sizeof text,section,key,key);
   write_text(ini,text);observed_bytes=0;
   assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
-  assert(observed_bytes==baseline+4);frame(engine);
+  assert(observed_bytes==baseline+sample_bytes);frame(engine);
+  assert(gml_global_num(&engine->vm,"count_marker")!=31);anygm_unload(engine);
+
+  assert(strlen(fixture.path)!=size);
+  assert(gml_imohash(fixture.path,strlen(fixture.path),digest));
+  for(unsigned i=0;i<16;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
+  snprintf(key,sizeof key,"imohash:payload:%s",hex);
+  snprintf(text,sizeof text,section,key,key);
+  write_text(ini,text);observed_bytes=0;
+  assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
+  assert(observed_bytes==baseline);frame(engine);
   assert(gml_global_num(&engine->vm,"count_marker")!=31);
   anygm_destroy(engine);assert(!remove(ini));anygm_synthetic_content_destroy(&fixture);
 }

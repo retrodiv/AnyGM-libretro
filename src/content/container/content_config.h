@@ -21,6 +21,8 @@ void anygm_content_config_destroy(AnygmContentConfig *config);
 int anygm_content_config_has_input(const AnygmContentConfig *config);
 /* Recognition keys are bounded hints, never integrity checks. */
 int anygm_content_config_candidate(const AnygmContentConfig *config,int zip,uint64_t size);
+int anygm_content_config_input_candidate(const AnygmContentConfig *config,uint64_t size);
+int anygm_content_config_key_has_input(const AnygmContentConfig *config,const char *key);
 int anygm_content_config_matches(const AnygmContentConfig *config,const char *key);
 int anygm_content_config_select(const AnygmContentConfig *config,const char *key,
                                AnygmContentTransforms *transforms,unsigned priority,

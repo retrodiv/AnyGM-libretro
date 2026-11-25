@@ -118,9 +118,19 @@ the first load. Cabinet installation manifests retain their separate verificatio
 contract. Reading or converting content may still require the complete input even
 though computing its cache identity takes only the samples described above.
 
-Scoped selectors cannot declare pre-routing `input`, `input.probe` or `input.final`
-adapters: those must be available before routing and belong in defaults
-or anchors. Other selected transforms and patches retain their ordinary contracts.
+Scoped `input`, `input.probe` and `input.final` declarations apply at the
+input-preparation boundary. A ZIP selector identifies the outer archive for
+preparation. A payload selector identifies the exact bytes presented for
+preparation, such as a loose Classic executable, a loose data image, or the
+selected archive member when preparation reaches it. A ZIP adapter runs only
+on the outer archive, including when it returns the original bytes unchanged.
+
+A payload selector that declares an input adapter and only matches after
+preparation or routing rejects the load. For example, key a launcher adapter
+to the original executable to adapt its bytes. A selector keyed to the data
+image discovered inside the launcher can still declare overrides and other
+transforms. External patches retain their source-relative paths and integrity
+checks.
 
 An illustrative sampled key can select runtime directives:
 
@@ -328,12 +338,11 @@ An explicitly selected `input` function or pipeline can normalize the source bef
 An optional `input.probe` enumerates bounded candidate ranges in that same original source;
 the complete structural reader must select exactly one valid normalized result. An optional
 `input.final` pipeline then processes the selected representation, including after a probe's
-identity or zero-record decline. These entries
-follow the ordinary default/anchor layering, with the contract in `CONTENT_TRANSFORMS.md`.
-An absent adapter or byte-identical path result retains ordinary member/adjacent-payload
-selection. A changed path result retains original-byte identity only for its cache key,
-not for selecting runtime directives. `CONTENT_TRANSFORMS.md` owns that preparation
-contract. Logs report default and anchor layers and the effective directive count.
+identity or zero-record decline. These entries follow the ordinary
+whole-entry precedence, with the contract in `CONTENT_TRANSFORMS.md`. An absent adapter or
+byte-identical path result resumes ordinary routing. A changed data or Classic result retains
+the original payload selection. An adapted archive permits runtime directives for the resolved
+payload. Logs report the configuration layers and the effective directive count.
 
 ## Example
 

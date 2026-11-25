@@ -11,6 +11,7 @@
 
 typedef struct {
   int transforms;
+  int has_input;
   size_t begin,end;
   uint64_t size;
   char key[49];
@@ -177,11 +178,8 @@ AnygmContentConfig *anygm_content_config_parse(const void *text,size_t size,
       AnygmContentTransforms *validation=anygm_content_transforms_create();
       int ok=document && validation && anygm_content_transforms_parse(validation,document,
         strlen(document),error,error_size);
-      /* A payload can be identified only after its container has been routed.
-       * Pre-routing source adapters therefore belong in defaults or anchors. */
-      if(ok && section->key[0] && anygm_content_source_configured(validation))
-        ok=config_error(error,error_size,"selected sections cannot declare input adapters");
-      if(ok && !section->key[0] && anygm_content_source_configured(validation)) config->has_input=1;
+      if(ok && anygm_content_source_configured(validation))
+        config->has_input=section->has_input=1;
       free(document); anygm_content_transforms_destroy(validation);
       if(!ok) goto invalid;
     } else {
@@ -216,6 +214,21 @@ int anygm_content_config_candidate(const AnygmContentConfig *config,int zip,uint
     const ConfigSection *section=&config->sections[i];
     if((!size || section->size==size) && !strncmp(section->key,prefix,strlen(prefix))) return 1;
   }
+  return 0;
+}
+
+int anygm_content_config_input_candidate(const AnygmContentConfig *config,uint64_t size){
+  for(size_t i=0;config && i<config->count;i++){
+    const ConfigSection *section=&config->sections[i];
+    if(section->has_input && (!size || section->size==size) &&
+       !strncmp(section->key,"imohash:payload:",16)) return 1;
+  }
+  return 0;
+}
+
+int anygm_content_config_key_has_input(const AnygmContentConfig *config,const char *key){
+  for(size_t i=0;config && i<config->count;i++)
+    if(config->sections[i].has_input && !strcmp(config->sections[i].key,key)) return 1;
   return 0;
 }
 

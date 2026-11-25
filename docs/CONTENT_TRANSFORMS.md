@@ -33,9 +33,10 @@ defaults in either case; content that requires a program still fails without one
 
 An advanced `.anygm` anchor may carry the same `[transforms]` section after its `[anygm]` payload
 selection. Each declared entry replaces the lower-priority entry completely, including parameters;
-undeclared entries remain available. Precedence is an explicitly opened anchor,
-outer-to-inner archive anchors, the lone sibling anchor, and the INI
-defaults. Multiple sibling anchors select
+undeclared entries remain available. Matching ZIP and payload sections in the system INI
+take precedence over anchors and defaults, in the order described in
+[Content configuration](CONTENT_CONFIGURATION.md#sections-and-precedence).
+Multiple sibling anchors select
 none. Transform requirements do not depend on the runtime-overrides option. An unreadable selected
 sibling anchor rejects resolution rather than silently selecting another program.
 
@@ -76,7 +77,7 @@ example = buffer edit_bytes() {
 Functions are reusable buffer operations. A `[pipelines]` section declares an ordered chain of
 functions, named external patches, other pipelines, and explicitly selected built-in steps. All declarations share the
 same case-sensitive namespace; `builtin.` is reserved. Pipelines follow the
-same default/anchor layering rules as source functions.
+same layering rules as source functions.
 A higher-priority entry replaces the whole chain, not individual steps. Changing the chain order
 or any referenced function changes the configuration identity. Source declaration order and
 insignificant whitespace do not.
@@ -134,10 +135,8 @@ Candidate ambiguity or selection errors still reject before it runs. The ordinar
 validates the final result; a final pipeline does not weaken that parser.
 
 Patch declarations follow the same whole-entry precedence and shared namespace as functions and
-pipelines. Put content-specific dependencies in a
-content-local anchor: every effective patch declaration is read
-and checked before input preparation, even if a conditional candidate does not eventually use
-it. Merely declaring patches without an input
+pipelines. Every effective patch declaration is read and checked before input
+preparation, even if a conditional candidate does not eventually use it. Merely declaring patches without an input
 entry does not enable preparation.
 
 Paths are relative to the original file being prepared, not to the system INI, current working
@@ -197,12 +196,11 @@ memory result is privately owned, including a single-step identity copy. Unselec
 borrowed. Rejection publishes neither an output image nor partially selected configuration.
 
 Path preparation reads a selected original once into a bounded buffer and leaves it
-untouched. A probe that declines ordinary content does not hash that input for system
-configuration. An actual adaptation's prepared cache key includes the original
+untouched. Fast selector lookup samples only files with a declared candidate size. An actual adaptation's prepared cache key includes the original
 digest, effective program/pipeline identity and output digest. Source adaptation runs on every
 load; this cache is disposable storage, not permission to skip a selected operation or validation.
-An existing prepared data or archive image is reused only after its length and complete SHA-256
-match the newly prepared bytes. Identical bytes are not republished, so a host rename need not
+An existing prepared data or archive image is reused when its length and imohash match the
+newly prepared bytes. Patch stages independently verify exact SHA-256 digests. Identical bytes are not republished, so a host rename need not
 replace an existing destination. A corrupt regular cache file is removed only after its replacement
 has been fully written and flushed; a failed publication never exposes a partial image. Non-regular
 destinations reject without removal.
@@ -211,8 +209,12 @@ Assets and code companions remain relative to the original source directory, or 
 member directory for an archive result. Adapted Classic images are re-imported so a primary-file
 fingerprint cannot silently authorize reuse after an external resource changes.
 
-A changed source does not select different runtime directives. Defaults and content-local
-anchors remain the complete declaration path described in `CONTENT_CONFIGURATION.md`.
+Declare `input`, `input.probe` and `input.final` in defaults, anchors, or fast selector
+sections that match the bytes before preparation. ZIP selectors prepare the original outer
+archive. Payload selectors can prepare a loose file or an extracted member when the pipeline
+receives that member. A payload selector that declares an adapter and only matches after
+preparation or routing causes a load error. See
+[fast selector identity](CONTENT_CONFIGURATION.md#preparation-and-cache-identity).
 
 ### Selecting among source ranges
 
@@ -406,7 +408,7 @@ little-endian u32 layout revision at offset 8, and a reserved zero word at offse
 This context permits selective compatibility patches and text normalization as well as caller-
 defined representation conversion. The distributed `text_newlines` function removes CR before LF
 only in a text record and leaves other contexts unchanged. Select it explicitly, for example in
-an original-file SHA scope or an anchor:
+a matching payload scope or an anchor:
 
 ```ini
 [pipelines]

@@ -2351,6 +2351,13 @@ static void cache_observe_close(void *userdata,void *file){
   cache_observed_vfs.file_close(userdata,file);
 }
 
+static void fixture_sample_key(const char *scope,const uint8_t *bytes,size_t size,char key[112]){
+  uint8_t digest[16];char hex[33];
+  if(!gml_imohash(bytes,size,digest)) abort();
+  for(unsigned i=0;i<16;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
+  snprintf(key,112,"imohash:%s:%s",scope,hex);
+}
+
 /* Warm resolution must sample both large files rather than scan or extract them. */
 static int cache_sample_read_case(const AnygmHostServices *services,const char *root){
   size_t size=1024u*1024u;
@@ -2358,10 +2365,17 @@ static int cache_sample_read_case(const AnygmHostServices *services,const char *
   if(!form) return 0;
   memcpy(form,"FORM",4);
   ZipEntry entry={(const uint8_t *)"data.win",8,form,(uint32_t)size,(uint32_t)size,0,0,0,0};
-  Buffer archive={0};char path[512],resolved[1024],warm[1024];
+  Buffer archive={0};char path[512],resolved[1024],warm[1024],ini[512];
+  char zip_key[112],member_key[112],wrong_size[112],text[768];
   int ok=build_zip(&entry,1,&archive) &&
     snprintf(path,sizeof path,"%s/sampled-cache.zip",root)<(int)sizeof path &&
     write_file(path,archive.data,archive.size);
+  if(ok){
+    fixture_sample_key("zip",archive.data,archive.size,zip_key);
+    fixture_sample_key("payload",form,size,member_key);
+    fixture_sample_key("zip",form,size,wrong_size);
+  }
+  size_t archive_size=archive.size;
   free(form);free(archive.data);
   AnygmContentRouter router={0};router.host=services;router.cache_directory=root;
   if(!ok || !anygm_content_resolve_path(&router,path,resolved,sizeof resolved,NULL,0,NULL,0))
@@ -2379,6 +2393,21 @@ static int cache_sample_read_case(const AnygmHostServices *services,const char *
   for(unsigned kind=0;kind<2;kind++)
     if(cache_observed_bytes[kind]<49152u || cache_observed_bytes[kind]>49152u+64u)
       return fail("warm cache exceeded its sampled source or payload read budget");
+  size_t baseline[2]={cache_observed_bytes[0],cache_observed_bytes[1]};
+  snprintf(ini,sizeof ini,"%s/AnyGM.ini",root);router.system_directory=root;
+  char wrong_hash[112];
+  strcpy(wrong_hash,zip_key);wrong_hash[43]=wrong_hash[43]=='0'?'1':'0';
+  const char *keys[]={wrong_size,wrong_hash,zip_key,member_key};
+  for(unsigned i=0;i<4;i++){
+    snprintf(text,sizeof text,"[%s.transforms]\ninput=buffer copy(){return slice(0,input_size);}\n",keys[i]);
+    if(!write_file(ini,text,strlen(text))) return 0;
+    memset(cache_observed_bytes,0,sizeof cache_observed_bytes);
+    if(!anygm_content_resolve_path(&router,path,warm,sizeof warm,NULL,0,NULL,0) || strcmp(warm,resolved) ||
+       cache_observed_bytes[0]!=baseline[0]+(i==2?archive_size:0) ||
+       cache_observed_bytes[1]!=baseline[1]+(i==3?size:0))
+      return fail("selector repeated archive samples or prepared the wrong file");
+  }
+  if(remove(ini)) return 0;
   return 1;
 }
 
@@ -2664,11 +2693,10 @@ static int selected_configuration_cases(const AnygmHostServices *services,const 
   return 1;
 }
 
-static void fixture_sample_key(const char *scope,const uint8_t *bytes,size_t size,char key[112]){
-  uint8_t digest[16];char hex[33];
-  if(!gml_imohash(bytes,size,digest)) abort();
-  for(unsigned i=0;i<16;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
-  snprintf(key,112,"imohash:%s:%s",scope,hex);
+static void observe_late_input(void *userdata,int level,const char *message){
+  if(level==ANYGM_CONTENT_LOG_ERROR &&
+     strstr(message,"declares input adapters but matches only after input preparation or routing"))
+    *(int *)userdata=1;
 }
 
 static int fast_configuration_cases(const AnygmHostServices *services,const char *root){
@@ -2692,6 +2720,26 @@ static int fast_configuration_cases(const AnygmHostServices *services,const char
     if(anygm_content_resolve_path(&router,i?exe:payload,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides)!=ANYGM_CONTENT_RESOLVE_OK ||
        strcmp(overrides,"$base=1\n$selected=2\n")) return fail("Studio identity followed its executable rather than its data image");
   }
+  int late_input=0;
+  router.log=observe_late_input;router.log_userdata=&late_input;
+  snprintf(text,sizeof text,"[%s.transforms]\ninput=buffer copy(){return slice(0,input_size);}\n",key);
+  if(!write_file(ini,text,strlen(text)) ||
+     anygm_content_resolve_path(&router,exe,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides)!=
+       ANYGM_CONTENT_RESOLVE_INVALID || !late_input || resolved[0])
+    return fail("input selector behind a launcher did not report a late match");
+  uint8_t wrapped[208]={'F','O','R','M'};
+  memcpy(wrapped+8,form,sizeof form);
+  char wrapper_path[700];
+  snprintf(wrapper_path,sizeof wrapper_path,"%s/wrapped.win",directory);
+  late_input=0;
+  snprintf(text,sizeof text,"[transforms]\ninput=buffer unwrap(){return slice(8,input_size-8);}\n"
+    "[%s.transforms]\ninput=buffer copy(){return slice(0,input_size);}\n",key);
+  if(!write_file(wrapper_path,wrapped,sizeof wrapped) || !write_file(ini,text,strlen(text)) ||
+     anygm_content_resolve_path(&router,wrapper_path,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides)!=
+       ANYGM_CONTENT_RESOLVE_INVALID || !late_input || resolved[0])
+    return fail("prepared data image did not report a late input selector");
+  snprintf(text,sizeof text,"[overrides]\n$base=1\n[%s.overrides]\n$selected=2\n",key);
+  if(!write_file(ini,text,strlen(text))) return 0;
   ZipEntry entry={(const uint8_t *)"data.win",8,form,sizeof form,sizeof form,0,0,0,0};
   Buffer archive={0};
   int ok=build_zip(&entry,1,&archive) && write_file(archive_path,archive.data,archive.size);
@@ -2710,6 +2758,22 @@ static int fast_configuration_cases(const AnygmHostServices *services,const char
      anygm_content_resolve_path(&router,archive_path,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides)!=ANYGM_CONTENT_RESOLVE_OK ||
      strcmp(overrides,"$base=1\n$selected=2\n$selected=3\n"))
     return fail("ZIP configuration did not follow and override payload configuration");
+  /* The outer ZIP input wins over a payload-scope entry for the same bytes. */
+  char outer_payload_key[112];
+  archive=(Buffer){0};
+  if(!build_zip(&entry,1,&archive)) return 0;
+  fixture_sample_key("payload",archive.data,archive.size,outer_payload_key);
+  free(archive.data);
+  snprintf(text,sizeof text,"[transforms]\ninput=buffer stop(){reject();return slice(0,0);}\n"
+    "[%s.transforms]\ninput=buffer stop(){reject();return slice(0,0);}\n"
+    "[%s.transforms]\ninput=buffer extract(){return slice(38,200);}\n"
+    "[%s.overrides]\n$zip_input=1\n",outer_payload_key,decoy,decoy);
+  if(!write_file(ini,text,strlen(text)) ||
+     anygm_content_resolve_path(&router,archive_path,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides)!=
+       ANYGM_CONTENT_RESOLVE_OK || !strstr(resolved,"/input-") || strcmp(overrides,"$zip_input=1\n"))
+    return fail("outer ZIP input did not prepare the archive at ZIP priority");
+  snprintf(text,sizeof text,"[overrides]\n$base=1\n[%s.overrides]\n$selected=2\n",key);
+  if(!write_file(ini,text,strlen(text))) return 0;
   static const uint8_t extra[]="unrelated archive member";
   ZipEntry repacked[2]={entry,
     {(const uint8_t *)"extra.bin",9,extra,sizeof extra-1,sizeof extra-1,0,0,0,0}};
@@ -2719,6 +2783,28 @@ static int fast_configuration_cases(const AnygmHostServices *services,const char
   free(archive.data);
   if(!ok || anygm_content_resolve_path(&router,archive_path,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides)!=ANYGM_CONTENT_RESOLVE_OK ||
      strcmp(overrides,"$base=1\n$selected=2\n")) return fail("repacking a payload changed its configuration identity");
+  /* Archive anchors still contribute dependencies when ZIP settings were
+   * selected before extraction and the member has its own input adapter. */
+  const char anchor[]="[anygm]\npayload=data.win\n"
+    "[transforms]\nunwrap=buffer extract(){return slice(8,input_size-8);}\n";
+  ZipEntry wrapped_entries[]={
+    {(const uint8_t *)"data.win",8,wrapped,sizeof wrapped,sizeof wrapped,0,0,0,0},
+    {(const uint8_t *)"member.anygm",12,(const uint8_t *)anchor,sizeof anchor-1,sizeof anchor-1,0,0,0,0},
+  };
+  archive=(Buffer){0};
+  if(!build_zip(wrapped_entries,2,&archive)) return 0;
+  fixture_sample_key("zip",archive.data,archive.size,decoy);
+  fixture_sample_key("payload",wrapped,sizeof wrapped,key);
+  ok=write_file(archive_path,archive.data,archive.size);
+  free(archive.data);
+  snprintf(text,sizeof text,"[%s.overrides]\n$zip_input=2\n"
+    "[%s.pipelines]\ninput=unwrap\n",decoy,key);
+  uint8_t prepared[200];
+  if(!ok || !write_file(ini,text,strlen(text)) ||
+     anygm_content_resolve_path(&router,archive_path,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides)!=
+       ANYGM_CONTENT_RESOLVE_OK || strcmp(overrides,"$zip_input=2\n") ||
+     !read_prefix(resolved,prepared,sizeof prepared) || memcmp(prepared,form,sizeof prepared))
+    return fail("payload selector did not prepare archive member with its anchor dependency");
   Fixture project={{0},0};
   if(!build_project_fixture(701,&project)) return 0;
   snprintf(payload,sizeof payload,"%s/project.gmk",directory);
@@ -2730,7 +2816,9 @@ static int fast_configuration_cases(const AnygmHostServices *services,const char
   Fixture classic={{0},0};
   if(!build_gm6_executable_fixture(&classic)) return 0;
   fixture_sample_key("payload",classic.data,classic.size,key);
-  snprintf(text,sizeof text,"[%s.overrides]\n$classic_executable=6\n",key);
+  snprintf(text,sizeof text,"[transforms]\ninput.probe=buffer stop(){reject();return slice(0,0);}\n"
+    "[%s.transforms]\ninput.probe=buffer decline(){return scratch_slice(0,0);}\n"
+    "[%s.overrides]\n$classic_executable=6\n",key,key);
   if(!write_file(exe,classic.data,classic.size) || !write_file(ini,text,strlen(text)) ||
      anygm_content_resolve_path(&router,exe,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides)!=ANYGM_CONTENT_RESOLVE_OK ||
      strcmp(overrides,"$classic_executable=6\n")) return fail("Classic executable identity did not follow its original bytes");

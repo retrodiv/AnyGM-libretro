@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "engine_internal.h"
+#include "gml_hash.h"
 #include "stdio_vfs.h"
 #include "synthetic_content.h"
 #include "vcdiff_fixture.h"
@@ -213,9 +214,44 @@ static int cache_reuse_and_repair(void){
   teardown(&f); return 1;
 }
 
+static int selected_final_patch(void){
+  PatchFixture f; setup(&f);
+  char parked[300]; snprintf(parked,sizeof parked,"%s.disabled",f.anchor);
+  assert(!rename(f.anchor,parked));
+  f.source.path=f.content[0].path;
+  uint8_t digest[16];char hex[33],key[49],text[2048],cached[1536];
+  assert(gml_imohash(f.bytes[0],f.size[0],digest));
+  for(unsigned i=0;i<16;i++) snprintf(hex+2*i,3,"%02x",digest[i]);
+  snprintf(key,sizeof key,"imohash:payload:%s",hex);
+  const char *config="[%s.patches]\nfirst=xdelta|first.xdelta|%s|%s|%s|%zu\n"
+    "[%s.pipelines]\ninput.final=first\n"
+    "[%s.transforms]\ninput.probe=buffer probe(){return slice(%s,0);}\n";
+  for(unsigned i=0;i<2;i++){
+    snprintf(text,sizeof text,config,key,f.digest[0],f.patch_digest[0],f.digest[1],f.size[1],
+             key,key,i?"input_size":"0");
+    write_text(f.ini,text);
+    assert(anygm_load(f.engine,&f.source,NULL)==ANYGM_OK); expect_payload(&f,1);
+    if(!i) snprintf(cached,sizeof cached,"%s",f.engine->current_content_path);
+    else assert(strcmp(cached,f.engine->current_content_path));
+    anygm_unload(f.engine);
+  }
+  for(unsigned i=0;i<3;i++){
+    char wrong[65];
+    strcpy(wrong,i==0?f.digest[0]:i==1?f.patch_digest[0]:f.digest[1]);
+    wrong[0]=wrong[0]=='0'?'1':'0';
+    snprintf(text,sizeof text,config,key,i==0?wrong:f.digest[0],i==1?wrong:f.patch_digest[0],
+             i==2?wrong:f.digest[1],f.size[1],key,key,"0");
+    write_text(f.ini,text);
+    assert(anygm_load(f.engine,&f.source,NULL)==ANYGM_ERROR_INVALID_CONTENT);
+  }
+  assert(!rename(parked,f.anchor));
+  teardown(&f); return 1;
+}
+
 int main(int argc,char **argv){
   static const AnygmTestCase cases[]={
     {"ordered_lifecycle",ordered_lifecycle},
+    {"selected_final_patch",selected_final_patch},
     {"dependency_rejection",dependency_rejection},
     {"memory_dependency_rejection",memory_dependency_rejection},
     {"cache_reuse_and_repair",cache_reuse_and_repair},
