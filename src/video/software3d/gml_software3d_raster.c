@@ -2134,9 +2134,9 @@ static int vertex_batch_scene(GmlRender *R,const GmlD3Vertex *vertex,int count,
     if(!isfinite(projected[i].x) || !isfinite(projected[i].y) || !isfinite(projected[i].z) ||
        fabs(projected[i].x)>32766 || fabs(projected[i].y)>32766) goto vertex_scene_done;
     if(v->alpha<1.0) opaque=0;
-    /* Untextured point-list vertices do not share interpolated coverage.
+    /* Independent point-list vertices do not share interpolated coverage.
      * The point writer skips zero-alpha vertices before allocating a stamp. */
-    if(v->alpha<minimum_alpha && (primitive!=1 || textured || v->alpha>0.0))
+    if(v->alpha<minimum_alpha && (primitive!=1 || v->alpha>0.0))
       minimum_alpha=v->alpha;
     if(v->alpha>maximum_alpha) maximum_alpha=v->alpha;
     if(v->r!=vertex[0].r || v->g!=vertex[0].g || v->b!=vertex[0].b) rgb_gradient=1;
