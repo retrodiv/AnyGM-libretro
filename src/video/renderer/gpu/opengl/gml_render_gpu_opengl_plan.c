@@ -282,15 +282,15 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
         source_name=scene->texture;
         resident_source=1;
       } else if(image->device_completed){
-        if(image->device_completed!=1u || !backend->completed_valid ||
-           backend->completed_width!=image->width || backend->completed_height!=image->height ||
-           backend->completed_generation!=image->content_generation){
+        if(image->device_completed!=1u || !backend->completed.valid ||
+           backend->completed.width!=image->width || backend->completed.height!=image->height ||
+           backend->completed.generation!=image->content_generation){
           gml_gpu_opengl_record_error(error,error_capacity,
                                       "completed graphics source unavailable");
           failed=1;
           break;
         }
-        source_name=backend->completed_texture;
+        source_name=backend->completed.texture;
         resident_source=1;
       } else if(!gml_gpu_opengl_upload_source(backend,image,counters,&source_name,op->linear?1:0)){
         gml_gpu_opengl_record_error(error,error_capacity,"graphics source upload failed");
@@ -373,25 +373,11 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
   return failed?0:1;
 }
 
-/* R03-PRESENT-INTEGER-SHIFT: an immutable complete picture is sampled at integer
- * indices. The canonical cache is never a target of this delivery-only pass. */
-int gml_render_gpu_opengl_present_transform(GmlGpuBackend *backend,uintptr_t framebuffer,
-  uint32_t width,uint32_t height,uint64_t generation,int dx,int dy,unsigned rotation,int scratch,
+static int gml_render_gpu_opengl_present_texture(GmlGpuBackend *backend,uintptr_t framebuffer,GLuint source,
+  uint32_t width,uint32_t height,int dx,int dy,unsigned rotation,int scratch,
   GmlGpuCounters *counters,char *error,size_t error_capacity){
-  if(!backend || !backend->loaded || !backend->program || !width || !height ||
-     width>GML_PLAN_MAX_EXTENT || height>GML_PLAN_MAX_EXTENT ||
-     rotation>3u || (scratch!=0 && scratch!=1)) return 0;
-  GLuint source=0,map_x=0,map_y=0;
-  if(scratch){
-    if(!backend->readback_present_valid || backend->readback_width!=width ||
-       backend->readback_height!=height) return 0;
-    source=backend->readback_texture;
-  }else{
-    if(!backend->completed_valid || backend->completed_width!=width ||
-       backend->completed_height!=height || backend->completed_generation!=generation) return 0;
-    source=backend->completed_texture;
-  }
   if(!source) return 0;
+  GLuint map_x=0,map_y=0;
   /* The CPU owner leaves the picture unshifted when either axis is outside it. */
   if((int64_t)dx>=width || (int64_t)dx<=-(int64_t)width ||
      (int64_t)dy>=height || (int64_t)dy<=-(int64_t)height) dx=dy=0;
@@ -434,7 +420,7 @@ int gml_render_gpu_opengl_present_transform(GmlGpuBackend *backend,uintptr_t fra
   backend->gl.ActiveTexture(GL_TEXTURE0);backend->gl.BindTexture(GL_TEXTURE_2D,0);
   backend->gl.UseProgram(0);backend->gl.BindVertexArray(0);
   backend->gl.Disable(GL_SCISSOR_TEST);
-  if(scratch)backend->readback_present_valid=0;
+  if(scratch) backend->readback_present_valid=0;
   GLenum status=backend->gl.GetError();
   if(status!=GL_NO_ERROR){
     gml_gpu_opengl_record_error(error,error_capacity,"integer presentation failed 0x%04X",(unsigned)status);
@@ -442,6 +428,37 @@ int gml_render_gpu_opengl_present_transform(GmlGpuBackend *backend,uintptr_t fra
     return 0;
   }
   return 1;
+}
+
+/* R03-PRESENT-INTEGER-SHIFT: an immutable complete picture is sampled at integer
+ * indices. The canonical cache is never a target of this delivery-only pass. */
+int gml_render_gpu_opengl_present_transform(GmlGpuBackend *backend,uintptr_t framebuffer,
+  uint32_t width,uint32_t height,uint64_t generation,int dx,int dy,unsigned rotation,int scratch,
+  GmlGpuCounters *counters,char *error,size_t error_capacity){
+  if(!backend || !backend->loaded || !backend->program || !width || !height ||
+     width>GML_PLAN_MAX_EXTENT || height>GML_PLAN_MAX_EXTENT ||
+     rotation>3u || (scratch!=0 && scratch!=1)) return 0;
+  GLuint source=0;
+  if(scratch){
+    if(!backend->readback_present_valid || backend->readback_width!=width ||
+       backend->readback_height!=height) return 0;
+    source=backend->readback_texture;
+  }else{
+    if(!backend->completed.valid || backend->completed.width!=width ||
+       backend->completed.height!=height || backend->completed.generation!=generation) return 0;
+    source=backend->completed.texture;
+  }
+  return gml_render_gpu_opengl_present_texture(backend,framebuffer,source,width,height,dx,dy,rotation,scratch,
+                         counters,error,error_capacity);
+}
+
+int gml_render_gpu_opengl_repeat_delivered_frame(GmlGpuBackend *backend,uintptr_t framebuffer,
+  uint32_t width,uint32_t height,GmlGpuCounters *counters,char *error,size_t error_capacity){
+  if(!backend || !backend->loaded || !backend->program || !backend->delivered.valid ||
+     width!=backend->delivered.width || height!=backend->delivered.height ||
+     width>GML_PLAN_MAX_EXTENT || height>GML_PLAN_MAX_EXTENT) return 0;
+  return gml_render_gpu_opengl_present_texture(backend,framebuffer,backend->delivered.texture,width,height,0,0,0,0,
+                         counters,error,error_capacity);
 }
 
 static uintptr_t preparation_framebuffer(void *userdata){

@@ -65,10 +65,8 @@ void gml_gpu_opengl_forget(GmlGpuBackend *backend){
   backend->readback_attached=0;
   backend->readback_width=backend->readback_height=0;
   backend->readback_present_valid=0;
-  backend->completed_framebuffer=backend->completed_texture=0;
-  backend->completed_width=backend->completed_height=0;
-  backend->completed_generation=0;
-  backend->completed_valid=backend->completed_attached=0;
+  memset(&backend->completed,0,sizeof backend->completed);
+  memset(&backend->delivered,0,sizeof backend->delivered);
   backend->host_extent_renderbuffer=0;
   backend->host_extent_width=backend->host_extent_height=0;
 }
@@ -92,9 +90,12 @@ static void delete_objects(GmlGpuBackend *backend){
   if(backend->readback_framebuffer && backend->gl.DeleteFramebuffers)
     backend->gl.DeleteFramebuffers(1,&backend->readback_framebuffer);
   if(backend->readback_texture) backend->gl.DeleteTextures(1,&backend->readback_texture);
-  if(backend->completed_framebuffer)
-    backend->gl.DeleteFramebuffers(1,&backend->completed_framebuffer);
-  if(backend->completed_texture) backend->gl.DeleteTextures(1,&backend->completed_texture);
+  if(backend->completed.framebuffer)
+    backend->gl.DeleteFramebuffers(1,&backend->completed.framebuffer);
+  if(backend->completed.texture) backend->gl.DeleteTextures(1,&backend->completed.texture);
+  if(backend->delivered.framebuffer)
+    backend->gl.DeleteFramebuffers(1,&backend->delivered.framebuffer);
+  if(backend->delivered.texture) backend->gl.DeleteTextures(1,&backend->delivered.texture);
   if(backend->host_extent_renderbuffer && backend->gl.DeleteRenderbuffers)
     backend->gl.DeleteRenderbuffers(1,&backend->host_extent_renderbuffer);
   if(backend->vertex_array && backend->gl.DeleteVertexArrays)

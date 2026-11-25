@@ -11,6 +11,74 @@
 
 LibretroAdapter g_libretro;
 
+static void clear_delivered_frame(void){
+  free(g_libretro.delivered_pixels);
+  g_libretro.delivered_pixels=NULL;
+  g_libretro.delivered_capacity=0;
+  g_libretro.delivered_width=g_libretro.delivered_height=0;
+  g_libretro.delivered_copy_valid=g_libretro.delivered_hardware=false;
+}
+
+static void remember_delivered_frame(const AnygmFrameOutput *frame){
+  g_libretro.delivered_width=frame->width;
+  g_libretro.delivered_height=frame->height;
+  g_libretro.delivered_copy_valid=false;
+  g_libretro.delivered_hardware=(frame->flags&ANYGM_FRAME_HARDWARE_TARGET)!=0;
+  if(g_libretro.can_dupe) return;
+  if(g_libretro.delivered_hardware){
+#if ANYGM_HARDWARE_RENDER
+    g_libretro.delivered_copy_valid=anygm_graphics_capture_delivered_frame(
+      g_libretro.engine,frame->width,frame->height)!=0;
+#endif
+    return;
+  }
+  if(!frame->pixels || !frame->width || !frame->height ||
+     (size_t)frame->width>SIZE_MAX/sizeof(uint32_t)/frame->height) return;
+  size_t row_size=(size_t)frame->width*sizeof(uint32_t);
+  if(frame->pitch<row_size || frame->pitch>SIZE_MAX/frame->height) return;
+  size_t bytes=row_size*frame->height;
+  if(bytes>g_libretro.delivered_capacity){
+    uint32_t *pixels=realloc(g_libretro.delivered_pixels,bytes);
+    if(!pixels) return;
+    g_libretro.delivered_pixels=pixels;
+    g_libretro.delivered_capacity=bytes;
+  }
+  for(unsigned row=0;row<frame->height;row++)
+    memcpy((uint8_t *)g_libretro.delivered_pixels+(size_t)row*row_size,
+           (const uint8_t *)frame->pixels+(size_t)row*frame->pitch,row_size);
+  g_libretro.delivered_copy_valid=true;
+}
+
+static void present_after_frame_failure(void){
+  unsigned width=g_libretro.delivered_width,height=g_libretro.delivered_height;
+  if(g_libretro.can_dupe && width && height){
+    g_libretro.video(NULL,width,height,0);
+    return;
+  }
+  if(g_libretro.delivered_copy_valid){
+    if(!g_libretro.delivered_hardware){
+      g_libretro.video(g_libretro.delivered_pixels,width,height,(size_t)width*sizeof(uint32_t));
+      return;
+    }
+#if ANYGM_HARDWARE_RENDER
+    if(anygm_graphics_repeat_delivered_frame(g_libretro.engine,width,height)){
+      g_libretro.video(RETRO_HW_FRAME_BUFFER_VALID,width,height,0);
+      return;
+    }
+#endif
+  }
+  /* Before the first delivered picture, and after a device copy is lost, publish black. */
+  static const uint32_t black=UINT32_C(0xff000000);
+#if ANYGM_HARDWARE_RENDER
+  if(libretro_hw_render_requested() &&
+     anygm_graphics_present_emergency_frame(g_libretro.engine,&black,1,1)){
+    g_libretro.video(RETRO_HW_FRAME_BUFFER_VALID,1,1,0);
+    return;
+  }
+#endif
+  g_libretro.video(&black,1,1,sizeof black);
+}
+
 void libretro_log(enum retro_log_level level,const char *format,...){
   char message[2048];
   va_list arguments;
@@ -213,6 +281,7 @@ void retro_init(void){
 }
 
 void retro_deinit(void){
+  clear_delivered_frame();
   libretro_options_release_rotation();
   libretro_hw_render_release();
   if(g_libretro.engine){
@@ -228,6 +297,7 @@ void retro_deinit(void){
   memset(g_libretro.override_used,0,sizeof g_libretro.override_used);
   g_libretro.prepared=false;
   g_libretro.loaded=false;
+  g_libretro.startup_failure_pending=false;
   g_libretro.provisional_av_exposed=false;
   g_libretro.startup_av_notification_pending=false;
   memset(&g_libretro.pressure,0,sizeof g_libretro.pressure);
@@ -383,9 +453,24 @@ static void update_directories(void){
               system,ANYGM_CACHE_SUBDIRECTORY);
 }
 
-bool libretro_content_start(void){
+static void notify_content_load_failure(const char *error){
+  if(!g_libretro.environment) return;
+  char shown[576];
+  if(error[0]) snprintf(shown,sizeof shown,"AnyGM cannot load this content: %s",error);
+  else snprintf(shown,sizeof shown,"AnyGM cannot load this content.");
+  struct retro_message_ext message={
+    .msg=shown,.duration=6000,.priority=3,.level=RETRO_LOG_ERROR,
+    .target=RETRO_MESSAGE_TARGET_ALL,.type=RETRO_MESSAGE_TYPE_NOTIFICATION,.progress=-1
+  };
+  if(!g_libretro.environment(RETRO_ENVIRONMENT_SET_MESSAGE_EXT,&message)){
+    struct retro_message legacy={shown,360};
+    g_libretro.environment(RETRO_ENVIRONMENT_SET_MESSAGE,&legacy);
+  }
+}
+
+bool libretro_content_start(bool deferred){
   if(g_libretro.loaded) return true;
-  if(!g_libretro.prepared || !g_libretro.engine) return false;
+  if(!g_libretro.prepared || !g_libretro.engine || g_libretro.startup_failure_pending) return false;
   if(!libretro_memory_can_load()){
     libretro_memory_request_stop();
     libretro_memory_load_notice();
@@ -394,13 +479,19 @@ bool libretro_content_start(void){
   bool provisional_av_exposed=g_libretro.provisional_av_exposed;
   AnygmResult result=anygm_load_start(g_libretro.engine);
   if(result!=ANYGM_OK){
-    if(result==ANYGM_ERROR_OUT_OF_MEMORY || libretro_memory_allocation_rejected()){
+    bool memory_failure=result==ANYGM_ERROR_OUT_OF_MEMORY || libretro_memory_allocation_rejected();
+    if(memory_failure){
       libretro_memory_request_stop();
       libretro_memory_load_notice();
     }
     char error[512];
     anygm_get_last_error(g_libretro.engine,error,sizeof error);
     libretro_log(RETRO_LOG_ERROR,"Prepared content startup failed (%d): %s\n",result,error);
+    if(deferred && !memory_failure){
+      /* Retire the content from retro_run after the frontend's context callback returns. */
+      g_libretro.startup_failure_pending=true;
+      notify_content_load_failure(error);
+    }
     libretro_options_release_rotation();
     libretro_display_release();
     return false;
@@ -503,25 +594,7 @@ bool retro_load_game(const struct retro_game_info *info){
     char error[512];
     anygm_get_last_error(g_libretro.engine,error,sizeof error);
     libretro_log(RETRO_LOG_ERROR,"Content load failed (%d): %s\n",result,error);
-    /* A refusal that only reaches the log is a black screen as far as the player is concerned.
-     * SET_MESSAGE_EXT puts the reason on screen where a frontend supports it; a frontend that
-     * does not simply leaves the log entry, which is what happened before. */
-    if(g_libretro.environment){
-      struct retro_message_ext message;
-      memset(&message,0,sizeof message);
-      /* Deliberately truncating: a notification has room for a sentence, and the whole
-       * diagnostic is in the log line above. */
-      char shown[576];
-      snprintf(shown,sizeof shown,"AnyGM cannot load this content: %s",error);
-      message.msg=shown;
-      message.duration=6000;
-      message.priority=3;
-      message.level=RETRO_LOG_ERROR;
-      message.target=RETRO_MESSAGE_TARGET_ALL;
-      message.type=RETRO_MESSAGE_TYPE_NOTIFICATION;
-      message.progress=-1;
-      g_libretro.environment(RETRO_ENVIRONMENT_SET_MESSAGE_EXT,&message);
-    }
+    notify_content_load_failure(error);
     libretro_cache_end();
     return false;
   }
@@ -543,7 +616,8 @@ bool retro_load_game(const struct retro_game_info *info){
     if(libretro_hw_render_request(true)) return true;
   }
   libretro_options_finalize_graphics(false);
-  if(libretro_content_start()) return true;
+  if(libretro_content_start(false)) return true;
+  if(g_libretro.startup_failure_pending) retro_unload_game();
   if(libretro_memory_allocation_rejected()){
     libretro_memory_stop();
     return true;
@@ -557,6 +631,7 @@ bool retro_load_game_special(unsigned type,const struct retro_game_info *info,si
 }
 
 void libretro_abort_for_memory(void){
+  clear_delivered_frame();
   libretro_options_release_rotation();
   libretro_hw_render_release();
   if(g_libretro.engine){
@@ -568,11 +643,13 @@ void libretro_abort_for_memory(void){
   libretro_cache_abandon();
   g_libretro.prepared=false;
   g_libretro.loaded=false;
+  g_libretro.startup_failure_pending=false;
   g_libretro.frame_completed=false;
   memset(&g_libretro.frame,0,sizeof g_libretro.frame);
 }
 
 void retro_unload_game(void){
+  clear_delivered_frame();
   if(!g_libretro.loaded && !g_libretro.prepared){
     memset(&g_libretro.pressure,0,sizeof g_libretro.pressure);
     return;
@@ -603,6 +680,7 @@ void retro_unload_game(void){
   libretro_cache_end();
   g_libretro.prepared=false;
   g_libretro.loaded=false;
+  g_libretro.startup_failure_pending=false;
   g_libretro.provisional_av_exposed=false;
   g_libretro.startup_av_notification_pending=false;
   g_libretro.content_glsl_candidate=false;
@@ -816,6 +894,11 @@ static void note_save_tick(void){
 
 void retro_run(void){
   if(libretro_memory_run()) return;
+  if(g_libretro.startup_failure_pending){
+    retro_unload_game();
+    if(g_libretro.environment) g_libretro.environment(RETRO_ENVIRONMENT_SHUTDOWN,NULL);
+    return;
+  }
   if(!g_libretro.loaded){
     if(g_libretro.video) g_libretro.video(NULL,288,216,0);
     return;
@@ -901,9 +984,7 @@ void retro_run(void){
      * picture is repeated where the frontend accepts a duplicate and resent otherwise. */
     if(g_libretro.video){
       uint64_t video_started=timing.active?frame_profile_now(&timing):0;
-      g_libretro.video(g_libretro.can_dupe?NULL:g_libretro.frame.pixels,
-                       g_libretro.av.base_width,g_libretro.av.base_height,
-                       g_libretro.can_dupe?0:g_libretro.frame.pitch);
+      present_after_frame_failure();
       if(timing.active) frame_profile_callback(&timing,video_started,&timing.video_ns);
     }
     frame_profile_report(&timing,result,completed_steps);
@@ -974,6 +1055,7 @@ void retro_run(void){
   if(step+1==calls) prepare_expected_save();
   uint64_t video_started=timing.active && step+1==calls?frame_profile_now(&timing):0;
   if(step+1==calls && g_libretro.video && g_libretro.video_enabled){
+    remember_delivered_frame(&g_libretro.frame);
     /* The engine reports which target it rendered into. The hardware sentinel says the frame is
      * already on the frontend's own framebuffer; without it a complete CPU frame is available and
      * the ordinary pixel callback carries it. The two are never both authoritative. */

@@ -75,7 +75,7 @@ static uintptr_t hardware_get_framebuffer(void *userdata){
 static void hardware_context_reset(void){
   AnygmGraphicsContext context;
   AnygmResult result;
-  if(!g_libretro.engine) return;
+  if(!g_libretro.engine || g_libretro.startup_failure_pending) return;
   memset(&context,0,sizeof context);
   context.struct_size=sizeof context;
   context.api=g_hardware.context_type==RETRO_HW_CONTEXT_OPENGLES3
@@ -102,8 +102,7 @@ static void hardware_context_reset(void){
    * code behind that boundary so its first shader query and draw see the final outcome. */
   if(g_libretro.prepared && !g_libretro.loaded){
     libretro_options_finalize_graphics(g_hardware_adopted);
-    if(!libretro_content_start())
-      libretro_log(RETRO_LOG_ERROR,"Prepared content could not be started after context reset\n");
+    libretro_content_start(true);
   }
 }
 

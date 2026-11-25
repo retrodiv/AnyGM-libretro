@@ -58,6 +58,9 @@ static unsigned prepare_sequence;
 static unsigned request_sequence;
 static unsigned start_sequence;
 static unsigned start_calls;
+static AnygmResult start_result;
+static unsigned unload_calls,shutdown_calls,error_notices,legacy_error_notices;
+static bool accepts_extended_notice;
 static AnygmConfigDelta latest_config;
 static unsigned geometry_updates;
 static unsigned system_av_updates;
@@ -71,9 +74,15 @@ static AnygmResult reset_result;
 
 static uint32_t frame_flags;
 static const void *last_video_pixels;
-static unsigned last_video_width;
+static unsigned last_video_width,last_video_height;
+static size_t last_video_pitch;
 static int video_calls;
 static AnygmResult frame_result;
+static bool frontend_can_dupe,use_pitched_frame;
+static uint32_t pitched_frame[6];
+static const uint32_t default_video_frame[320u*240u];
+static unsigned captures,repeats;
+static bool device_copy_valid;
 static uint32_t scheduled_steps;
 static unsigned audio_calls;
 static uint64_t simulated_ns;
@@ -198,12 +207,28 @@ static int16_t reserved_keyboard_input(unsigned port,unsigned device,unsigned in
 
 static bool environment_callback(unsigned command,void *data){
   switch(command){
+    case RETRO_ENVIRONMENT_GET_CAN_DUPE:
+      *(bool *)data=frontend_can_dupe;
+      return true;
     case RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK:
       if(!keyboard_registration_allowed) return false;
       delivered_keyboard=((const struct retro_keyboard_callback*)data)->callback;
       return true;
     case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
       ((struct retro_log_callback*)data)->log=log_callback;
+      return true;
+    case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:{
+      const struct retro_message_ext *message=data;
+      if(message && message->level==RETRO_LOG_ERROR && message->msg &&
+         strstr(message->msg,"AnyGM cannot load this content")) error_notices++;
+      return accepts_extended_notice; }
+    case RETRO_ENVIRONMENT_SET_MESSAGE:{
+      const struct retro_message *message=data;
+      if(message && message->msg && strstr(message->msg,"AnyGM cannot load this content"))
+        legacy_error_notices++;
+      return true; }
+    case RETRO_ENVIRONMENT_SHUTDOWN:
+      shutdown_calls++;
       return true;
     case RETRO_ENVIRONMENT_GET_VARIABLE:{
       struct retro_variable *variable=data;
@@ -261,11 +286,11 @@ static bool environment_callback(unsigned command,void *data){
 }
 
 static void video_callback(const void *data,unsigned width,unsigned height,size_t pitch){
-  (void)height;
-  (void)pitch;
   video_calls++;
   last_video_pixels=data;
   last_video_width=width;
+  last_video_height=height;
+  last_video_pitch=pitch;
   if(simulate_cost) simulated_ns+=2000000u;
 }
 
@@ -295,14 +320,14 @@ AnygmResult anygm_load_start(AnygmEngine *engine){
   (void)engine;
   start_calls++;
   if(!start_sequence) start_sequence=++sequence;
-  return ANYGM_OK;
+  return start_result;
 }
 AnygmResult anygm_load(AnygmEngine *engine,const AnygmContentSource *source,
                        const AnygmLoadConfig *config){
   (void)engine; (void)source; (void)config;
   return ANYGM_OK;
 }
-void anygm_unload(AnygmEngine *engine){ (void)engine; }
+void anygm_unload(AnygmEngine *engine){ (void)engine; unload_calls++; }
 void anygm_unload_for_memory_pressure(AnygmEngine *engine){ (void)engine; }
 uint32_t anygm_graphics_present_emergency_frame(AnygmEngine *engine,const uint32_t *pixels,
                                                 uint32_t width,uint32_t height){
@@ -311,6 +336,17 @@ uint32_t anygm_graphics_present_emergency_frame(AnygmEngine *engine,const uint32
   (void)width;
   (void)height;
   return ANYGM_OK;
+}
+uint32_t anygm_graphics_capture_delivered_frame(AnygmEngine *engine,uint32_t width,uint32_t height){
+  (void)engine;
+  captures++;
+  device_copy_valid=width==320 && height==240;
+  return device_copy_valid;
+}
+uint32_t anygm_graphics_repeat_delivered_frame(AnygmEngine *engine,uint32_t width,uint32_t height){
+  (void)engine;
+  repeats++;
+  return device_copy_valid && width==320 && height==240;
 }
 AnygmResult anygm_reset(AnygmEngine *engine){ (void)engine; return ANYGM_OK; }
 AnygmResult anygm_get_av_info(const AnygmEngine *engine,AnygmAvInfo *info){
@@ -332,10 +368,15 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
   if(simulate_cost) simulated_ns+=7000000u;
   if(frame_result!=ANYGM_OK) return frame_result;
   static const int16_t audio[4]={1,2,3,4};
-  output->pixels=(const void*)(uintptr_t)0x1000u;
+  output->pixels=default_video_frame;
   output->width=320;
   output->height=240;
   output->pitch=320*4;
+  if(use_pitched_frame){
+    output->pixels=pitched_frame;
+    output->width=output->height=2;
+    output->pitch=3*sizeof(uint32_t);
+  }
   output->pixel_format=ANYGM_PIXEL_XRGB8888;
   output->flags=frame_flags;
   output->audio=audio;
@@ -421,7 +462,8 @@ void anygm_graphics_context_destroy(AnygmEngine *engine,uint32_t context_is_curr
   destroy_current=context_is_current;
 }
 
-static void begin(const char *value,int available,unsigned preferred,int desktop,int embedded){
+static void begin_with_dupe(const char *value,int available,unsigned preferred,int desktop,
+                            int embedded,bool can_dupe){
   keyboard_registration_allowed=0;
   delivered_keyboard=NULL;
   option_value=value;
@@ -441,6 +483,9 @@ static void begin(const char *value,int available,unsigned preferred,int desktop
   request_sequence=0;
   start_sequence=0;
   start_calls=0;
+  start_result=ANYGM_OK;
+  unload_calls=shutdown_calls=error_notices=legacy_error_notices=0;
+  accepts_extended_notice=true;
   memset(&latest_config,0,sizeof latest_config);
   geometry_updates=0;
   system_av_updates=0;
@@ -453,6 +498,10 @@ static void begin(const char *value,int available,unsigned preferred,int desktop
   video_calls=0;
   audio_calls=0;
   frame_result=ANYGM_OK;
+  frontend_can_dupe=can_dupe;
+  use_pitched_frame=false;
+  captures=repeats=0;
+  device_copy_valid=false;
   scheduled_steps=1;
   simulated_ns=1000000000u;
   clock_calls=trace_calls=0;
@@ -479,6 +528,10 @@ static void begin(const char *value,int available,unsigned preferred,int desktop
   retro_set_audio_sample_batch(NULL);
   retro_set_input_poll(NULL);
   retro_init();
+}
+
+static void begin(const char *value,int available,unsigned preferred,int desktop,int embedded){
+  begin_with_dupe(value,available,preferred,desktop,embedded,false);
 }
 
 static void finish(void){
@@ -526,7 +579,7 @@ static int rejection_keeps_software(void){
   /* The ordinary pixel callback still carries the frame. */
   retro_run();
   REQUIRE(video_calls==1,"a frame was presented");
-  REQUIRE(last_video_pixels==(const void*)(uintptr_t)0x1000u,"the CPU frame was presented");
+  REQUIRE(last_video_pixels==default_video_frame,"the CPU frame was presented");
   finish();
   return 0;
 }
@@ -705,7 +758,7 @@ static int failed_adoption_keeps_software(void){
    * granted a context. */
   frame_flags=0;
   retro_run();
-  REQUIRE(last_video_pixels==(const void*)(uintptr_t)0x1000u,
+  REQUIRE(last_video_pixels==default_video_frame,
           "a software frame under an accepted context is still presented");
   finish();
   return 0;
@@ -723,7 +776,7 @@ static int sentinel_selects_the_target(void){
   REQUIRE(last_video_width==320,"the announced extent is the rendered one");
   frame_flags=0;
   retro_run();
-  REQUIRE(last_video_pixels==(const void*)(uintptr_t)0x1000u,
+  REQUIRE(last_video_pixels==default_video_frame,
           "a CPU frame in the same session uses the pixel callback");
   finish();
   return 0;
@@ -1121,7 +1174,88 @@ static int prepared_renderer_controls_negotiation(void){
   return 0;
 }
 
+static int deferred_startup_failure_notifies_and_retires_content(void){
+  for(int extended=0;extended<2;extended++){
+    begin("OpenGL",0,0,1,1);
+    accepts_extended_notice=extended!=0;
+    start_result=ANYGM_ERROR_INVALID_CONTENT;
+    REQUIRE(load() && declared.context_reset && start_calls==0,
+            "prepared content is accepted before context reset");
+    declared.context_reset();
+    REQUIRE(start_calls==1 && error_notices==1 && legacy_error_notices==(extended?0u:1u),
+            "deferred startup failure shows one error through the available message interface");
+    REQUIRE(!shutdown_calls && !unload_calls,"content retirement waits for the context callback to return");
+    declared.context_reset();
+    REQUIRE(start_calls==1 && error_notices==1,"recreating the context cannot retry failed startup");
+    retro_run();
+    REQUIRE(shutdown_calls==1 && unload_calls==1 && !g_libretro.prepared && !g_libretro.loaded,
+            "the first run after failure retires content and requests one shutdown");
+    retro_run();
+    REQUIRE(shutdown_calls==1 && unload_calls==1,"an ignored shutdown request is not repeated");
+    finish();
+  }
+  return 0;
+}
+
+static int failed_frame_repeats_its_last_delivery(void){
+  begin_with_dupe("CPU",0,0,0,0,false);
+  REQUIRE(load(),"software content loads without video duplication support");
+  use_pitched_frame=true;
+  uint32_t input[]={1,2,99,3,4,99};
+  uint32_t expected[]={1,2,3,4};
+  memcpy(pitched_frame,input,sizeof input);
+  retro_run();
+  REQUIRE(last_video_pixels==pitched_frame && last_video_pitch==12,
+          "the successful delivery uses the ordinary pitched frame");
+  memset(pitched_frame,0,sizeof pitched_frame);
+  frame_result=ANYGM_ERROR_INTERNAL;
+  retro_run();
+  REQUIRE(last_video_pixels && last_video_pixels!=pitched_frame &&
+          last_video_width==2 && last_video_height==2 && last_video_pitch==8 &&
+          !memcmp(last_video_pixels,expected,sizeof expected),
+          "the failed tick resends the owned pixels with the previous geometry");
+  retro_unload_game();
+  REQUIRE(load(),"software content can load after the previous one unloads");
+  retro_run();
+  REQUIRE(last_video_pixels && last_video_width==1 && last_video_height==1 &&
+          last_video_pitch==sizeof(uint32_t) && *(const uint32_t*)last_video_pixels==0xff000000u,
+          "first-frame failure delivers black and cannot reuse the old game's pixels");
+  finish();
+
+  begin_with_dupe("OpenGL",0,0,1,1,false);
+  REQUIRE(load() && declared.context_reset,"hardware content negotiates a context");
+  declared.context_reset();
+  frame_flags=ANYGM_FRAME_HARDWARE_TARGET;
+  retro_run();
+  REQUIRE(captures==1 && !repeats && last_video_pixels==RETRO_HW_FRAME_BUFFER_VALID,
+          "a non-duplicating hardware frontend keeps a device copy on success");
+  frame_result=ANYGM_ERROR_INTERNAL;
+  retro_run();
+  REQUIRE(captures==1 && repeats==1 && last_video_pixels==RETRO_HW_FRAME_BUFFER_VALID,
+          "the failed tick presents the saved device image");
+  device_copy_valid=false;
+  retro_run();
+  REQUIRE(repeats==2 && last_video_pixels && last_video_width==1,
+          "losing the device image still delivers a real replacement frame");
+  finish();
+
+  begin_with_dupe("OpenGL",0,0,1,1,true);
+  REQUIRE(load() && declared.context_reset,"a duplicating frontend negotiates a context");
+  declared.context_reset();
+  frame_flags=ANYGM_FRAME_HARDWARE_TARGET;
+  retro_run();
+  frame_result=ANYGM_ERROR_INTERNAL;
+  retro_run();
+  REQUIRE(!captures && !repeats && !last_video_pixels &&
+          last_video_width==320 && last_video_height==240 && !last_video_pitch,
+          "a frontend that can duplicate requires no snapshot or replay");
+  finish();
+  return 0;
+}
+
 int main(void){
+  if(failed_frame_repeats_its_last_delivery()) return EXIT_FAILURE;
+  if(deferred_startup_failure_notifies_and_retires_content()) return EXIT_FAILURE;
   if(prepared_renderer_controls_negotiation()) return EXIT_FAILURE;
   if(controller_updates_preserve_keyboard_authority()) return EXIT_FAILURE;
   if(option_none_negotiates_nothing()) return EXIT_FAILURE;

@@ -102,23 +102,23 @@ static int readback_scratch_ready(GmlGpuBackend *backend,size_t needed,char *err
   return 1;
 }
 
-int gml_gpu_opengl_capture_completed_frame(GmlGpuBackend *backend,uintptr_t framebuffer,
-                                            uint32_t width,uint32_t height,uint64_t generation){
+static int capture_frame(GmlGpuBackend *backend,GlFrameSnapshot *snapshot,uintptr_t framebuffer,
+                         uint32_t width,uint32_t height,uint64_t generation){
   GLenum status=GL_FRAMEBUFFER_COMPLETE;
   if(!backend || !backend->loaded || !backend->gl.CopyTexSubImage2D ||
      !width || !height || backend->scene.max_texture_size<=0 ||
      width>(uint32_t)backend->scene.max_texture_size ||
      height>(uint32_t)backend->scene.max_texture_size) return 0;
-  backend->completed_valid=0;
+  snapshot->valid=0;
   while(backend->gl.GetError()!=GL_NO_ERROR){}
-  if(!backend->completed_framebuffer)
-    backend->gl.GenFramebuffers(1,&backend->completed_framebuffer);
-  if(!backend->completed_texture) backend->gl.GenTextures(1,&backend->completed_texture);
-  if(!backend->completed_framebuffer || !backend->completed_texture) return 0;
+  if(!snapshot->framebuffer)
+    backend->gl.GenFramebuffers(1,&snapshot->framebuffer);
+  if(!snapshot->texture) backend->gl.GenTextures(1,&snapshot->texture);
+  if(!snapshot->framebuffer || !snapshot->texture) return 0;
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,(GLuint)framebuffer);
   backend->gl.ActiveTexture(GL_TEXTURE0);
-  backend->gl.BindTexture(GL_TEXTURE_2D,backend->completed_texture);
-  if(backend->completed_width!=width || backend->completed_height!=height){
+  backend->gl.BindTexture(GL_TEXTURE_2D,snapshot->texture);
+  if(snapshot->width!=width || snapshot->height!=height){
     backend->gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
@@ -126,30 +126,42 @@ int gml_gpu_opengl_capture_completed_frame(GmlGpuBackend *backend,uintptr_t fram
     backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
     backend->gl.TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,(GLsizei)width,(GLsizei)height,0,
                            GL_RGBA,GL_UNSIGNED_BYTE,NULL);
-    backend->completed_width=width;
-    backend->completed_height=height;
-    backend->completed_attached=0;
+    snapshot->width=width;
+    snapshot->height=height;
+    snapshot->attached=0;
   }
   backend->gl.CopyTexSubImage2D(GL_TEXTURE_2D,0,0,0,0,0,(GLsizei)width,(GLsizei)height);
   backend->gl.BindTexture(GL_TEXTURE_2D,0);
-  if(!backend->completed_attached){
-    backend->gl.BindFramebuffer(GL_FRAMEBUFFER,backend->completed_framebuffer);
+  if(!snapshot->attached){
+    backend->gl.BindFramebuffer(GL_FRAMEBUFFER,snapshot->framebuffer);
     backend->gl.FramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,
-                                     backend->completed_texture,0);
+                                     snapshot->texture,0);
     status=backend->gl.CheckFramebufferStatus(GL_FRAMEBUFFER);
     backend->gl.BindFramebuffer(GL_FRAMEBUFFER,(GLuint)framebuffer);
   }
   if(backend->gl.GetError()!=GL_NO_ERROR || status!=GL_FRAMEBUFFER_COMPLETE){
     /* Force allocation again after a failed resize; dimensions alone are not storage proof. */
-    backend->completed_width=backend->completed_height=0;
-    backend->completed_attached=0;
+    snapshot->width=snapshot->height=0;
+    snapshot->attached=0;
     while(backend->gl.GetError()!=GL_NO_ERROR){}
     return 0;
   }
-  backend->completed_generation=generation;
-  backend->completed_valid=1;
-  backend->completed_attached=1;
+  snapshot->generation=generation;
+  snapshot->valid=1;
+  snapshot->attached=1;
   return 1;
+}
+
+int gml_gpu_opengl_capture_completed_frame(GmlGpuBackend *backend,uintptr_t framebuffer,
+                                            uint32_t width,uint32_t height,uint64_t generation){
+  return backend && capture_frame(backend,&backend->completed,framebuffer,width,height,generation);
+}
+
+int gml_gpu_opengl_capture_delivered_frame(GmlGpuBackend *backend,uintptr_t framebuffer,
+                                            uint32_t width,uint32_t height){
+  if(!backend) return 0;
+  backend->delivered.valid=0;
+  return capture_frame(backend,&backend->delivered,framebuffer,width,height,0);
 }
 
 int gml_gpu_opengl_capture_device_presentation(GmlGpuBackend *backend,uintptr_t framebuffer,
@@ -180,15 +192,15 @@ int gml_gpu_opengl_read_completed_frame(GmlGpuBackend *backend,uintptr_t framebu
   GmlRenderPlan plan;
   size_t bytes;
   GLenum status;
-  if(!backend || !backend->loaded || !backend->completed_valid || !pixels ||
-     !width || !height || pitch_pixels<width || backend->completed_width!=width ||
-     backend->completed_height!=height || backend->completed_generation!=generation ||
+  if(!backend || !backend->loaded || !backend->completed.valid || !pixels ||
+     !width || !height || pitch_pixels<width || backend->completed.width!=width ||
+     backend->completed.height!=height || backend->completed.generation!=generation ||
      (size_t)width>SIZE_MAX/height/4u ||
      (size_t)pitch_pixels>SIZE_MAX/height/4u) return 0;
   bytes=(size_t)width*height*4u;
   if(!readback_scratch_ready(backend,bytes,NULL,0u)) return 0;
   while(backend->gl.GetError()!=GL_NO_ERROR){}
-  backend->gl.BindFramebuffer(GL_FRAMEBUFFER,backend->completed_framebuffer);
+  backend->gl.BindFramebuffer(GL_FRAMEBUFFER,backend->completed.framebuffer);
   backend->gl.BindBuffer(GL_PIXEL_PACK_BUFFER,0);
   backend->gl.PixelStorei(GL_PACK_ALIGNMENT,1);
   backend->gl.PixelStorei(GL_PACK_ROW_LENGTH,0);

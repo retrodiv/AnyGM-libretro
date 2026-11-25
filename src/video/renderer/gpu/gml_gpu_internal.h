@@ -42,6 +42,10 @@ int gml_gpu_opengl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
                        char *error,size_t error_capacity);
 int gml_gpu_opengl_capture_completed_frame(GmlGpuBackend *backend,uintptr_t framebuffer,
                                             uint32_t width,uint32_t height,uint64_t generation);
+int gml_gpu_opengl_capture_delivered_frame(GmlGpuBackend *backend,uintptr_t framebuffer,
+                                            uint32_t width,uint32_t height);
+int gml_render_gpu_opengl_repeat_delivered_frame(GmlGpuBackend *backend,uintptr_t framebuffer,
+  uint32_t width,uint32_t height,GmlGpuCounters *counters,char *error,size_t error_capacity);
 int gml_gpu_opengl_capture_device_presentation(GmlGpuBackend *backend,uintptr_t framebuffer,
                                                 uint32_t width,uint32_t height,
                                                 uint64_t generation);

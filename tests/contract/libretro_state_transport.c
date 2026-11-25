@@ -177,6 +177,15 @@ size_t anygm_get_last_error(const AnygmEngine *engine,char *message,size_t capac
  * This scenario never turns the setting on, so they do nothing. */
 #if ANYGM_HARDWARE_RENDER
 bool libretro_hw_render_request(bool needed){ (void)needed; return false; }
+uint32_t anygm_graphics_capture_delivered_frame(AnygmEngine *engine,uint32_t width,uint32_t height){
+  (void)engine; (void)width; (void)height; return 0;
+}
+uint32_t anygm_graphics_repeat_delivered_frame(AnygmEngine *engine,uint32_t width,uint32_t height){
+  (void)engine; (void)width; (void)height; return 0;
+}
+void libretro_hw_render_release(void){}
+bool libretro_hw_render_requested(void){ return false; }
+#endif
 uint32_t anygm_graphics_present_emergency_frame(AnygmEngine *engine,const uint32_t *pixels,
                                                 uint32_t width,uint32_t height){
   (void)engine;
@@ -185,10 +194,6 @@ uint32_t anygm_graphics_present_emergency_frame(AnygmEngine *engine,const uint32
   (void)height;
   return 0;
 }
-
-void libretro_hw_render_release(void){}
-bool libretro_hw_render_requested(void){ return false; }
-#endif
 void libretro_vfs_request(void){}
 void libretro_vfs_services_init(AnygmHostServices *services){ (void)services; }
 bool libretro_vfs_clear_cache(const char *path,bool keep_root){

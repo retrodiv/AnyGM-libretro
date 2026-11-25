@@ -354,6 +354,13 @@ typedef struct GlScene {
 enum { GL_SCENE_NATIVE_PLAIN=1,GL_SCENE_NATIVE_WHITE_TINT=2,GL_SCENE_NATIVE_ZERO_ALPHA_BLEND=4,
        GL_SCENE_NATIVE_EQUAL_EXTENT=8 };
 
+typedef struct GlFrameSnapshot {
+  GLuint framebuffer,texture;
+  uint32_t width,height;
+  uint64_t generation;
+  int valid,attached;
+} GlFrameSnapshot;
+
 struct GmlGpuBackend {
   uint64_t target_attachments,target_reuses,white_unit_clears,white_tint_quads,zero_alpha_blend_quads,identity_map_draws,bounded_surface_draws;
   uint64_t host_extent_passes;
@@ -391,10 +398,9 @@ struct GmlGpuBackend {
   int readback_pipelined;
   /* Completed transport pixels must outlive the borrowed frontend target and ordinary
    * content readback plans. Only metadata is retained on CPU until observation. */
-  GLuint completed_framebuffer,completed_texture;
-  uint32_t completed_width,completed_height;
-  uint64_t completed_generation;
-  int completed_valid,completed_attached;
+  GlFrameSnapshot completed;
+  /* An adapter's failure frame is the final image already delivered to its frontend. */
+  GlFrameSnapshot delivered;
   /* One unused R8 attachment bounds tiled presentation work; never content or state. */
   GLuint host_extent_renderbuffer;
   uint32_t host_extent_width,host_extent_height;

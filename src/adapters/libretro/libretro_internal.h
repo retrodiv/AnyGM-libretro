@@ -70,6 +70,10 @@ typedef struct LibretroAdapter {
   AnygmEngine *engine;
   LibretroMemoryPressure pressure;
   AnygmFrameOutput frame;
+  uint32_t *delivered_pixels;
+  size_t delivered_capacity;
+  unsigned delivered_width,delivered_height;
+  bool delivered_copy_valid,delivered_hardware;
   AnygmAvInfo av;
   AnygmConfig config;
   unsigned requested_frontend_rotation;
@@ -92,6 +96,7 @@ typedef struct LibretroAdapter {
   unsigned pointer_seen;
   bool prepared;
   bool loaded;
+  bool startup_failure_pending;
   bool provisional_av_exposed;
   bool startup_av_notification_pending;
   float announced_aspect;
@@ -184,7 +189,7 @@ static inline bool libretro_hw_render_request(bool needed){ (void)needed; return
 static inline void libretro_hw_render_release(void){}
 static inline bool libretro_hw_render_requested(void){ return false; }
 #endif
-bool libretro_content_start(void);
+bool libretro_content_start(bool deferred);
 void libretro_input_register(void);
 void libretro_input_snapshot(AnygmInputFrame *input,uint32_t width,uint32_t height);
 void libretro_input_text_acknowledge(uint32_t count);

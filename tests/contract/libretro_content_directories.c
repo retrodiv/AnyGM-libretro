@@ -223,6 +223,15 @@ size_t anygm_get_last_error(const AnygmEngine *engine,char *message,size_t capac
 /* The rest of the adapter is out of frame; only the directories the loader receives are on test. */
 #if ANYGM_HARDWARE_RENDER
 bool libretro_hw_render_request(bool needed){ return needed && delay_start; }
+uint32_t anygm_graphics_capture_delivered_frame(AnygmEngine *engine,uint32_t width,uint32_t height){
+  (void)engine; (void)width; (void)height; return 0;
+}
+uint32_t anygm_graphics_repeat_delivered_frame(AnygmEngine *engine,uint32_t width,uint32_t height){
+  (void)engine; (void)width; (void)height; return 0;
+}
+void libretro_hw_render_release(void){}
+bool libretro_hw_render_requested(void){ return false; }
+#endif
 uint32_t anygm_graphics_present_emergency_frame(AnygmEngine *engine,const uint32_t *pixels,
                                                 uint32_t width,uint32_t height){
   (void)engine;
@@ -231,10 +240,6 @@ uint32_t anygm_graphics_present_emergency_frame(AnygmEngine *engine,const uint32
   (void)height;
   return 0;
 }
-
-void libretro_hw_render_release(void){}
-bool libretro_hw_render_requested(void){ return false; }
-#endif
 void libretro_options_register(void){}
 void libretro_options_apply(bool all_fields){
   (void)all_fields; g_libretro.scene_gpu_selected=delay_start!=0;

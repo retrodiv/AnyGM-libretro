@@ -15,7 +15,7 @@ extern "C" {
  * runtime library version, and every publishable metadata file declares the literal "Git" instead
  * of a number, so no copy can promise a value that has gone stale. CONTRIBUTING.md owns the single
  * increment step. */
-#define ANYGM_VERSION "0.1.1024"
+#define ANYGM_VERSION "0.1.1025"
 #define ANYGM_API_VERSION 12u
 #define ANYGM_HOST_SERVICES_VERSION 4u
 #define ANYGM_STATE_SCHEMA 70u
@@ -620,6 +620,13 @@ void anygm_graphics_context_destroy(AnygmEngine *engine,uint32_t context_is_curr
  * graphics resources. The host must immediately present the target on success. */
 uint32_t anygm_graphics_present_emergency_frame(AnygmEngine *engine,const uint32_t *pixels,
                                                 uint32_t width,uint32_t height);
+
+/* Preserve a successfully rendered hardware target for retry, separately from save-state
+ * images. Call with the adopted context current, before the host reuses that framebuffer.
+ * Repeating the copy touches only the current host target. The host must present it immediately
+ * on success. Both operations return zero when the context or matching image is unavailable. */
+uint32_t anygm_graphics_capture_delivered_frame(AnygmEngine *engine,uint32_t width,uint32_t height);
+uint32_t anygm_graphics_repeat_delivered_frame(AnygmEngine *engine,uint32_t width,uint32_t height);
 
 typedef struct AnygmAvInfo {
   uint32_t struct_size;

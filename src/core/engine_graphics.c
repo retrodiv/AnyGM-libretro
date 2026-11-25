@@ -27,6 +27,26 @@ uint32_t anygm_graphics_present_emergency_frame(AnygmEngine *engine,const uint32
 #endif
 }
 
+uint32_t anygm_graphics_capture_delivered_frame(AnygmEngine *engine,uint32_t width,uint32_t height){
+#if ANYGM_HARDWARE_RENDER
+  return engine && engine->guard==ANYGM_ENGINE_GUARD && engine->lifecycle==ENGINE_LOADED &&
+    gml_gpu_capture_delivered_frame(engine->gpu,width,height);
+#else
+  (void)engine; (void)width; (void)height;
+  return 0;
+#endif
+}
+
+uint32_t anygm_graphics_repeat_delivered_frame(AnygmEngine *engine,uint32_t width,uint32_t height){
+#if ANYGM_HARDWARE_RENDER
+  return engine && engine->guard==ANYGM_ENGINE_GUARD && engine->lifecycle==ENGINE_LOADED &&
+    gml_gpu_repeat_delivered_frame(engine->gpu,width,height);
+#else
+  (void)engine; (void)width; (void)height;
+  return 0;
+#endif
+}
+
 #if ANYGM_HARDWARE_RENDER
 
 static int engine_execute_graphics_plan(AnygmEngine *engine,GmlRenderPlan *plan){

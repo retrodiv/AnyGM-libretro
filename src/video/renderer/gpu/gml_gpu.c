@@ -23,6 +23,19 @@ int gml_gpu_present_emergency_frame(GmlGpu *gpu,const uint32_t *pixels,
   return gml_gpu_opengl_present_emergency_frame(gpu->backend,&gpu->context,pixels,width,height);
 }
 
+int gml_gpu_capture_delivered_frame(GmlGpu *gpu,uint32_t width,uint32_t height){
+  return context_accessible(gpu) &&
+    gml_gpu_opengl_capture_delivered_frame(gpu->backend,
+      gpu->context.get_current_framebuffer(gpu->context.userdata),width,height);
+}
+
+int gml_gpu_repeat_delivered_frame(GmlGpu *gpu,uint32_t width,uint32_t height){
+  return context_accessible(gpu) &&
+    gml_render_gpu_opengl_repeat_delivered_frame(gpu->backend,
+      gpu->context.get_current_framebuffer(gpu->context.userdata),width,height,
+      &gpu->counters,gpu->error,sizeof gpu->error);
+}
+
 GmlGpu *gml_gpu_create(void){
   GmlGpu *gpu=(GmlGpu*)calloc(1,sizeof *gpu);
   if(!gpu) return NULL;

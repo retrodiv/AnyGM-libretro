@@ -502,6 +502,45 @@ static uint32_t completed_context_is_current(void *userdata){
   return *(const uint32_t*)userdata;
 }
 
+static uintptr_t current_test_host_framebuffer(void *userdata){
+  return *(const uintptr_t *)userdata;
+}
+
+static int delivered_frame_snapshot_case(void){
+  for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++){
+    anygm_test_graphics_reset();
+    uintptr_t host_framebuffer=7u;
+    GmlGpuContext context=fake_context(api);
+    context.userdata=&host_framebuffer;
+    context.get_current_framebuffer=current_test_host_framebuffer;
+    GmlGpu *gpu=gml_gpu_create();
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"delivery context adopted");
+    REQUIRE(!gml_gpu_repeat_delivered_frame(gpu,5u,3u),"no delivery is available on startup");
+    /* A context owner may call from within its render callback without an observation hook. */
+    REQUIRE(gml_gpu_capture_delivered_frame(gpu,5u,3u) &&
+            anygm_test_graphics_scene_copies()==1u &&
+            anygm_test_graphics_last_copy_framebuffer()==7u &&
+            !anygm_test_graphics_read_pixels(),
+            "delivery saves the actual host target on-device");
+    unsigned delivered_texture=anygm_test_graphics_attached_texture();
+    REQUIRE(delivered_texture && anygm_test_graphics_texture_width(delivered_texture)==5u,
+            "delivery has independent storage for the actual output extent");
+    host_framebuffer=19u;
+    REQUIRE(!gml_gpu_repeat_delivered_frame(gpu,8u,4u) &&
+            gml_gpu_repeat_delivered_frame(gpu,5u,3u) &&
+            gml_gpu_repeat_delivered_frame(gpu,5u,3u) &&
+            anygm_test_graphics_last_draw_framebuffer()==19u &&
+            anygm_test_graphics_scene_copies()==1u && !anygm_test_graphics_read_pixels(),
+            "repeated failures present to the new host target without another capture");
+    gml_gpu_context_lost(gpu);
+    REQUIRE(!gml_gpu_repeat_delivered_frame(gpu,5u,3u) &&
+            gml_gpu_context_reset(gpu,&context) && !gml_gpu_repeat_delivered_frame(gpu,5u,3u),
+            "context loss discards the previous delivery");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
 static int integer_presentation_shift_case(void){
   for(unsigned api=GML_GPU_API_OPENGL_CORE;api<=GML_GPU_API_OPENGLES3;api++){
     uint32_t current=1u,pixels[8u*4u]={0};GmlGpuCounters before={0},after={0};
@@ -10353,6 +10392,7 @@ int main(int argc,char **argv){
     {"scene_region_overwrite",scene_region_overwrite_case},
     {"unbound_context_access",unbound_context_access_case},
     {"completed_frame_snapshot",completed_frame_snapshot_case},
+    {"delivered_frame_snapshot",delivered_frame_snapshot_case},
     {"full_host_clear_discard",full_host_clear_discard_case},
     {"bounded_host_extent",bounded_host_extent_case},
     {"integer_presentation_shift",integer_presentation_shift_case},
