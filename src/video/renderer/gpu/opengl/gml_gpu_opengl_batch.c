@@ -576,7 +576,8 @@ static int repeat_quad_valid(const GmlRenderDrawOp *op,
      op->scene_family!=GML_RENDER_SCENE_SURFACE ||
      op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
      q->shape!=GML_RENDER_QUAD_AXIS_ALIGNED || q->span_active || q->font_sdf_width ||
-     (q->sampling.filter!=GML_RENDER_FILTER_BOX && q->sampling.filter!=GML_RENDER_FILTER_NEAREST) ||
+     (q->sampling.filter!=GML_RENDER_FILTER_BOX && q->sampling.filter!=GML_RENDER_FILTER_NEAREST &&
+      q->sampling.filter!=GML_RENDER_FILTER_BILINEAR) ||
      q->sampling.logical_margin_mask ||
      q->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
      !full_region(q->sampling.source_region,source->width,source->height) ||
@@ -603,9 +604,13 @@ static int repeat_quad_valid(const GmlRenderDrawOp *op,
   int round_app_point=(flags&GML_RENDER_REPEAT_ROUND_APP_POINT)!=0;
   int classic_aspect=(flags&GML_RENDER_REPEAT_CLASSIC_ASPECT)!=0;
   int classic_app=(flags&GML_RENDER_REPEAT_CLASSIC_ASPECT_APPLICATION)!=0;
+  int classic_linear=(flags&GML_RENDER_REPEAT_CLASSIC_LINEAR_APPLICATION)!=0;
   if(flags&~(GML_RENDER_REPEAT_FULL_SOURCE|GML_RENDER_REPEAT_BLEND_DISABLED|
              GML_RENDER_REPEAT_ROUND_APP_POINT|GML_RENDER_REPEAT_CLASSIC_ASPECT|
-             GML_RENDER_REPEAT_CLASSIC_ASPECT_APPLICATION) ||
+             GML_RENDER_REPEAT_CLASSIC_ASPECT_APPLICATION|GML_RENDER_REPEAT_CLASSIC_LINEAR_APPLICATION) ||
+     (classic_linear!=(q->sampling.filter==GML_RENDER_FILTER_BILINEAR)) ||
+     (classic_linear && (!full_source || classic_aspect || classic_app || disabled || round_app_point || blend!=1 ||
+       state->alpha_test_enabled || op->sources[0].resource_class==GML_RENDER_RESOURCE_SURFACE)) ||
      ((disabled || round_app_point) && blend!=1) ||
      (round_app_point && (!full_source || disabled)) ||
      (classic_app && !classic_aspect) ||
@@ -632,7 +637,8 @@ static int repeat_quad_valid(const GmlRenderDrawOp *op,
        span[3]!=ceil((target_extent-span[0])/span[1])+1 || span[3]>8192.0 ||
        ((q->sampling.filter==GML_RENDER_FILTER_BOX) && source_extent>8*lround(span[1])) ||
        (full_source && lround(span[1])>=target_extent) ||
-       (classic_aspect && lround(span[1])<source_extent)) return 0;
+       (classic_aspect && lround(span[1])<source_extent) ||
+       (classic_linear && lround(span[1])<=source_extent)) return 0;
   }
   return q->span_x[3]*q->span_y[3]<=8192.0 &&
     (full_source || lround(q->span_x[1])<source->width || lround(q->span_y[1])<source->height);
@@ -3908,7 +3914,9 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
   backend->gl.Scissor(left,bottom,width,height);
   backend->gl.ActiveTexture(GL_TEXTURE0);
   backend->gl.BindTexture(GL_TEXTURE_2D,inline_effect?scene->snapshot_texture:capture_texture?capture_texture:source->texture);
-  GLint capture_filter=effect && effect->kind==GML_RENDER_LAYER_EFFECT_UNDERWATER && effect->linear?GL_LINEAR:GL_NEAREST;
+  int classic_linear=repeat && q->sampling.filter==GML_RENDER_FILTER_BILINEAR;
+  GLint capture_filter=(classic_linear ||
+    (effect && effect->kind==GML_RENDER_LAYER_EFFECT_UNDERWATER && effect->linear))?GL_LINEAR:GL_NEAREST;
   backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,capture_filter);
   backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,capture_filter);
   if(effect && effect->kind==GML_RENDER_LAYER_EFFECT_UNDERWATER){
@@ -4105,6 +4113,10 @@ cleanup:
   backend->gl.ActiveTexture(GL_TEXTURE1);
   backend->gl.BindTexture(GL_TEXTURE_2D,0);
   backend->gl.ActiveTexture(GL_TEXTURE0);
+  if(classic_linear){
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+  }
   backend->gl.BindTexture(GL_TEXTURE_2D,0);
   if(backend->gl.GetError()!=GL_NO_ERROR) outcome=-1;
   if(outcome>0){ target->valid=1; target->rendered_origin=1; }

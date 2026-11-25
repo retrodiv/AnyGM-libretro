@@ -4236,17 +4236,20 @@ static int resident_surface_repeat(GmlRender *r,int surf,int sw,int sh,
   int flip_x,int flip_y,uint32_t colour,double alpha,int full_source){
   long dw=lround(width),dh=lround(height);
   int magnified=dw>=sw && dh>=sh;
-  int classic_aspect=full_source && magnified && r->classic &&
-    anygm_policy_classic_modern_presentation(r->win) && r->win->classic_scaling<0;
-  /* Filtered Classic application magnification retains its bilinear compositor. */
   int classic_filtered_application=r->classic && r->interp && surf==0;
+  int classic_linear=classic_filtered_application && full_source &&
+    dw>sw && dh>sh && r->alphablend && !r->alpha_test_enable;
+  int classic_aspect=full_source && magnified && r->classic && !classic_linear &&
+    anygm_policy_classic_modern_presentation(r->win) && r->win->classic_scaling<0;
   if((!r->alphablend && r->blendmode) || resident_surface_shader_selected(r) ||
      ((full_source || !r->alphablend) && r->interp && !flip_x && !flip_y &&
        !r->target_sp && r->fb==r->base_fb &&
        r->classic_interp_phase[0] && r->classic_interp_phase[1] && r->classic_interp_phase[2]) ||
      (full_source && (dw>=r->fbw || dh>=r->fbh)) ||
      (r->interp && (sw>8*dw || sh>8*dh)) ||
-     (magnified && (!full_source || classic_filtered_application)) ||
+     (magnified && (!full_source || (classic_filtered_application && !classic_linear))) ||
+     (classic_linear && dw==2*sw && dh==2*sh &&
+       r->app_interp_phase[0] && r->app_interp_phase[1] && r->app_interp_phase[2]) ||
      (classic_aspect && !r->alphablend)) return 0;
   if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
   gml_render_flush_pending_fill(r);
@@ -4268,13 +4271,15 @@ static int resident_surface_repeat(GmlRender *r,int surf,int sw,int sh,
     {0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
   GmlRenderQuad *q=&op.payload.quad;
   q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
-  q->sampling=(GmlRenderSamplingPolicy){r->interp?GML_RENDER_FILTER_BOX:GML_RENDER_FILTER_NEAREST,
+  q->sampling=(GmlRenderSamplingPolicy){
+    classic_linear?GML_RENDER_FILTER_BILINEAR:r->interp?GML_RENDER_FILTER_BOX:GML_RENDER_FILTER_NEAREST,
     GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,(uint32_t)sw,(uint32_t)sh},GML_RENDER_QUANTISE_SURFACE_REPEAT,0u};
   q->x[1]=q->x[2]=r->fbw;q->y[2]=q->y[3]=r->fbh;
   q->u[0]=q->u[3]=flip_x;q->u[1]=q->u[2]=!flip_x;
   q->v[0]=q->v[1]=flip_y;q->v[2]=q->v[3]=!flip_y;
   q->filtered_draw_alpha=fmin(alpha,1.0);
   if(full_source)q->surface_repeat_flags|=GML_RENDER_REPEAT_FULL_SOURCE;
+  if(classic_linear)q->surface_repeat_flags|=GML_RENDER_REPEAT_CLASSIC_LINEAR_APPLICATION;
   if(classic_aspect){
     q->surface_repeat_flags|=GML_RENDER_REPEAT_CLASSIC_ASPECT;
     if(!surf)q->surface_repeat_flags|=GML_RENDER_REPEAT_CLASSIC_ASPECT_APPLICATION;

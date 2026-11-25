@@ -1891,6 +1891,22 @@
   "    ivec2 local=p-ivec2(repeat_origin(col,0),repeat_origin(row,1));\n" \
   "    if((u_underlay_flags&2)!=0)local.x=extent.x-1-local.x;\n" \
   "    if((u_underlay_flags&4)!=0)local.y=extent.y-1-local.y;\n" \
+  "    if((u_surface_rule.z&32)!=0){\n" \
+  "      vec2 uv=(vec2(local)/vec2(extent))+0.5/vec2(size);\n" \
+  "      if((u_underlay_flags&8)!=0)uv.y=1.0-uv.y;\n" \
+  "      vec4 sample_value=textureLod(u_image,uv,0.0);\n" \
+  "      ivec2 numerator=local*size;\n" \
+  "      ivec2 low=numerator/extent,residue=numerator%extent;\n" \
+  "      ivec2 high=min(low+ivec2(residue.x!=0?1:0,residue.y!=0?1:0),size-ivec2(1));\n" \
+  "      if((u_underlay_flags&8)!=0){low.y=size.y-1-low.y;high.y=size.y-1-high.y;}\n" \
+  "      bool covered=texelFetch(u_image,low,0).a>0.0 || texelFetch(u_image,high,0).a>0.0 ||\n" \
+  "        texelFetch(u_image,ivec2(low.x,high.y),0).a>0.0 || texelFetch(u_image,ivec2(high.x,low.y),0).a>0.0;\n" \
+  "      if(covered){\n" \
+  "        vec3 rgb=sample_value.rgb*(255.0*sample_value.a)+vec3(prior.rgb)*(1.0-sample_value.a);\n" \
+  "        prior=ivec4(ivec3(floor(rgb+0.5)),255);\n" \
+  "      }\n" \
+  "      continue;\n" \
+  "    }\n" \
   "    ivec2 lo=local*size/extent,hi=lo+ivec2(1);\n" \
   "    if((u_surface_rule.z&8)!=0){\n" \
   "      ivec2 add=ivec2(extent.x%size.x==0?size.x:extent.x,extent.y%size.y==0?size.y:extent.y);\n" \
