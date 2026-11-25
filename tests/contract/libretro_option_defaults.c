@@ -558,7 +558,6 @@ static void crt_adjustment_forces_the_logical_raster(void){
   if(!crt || !raster || raster!=crt+4 || strcmp(crt->desc,"Adjust for 4:3 CRT TV") ||
      strcmp(crt->default_value,"Off"))
     complain("CRT adjustment must precede game resolution and default to Off");
-  if(definition("anygm_crt_oversize_handling")) complain("retired CRT oversize selector is exposed");
   if(!aspect || strcmp(aspect->desc,"Aspect Ratio Force (Experimental)"))
     complain("aspect selector label differs");
   if(!crt || !width || !height || !orientation || !rotation || !shaders ||
