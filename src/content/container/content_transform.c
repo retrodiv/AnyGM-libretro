@@ -195,6 +195,12 @@ int anygm_content_transforms_has(const AnygmContentTransforms *set,const char *n
   return lookup(set,name)!=NULL;
 }
 
+int anygm_content_transforms_has_priority(const AnygmContentTransforms *set,const char *name,
+                                          unsigned priority){
+  const TransformEntry *entry=lookup(set,name);
+  return entry && entry->priority==priority;
+}
+
 size_t anygm_content_transforms_patch_count(const AnygmContentTransforms *set){
   size_t count=0;
   if(set) for(size_t i=0;i<set->count;i++) if(set->entries[i].patch) count++;
@@ -224,6 +230,40 @@ int anygm_content_transforms_bind_patch(AnygmContentTransforms *set,const char *
   return fail(error,error_size,"unknown patch resource");
 }
 
+int anygm_content_transforms_keep_bound_patches(AnygmContentTransforms *target,
+    const AnygmContentTransforms *source,unsigned priority){
+  for(size_t i=0;i<source->count;i++){
+    const TransformEntry *from=&source->entries[i];
+    if(from->priority!=priority || !anygm_content_patch_bound_size(from->patch)) continue;
+    if(target->count==ANYGM_TRANSFORM_MAX_PROGRAMS) return 0;
+    AnygmContentPatch *patch=anygm_content_patch_retain(from->patch);
+    if(!patch) return 0;
+    TransformEntry *to=&target->entries[target->count++];
+    memcpy(to->name,from->name,sizeof to->name);
+    to->priority=priority;
+    to->patch=patch;
+  }
+  return 1;
+}
+
+int anygm_content_transforms_share_bound_patch(AnygmContentTransforms *target,
+    const AnygmContentTransforms *bound,const char *name,size_t *size){
+  const TransformEntry *from=lookup(bound,name);
+  *size=0;
+  if(!from) return 1;
+  for(size_t i=0;i<target->count;i++){
+    TransformEntry *to=&target->entries[i];
+    if(!to->patch || to->priority!=from->priority || strcmp(to->name,name)) continue;
+    AnygmContentPatch *patch=anygm_content_patch_retain(from->patch);
+    if(!patch) return 0;
+    anygm_content_patch_release(to->patch);
+    to->patch=patch;
+    *size=anygm_content_patch_bound_size(patch);
+    break;
+  }
+  return 1;
+}
+
 int anygm_content_transforms_parse(AnygmContentTransforms *set,const void *text,size_t size,
                                    char *error,size_t error_size){
   return anygm_content_transforms_parse_layer(set,text,size,0,error,error_size);
@@ -250,8 +290,8 @@ static int pipeline_steps(TransformEntry *entry,const char *value,const char *en
   return entry->step_count!=0;
 }
 
-int anygm_content_transforms_parse_layer(AnygmContentTransforms *set,const void *text,size_t size,
-                                         unsigned priority,char *error,size_t error_size){
+static int parse_transform_layer(AnygmContentTransforms *set,const void *text,size_t size,
+                                 unsigned priority,int exclude_input,char *error,size_t error_size){
   if(error && error_size) error[0]=0;
   if(!set || (size && !text) || size>ANYGM_TRANSFORM_MAX_CONFIG_BYTES ||
      (size && memchr(text,0,size))) return fail(error,error_size,"invalid configuration");
@@ -316,6 +356,18 @@ int anygm_content_transforms_parse_layer(AnygmContentTransforms *set,const void 
     while(at<size && (bytes[at]==' ' || bytes[at]=='\t')) at++;
     if(at<size && bytes[at]!='\r' && bytes[at]!='\n') goto invalid;
   }
+  if(exclude_input){
+    size_t retained=0;
+    for(size_t i=0;i<staged.count;i++){
+      TransformEntry *entry=&staged.entries[i];
+      if(!strcmp(entry->name,"input") || !strcmp(entry->name,"input.probe") ||
+         !strcmp(entry->name,"input.final")){
+        free(entry->program); free(entry->parameters);
+        anygm_content_patch_release(entry->patch);
+      } else staged.entries[retained++]=*entry;
+    }
+    staged.count=retained;
+  }
   size_t additional=0;
   for(size_t i=0;i<staged.count;i++) if(!lookup(set,staged.entries[i].name)) additional++;
   if(additional>ANYGM_TRANSFORM_MAX_PROGRAMS-set->count) goto invalid;
@@ -342,6 +394,16 @@ invalid:
   }
   if(error && error_size && error[0]) return 0;
   return fail(error,error_size,"malformed or oversized transform declaration");
+}
+
+int anygm_content_transforms_parse_layer(AnygmContentTransforms *set,const void *text,size_t size,
+                                         unsigned priority,char *error,size_t error_size){
+  return parse_transform_layer(set,text,size,priority,0,error,error_size);
+}
+
+int anygm_content_transforms_parse_layer_without_input(AnygmContentTransforms *set,
+    const void *text,size_t size,unsigned priority,char *error,size_t error_size){
+  return parse_transform_layer(set,text,size,priority,1,error,error_size);
 }
 
 void anygm_content_transforms_hash(const AnygmContentTransforms *set,uint8_t digest[32]){

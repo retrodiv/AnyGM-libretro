@@ -122,8 +122,12 @@ Scoped `input`, `input.probe` and `input.final` declarations apply at the
 input-preparation boundary. A ZIP selector identifies the outer archive for
 preparation. A payload selector identifies the exact bytes presented for
 preparation, such as a loose Classic executable, a loose data image, or the
-selected archive member when preparation reaches it. A ZIP adapter runs only
-on the outer archive, including when it returns the original bytes unchanged.
+selected archive member when preparation reaches it. A ZIP section supplies its
+`input`, `input.probe` and `input.final` entries only for the outer archive.
+After extraction, the member receives adapters from defaults, anchors and its
+matching payload section. Other ZIP declarations retain their precedence.
+If a default, anchor or payload adapter changed the archive during preparation,
+the result routes once.
 
 A payload selector that declares an input adapter and only matches after
 preparation or routing rejects the load. For example, key a launcher adapter

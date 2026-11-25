@@ -27,6 +27,9 @@ int anygm_content_config_matches(const AnygmContentConfig *config,const char *ke
 int anygm_content_config_select(const AnygmContentConfig *config,const char *key,
                                AnygmContentTransforms *transforms,unsigned priority,
                                char *overrides,size_t capacity,char *error,size_t error_size);
+int anygm_content_config_select_without_input(const AnygmContentConfig *config,const char *key,
+    AnygmContentTransforms *transforms,unsigned priority,char *overrides,size_t capacity,
+    char *error,size_t error_size);
 /* Apply defaults. Overrides are bounded text for the engine-owned directive parser. */
 int anygm_content_config_apply(const AnygmContentConfig *config,
                                AnygmContentTransforms *transforms,unsigned priority,

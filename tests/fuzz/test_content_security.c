@@ -2798,7 +2798,10 @@ static int fast_configuration_cases(const AnygmHostServices *services,const char
   ok=write_file(archive_path,archive.data,archive.size);
   free(archive.data);
   snprintf(text,sizeof text,"[%s.overrides]\n$zip_input=2\n"
-    "[%s.pipelines]\ninput=unwrap\n",decoy,key);
+    "[%s.transforms]\ninput=buffer verify(){if(read32(input,0)!=0x04034b50) reject();"
+    "return slice(0,input_size);}\n"
+    "zip_copy=buffer copy(){return slice(0,input_size);}\n"
+    "[%s.pipelines]\ninput=unwrap | zip_copy\n",decoy,decoy,key);
   uint8_t prepared[200];
   if(!ok || !write_file(ini,text,strlen(text)) ||
      anygm_content_resolve_path(&router,archive_path,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides)!=
@@ -2823,6 +2826,104 @@ static int fast_configuration_cases(const AnygmHostServices *services,const char
      anygm_content_resolve_path(&router,exe,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides)!=ANYGM_CONTENT_RESOLVE_OK ||
      strcmp(overrides,"$classic_executable=6\n")) return fail("Classic executable identity did not follow its original bytes");
   return 1;
+}
+
+static int zip_adapter_scope_cases(const AnygmHostServices *services,const char *root){
+  char directory[600],ini[700],archive_path[700],patch_path[700],resolved[1536],assets[1536],overrides[4096];
+  snprintf(directory,sizeof directory,"%s/zip-adapter-scope",root);
+  if(mkdir(directory,0700)) return 0;
+  snprintf(ini,sizeof ini,"%s/AnyGM.ini",directory);
+  snprintf(archive_path,sizeof archive_path,"%s/content.zip",directory);
+  snprintf(patch_path,sizeof patch_path,"%s/identity.xdelta",directory);
+  Fixture classic={{0},0};
+  Buffer wrapped={0},archive={0};
+  if(!build_gm6_executable_fixture(&classic) ||
+     !buffer_bytes(&wrapped,"WRAPPED!",8) || !buffer_bytes(&wrapped,classic.data,classic.size))
+    goto failed;
+  ZipEntry entry={(const uint8_t *)"member.exe",10,wrapped.data,(uint32_t)wrapped.size,
+    (uint32_t)wrapped.size,0,0,0,0};
+  if(!build_zip(&entry,1,&archive) || !buffer_bytes(&archive,"X",1)) goto failed;
+  /* A valid one-byte ZIP comment gives the outer adapter a real change to make. */
+  store_u16(archive.data,archive.size-3,1);
+  char zip_key[112],member_key[112],text[4096];
+  fixture_sample_key("zip",archive.data,archive.size,zip_key);
+  fixture_sample_key("payload",wrapped.data,wrapped.size,member_key);
+  if(!write_file(archive_path,archive.data,archive.size)) goto failed;
+  AnygmContentRouter router={0};
+  router.host=services;router.cache_directory=directory;router.system_directory=directory;
+  if(anygm_content_resolve_path(&router,archive_path,resolved,sizeof resolved,NULL,0,NULL,0)!=
+       ANYGM_CONTENT_RESOLVE_INVALID) goto failed;
+
+  size_t patch_size=0;
+  uint8_t *patch=anygm_test_vcdiff_literal(archive.data,archive.size,&patch_size);
+  char archive_hash[65],patch_hash[65];
+  anygm_test_sha256_hex(archive.data,archive.size,archive_hash);
+  anygm_test_sha256_hex(patch,patch_size,patch_hash);
+  int patch_written=write_file(patch_path,patch,patch_size);
+  free(patch);
+  if(!patch_written) goto failed;
+
+  const char copy[]="input=buffer copy(){return slice(0,input_size);}\n";
+  const char global_probe[]="input.probe=buffer probe(){"
+    "if(read32(input,0)!=0x50415257) return scratch_slice(0,0);"
+    "write64(scratch,0,8);write64(scratch,8,input_size-8);return scratch_slice(0,80);}\n";
+  const char zip_change[]="input=buffer trim(){"
+    "if(read32(input,0)!=0x04034b50) reject();"
+    "write8(work,input_size-3,0);return slice(0,input_size-1);}\n";
+  const char zip_identity[]="input.final=buffer verify(){"
+    "if(read32(input,0)!=0x04034b50) reject();return slice(0,input_size);}\n";
+  cache_observed_vfs=*services;
+  cache_observed_paths[0]=archive_path;cache_observed_paths[1]=patch_path;
+  memset(cache_observed_files,0,sizeof cache_observed_files);
+  AnygmHostServices observed=*services;
+  observed.file_open=cache_observe_open;observed.file_read=cache_observe_read;
+  observed.file_close=cache_observe_close;router.host=&observed;
+  for(unsigned route=0;route<3;route++){
+    if(route==0)
+      snprintf(text,sizeof text,"[transforms]\n%s%s[%s.pipelines]\ninput.final=zip_copy\n"
+        "[%s.patches]\nzip_copy=xdelta|identity.xdelta|%s|%s|%s|%zu\n"
+        "[%s.overrides]\n$scope=1\n",copy,global_probe,zip_key,zip_key,
+        archive_hash,patch_hash,archive_hash,archive.size,zip_key);
+    else if(route==1)
+      /* The global probe declines archives. The final step explicitly calls the
+       * ZIP input program, so candidate validation stays specific to the member. */
+      snprintf(text,sizeof text,"[transforms]\n%s%s[%s.transforms]\n%s"
+        "[%s.pipelines]\ninput.final=input\n[%s.overrides]\n$scope=1\n",
+        copy,global_probe,zip_key,zip_change,zip_key,zip_key);
+    else
+      snprintf(text,sizeof text,"[%s.transforms]\n%s%s[%s.transforms]\n"
+        "input=buffer verify(){if(read32(input,0)!=0x04034b50) reject();"
+        "return slice(0,input_size);}\n[%s.overrides]\n$scope=1\n",
+        member_key,copy,global_probe,zip_key,zip_key);
+    if(!write_file(ini,text,strlen(text))) goto failed;
+    for(unsigned warm=0;warm<2;warm++){
+      memset(cache_observed_bytes,0,sizeof cache_observed_bytes);
+      char magic[4];
+      if(anygm_content_resolve_path(&router,archive_path,resolved,sizeof resolved,
+           assets,sizeof assets,overrides,sizeof overrides)!=ANYGM_CONTENT_RESOLVE_OK ||
+         strcmp(overrides,"$scope=1\n") || !strstr(resolved,"/input-") ||
+         !read_prefix(resolved,magic,sizeof magic) || memcmp(magic,"FORM",4) ||
+         !strstr(assets,route==1?"/payload-":"/content-") ||
+         cache_observed_bytes[1]!=(route==0?patch_size:0) ||
+         (warm && cache_observed_bytes[0]!=2u*archive.size))
+        goto failed;
+    }
+  }
+
+  /* A byte-changing lower layer retains its one-pass rule even when a ZIP
+   * final step subsequently verifies the same archive without changing it. */
+  int late_input=0;
+  router.log=observe_late_input;router.log_userdata=&late_input;
+  snprintf(text,sizeof text,"[transforms]\n%s[%s.transforms]\n%s[%s.transforms]\n%s%s",
+    zip_change,zip_key,zip_identity,member_key,copy,global_probe);
+  if(!write_file(ini,text,strlen(text)) ||
+     anygm_content_resolve_path(&router,archive_path,resolved,sizeof resolved,NULL,0,NULL,0)!=
+       ANYGM_CONTENT_RESOLVE_INVALID || !late_input || resolved[0]) goto failed;
+  free(wrapped.data);free(archive.data);
+  return 1;
+failed:
+  free(wrapped.data);free(archive.data);
+  return fail("ZIP adapter scope, member preparation or archive read budget changed");
 }
 
 int main(void){
@@ -2874,7 +2975,8 @@ int main(void){
          transform_configuration_cases(&services,root) &&
          input_pipeline_cases(&services,root) &&
          selected_configuration_cases(&services,root) &&
-         fast_configuration_cases(&services,root);
+         fast_configuration_cases(&services,root) &&
+         zip_adapter_scope_cases(&services,root);
   ZipEntry pair[2]={traversal,safe};
   ok=ok&&invalid_case(&services,root,"traversal.zip",pair,2);
   pair[0]=absolute;

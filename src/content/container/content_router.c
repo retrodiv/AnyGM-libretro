@@ -51,12 +51,13 @@ enum { CONFIG_ANCHOR_LAYERS=ANYGM_CONTENT_MAX_NESTING_LEVELS+3u };
 typedef struct ContentConfigResolution {
   AnygmContentConfig *ini;
   int input_adapted;
-  int zip_input_used;
+  int archive_member;
   uint64_t sampled_size;
   CacheFingerprint sampled_fingerprint;
   char sampled_path[1536];
   char input_key[49];
   AnygmContentTransforms *selection_base;
+  AnygmContentTransforms *zip_patches;
   char specific[ANYGM_CONFIG_OVERRIDE_BYTES];
   char zip_specific[ANYGM_CONFIG_OVERRIDE_BYTES];
   char zip_key[49];
@@ -86,12 +87,19 @@ static int bind_patch_resources(const AnygmContentRouter *router,const char *sou
   }
   anygm_content_path_parent(source_path,parent,sizeof parent);
   size_t remaining=(size_t)ANYGM_TRANSFORM_MAX_INPUT_BYTES;
+  ContentConfigResolution *config=router->configuration;
   for(size_t i=0;i<count;i++){
     AnygmContentPatchSpec spec;
     char name[64],path[1536],detail[256]={0};
     uint8_t *bytes=NULL;
     size_t size=0;
     if(!anygm_content_transforms_patch_at(transforms,i,name,&spec)) return 0;
+    if(config->archive_member && config->zip_patches){
+      if(!anygm_content_transforms_share_bound_patch(transforms,config->zip_patches,name,&size))
+        return 0;
+      if(size>remaining) return 0;
+      if(size){ remaining-=size; continue; }
+    }
     if(remaining<5u || !path_join_bounded(path,sizeof path,parent,spec.path) ||
        !anygm_vfs_read_all(router->host,path,&bytes,&size,remaining)){
       if(error && error_size) snprintf(error,error_size,
@@ -623,8 +631,11 @@ static int select_fast_configuration(const AnygmContentRouter *router,const char
   int ok=!key[0] || anygm_content_config_select(config->ini,key,router->transforms,UINT_MAX-1u,
     config->specific,sizeof config->specific,error,sizeof error);
   if(ok && config->zip_key[0])
-    ok=anygm_content_config_select(config->ini,config->zip_key,router->transforms,UINT_MAX,
-      config->zip_specific,sizeof config->zip_specific,error,sizeof error);
+    ok=config->archive_member?
+      anygm_content_config_select_without_input(config->ini,config->zip_key,router->transforms,
+        UINT_MAX,config->zip_specific,sizeof config->zip_specific,error,sizeof error):
+      anygm_content_config_select(config->ini,config->zip_key,router->transforms,UINT_MAX,
+        config->zip_specific,sizeof config->zip_specific,error,sizeof error);
   if(!ok) content_log(router,ANYGM_CONTENT_LOG_ERROR,"configuration: %s",error);
   return ok;
 }
@@ -1222,11 +1233,11 @@ static int anchor_parse(const uint8_t *data,size_t size,char *reference,size_t r
 static int anchor_apply_transforms(const AnygmContentRouter *router,
                                    const uint8_t *data,size_t size,unsigned priority){
   char error[256]={0};
-  if(!router || !router->transforms ||
-     !anygm_content_transforms_parse_layer(router->transforms,data,size,priority,error,sizeof error) ||
-     (router->configuration->selection_base &&
-      !anygm_content_transforms_parse_layer(router->configuration->selection_base,data,size,
-                                            priority,error,sizeof error))){
+  /* After matching the outer file, later anchors extend the base for the
+   * next selection. The outer effective set may include ZIP-only entries. */
+  AnygmContentTransforms *base=router->configuration->selection_base;
+  if(!anygm_content_transforms_parse_layer(base?base:router->transforms,data,size,
+                                           priority,error,sizeof error)){
     content_log(router,ANYGM_CONTENT_LOG_ERROR,"%s",
                 error[0]?error:"anchor: transform context is unavailable");
     return 0;
@@ -1533,6 +1544,7 @@ static int load_archive_content_depth(const AnygmContentRouter *router,const cha
     content_log(router,ANYGM_CONTENT_LOG_ERROR,"archive: nesting limit reached at %s",zpath);
     return 0;
   }
+  router->configuration->archive_member=1;
   const char *base=router?router->cache_directory:NULL;
   char zbuf[1024]; snprintf(zbuf,sizeof zbuf,"%s",zpath);
   const char *slash=strrchr(zbuf,'/'),*bs=strrchr(zbuf,'\\');
@@ -1725,14 +1737,15 @@ static int load_input_pipeline(const AnygmContentRouter *router,const char *path
                                 char *asset_root,size_t asset_root_size,
                                 char *overrides,size_t overrides_size,int depth){
   ContentConfigResolution *config=router->configuration;
-  /* A changed result routes once. An outer ZIP adapter has also consumed
-   * its scope when it declines and ordinary archive routing resumes. */
-  if(config->input_adapted || config->zip_input_used)
+  /* A lower-layer adaptation routes once. ZIP-scope adapters are filtered
+   * on member selection, leaving that member's own preparation available. */
+  if(config->input_adapted)
     return select_fast_configuration(router,path,CONFIG_ROUTED_PAYLOAD)?0:-1;
   if(!select_fast_configuration(router,path,CONFIG_PIPELINE_SOURCE)) return -1;
   if(!anygm_content_source_configured(router->transforms)) return 0;
-  if(depth==0 && config->zip_key[0] && anygm_content_config_key_has_input(config->ini,config->zip_key))
-    config->zip_input_used=1;
+  int outer_zip_input=!config->archive_member && config->zip_key[0] &&
+    anygm_content_config_key_has_input(config->ini,config->zip_key);
+  AnygmContentSourceScope zip_scope={.priority=UINT_MAX};
   AnygmContentTransforms *selected=anygm_content_transforms_create();
   uint8_t *original=NULL,*image=NULL;
   size_t original_size=0,image_size=0;
@@ -1742,18 +1755,24 @@ static int load_input_pipeline(const AnygmContentRouter *router,const char *path
   if(!anygm_vfs_read_all(router->host,path,&original,&original_size,
                          (size_t)ANYGM_TRANSFORM_MAX_INPUT_BYTES)) goto done;
   if(!bind_patch_resources(router,path,selected,error,sizeof error)) goto done;
-  if(!anygm_content_source_prepare(selected,original,original_size,validate_source_candidate,selected,
-       &image,&image_size,error,sizeof error)) goto done;
-  if(!image || (image_size==original_size && (!image_size || !memcmp(image,original,image_size)))){
-    result=0; goto done;
+  if(!anygm_content_source_prepare_scoped(selected,original,original_size,validate_source_candidate,
+       selected,outer_zip_input?&zip_scope:NULL,&image,&image_size,error,sizeof error)) goto done;
+  int changed=image && (image_size!=original_size || memcmp(image,original,image_size));
+  int zip_result=changed && image_size>=4u && !memcmp(image,"PK\003\004",4);
+  if(!config->archive_member && config->zip_key[0] && (!changed || zip_result) &&
+     anygm_content_transforms_patch_count(selected)){
+    config->zip_patches=anygm_content_transforms_create();
+    if(!config->zip_patches ||
+       !anygm_content_transforms_keep_bound_patches(config->zip_patches,selected,UINT_MAX)) goto done;
   }
+  if(!changed){ result=0; goto done; }
   int kind=image_size>=8u && !memcmp(image,"FORM",4)?1:
-    image_size>=4u && !memcmp(image,"PK\003\004",4)?2:
+    zip_result?2:
     image_size>=8u && zu32(image)==GMLC_CLASSIC_MAGIC?3:
     image_size>=2u && image[0]=='M' && image[1]=='Z'?3:0;
   if(!kind){ snprintf(error,sizeof error,"result is not a supported input representation"); goto done; }
   if(!anygm_content_transforms_copy(router->transforms,selected)) goto done;
-  config->input_adapted=1;
+  config->input_adapted=kind!=2 || !outer_zip_input || zip_scope.changed_outside_scope;
   /* Only actual adaptation needs this cache identity. Include both complete
    * imohash values and the independent transformation/dependency signature. */
   CacheFingerprint original_fingerprint,image_fingerprint,key;
@@ -2328,6 +2347,7 @@ AnygmContentResolveResult anygm_content_resolve_path(
   }
   anygm_content_config_destroy(scoped.configuration->ini);
   anygm_content_transforms_destroy(scoped.configuration->selection_base);
+  anygm_content_transforms_destroy(scoped.configuration->zip_patches);
   free(scoped.configuration);
   anygm_content_transforms_destroy(scoped.transforms);
   return result;

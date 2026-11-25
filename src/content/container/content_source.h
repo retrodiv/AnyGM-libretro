@@ -42,4 +42,16 @@ int anygm_content_source_prepare(const AnygmContentTransforms *transforms,
                                   uint8_t **output,size_t *output_size,
                                   char *error,size_t error_size);
 
+typedef struct {
+  unsigned priority;
+  int changed_outside_scope;
+} AnygmContentSourceScope;
+
+/* Report successful byte-changing stages outside the indicated adapter scope.
+ * Candidate selection belongs to the scope if either its probe or selected operation does. */
+int anygm_content_source_prepare_scoped(const AnygmContentTransforms *transforms,
+    const void *data,size_t size,AnygmContentSourceValidator validate,void *context,
+    AnygmContentSourceScope *scope,uint8_t **output,size_t *output_size,
+    char *error,size_t error_size);
+
 #endif

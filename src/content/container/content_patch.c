@@ -127,6 +127,10 @@ void anygm_content_patch_hash(const AnygmContentPatch *patch, uint8_t digest[32]
   gml_sha256_final(&hash, digest);
 }
 
+size_t anygm_content_patch_bound_size(const AnygmContentPatch *patch){
+  return patch && patch->bytes ? patch->size : 0;
+}
+
 int anygm_content_patch_bind(AnygmContentPatch **patch, uint8_t **bytes, size_t size,
                              char *error, size_t error_size)
 {

@@ -26,6 +26,7 @@ AnygmContentPatch *anygm_content_patch_retain(AnygmContentPatch *patch);
 void anygm_content_patch_release(AnygmContentPatch *patch);
 void anygm_content_patch_spec(const AnygmContentPatch *patch, AnygmContentPatchSpec *spec);
 void anygm_content_patch_hash(const AnygmContentPatch *patch, uint8_t digest[32]);
+size_t anygm_content_patch_bound_size(const AnygmContentPatch *patch);
 /* Replace only this reference, after checking the patch identity. Success takes
  * the malloc-owned byte buffer and clears *bytes; failure changes neither input.
  * The caller relinquishes all aliases to transferred bytes. No I/O occurs here. */

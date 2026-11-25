@@ -24,9 +24,14 @@ int anygm_content_source_configured(const AnygmContentTransforms *transforms){
     anygm_content_transforms_has(transforms,"input.final");
 }
 
+static int bytes_changed(const void *before,size_t before_size,const void *after,size_t after_size){
+  return before_size!=after_size || (before_size && memcmp(before,after,before_size)!=0);
+}
+
 static int prepare_selected_source(const AnygmContentTransforms *transforms,
                                   const void *data,size_t size,
                                   AnygmContentSourceValidator validate,void *context,
+                                  AnygmContentSourceScope *scope,int *scoped_selection,
                                   uint8_t **output,size_t *output_size,
                                   char *error,size_t error_size){
   if(error && error_size) error[0]=0;
@@ -36,9 +41,13 @@ static int prepare_selected_source(const AnygmContentTransforms *transforms,
     return source_error(error,error_size,"invalid arguments");
   if(!anygm_content_transforms_has(transforms,"input") &&
      !anygm_content_transforms_has(transforms,"input.probe")) return 1;
-  if(!anygm_content_transforms_has(transforms,"input.probe"))
+  if(!anygm_content_transforms_has(transforms,"input.probe")){
+    if(scope) *scoped_selection=anygm_content_transforms_has_priority(transforms,"input",scope->priority);
     return anygm_content_transform_run(transforms,"input",data,size,NULL,0,
       output,output_size,error,error_size);
+  }
+  int scoped_probe=scope &&
+    anygm_content_transforms_has_priority(transforms,"input.probe",scope->priority);
   if(!validate) return source_error(error,error_size,"candidate selection requires a validator");
   uint8_t *table=NULL,*selected=NULL;
   size_t table_size=0,selected_size=0;
@@ -103,6 +112,8 @@ static int prepare_selected_source(const AnygmContentTransforms *transforms,
         return source_error(error,error_size,"ambiguous normalized candidates");
       }
       selected=candidate; selected_size=candidate_size;
+      if(scope) *scoped_selection=scoped_probe ||
+        anygm_content_transforms_has_priority(transforms,operation,scope->priority);
     } else {
       free(candidate);
       if(detail[0]) snprintf(last_error,sizeof last_error,"%s",detail);
@@ -115,27 +126,43 @@ static int prepare_selected_source(const AnygmContentTransforms *transforms,
   return 1;
 }
 
-int anygm_content_source_prepare(const AnygmContentTransforms *transforms,
-                                  const void *data,size_t size,
-                                  AnygmContentSourceValidator validate,void *context,
-                                  uint8_t **output,size_t *output_size,
-                                  char *error,size_t error_size){
+int anygm_content_source_prepare_scoped(const AnygmContentTransforms *transforms,
+    const void *data,size_t size,AnygmContentSourceValidator validate,void *context,
+    AnygmContentSourceScope *scope,uint8_t **output,size_t *output_size,
+    char *error,size_t error_size){
+  if(scope) scope->changed_outside_scope=0;
   if(output) *output=NULL;
   if(output_size) *output_size=0;
   if(!output || !output_size || (size && !data))
     return source_error(error,error_size,"invalid arguments");
   uint8_t *selected=NULL;
   size_t selected_size=0;
-  if(!prepare_selected_source(transforms,data,size,validate,context,
+  int scoped_selection=0;
+  if(!prepare_selected_source(transforms,data,size,validate,context,scope,&scoped_selection,
        &selected,&selected_size,error,error_size)) return 0;
+  int changed_outside_scope=scope && selected && !scoped_selection &&
+    bytes_changed(data,size,selected,selected_size);
   if(!anygm_content_transforms_has(transforms,"input.final")){
+    if(scope) scope->changed_outside_scope=changed_outside_scope;
     *output=selected; *output_size=selected_size; return 1;
   }
   /* A probe's identity/zero-record decline selects ordinary input; it must not
    * bypass an explicitly configured final pipeline. Candidate enumeration and
    * ambiguity checks are unchanged and finish before this single final pass. */
-  int ok=anygm_content_transform_run(transforms,"input.final",selected?selected:data,
-    selected?selected_size:size,NULL,0,output,output_size,error,error_size);
+  const void *final_input=selected?selected:data;
+  size_t final_size=selected?selected_size:size;
+  int ok=anygm_content_transform_run(transforms,"input.final",final_input,final_size,
+                                    NULL,0,output,output_size,error,error_size);
+  if(ok && scope) scope->changed_outside_scope=changed_outside_scope ||
+    (!anygm_content_transforms_has_priority(transforms,"input.final",scope->priority) &&
+     bytes_changed(final_input,final_size,*output,*output_size));
   free(selected);
   return ok;
+}
+
+int anygm_content_source_prepare(const AnygmContentTransforms *transforms,
+    const void *data,size_t size,AnygmContentSourceValidator validate,void *context,
+    uint8_t **output,size_t *output_size,char *error,size_t error_size){
+  return anygm_content_source_prepare_scoped(transforms,data,size,validate,context,NULL,
+                                              output,output_size,error,error_size);
 }

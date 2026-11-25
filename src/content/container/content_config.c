@@ -238,8 +238,8 @@ int anygm_content_config_matches(const AnygmContentConfig *config,const char *ke
   return 0;
 }
 
-int anygm_content_config_select(const AnygmContentConfig *config,const char *key,
-                               AnygmContentTransforms *transforms,unsigned priority,
+static int select_configuration(const AnygmContentConfig *config,const char *key,
+                               AnygmContentTransforms *transforms,unsigned priority,int exclude_input,
                                char *overrides,size_t capacity,char *error,size_t error_size){
   if(overrides && capacity) overrides[0]=0;
   if(!config) return 1;
@@ -251,8 +251,11 @@ int anygm_content_config_select(const AnygmContentConfig *config,const char *key
     if(strcmp(section->key,key)) continue;
     if(section->transforms){
       char *document=transform_document(config,section);
-      valid=document && anygm_content_transforms_parse_layer(staged,document,strlen(document),
-        priority,error,error_size);
+      valid=document && (exclude_input?
+        anygm_content_transforms_parse_layer_without_input(staged,document,strlen(document),
+                                                          priority,error,error_size):
+        anygm_content_transforms_parse_layer(staged,document,strlen(document),
+                                            priority,error,error_size));
       free(document);
     } else valid=override_text(config,section,selected_overrides,sizeof selected_overrides,error,error_size);
   }
@@ -263,4 +266,16 @@ int anygm_content_config_select(const AnygmContentConfig *config,const char *key
   if(valid) memcpy(overrides,selected_overrides,length+1u);
   anygm_content_transforms_destroy(staged);
   return valid;
+}
+
+int anygm_content_config_select(const AnygmContentConfig *config,const char *key,
+                               AnygmContentTransforms *transforms,unsigned priority,
+                               char *overrides,size_t capacity,char *error,size_t error_size){
+  return select_configuration(config,key,transforms,priority,0,overrides,capacity,error,error_size);
+}
+
+int anygm_content_config_select_without_input(const AnygmContentConfig *config,const char *key,
+    AnygmContentTransforms *transforms,unsigned priority,char *overrides,size_t capacity,
+    char *error,size_t error_size){
+  return select_configuration(config,key,transforms,priority,1,overrides,capacity,error,error_size);
 }

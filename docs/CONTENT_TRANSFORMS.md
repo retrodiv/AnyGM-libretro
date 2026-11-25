@@ -145,9 +145,10 @@ policy: at most 511 bytes, no absolute/drive paths, parent/dot segments, control
 empty interior segments; backslashes normalize to slashes. Spaces within a field are preserved.
 A trailing slash or literal field separator `|` cannot name a patch. For an archive's internal
 anchor, put its patch resources beside the selected extracted input (or in a relative
-subdirectory). An outer anchor preparing an archive operates on that archive's bytes, not
-implicitly on an inner member. Memory-only input has no file-backed resource root and rejects
-external patch dependencies; it never falls back to the host's working directory.
+subdirectory). An outer anchor preparing an archive operates on that archive's bytes.
+When a ZIP-scope patch has already been bound for the outer archive, its verified
+dependency remains available to the member for that load. Memory-only input rejects external
+patch dependencies because it has no file-backed resource root.
 
 Only the router reads files, through host VFS services. It transfers validated immutable buffers
 to the registry; neither the transform interpreter nor the patch decoder gains file, process,
@@ -185,10 +186,11 @@ core's advertised extensions. The input is treated as data; no code is executed.
 Without an `input`, `input.probe` or `input.final` entry the ordinary parser path is unchanged. A selected entry that rejects
 causes the load to fail, not a fallback to a different interpretation. To decline a format in a
 default function, return the input unchanged. For path content a byte-identical result resumes
-ordinary routing, including archive-member and adjacent-payload selection. A changed result is
-routed once; it does not recursively run `input` again. Supported results are data images,
-ZIP-compatible archives, and Classic images accepted by the structural reader. A source adapter
-is not a replacement for that reader's structural and integrity checks.
+ordinary routing, including archive-member and adjacent-payload selection. A result changed by
+defaults, anchors or a payload section routes once. When changes come from ZIP-section adapters,
+the archive member can run its own preparation with the remaining effective adapters.
+Supported results are data images, ZIP-compatible archives, and Classic images accepted by the
+structural reader. Prepared results still go through its structural and integrity checks.
 
 Memory content uses the same selection and interpreter but retains its existing data-image-only
 consumer: a transformed ZIP or source project must be loaded by path. Each successful transformed

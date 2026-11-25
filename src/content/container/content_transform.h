@@ -54,6 +54,11 @@ int anygm_content_transforms_parse(AnygmContentTransforms *set,const void *text,
  * replaces an entry. Priority affects selection only, not the resulting identity. */
 int anygm_content_transforms_parse_layer(AnygmContentTransforms *set,const void *text,size_t size,
                                          unsigned priority,char *error,size_t error_size);
+/* Validate the whole layer and overlay its entries other than the source adapters. */
+int anygm_content_transforms_parse_layer_without_input(AnygmContentTransforms *set,
+    const void *text,size_t size,unsigned priority,char *error,size_t error_size);
+int anygm_content_transforms_has_priority(const AnygmContentTransforms *set,const char *name,
+                                          unsigned priority);
 int anygm_content_transforms_has(const AnygmContentTransforms *set,const char *name);
 /* Value-copy declarations for the router's explicit external-resource reads.
  * Selected resources are dependencies of this configuration transaction. Binding
@@ -64,6 +69,12 @@ int anygm_content_transforms_patch_at(const AnygmContentTransforms *set,size_t i
 int anygm_content_transforms_bind_patch(AnygmContentTransforms *set,const char *name,
                                         uint8_t **bytes,size_t size,
                                         char *error,size_t error_size);
+/* Keep the bound resources of one layer in an empty set, then share them
+ * with a later selection of that same immutable layer. */
+int anygm_content_transforms_keep_bound_patches(AnygmContentTransforms *target,
+    const AnygmContentTransforms *source,unsigned priority);
+int anygm_content_transforms_share_bound_patch(AnygmContentTransforms *target,
+    const AnygmContentTransforms *bound,const char *name,size_t *size);
 /* Validate a complete expansion before executing any leaf. Pipeline references
  * may be forward-declared or supplied by another configuration layer. */
 int anygm_content_transform_validate(const AnygmContentTransforms *set,const char *name,
