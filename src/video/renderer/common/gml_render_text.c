@@ -354,7 +354,11 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
         }
         if(!resident_glyph && r->resident_application_pass && !f->subpixel && f->sdf_spread<=0){
           GmlSprite cell={.w=g->w,.h=g->h};
-          resident_glyph=resident_text_glyph_outside(r,&cell,&gt,glyph_x,glyph_y,
+          /* Rotated real text passes camera-relative coordinates to the
+           * shared blitter. Use the same input for its clipping proof. */
+          double clip_x=use_rot?glyph_x-r->cam_x:glyph_x;
+          double clip_y=use_rot?glyph_y-r->cam_y:glyph_y;
+          resident_glyph=resident_text_glyph_outside(r,&cell,&gt,clip_x,clip_y,
                                                    xs,ys,use_rot?rotation:0.0);
         }
         if(!resident_glyph && r->resident_application_pass && use_rot && !f->runtime_owned &&

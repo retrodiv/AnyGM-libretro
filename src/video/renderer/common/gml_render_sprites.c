@@ -4514,6 +4514,31 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
      page->tx<0 || page->ty<0 ||
      (int64_t)page->tx+page->sw>sprite->w ||
      (int64_t)page->ty+page->sh>sprite->h) return 0;
+  /* Share the placed atlas quad with sprites. Binary coverage is resolved
+   * by nearest sampling and the existing device alpha stamp. */
+  int modern_screen_text=family==GML_RENDER_SCENE_TEXT &&
+    anygm_policy_has_modern_layer_semantics(r->win) && r->alphablend && !r->blendmode &&
+    !gml_render_target_preserves_alpha(r);
+  if(modern_screen_text){
+    if(r->classic || r->interp || r->gui_pass_active || r->target_id>=0 || r->target_sp ||
+       r->alpha_test_enable || alpha!=1.0 || page->sw<=0 || page->sh<=0 ||
+       page->sw>256 || page->sh>256 || page->sx<0 || page->sy<0 ||
+       phase<0.001 || fabs(phase-360.0)<0.001 || !atlas_pixels(r,page->atlas)) return 0;
+    const GmlAtlas *atlas=&r->atlas[page->atlas];
+    if(atlas->w>16384 || atlas->h>16384 || (int64_t)page->sx+page->sw>atlas->w ||
+       (int64_t)page->sy+page->sh>atlas->h) return 0;
+    resident_classify_page(r,page,atlas);
+    if(!page->scene_binary_alpha) return 0;
+    GmlRenderRotatedPlacement placement;
+    int placed=gml_render_rotated_sprite_placement(r,sprite,page,x,y,xs,ys,phase,&placement);
+    if(placed>0) for(unsigned corner=0;corner<4u;corner++)
+      if(fabs(placement.x[corner])>65536.0 || fabs(placement.y[corner])>65536.0) return 0;
+    /* Real glyph views name the same physical crop without logical dimensions. */
+    GmlTpag selected=*page;
+    selected.tw=selected.sw;selected.th=selected.sh;
+    return placed==0 || (placed>0 && resident_atlas_crop_from_page_impl(r,&selected,
+      0,0,page->sw,page->sh,0,0,1,1,family,colour,alpha,16,NULL,NULL,0u,0,NULL,&placement));
+  }
   int native_axis=family==GML_RENDER_SCENE_SPRITE && !r->classic && !r->interp &&
     r->target_id<0 && !r->target_sp && !r->fog_flat && !r->gui_pass_active &&
     r->active_shader<0 && r->alphablend && !r->blendmode && r->color_write_mask==15u &&
@@ -5075,11 +5100,6 @@ int gml_render_resident_rotated_font_glyph(GmlRender *r,GmlSprite *sprite,GmlTpa
                                            uint32_t colour,double alpha){
   if(!r || !page || page->atlas<0 || page->atlas>=r->n_atlas ||
      r->atlas[page->atlas].runtime_font_page) return 0;
-  /* The unwrapped modern normal glyph writer can queue cell views. Its
-   * opaque-target coverage is not qualified by the detached texel packets;
-   * retain the existing CPU path instead of broadening the pixel contract. */
-  if(anygm_policy_has_modern_layer_semantics(r->win) && r->alphablend &&
-     r->blendmode==0 && !gml_render_target_preserves_alpha(r)) return 0;
   /* Rotated CPU glyphs write only the base image. Retain the phase bytes and
    * their independent coverage while staging the same existing text owner. */
   if(r->classic_phase_resource && !r->classic_phase_scene_preparing &&

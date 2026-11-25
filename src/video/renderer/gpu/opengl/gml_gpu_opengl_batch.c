@@ -1446,10 +1446,14 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
     state->write_mask==15u && state->alpha_test_enabled<=1u && state->alpha_test_reference<=255u &&
     state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
     (qualified_blend(state)==1 || qualified_blend(state)==14);
+  int screen_text=op->scene_family==GML_RENDER_SCENE_TEXT && screen &&
+    !state->alpha_test_enabled && !state->alpha_test_reference && qualified_blend(state)==1 &&
+    quad->filtered_draw_alpha==1.0 && (quad->corner_colour[0]>>24)==255u &&
+    crop.width<=256u && crop.height<=256u;
   if(!source || !source->width || !source->height || source->rendered_origin ||
      source->width>16384u || source->height>16384u ||
      source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
-     op->scene_family!=GML_RENDER_SCENE_SPRITE || op->source_count!=1u || !op->sources ||
+     (op->scene_family!=GML_RENDER_SCENE_SPRITE && !screen_text) || !op->sources || op->source_count!=1u ||
      op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS ||
      (!numbered && !screen && !binary_numbered) ||
      op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
