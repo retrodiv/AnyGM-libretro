@@ -5250,6 +5250,7 @@ static int scene_tiled_surface_packets_case(void){
   for(unsigned api=0;api<2u;api++) for(unsigned whole=0;whole<2u;whole++)
   for(unsigned target_kind=0;target_kind<3u;target_kind++)
   for(unsigned kind=0;kind<6u;kind++) for(unsigned equation=0;equation<(kind==2u || kind==3u?5u:1u);equation++)
+  for(unsigned zero=0;zero<(kind==2u || kind==3u?2u:1u);zero++)
   for(unsigned invalid=0;invalid<14u;invalid++){
     if(whole && kind>=3u) continue;
     if(invalid==13u && kind==5u) continue;
@@ -5300,6 +5301,7 @@ static int scene_tiled_surface_packets_case(void){
       op->reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;op->sources=&source;op->source_count=1u;
       GmlRenderQuad *q=&op->payload.quad;double width=kind>=4u?12:3,height=kind>=4u?9:3;
       q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;q->sampling=state.samplers[0];q->filtered_draw_alpha=kind==5u?1:.4;
+      if(zero)q->filtered_draw_alpha=0.0;
       q->x[0]=q->x[3]=-1;q->x[1]=q->x[2]=-1+width;q->y[0]=q->y[1]=1;q->y[2]=q->y[3]=1+height;
       if(kind<4u){q->inverse_anchor[0]=-1;q->inverse_anchor[1]=1;q->inverse_x[0]=-width;q->inverse_y[1]=height;}
       if(kind==0u || kind==2u || kind==3u) q->span_y[0]=4;
@@ -5307,6 +5309,7 @@ static int scene_tiled_surface_packets_case(void){
         q->u[corner]=(corner==0u || corner==3u?0.0:1.0)+(kind==5u?.5/SW-.5/width:0);
         q->v[corner]=(corner<2u?0.0:1.0)+(kind==5u?.5/SH-.5/height:0);
         q->corner_colour[corner]=kind==5u?0xFFFFFFFFu:0x663470D0u;
+        if(zero)q->corner_colour[corner]&=0xFFFFFFu;
       }
     }
     GmlRenderDrawOp *last=&ops[QUADS];GmlRenderQuad *q=&last->payload.quad;

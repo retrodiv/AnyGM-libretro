@@ -572,6 +572,7 @@ static int nearest_surface_function_valid(const GmlRenderDrawOp *op,
   int native_factors=gml_render_blend_snapshot_native(state);
   int source_colour_alpha=native_factors || blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_PRESERVE ||
     blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE;
+  int destination=blend>=GL_SCENE_BLEND_SURFACE_DEST_BASE && blend<=GL_SCENE_BLEND_SURFACE_DEST_LIMIT;
   if(native_factors && (q->span_y[0]!=4.0 || q->span_y[3] ||
      q->span_x[0] || q->span_x[1] || state->alpha_test_enabled))return 0;
   int tiled=q->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_POINT;
@@ -611,7 +612,7 @@ static int nearest_surface_function_valid(const GmlRenderDrawOp *op,
       (blend<18 || blend>25) && !source_colour_alpha &&
       (blend<GL_SCENE_BLEND_SURFACE_DEST_BASE || blend>GL_SCENE_BLEND_SURFACE_DEST_LIMIT)) ||
      !isfinite(q->filtered_draw_alpha) || q->filtered_draw_alpha<0.0 ||
-     (!q->filtered_draw_alpha && !source_colour_alpha) || q->filtered_draw_alpha>1.0)
+     (!q->filtered_draw_alpha && !source_colour_alpha && !destination) || q->filtered_draw_alpha>1.0)
     return 0;
   if(q->span_y[3]!=0.0 && q->span_y[3]!=1.0 && q->span_y[3]!=2.0) return 0;
   if(q->span_y[3]==0.0){

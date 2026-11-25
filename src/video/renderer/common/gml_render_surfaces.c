@@ -3259,8 +3259,8 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
      left>=r->fbw || top>=r->fbh || left+width<=0.0 || top+height<=0.0) return 1;
   /* Destination factors can write even when the sampled opacity is zero.
    * Source-colour/source-alpha retains straight source RGB in that case;
-   * other unqualified zero-opacity recipes stay with the CPU owner. */
-  if(alpha<=0.0 && !source_colour_alpha) return 0;
+   * the destination presets also retain their straight sampled RGB. */
+  if(alpha<=0.0 && !source_colour_alpha && !destination_blend) return 0;
   if(alpha<0.0) alpha=0.0;
   int unit=whole && width==sw && height==sh && signed_width>0 && signed_height>0;
   int opaque=surface_known_opaque(r,surf);
