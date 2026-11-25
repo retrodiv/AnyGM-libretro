@@ -598,7 +598,7 @@ static void cold_room_log(void *userdata,AnygmLogLevel level,const char *message
 
 static int cold_room_entry_policy(void){
   AnygmSyntheticContent content;
-  if(!anygm_synthetic_cold_room_content_create(&content)) return 0;
+  if(!anygm_synthetic_cold_room_content_create(&content,60)) return 0;
   const struct { const char *setting; int selected,room,boot; } cases[]={
     {NULL,-1,0,1},{"",-1,0,1},{NULL,1,1,1},
     {"1",-1,1,0},{"0",-1,0,1},{"01",0,1,0},

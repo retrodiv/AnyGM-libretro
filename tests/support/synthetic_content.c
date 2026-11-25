@@ -265,7 +265,7 @@ int anygm_synthetic_tilemap_content_create(AnygmSyntheticContent *fixture){
   return 1;
 }
 
-int anygm_synthetic_cold_room_content_create(AnygmSyntheticContent *fixture){
+int anygm_synthetic_cold_room_content_create(AnygmSyntheticContent *fixture,int boot_speed){
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);
   if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
@@ -299,7 +299,7 @@ int anygm_synthetic_cold_room_content_create(AnygmSyntheticContent *fixture){
   rooms[0].id=rooms[0].name=(char*)"room_boot"; rooms[0].creation_code_path=first;
   rooms[1].id=rooms[1].name=(char*)"room_target"; rooms[1].creation_code_path=second;
   for(int i=0;i<2;i++){
-    rooms[i].width=64; rooms[i].height=48; rooms[i].speed=60;
+    rooms[i].width=64; rooms[i].height=48; rooms[i].speed=i?60:boot_speed;
     rooms[i].draw_background_color=1;
   }
   rooms[0].instances=&instance; rooms[0].n_instances=rooms[0].cap_instances=1;

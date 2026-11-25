@@ -319,9 +319,17 @@ static double content_fps(void){
   return g_libretro.av.frames_per_second>0?g_libretro.av.frames_per_second:60.0;
 }
 
-/* The cadence the frontend is asked to hold: a declared CRT mode's, else the content's own. */
 static double frontend_cadence(void){
-  return g_libretro.av.presentation_frequency_hz?g_libretro.av.presentation_frequency_hz:content_fps();
+  if(g_libretro.av.presentation_frequency_hz) return g_libretro.av.presentation_frequency_hz;
+  double fps=content_fps();
+  /* A CRT frontend can multiply a slow mode's refresh without changing the advertised core
+   * rate. Request an integer-repeat mode ourselves when it fits the standard 50–60 Hz range,
+   * so the existing scheduler keeps logical steps independent of the frontend's audio clock. */
+  if(g_libretro.config.adjust_crt_tv && fps<50.0){
+    double refresh=ceil(50.0/fps)*fps;
+    if(refresh<=60.0) return refresh;
+  }
+  return fps;
 }
 
 static float frontend_aspect(void){
@@ -361,6 +369,7 @@ void retro_get_system_av_info(struct retro_system_av_info *info){
   g_libretro.presented_fps=0.0;
   fill_av_info(info);
   g_libretro.announced_aspect=info->geometry.aspect_ratio;
+  g_libretro.presented_crt_adjustment=g_libretro.config.adjust_crt_tv!=0;
   if(!g_libretro.display_active_hz && !g_libretro.display_notification_pending)
     g_libretro.presented_fps=info->timing.fps;
   /* The initial AV answer is the frontend's startup cadence, not a SET_SYSTEM_AV_INFO call
@@ -1036,22 +1045,31 @@ void retro_run(void){
   bool display_cadence=g_libretro.display_active_hz || g_libretro.display_requested_hz ||
                        g_libretro.display_notification_pending;
   bool room_started=(g_libretro.frame.flags&ANYGM_FRAME_ROOM_STARTED)!=0;
-  bool held_cadence=room_started && !display_cadence && g_libretro.presented_fps>0 &&
-                    frontend_cadence()!=g_libretro.presented_fps;
-  if((geometry_changed || timing_changed || held_cadence) && g_libretro.environment){
+  bool crt_adjustment=g_libretro.config.adjust_crt_tv!=0;
+  bool crt_adjustment_changed=crt_adjustment!=g_libretro.presented_crt_adjustment;
+  g_libretro.presented_crt_adjustment=crt_adjustment;
+  if((geometry_changed || timing_changed || room_started || crt_adjustment_changed) &&
+     g_libretro.environment){
     if(!av_refreshed) libretro_update_av();
+    double cadence=frontend_cadence();
     bool room_cadence=(g_libretro.frame.flags&ANYGM_FRAME_TIMING_ROOM_CHANGED)!=0;
-    /* Under a declared mode the content's rate is only a step rate. Announcing it would make the
-     * frontend rebuild the mode it already holds. */
-    bool declared_held=!display_cadence && g_libretro.av.presentation_frequency_hz &&
-      g_libretro.presented_fps==(double)g_libretro.av.presentation_frequency_hz;
-    bool announce=held_cadence || (timing_changed && !declared_held &&
+    /* A new step rate can fit the same CRT refresh. Keep that mode even across a room change. */
+    bool crt_held=!display_cadence &&
+      (g_libretro.av.presentation_frequency_hz || (crt_adjustment && !av_refreshed)) &&
+      g_libretro.presented_fps==cadence;
+    bool change_cadence=!display_cadence && (room_started || crt_adjustment_changed) &&
+      g_libretro.presented_fps>0 && cadence!=g_libretro.presented_fps;
+    bool announce=change_cadence || (timing_changed && !crt_held &&
       (av_refreshed || room_cadence || display_cadence || g_libretro.presented_fps<=0));
-    if(announce && !display_cadence) g_libretro.presented_fps=frontend_cadence();
+    double previous_cadence=g_libretro.presented_fps;
+    if(announce && !display_cadence) g_libretro.presented_fps=cadence;
     struct retro_system_av_info av;
     fill_av_info(&av);
-    if(announce)
-      g_libretro.environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO,&av);
+    if(announce){
+      bool accepted=g_libretro.environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO,&av);
+      if(!accepted && !display_cadence && (crt_adjustment || crt_adjustment_changed))
+        g_libretro.presented_fps=previous_cadence;
+    }
     else if(geometry_changed)
       g_libretro.environment(RETRO_ENVIRONMENT_SET_GEOMETRY,&av.geometry);
     if(announce || geometry_changed) g_libretro.announced_aspect=av.geometry.aspect_ratio;

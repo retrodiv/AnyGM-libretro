@@ -83,6 +83,7 @@ typedef struct LibretroAdapter {
   int32_t display_mouse_x,display_mouse_y,display_wheel;
   /* Content cadence the frontend holds; content may run at another within a room (see retro_run). */
   double presented_fps;
+  bool presented_crt_adjustment;
   /* Ticks run, and the tick count at the last retro_serialize with the interval before it; a
    * repeated interval predicts the next save (see prepare_expected_save). */
   uint64_t run_ticks,save_tick,save_interval;

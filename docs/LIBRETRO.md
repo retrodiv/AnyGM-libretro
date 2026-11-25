@@ -63,12 +63,17 @@ change rather than in the middle of one. A restored state resumes its room and
 announces nothing. While the two cadences agree the clock yields exactly one
 step per tick.
 
-A [declared CRT mode](CONTENT_CONFIGURATION.md#declared-crt-mode) replaces the
-content's cadence as the one the frontend holds. Its refresh is in the startup
-answer and is announced again only when the mode is selected, changed or
-withdrawn. Room changes then move the step rate alone, on the same fractional
-clock, and relative pointer motion is accumulated over ticks that run no step.
-A content display request keeps precedence over the declared refresh.
+Automatic CRT adjustment requests the lowest whole multiple of a slow game's
+cadence in the 50–60 Hz range when one exists. A game running at 25 or 30 FPS
+therefore runs one step per two refreshes at 50 or 60 Hz. A rate without such
+a multiple keeps its usual cadence. Room changes that use the same refresh
+keep the current mode. Ordinary display output uses the content cadence.
+
+A [declared CRT mode](CONTENT_CONFIGURATION.md#declared-crt-mode) supplies its
+own refresh ahead of the automatic rule. Its refresh is in the startup answer
+and is announced again when it changes. The scheduler preserves the logical
+step rate and accumulates relative pointer motion over ticks that run no step.
+A content display request keeps precedence over both CRT policies.
 
 ## Rewind snapshots
 

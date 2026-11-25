@@ -23,7 +23,7 @@ int anygm_synthetic_sized_content_create(AnygmSyntheticContent *fixture,unsigned
 int anygm_synthetic_tilemap_content_create(AnygmSyntheticContent *fixture);
 /* The initial room owns a persistent controller and a boot-only global;
  * the second room records whether that controller's Create ran. */
-int anygm_synthetic_cold_room_content_create(AnygmSyntheticContent *fixture);
+int anygm_synthetic_cold_room_content_create(AnygmSyntheticContent *fixture,int boot_speed);
 /* The neutral engine fixture with one object-held array of lists and one global list. Its Step
  * deliberately rewrites both so a persistent content override can prove it runs after Step. */
 int anygm_synthetic_list_override_content_create(AnygmSyntheticContent *fixture);

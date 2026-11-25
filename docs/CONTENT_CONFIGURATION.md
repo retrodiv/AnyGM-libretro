@@ -486,9 +486,9 @@ modern content may resize its camera while leaving those legacy view arrays unch
 
 ## Declared CRT mode
 
-Automatic CRT adjustment keeps a small 4:3 raster as it is and presents it at the content's own
-cadence. At low rates a CRT mode switch then selects a mode with many blank lines, which flattens
-the picture. An anchor can name the mode instead:
+Automatic CRT adjustment keeps a small 4:3 raster as it is. When the content's cadence has an
+integer multiple between 50 and 60 Hz, the libretro adapter can use the higher refresh and hold
+each logical frame across multiple refreshes. An anchor can choose the raster and refresh explicitly:
 
 ```ini
 ?crt crtmode|320|240|60

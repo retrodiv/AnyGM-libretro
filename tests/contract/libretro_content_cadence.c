@@ -15,7 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static bool running,invalid_callback;
+static bool running,invalid_callback,refuse_av;
 static unsigned videos,av_calls,silent_ticks;
 static size_t samples,tick_samples;
 static double announced_fps;
@@ -34,7 +34,7 @@ static bool environment(unsigned command,void *data){
     if(!running) invalid_callback=true;
     announced_fps=info->timing.fps;
     announced_width=info->geometry.base_width;
-    return true;
+    return !refuse_av;
   }
   if(command==RETRO_ENVIRONMENT_SET_GEOMETRY){ geometry_calls++; return true; }
   if(command==RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE){
@@ -175,6 +175,74 @@ static int snapshot(void *ring,size_t capacity){
   return answer && answer<=capacity && retro_serialize(ring,capacity);
 }
 
+static int automatic_crt_case(int boot_speed,int refresh){
+  AnygmSyntheticContent fixture={0};
+  int ok=1;
+  negotiation=0; crt_on=1; overrides_on=1; options_changed=0;
+  invalid_callback=false;
+  REQUIRE(anygm_synthetic_cold_room_content_create(&fixture,boot_speed),"create automatic CRT source");
+  retro_set_environment(environment); retro_set_video_refresh(video);
+  retro_set_audio_sample_batch(audio); retro_init();
+  struct retro_game_info content={fixture.path,NULL,0,NULL};
+  REQUIRE(retro_load_game(&content),"load without a declared mode");
+  struct retro_system_av_info av; retro_get_system_av_info(&av);
+  REQUIRE(g_libretro.av.frames_per_second==boot_speed,"the boot room keeps its authored speed");
+  REQUIRE(av.timing.fps==refresh,"automatic CRT startup reports the expected refresh");
+
+  unsigned calls=av_calls;
+  for(int i=0;i<4;i++) tick();
+  long frame=frame_now();
+  samples=0; silent_ticks=0;
+  for(int i=0;i<refresh;i++) tick();
+  REQUIRE(frame_now()==frame+boot_speed && av_calls==calls,
+          "one second of refreshes executes one second of logical steps");
+  printf("automatic CRT: %d steps per second at %d Hz, %zu audio frames\n",
+         boot_speed,refresh,samples);
+  REQUIRE(!silent_ticks && samples==44100,"audio crosses every refresh and keeps its duration");
+
+  bool multiplied=refresh!=boot_speed;
+  options(0,1);
+  tick();
+  REQUIRE(av_calls==calls+multiplied && (!multiplied || announced_fps==boot_speed),
+          "turning CRT adjustment off restores the authored clock when needed");
+  frame=frame_now();
+  for(int i=0;i<8;i++) tick();
+  REQUIRE(frame_now()==frame+8,"ordinary display clocks advance at one step per tick");
+
+  options(1,1);
+  tick();
+  REQUIRE(av_calls==calls+2*multiplied && (!multiplied || announced_fps==refresh),
+          "turning CRT adjustment back on restores the repeat cadence when needed");
+  if(boot_speed==30){
+    calls=av_calls;
+    speed(60);
+    REQUIRE(enter_room(1),"enter a full-rate room with the same CRT refresh");
+    frame=frame_now();
+    for(int i=0;i<8;i++) tick();
+    REQUIRE(frame_now()==frame+8 && av_calls==calls,
+            "a new room keeping the same CRT refresh does not rebuild the frontend");
+    retro_reset();
+    for(int i=0;i<4;i++) tick();
+    REQUIRE(av_calls==calls && g_libretro.av.frames_per_second==30,
+            "Reset returns to half-speed logical steps on the same CRT refresh");
+    options(0,1);
+    tick();
+    calls=av_calls;
+    refuse_av=true;
+    options(1,1);
+    tick();
+    frame=frame_now();
+    for(int i=0;i<8;i++) tick();
+    REQUIRE(av_calls==calls+1 && frame_now()==frame+8,
+            "a refused CRT transition schedules against the preceding frontend clock");
+  }
+  REQUIRE(!invalid_callback,"automatic CRT updates run inside retro_run");
+done:
+  refuse_av=false;
+  retro_unload_game(); retro_deinit(); anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int declared_mode_case(int response,const char *earlier){
   AnygmSyntheticContent fixture={0};
   void *ring=NULL,*plain=NULL,*in_mode=NULL;
@@ -182,7 +250,7 @@ static int declared_mode_case(int response,const char *earlier){
   int ok=1;
   negotiation=response; crt_on=0; overrides_on=1; options_changed=0; mouse_delta=0;
   invalid_callback=false;
-  REQUIRE(anygm_synthetic_cold_room_content_create(&fixture),"create declared-mode source");
+  REQUIRE(anygm_synthetic_cold_room_content_create(&fixture,60),"create declared-mode source");
   retro_set_environment(environment); retro_set_video_refresh(video);
   retro_set_audio_sample_batch(audio); retro_init();
   retro_set_input_state(input_state);
@@ -359,6 +427,8 @@ done:
 
 int main(void){
   if(!held_cadence_case()) return EXIT_FAILURE;
+  if(!automatic_crt_case(25,50) || !automatic_crt_case(30,60) ||
+     !automatic_crt_case(48,48) || !automatic_crt_case(60,60)) return EXIT_FAILURE;
   for(int response=-1;response<=1;response++)
     if(!declared_mode_case(response,"") || !declared_mode_case(response,"$fixture_marker=7\n"))
       return EXIT_FAILURE;
