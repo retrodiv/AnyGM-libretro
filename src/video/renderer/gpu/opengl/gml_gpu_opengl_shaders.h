@@ -1877,6 +1877,7 @@
   "    if((u_underlay_flags&4)!=0)local.y=extent.y-1-local.y;\n" \
   "    ivec2 lo=local*size/extent,hi=lo+ivec2(1);\n" \
   "    if((u_underlay_flags&1)==0)hi=max(hi,(local+ivec2(1))*size/extent);\n" \
+  "    else if((u_surface_rule.z&1)!=0){lo=((local*2+1)*size-1)/(extent*2);hi=lo+ivec2(1);}\n" \
   "    ivec4 total=ivec4(0);\n" \
   "    for(int y=lo.y;y<hi.y;y++)for(int x=lo.x;x<hi.x;x++){\n" \
   "      int sy=(u_underlay_flags&8)!=0?size.y-1-y:y;\n" \
@@ -1885,6 +1886,12 @@
   "    int count=(hi.x-lo.x)*(hi.y-lo.y);\n" \
   "    if(total.a==0 || total.a<=u_surface_rule.x*count)continue;\n" \
   "    ivec3 rgb=(total.rgb/count)*u_surface_tint.rgb/255;\n" \
+  "    if(u_surface_rule.z!=0 && (total.a==count*255 || (u_surface_rule.z&3)==3)){\n" \
+  "      prior=ivec4(rgb,255);continue;\n" \
+  "    }\n" \
+  "    if((u_surface_rule.z&4)!=0 && count==1){\n" \
+  "      prior=ivec4((rgb*total.a+prior.rgb*(255-total.a)+127)/255,255);continue;\n" \
+  "    }\n" \
   "    uvec2 a=d64_mul(d64_div(d64_div(d64_int(total.a),d64_int(count)),d64_uint(255u)),opacity);\n" \
   "    uvec2 inverse=d64_sub(one,a);\n" \
   "    for(int channel=0;channel<3;channel++){\n" \

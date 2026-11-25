@@ -4233,10 +4233,14 @@ static int resident_surface_part(GmlRender *r,int surf,double sx,double sy,doubl
 
 static int resident_surface_repeat(GmlRender *r,int surf,int sw,int sh,
   double phase_x,double phase_y,double width,double height,double columns,double rows,
-  int flip_x,int flip_y,uint32_t colour,double alpha){
-  /* The caller selects the presets that use the generic cell's source-over
-   * accumulation. Keep the unit and full-source special cases at that seam. */
-  if(!r->alphablend || resident_surface_shader_selected(r) ||
+  int flip_x,int flip_y,uint32_t colour,double alpha,int full_source){
+  /* Unit and mixed-axis full-source draws keep their separate sampling rules. */
+  if((!r->alphablend && r->blendmode) || resident_surface_shader_selected(r) ||
+     ((full_source || !r->alphablend) && r->interp && !flip_x && !flip_y &&
+       !r->target_sp && r->fb==r->base_fb &&
+       r->classic_interp_phase[0] && r->classic_interp_phase[1] && r->classic_interp_phase[2]) ||
+     (full_source && (lround(width)>=sw || lround(height)>=sh ||
+                      lround(width)>=r->fbw || lround(height)>=r->fbh)) ||
      (r->interp && (sw>8*lround(width) || sh>8*lround(height))) ||
      (lround(width)>=sw && lround(height)>=sh)) return 0;
   if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
@@ -4265,6 +4269,10 @@ static int resident_surface_repeat(GmlRender *r,int surf,int sw,int sh,
   q->u[0]=q->u[3]=flip_x;q->u[1]=q->u[2]=!flip_x;
   q->v[0]=q->v[1]=flip_y;q->v[2]=q->v[3]=!flip_y;
   q->filtered_draw_alpha=fmin(alpha,1.0);
+  if(full_source)q->surface_repeat_flags|=GML_RENDER_REPEAT_FULL_SOURCE;
+  if(!r->alphablend)q->surface_repeat_flags|=GML_RENDER_REPEAT_BLEND_DISABLED;
+  if(full_source && r->alphablend && !surf && anygm_policy_uses_first_generation_studio(r->win))
+    q->surface_repeat_flags|=GML_RENDER_REPEAT_ROUND_APP_POINT;
   q->span_x[0]=phase_x;q->span_x[1]=width;q->span_x[2]=r->cam_x;q->span_x[3]=columns;
   q->span_y[0]=phase_y;q->span_y[1]=height;q->span_y[2]=r->cam_y;q->span_y[3]=rows;
   uint32_t tint=0xFF000000u|((colour&255u)<<16)|(colour&0xFF00u)|((colour>>16)&255u);
@@ -4335,9 +4343,9 @@ int gml_render_resident_surface_tiled(GmlRender *r,int surf,double x,double y,
    * Copies and destination-factor presets do not enter that rounding chain. */
   if(normal && !classic_copy && (!opaque || (r->alphablend && alpha<1.0)) &&
      lround(width)>width && lround(height)>height){
-    return !full_normal && !unit &&
+    return !unit &&
       resident_surface_repeat(r,surf,sw,sh,first_x,first_y,width,height,columns,rows,
-                              xs<0,ys<0,colour,alpha);
+                              xs<0,ys<0,colour,alpha,full_normal);
   }
   if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
   gml_render_flush_pending_fill(r);if(r->pending_fill) return 0;

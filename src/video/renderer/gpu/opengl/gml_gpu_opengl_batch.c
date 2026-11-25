@@ -597,6 +597,16 @@ static int repeat_quad_valid(const GmlRenderDrawOp *op,
      (blend!=1 && blend!=3) ||
      state->coverage_policy!=(blend==3?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) ||
      q->source_opaque || (q->corner_colour[0]>>24)!=255u) return 0;
+  unsigned flags=q->surface_repeat_flags;
+  int full_source=(flags&GML_RENDER_REPEAT_FULL_SOURCE)!=0;
+  int disabled=(flags&GML_RENDER_REPEAT_BLEND_DISABLED)!=0;
+  int round_app_point=(flags&GML_RENDER_REPEAT_ROUND_APP_POINT)!=0;
+  if(flags&~(GML_RENDER_REPEAT_FULL_SOURCE|GML_RENDER_REPEAT_BLEND_DISABLED|
+             GML_RENDER_REPEAT_ROUND_APP_POINT) ||
+     ((disabled || round_app_point) && blend!=1) ||
+     (round_app_point && (!full_source || disabled))) return 0;
+  if(full_source && (q->u[0]!=0.0 || q->v[0]!=0.0 || q->filtered_draw_alpha!=1.0 ||
+     q->corner_colour[0]!=0xffffffffu)) return 0;
   if((q->u[0]!=0.0 && q->u[0]!=1.0) || (q->v[0]!=0.0 && q->v[0]!=1.0)) return 0;
   for(unsigned corner=1;corner<4u;corner++){
     int right=corner==1u || corner==2u,bottom=corner>=2u;
@@ -614,7 +624,8 @@ static int repeat_quad_valid(const GmlRenderDrawOp *op,
        (span[0]!=0.0 && fabs(span[0])<0x1p-900) ||
        (span[2]!=0.0 && fabs(span[2])<0x1p-900) ||
        span[3]!=ceil((target_extent-span[0])/span[1])+1 || span[3]>8192.0 ||
-       ((q->sampling.filter==GML_RENDER_FILTER_BOX) && source_extent>8*lround(span[1]))) return 0;
+       ((q->sampling.filter==GML_RENDER_FILTER_BOX) && source_extent>8*lround(span[1])) ||
+       (full_source && (lround(span[1])>=source_extent || lround(span[1])>=target_extent))) return 0;
   }
   return q->span_x[3]*q->span_y[3]<=8192.0 &&
     (lround(q->span_x[1])<source->width || lround(q->span_y[1])<source->height);
@@ -3926,7 +3937,7 @@ static int draw_exact_quad(GmlGpuBackend *backend,const GmlRenderDrawOp *op,
     uint32_t colour=q->corner_colour[0];
     GLint tint[4]={(GLint)((colour>>16)&255u),(GLint)((colour>>8)&255u),(GLint)(colour&255u),255};
     GLint rule[4]={state->alpha_test_enabled?(GLint)state->alpha_test_reference:-1,
-      qualified_blend(state)==3,0,0};
+      qualified_blend(state)==3,(GLint)q->surface_repeat_flags,0};
     backend->gl.Uniform4iv(exact->exact_u_repeat_axes,3,axes);
     backend->gl.Uniform2iv(exact->exact_u_repeat_counts,1,count);
     backend->gl.Uniform4iv(exact->exact_u_underlay_size,1,size);

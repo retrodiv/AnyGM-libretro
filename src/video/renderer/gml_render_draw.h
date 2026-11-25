@@ -422,6 +422,12 @@ typedef enum GmlRenderQuadShape {
   GML_RENDER_QUAD_WARPED=5
 } GmlRenderQuadShape;
 
+enum {
+  GML_RENDER_REPEAT_FULL_SOURCE=1u,
+  GML_RENDER_REPEAT_BLEND_DISABLED=2u,
+  GML_RENDER_REPEAT_ROUND_APP_POINT=4u
+};
+
 typedef struct GmlRenderQuad {
   double x[4],y[4];
   /* WARPED carries page-local texel coordinates in u/v; other nonrotated
@@ -459,6 +465,8 @@ typedef struct GmlRenderQuad {
   /* Selected-view distance glyph coverage; zero selects ordinary texture colour.
    * This per-operation value is transient, never canonical state or CPU geometry. */
   double font_sdf_width;
+  /* Ordered surface repeats carry the selected CPU sampling and coverage policies. */
+  uint32_t surface_repeat_flags;
 } GmlRenderQuad;
 
 enum {
