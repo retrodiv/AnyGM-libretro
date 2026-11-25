@@ -2823,9 +2823,10 @@ static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *o
     int type=(int)asnum(typev);
     if(type!=0 && type!=1) return 0;
     if(type==1 && anygm_host_development_setting(vm->host,"GML_DBG_GP")) return 0;
-    /* The recognised shape names no device. With one pad that is the only pad and the answer is
-     * the same; with a second one live it would quietly answer for player one, so hand it back. */
-    if(type==1 && gml_input_gamepad_connected(vm,1)) return 0;
+    /* The direct input path reads device zero. Leave undefined arguments (defaulting to -1 in
+     * the script), requests for other devices, and multi-pad input to the interpreter. */
+    if(type==1 && (!args || n_args<1 || args[0].t==V_UNDEF || asnum(args[0])!=0.0 ||
+                   gml_input_gamepad_connected(vm,1))) return 0;
     GmlVal value=inst_get_any_h(vm,self,in[20].refname,in[20].refhash?in[20].refhash:gml_value_name_hash(in[20].refname));
     if(value.t==V_ARR && value.arr){
       int a0=(int)asnum(gml_arr_get(value,0));
