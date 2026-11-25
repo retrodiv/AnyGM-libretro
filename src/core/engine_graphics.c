@@ -812,7 +812,11 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
   int crt_readback=engine->host_crt_active && engine->host_canvas_active;
   if(engine->host_canvas_active && scene &&
      engine_present_indirect_gui_host(engine,width,height)) return 1;
-  if(engine->host_canvas_active && !crt_readback) return 0;
+  /* The deferred fit promotes a private frame and needs a current context before any draw. */
+  int fit_deferred=crt_readback || (scene && engine->host_canvas_active &&
+    engine_graphics_is_current(engine) &&
+    engine_present_crop_rect(engine,engine->output_width,engine->output_height,NULL,NULL,NULL,NULL));
+  if(engine->host_canvas_active && !fit_deferred) return 0;
   if(!gml_render_deferred_presentation(&engine->render,&record)){
     if(scene && crt_readback)
       return engine_present_hardware_canvas_plan(engine,width,height,1);
@@ -921,9 +925,9 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
         geometry->extent_x*=record.destination_width/record.extent_x;
         geometry->extent_y*=record.destination_height/record.extent_y;
       }
-      if(crt_readback){
+      if(fit_deferred){
         /* Preserve the terminal program at its authored extent. Prefer a private device target,
-         * promote it to the canonical completed-frame cache and apply the CRT fit there; if any
+         * promote it to the canonical completed-frame cache and apply the host fit there; if any
          * stage refuses, retain the established synchronous CPU fallback transaction. */
         GmlRenderPlan terminal_plan=*plan;
         int fitted=engine_present_plan_device_canvas(engine,&terminal_plan,width,height);
@@ -969,7 +973,7 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
   if(record.sampling_rule==GML_RENDER_PRESENTATION_BOX){
     if(!gml_render_plan_add_blit_box(plan,image,destination,0xFFu)) return 0;
   } else if(!gml_render_plan_add_blit_nearest(plan,image,destination,axis_x,axis_y,0xFFu)) return 0;
-  if(crt_readback){
+  if(fit_deferred){
     if(!engine_present_plan_device_canvas(engine,plan,width,height)) return 0;
     gml_render_discard_deferred_presentation(&engine->render);
     engine->frame_authority=ENGINE_FRAME_GPU_PRESENTED_DEVICE_RESIDENT;

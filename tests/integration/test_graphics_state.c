@@ -5699,7 +5699,7 @@ static int completed_frame_capacity_case(void){
  * proves device-only completion, ownership and transport; the software plan cases own pixels. */
 static int crt_terminal_program_extent(unsigned source_w,unsigned source_h,
                                        unsigned host_w,unsigned host_h,int native_padding,
-                                       int area_filter,unsigned rotation,int cropped){
+                                       int area_filter,unsigned rotation,int cropped,int crt){
   Session session;
   CurrentContextWitness witness={1u,0u};
   AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
@@ -5716,7 +5716,8 @@ static int crt_terminal_program_extent(unsigned source_w,unsigned source_h,
   engine->config.content_shader_readback=ANYGM_SHADER_READBACK_BUDGETED;
   engine->output_width=source_w; engine->output_height=source_h;
   engine->host_output_width=host_w; engine->host_output_height=host_h;
-  engine->host_crt_active=engine->host_canvas_active=1;
+  engine->host_crt_active=crt;
+  engine->host_canvas_active=1;
   engine->host_crt_area_filter=area_filter;
   engine->host_rotation=rotation;
   if(cropped){
@@ -5742,6 +5743,7 @@ static int crt_terminal_program_extent(unsigned source_w,unsigned source_h,
   gml_render_shader_set_current(render,0);
   gml_draw_surface_stretched(render,0,0,0,source_w,source_h,0xFFFFFFu,1.0);
   gml_render_shader_set_current(render,-1);
+  if(!crt) engine->scene_renderer_session=ANYGM_SCENE_RENDERER_OPENGL;
   unsigned width=0,height=0;
   int ok=gml_render_deferred_presentation(render,NULL) &&
          engine_present_hardware_screen(engine,&width,&height) &&
@@ -5776,17 +5778,17 @@ static int crt_terminal_program_extent(unsigned source_w,unsigned source_h,
   return 1;
 }
 static int crt_terminal_program_case(void){
-  return crt_terminal_program_extent(400,300,640,480,0,0,ANYGM_IMAGE_ROTATION_NONE,0) &&
-         crt_terminal_program_extent(320,180,320,240,1,0,ANYGM_IMAGE_ROTATION_NONE,0) &&
-         crt_terminal_program_extent(240,240,320,240,1,0,ANYGM_IMAGE_ROTATION_NONE,0) &&
-         crt_terminal_program_extent(400,300,320,240,0,1,ANYGM_IMAGE_ROTATION_RIGHT,0) &&
-         crt_terminal_program_extent(400,300,640,480,0,0,ANYGM_IMAGE_ROTATION_NONE,1) &&
-         crt_terminal_program_extent(400,300,320,240,0,1,ANYGM_IMAGE_ROTATION_RIGHT,1);
+  return crt_terminal_program_extent(400,300,640,480,0,0,ANYGM_IMAGE_ROTATION_NONE,0,1) &&
+         crt_terminal_program_extent(320,180,320,240,1,0,ANYGM_IMAGE_ROTATION_NONE,0,1) &&
+         crt_terminal_program_extent(240,240,320,240,1,0,ANYGM_IMAGE_ROTATION_NONE,0,1) &&
+         crt_terminal_program_extent(400,300,320,240,0,1,ANYGM_IMAGE_ROTATION_RIGHT,0,1) &&
+         crt_terminal_program_extent(400,300,640,480,0,0,ANYGM_IMAGE_ROTATION_NONE,1,1) &&
+         crt_terminal_program_extent(400,300,320,240,0,1,ANYGM_IMAGE_ROTATION_RIGHT,1,1);
 }
 
 /* An ordinary deferred final draw has to finish at the logical raster before CRT fitting too.
  * Neither stage needs to expose the completed image to the processor. */
-static int crt_deferred_presentation_extent(int cropped){
+static int crt_deferred_presentation_extent(int cropped,int crt){
   Session session;
   CurrentContextWitness witness={1u,0u};
   AnygmGraphicsContext context=graphics_context(ANYGM_GRAPHICS_OPENGLES3);
@@ -5799,9 +5801,11 @@ static int crt_deferred_presentation_extent(int cropped){
   AnygmEngine *engine=session.engine;
   GmlRender *render=&engine->render;
   engine->output_width=400u; engine->output_height=300u;
-  engine->host_output_width=640u; engine->host_output_height=480u;
-  engine->host_crt_active=engine->host_canvas_active=1;
-  engine->host_canvas_width=640; engine->host_canvas_height=480;
+  engine->host_output_width=crt?640u:320u; engine->host_output_height=crt?480u:240u;
+  engine->host_crt_active=crt;
+  engine->host_canvas_active=1;
+  engine->host_canvas_width=(int)engine->host_output_width;
+  engine->host_canvas_height=(int)engine->host_output_height;
   engine->host_canvas_x=engine->host_canvas_y=0;
   if(cropped){
     engine->present_crop_left=7;engine->present_crop_right=3;
@@ -5815,6 +5819,7 @@ static int crt_deferred_presentation_extent(int cropped){
   gml_render_gui_begin(render,400,300);
   gml_render_gui_set_size(render,400,300);
   gml_draw_surface_stretched(render,0,0,0,400,300,0xFFFFFFu,1.0);
+  if(!crt) engine->scene_renderer_session=ANYGM_SCENE_RENDERER_OPENGL;
   GmlRenderDeferredPresentation record={0};
   int ok=gml_render_deferred_presentation(render,&record) && record.shader<0 &&
          engine_present_hardware_screen(engine,NULL,NULL) &&
@@ -5824,7 +5829,8 @@ static int crt_deferred_presentation_extent(int cropped){
          engine->frame_materializations==0 && engine->canvas_pass_frames==1u &&
          engine->host_plan.images[0].device_completed==1u &&
          !engine->host_plan.images[0].cpu_pixels &&
-         engine->host_plan.operations[1].opcode==GML_PLAN_OP_BLIT_OPAQUE_SHARP_BILINEAR;
+         engine->host_plan.operations[1].opcode==
+           (crt?GML_PLAN_OP_BLIT_OPAQUE_SHARP_BILINEAR:GML_PLAN_OP_BLIT_OPAQUE_BOX);
   GmlGpuCounters counters={0};
   gml_gpu_counters(engine->gpu,&counters);
   ok=ok && counters.completed_frame_copies==1u && counters.scene_readbacks==0u &&
@@ -5843,7 +5849,15 @@ static int crt_deferred_presentation_extent(int cropped){
 }
 
 static int crt_deferred_presentation_case(void){
-  return crt_deferred_presentation_extent(0) && crt_deferred_presentation_extent(1);
+  return crt_deferred_presentation_extent(0,1) && crt_deferred_presentation_extent(1,1);
+}
+
+static int noncrt_terminal_crop_case(void){
+  return crt_terminal_program_extent(400,300,640,480,0,0,ANYGM_IMAGE_ROTATION_NONE,1,0) &&
+         crt_terminal_program_extent(400,300,320,240,0,0,ANYGM_IMAGE_ROTATION_RIGHT,1,0);
+}
+static int noncrt_deferred_crop_case(void){
+  return crt_deferred_presentation_extent(1,0);
 }
 
 /* A surface's vertex coordinates belong to the draw's authored space, not a local shader tile. */
@@ -6505,6 +6519,8 @@ int main(void){
     {"completed frame capacity retains exact fitting bytes",completed_frame_capacity_case},
     {"CRT preserves terminal content programs",crt_terminal_program_case},
     {"CRT preserves ordinary deferred presentations",crt_deferred_presentation_case},
+    {"Plain host crop preserves terminal content programs",noncrt_terminal_crop_case},
+    {"Plain host crop preserves ordinary deferred presentations",noncrt_deferred_crop_case},
   };
   int failed=0;size_t executed=0;
   const char *selected=getenv("ANYGM_GRAPHICS_STATE_CASE");

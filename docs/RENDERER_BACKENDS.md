@@ -3866,6 +3866,16 @@ transfer or replay; a separate framebuffer read verifies the output. Engine fixt
 cover terminal programs, ordinary deferred rendering and rotated area delivery. Plan
 guards cover competing owners, physical bounds and transactional CPU refusal.
 
+OpenGL can use that same route on a non-CRT host canvas when a valid crop follows a
+deferred terminal draw. The logical presentation still executes at its authored extent.
+The promoted result then supplies the plain host filter and optional rotation. Uncropped
+plain host canvases retain their existing admissions. The device probe compares the
+ordinary retained SCREEN and an authored terminal program with the CPU host resolver.
+It exercises nearest enlargement, box reduction on one or both axes, margins and right
+rotation. The logical capture observed afterward must be byte exact. In the ordinary
+draw interval there is one logical promotion copy and zero completed-frame reads, CPU
+frame transports or replay. The program may upload its existing borrowed source once.
+
 ### Selected-background tiny opacity
 
 Classic selected-background tiny opacity retains its integer point owner and
