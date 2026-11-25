@@ -225,6 +225,7 @@ typedef struct GlSceneCheckpoint {
 
 /* Uniform locations belong to their program, not to the current draw. GLES normally shares
  * one combined exact-font program and retains the split generation programs as a compile fallback. */
+enum { GL_SCENE_EXACT_SURFACE_REPEAT=4 };
 typedef struct GlSceneExactProgram {
   GLuint exact_program;
   GLint exact_a_position,exact_a_texcoord,exact_a_colour;
@@ -239,6 +240,7 @@ typedef struct GlSceneExactProgram {
   GLint exact_u_font_channel,exact_u_font_margin;
   GLint exact_u_underlay_size,exact_u_underlay_origin,exact_u_underlay_flags;
   GLint exact_u_surface_rule,exact_u_surface_tint,exact_u_surface_alpha;
+  GLint exact_u_repeat_axes,exact_u_repeat_counts;
 } GlSceneExactProgram;
 
 typedef struct GlSceneProgram {
@@ -328,7 +330,7 @@ typedef struct GlScene {
   unsigned instance_span_count,instance_span_next;
   uint8_t *instance_mirror;
   int instance_reuse_attempted;
-  GlSceneExactProgram exact_programs[3];
+  GlSceneExactProgram exact_programs[4];
   GLuint snapshot_texture,copy_framebuffer,rgb_query;
   /* Disposable sampling images; public resources keep their actual byte format. */
   GlEffectSampleImage effect_sampler,effect_capture;

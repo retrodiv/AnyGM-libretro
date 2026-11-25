@@ -817,6 +817,23 @@
   "  return true;\n" \
   "}\n" \
   "#endif\n" \
+  "float surface_tap_support(){\n" \
+  "  ivec2 size=textureSize(u_image,0),extent=ivec2(v_span_x.zw);\n" \
+  "  ivec2 pixel=ivec2(floor(vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y)-v_span_x.xy));\n" \
+  "  bool leading=v_span_y.y!=0.0;\n" \
+  "  ivec2 den=leading?extent:2*extent;\n" \
+  "  ivec2 numerator=leading?pixel*size:(2*pixel+ivec2(1))*size-extent;\n" \
+  "  numerator=clamp(numerator,ivec2(0),(size-ivec2(1))*den);\n" \
+  "  ivec2 low=numerator/den,remainder=numerator%den;\n" \
+  "  float support=0.0;\n" \
+  "  for(int y=0;y<2;y++)for(int x=0;x<2;x++){\n" \
+  "    if((x!=0 && remainder.x==0)||(y!=0 && remainder.y==0))continue;\n" \
+  "    ivec2 at=min(low+ivec2(x,y),size-ivec2(1));\n" \
+  "    if(v_span_y.x!=0.0)at.y=size.y-1-at.y;\n" \
+  "    support=max(support,source_texel(at,0).a);\n" \
+  "  }\n" \
+  "  return support;\n" \
+  "}\n" \
   "vec4 hardware_background_tap(ivec2 at){\n" \
   "  ivec2 extent=textureSize(u_image,0);\n" \
   "  if(any(lessThan(at,ivec2(0))) || any(greaterThanEqual(at,extent))) return vec4(0.0);\n" \
@@ -1380,6 +1397,7 @@
   "#else\n" \
   "#ifndef GML_SCENE_ZERO_ALPHA_BLEND\n" \
   "      if(alpha<=0.0 && physical_filter<112) discard;\n" \
+  "      if(physical_filter==79 && v_span_y.z==2.0 && surface_tap_support()<=0.0) discard;\n" \
   "#endif\n" \
   "#endif\n" \
   "      vec3 rgb=sampled.rgb*v_colour.rgb;\n" \
@@ -1413,20 +1431,7 @@
   "    float support=sampled.a;\n" \
   "    // R03_SHADER_SURFACE_FILTERED_SUPPORT: alpha support survives sampler rounding.\n" \
   "    if(v_span_y.z==1.0 && (u_filter==21 || u_filter==22)){\n" \
-  "      ivec2 size=textureSize(u_image,0),extent=ivec2(v_span_x.zw);\n" \
-  "      ivec2 pixel=ivec2(floor(vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y)-v_span_x.xy));\n" \
-  "      bool leading=v_span_y.y!=0.0;\n" \
-  "      ivec2 den=leading?extent:2*extent;\n" \
-  "      ivec2 numerator=leading?pixel*size:(2*pixel+ivec2(1))*size-extent;\n" \
-  "      numerator=clamp(numerator,ivec2(0),(size-ivec2(1))*den);\n" \
-  "      ivec2 low=numerator/den,remainder=numerator%den;\n" \
-  "      support=0.0;\n" \
-  "      for(int y=0;y<2;y++)for(int x=0;x<2;x++){\n" \
-  "        if((x!=0 && remainder.x==0)||(y!=0 && remainder.y==0))continue;\n" \
-  "        ivec2 at=min(low+ivec2(x,y),size-ivec2(1));\n" \
-  "        if(v_span_y.x!=0.0)at.y=size.y-1-at.y;\n" \
-  "        support=max(support,source_texel(at,0).a);\n" \
-  "      }\n" \
+  "      support=surface_tap_support();\n" \
   "    }\n" \
   "    float alpha=sampled.a*v_colour.a;\n" \
   "#ifndef GML_SCENE_ZERO_ALPHA_BLEND\n" \
@@ -1804,6 +1809,71 @@
   "  result.a=u_font_preserve_alpha!=0\n" \
   "    ?int(min(255u,(source_alpha*source_alpha+uint(prior.a)*(255u-source_alpha)+127u)/255u)):255;\n" \
   "  return result;\n" \
+  "}\n"
+
+/* Ordered composition over an immutable device snapshot. */
+#define GML_GPU_OPENGL_SCENE_REPEAT_BOX_BODY \
+  "uniform sampler2D u_image;\n" \
+  "uniform sampler2D u_previous;\n" \
+  "uniform vec2 u_extent;\n" \
+  "uniform ivec2 u_region_origin;\n" \
+  "uniform ivec4 u_repeat_axes[3];\n" \
+  "uniform ivec2 u_repeat_counts;\n" \
+  "uniform ivec4 u_underlay_size;\n" \
+  "uniform int u_underlay_flags;\n" \
+  "uniform ivec4 u_surface_rule;\n" \
+  "uniform ivec4 u_surface_tint;\n" \
+  "uniform ivec2 u_surface_alpha;\n" \
+  "out vec4 o_color;\n" \
+  GML_GPU_OPENGL_BINARY64_BODY \
+  "int repeat_origin(int cell,int axis){\n" \
+  "  int first=axis*2;\n" \
+  "  uvec2 phase=uvec2(u_repeat_axes[0][first],u_repeat_axes[0][first+1]);\n" \
+  "  uvec2 period=uvec2(u_repeat_axes[1][first],u_repeat_axes[1][first+1]);\n" \
+  "  uvec2 camera=uvec2(u_repeat_axes[2][first],u_repeat_axes[2][first+1]);\n" \
+  "  uvec2 displacement=d64_add(phase,d64_mul(d64_int(cell),period));\n" \
+  "  return d64_floor(d64_sub(d64_add(displacement,camera),camera));\n" \
+  "}\n" \
+  "int repeat_lower_bound(int pixel,int axis){\n" \
+  "  int first=0,last=u_repeat_counts[axis];\n" \
+  "  while(first<last){\n" \
+  "    int middle=first+(last-first)/2;\n" \
+  "    if(repeat_origin(middle,axis)<pixel)first=middle+1;\n" \
+  "    else last=middle;\n" \
+  "  }\n" \
+  "  return first;\n" \
+  "}\n" \
+  "void main(){\n" \
+  "  ivec2 p=ivec2(gl_FragCoord.xy);\n" \
+  "  ivec4 prior=ivec4(round(texelFetch(u_previous,p-u_region_origin,0)*255.0));\n" \
+  "  p.y=int(u_extent.y)-1-p.y;\n" \
+  "  ivec2 extent=u_underlay_size.zw,size=u_underlay_size.xy;\n" \
+  "  ivec2 first=ivec2(repeat_lower_bound(p.x-extent.x+1,0),\n" \
+  "                    repeat_lower_bound(p.y-extent.y+1,1));\n" \
+  "  ivec2 last=ivec2(repeat_lower_bound(p.x+1,0),repeat_lower_bound(p.y+1,1));\n" \
+  "  uvec2 one=uvec2(0u,0x3ff00000u),opacity=uvec2(u_surface_alpha);\n" \
+  "  for(int row=first.y;row<last.y;row++)for(int col=first.x;col<last.x;col++){\n" \
+  "    ivec2 local=p-ivec2(repeat_origin(col,0),repeat_origin(row,1));\n" \
+  "    ivec2 lo=local*size/extent,hi=max(lo+ivec2(1),(local+ivec2(1))*size/extent);\n" \
+  "    ivec4 total=ivec4(0);\n" \
+  "    for(int y=lo.y;y<hi.y;y++)for(int x=lo.x;x<hi.x;x++){\n" \
+  "      int sy=(u_underlay_flags&8)!=0?size.y-1-y:y;\n" \
+  "      total+=ivec4(round(texelFetch(u_image,ivec2(x,sy),0)*255.0));\n" \
+  "    }\n" \
+  "    int count=(hi.x-lo.x)*(hi.y-lo.y);\n" \
+  "    if(total.a==0 || total.a<=u_surface_rule.x*count)continue;\n" \
+  "    ivec3 rgb=(total.rgb/count)*u_surface_tint.rgb/255;\n" \
+  "    uvec2 a=d64_mul(d64_div(d64_div(d64_int(total.a),d64_int(count)),d64_uint(255u)),opacity);\n" \
+  "    uvec2 inverse=d64_sub(one,a);\n" \
+  "    for(int channel=0;channel<3;channel++){\n" \
+  "      uvec2 add=d64_mul(d64_int(rgb[channel]),a),old=d64_mul(d64_int(prior[channel]),inverse);\n" \
+  "      prior[channel]=u_surface_rule.y!=0?min(255,d64_round(add)+d64_round(old)):\n" \
+  "                                         d64_floor(d64_add(add,old));\n" \
+  "    }\n" \
+  "    int alpha=d64_round(d64_mul(a,d64_uint(255u)));\n" \
+  "    prior.a=u_surface_rule.y!=0?min(255,(alpha*alpha+prior.a*(255-alpha)+127)/255):255;\n" \
+  "  }\n" \
+  "  o_color=vec4(prior)/255.0;\n" \
   "}\n"
 
 /* The eight-bit truncating source-over rule used by a characterised CPU leaf. Sampling the

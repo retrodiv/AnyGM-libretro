@@ -318,7 +318,7 @@ void gml_gpu_opengl_scene_destroy(GmlGpuBackend *backend,int context_is_current)
     for(size_t index=0;index<sizeof scene->compact_programs/sizeof scene->compact_programs[0];index++)
       if(scene->compact_programs[index].program)
         backend->gl.DeleteProgram(scene->compact_programs[index].program);
-    for(size_t index=0;index<3u;index++)
+    for(size_t index=0;index<sizeof scene->exact_programs/sizeof scene->exact_programs[0];index++)
       if(scene->exact_programs[index].exact_program)
         backend->gl.DeleteProgram(scene->exact_programs[index].exact_program);
     GlEffectSampleImage *sample_images[]={&scene->effect_sampler,&scene->effect_capture};

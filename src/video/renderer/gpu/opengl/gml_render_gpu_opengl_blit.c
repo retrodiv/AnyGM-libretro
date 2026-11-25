@@ -256,6 +256,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     region.x==0 && region.y==0 && region.width==source_width && region.height==source_height;
   if(!automatic_surface && !destination_surface &&
      quad->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_BOX_FUNCTION &&
+     quad->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_REPEAT_BOX &&
      quad->sampling.quantisation!=GML_RENDER_QUANTISE_POSITIONED_SAMPLE &&
      (quad->sampling.filter==GML_RENDER_FILTER_BOX || stretched_float ||
       quad->sampling.quantisation==GML_RENDER_QUANTISE_FIXED_STRETCHED)){
@@ -463,9 +464,14 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
       vertex[23]=(float)(phase_y-(double)vertex[15]);
       vertex[24]=(float)(step_y-(double)vertex[17]);
     }
+    int preserving_filtered_surface=!state->coverage_policy &&
+      (quad->sampling.quantisation==0u ||
+       quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_FILTERED);
     /* Surface float filtering owns every positive source-alpha contribution,
      * even when the hardware sampler rounds that contribution to zero. Carry
-     * one rectangle for a device tap-support test; colour stays hardware filtered. */
+     * one rectangle for a device tap-support test. Alpha-preserving draws
+     * also need this support to reject spurious alpha along transparent edges.
+     * Colour stays hardware filtered. */
     if(op->scene_family==GML_RENDER_SCENE_SURFACE && !quad->span_active &&
        quad->shape==GML_RENDER_QUAD_AXIS_ALIGNED &&
        quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
@@ -475,6 +481,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
         quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_LEADING ||
         quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_FILTERED_CUTOFF) &&
        (state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
+        preserving_filtered_surface ||
         quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_FILTERED_CUTOFF) &&
        source_width<=16384u && source_height<=16384u &&
        quad->x[1]-quad->x[0]<=16384.0 && quad->y[2]-quad->y[0]<=16384.0){
@@ -484,7 +491,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
       vertex[23]=rendered_source_origin?1.0f:0.0f;
       vertex[24]=(quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SURFACE_LEADING ||
                   quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_LEADING)?1.0f:0.0f;
-      vertex[25]=1.0f;
+      vertex[25]=preserving_filtered_surface?2.0f:1.0f;
     }
     /* A qualified opaque-source unit GUI draw can certify full target alpha
      * after its required coverage pass, without observing source pixels. */

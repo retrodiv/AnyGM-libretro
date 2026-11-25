@@ -407,8 +407,9 @@ static GlSceneExactProgram *build_exact_program(GmlGpuBackend *backend,
                                                 int shader_font_mode,
                                                 char *error,size_t error_capacity){
   int embedded=backend->api==GML_GPU_API_OPENGLES3;
-  int specialised=embedded && shader_font_mode>0;
-  int has_font=shader_font_mode!=0;
+  int repeat=shader_font_mode==GL_SCENE_EXACT_SURFACE_REPEAT;
+  int specialised=!repeat && embedded && shader_font_mode>0;
+  int has_font=!repeat && shader_font_mode!=0;
   const char *prefix=backend->api==GML_GPU_API_OPENGLES3
     ?GML_GPU_OPENGL_PREFIX_ES:GML_GPU_OPENGL_PREFIX_DESKTOP;
   char vertex_source[1024],fragment_source[32768];
@@ -420,7 +421,8 @@ static GlSceneExactProgram *build_exact_program(GmlGpuBackend *backend,
                          GML_GPU_OPENGL_SCENE_VERTEX_BODY);
   fragment_length=snprintf(fragment_source,sizeof fragment_source,
                            "%s#define GML_EXACT_FONT_MODE %d\n%s",prefix,
-                           shader_font_mode,GML_GPU_OPENGL_SCENE_EXACT_FRAGMENT_BODY);
+                           shader_font_mode,repeat?GML_GPU_OPENGL_SCENE_REPEAT_BOX_BODY:
+                                                  GML_GPU_OPENGL_SCENE_EXACT_FRAGMENT_BODY);
   if(vertex_length<0 || (size_t)vertex_length>=sizeof vertex_source ||
      fragment_length<0 || (size_t)fragment_length>=sizeof fragment_source){
     gml_gpu_opengl_record_error(error,error_capacity,"exact scene program source is too long");
@@ -499,10 +501,16 @@ static GlSceneExactProgram *build_exact_program(GmlGpuBackend *backend,
   scene->exact_u_surface_rule=backend->gl.GetUniformLocation(scene->exact_program,"u_surface_rule");
   scene->exact_u_surface_tint=backend->gl.GetUniformLocation(scene->exact_program,"u_surface_tint");
   scene->exact_u_surface_alpha=backend->gl.GetUniformLocation(scene->exact_program,"u_surface_alpha");
+  scene->exact_u_repeat_axes=repeat?backend->gl.GetUniformLocation(scene->exact_program,"u_repeat_axes[0]"):-1;
+  scene->exact_u_repeat_counts=repeat?backend->gl.GetUniformLocation(scene->exact_program,"u_repeat_counts"):-1;
   if(scene->exact_a_position<0 ||
      scene->exact_u_extent<0 || scene->exact_u_image<0 || scene->exact_u_previous<0 ||
      scene->exact_u_region_origin<0 ||
-     (!specialised &&
+     (repeat && (scene->exact_u_repeat_axes<0 || scene->exact_u_repeat_counts<0 ||
+       scene->exact_u_underlay_size<0 || scene->exact_u_underlay_flags<0 ||
+       scene->exact_u_surface_rule<0 || scene->exact_u_surface_tint<0 ||
+       scene->exact_u_surface_alpha<0)) ||
+     (!repeat && !specialised &&
       (scene->exact_a_texcoord<0 || scene->exact_a_colour<0 ||
        scene->exact_u_repetitions<0 || scene->exact_u_blend_rule<0 ||
        scene->exact_u_additive_alpha<0 || scene->exact_u_effect_colour<0 ||
@@ -532,6 +540,8 @@ GlSceneExactProgram *gml_gpu_opengl_scene_exact_program(GmlGpuBackend *backend,i
   GlScene *owner=&backend->scene;
   int embedded=backend->api==GML_GPU_API_OPENGLES3;
   unsigned slot=embedded?(font_mode==2?1u:font_mode==3?2u:0u):0u;
+  if(font_mode==GL_SCENE_EXACT_SURFACE_REPEAT)
+    return build_exact_program(backend,&owner->exact_programs[3],font_mode,error,error_capacity);
   if(font_mode!=0 && font_mode!=2 && font_mode!=3){
     gml_gpu_opengl_record_error(error,error_capacity,"exact font policy is unsupported");
     return NULL;

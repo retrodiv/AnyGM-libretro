@@ -4231,6 +4231,58 @@ static int resident_surface_part(GmlRender *r,int surf,double sx,double sy,doubl
   return 1;
 }
 
+static int resident_surface_repeat_box(GmlRender *r,int surf,int sw,int sh,
+  double phase_x,double phase_y,double width,double height,double columns,double rows,
+  uint32_t colour,double alpha){
+  if(surf<=0 || !r->interp || !r->alphablend || r->blendmode ||
+     resident_surface_shader_selected(r) || sw>8*lround(width) || sh>8*lround(height) ||
+     (lround(width)>=sw && lround(height)>=sh)) return 0;
+  if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
+  gml_render_flush_pending_fill(r);
+  if(r->pending_fill || !r->resident_application_pass) return 0;
+  const GmlRenderDeviceServices *device=gml_render_device(r);
+  GmlRenderResourceSource source={0};
+  if(!surface_feedback_source(r,device,gml_render_surface_resource_ensure(r,surf),0,&source))return 0;
+  GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
+  if(!target)return 0;
+  GmlRenderImageRef image=gml_render_application_scene_next_image_ref(r,target);
+  if(image.content_version==UINT64_MAX)return 0;
+  image.content_version++;
+  GmlRenderDrawOp op={.opcode=GML_RENDER_OP_TEXTURED_QUAD,.scene_family=GML_RENDER_SCENE_SURFACE,
+    .reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT,.sources=&source.image,.source_count=1u};
+  op.target=(GmlRenderTargetRef){image,1u,(uint32_t)r->fbw,(uint32_t)r->fbh,GML_RENDER_PIXEL_ARGB8888,
+    {0,0,(uint32_t)r->fbw,(uint32_t)r->fbh}};
+  GmlRenderQuad *q=&op.payload.quad;
+  q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+  q->sampling=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_BOX,GML_RENDER_EDGE_CLAMP_SUBIMAGE,
+    {0,0,(uint32_t)sw,(uint32_t)sh},GML_RENDER_QUANTISE_SURFACE_REPEAT_BOX,0u};
+  q->x[1]=q->x[2]=r->fbw;q->y[2]=q->y[3]=r->fbh;
+  q->u[1]=q->u[2]=q->v[2]=q->v[3]=1.0;
+  q->filtered_draw_alpha=fmin(alpha,1.0);
+  q->span_x[0]=phase_x;q->span_x[1]=width;q->span_x[2]=r->cam_x;q->span_x[3]=columns;
+  q->span_y[0]=phase_y;q->span_y[1]=height;q->span_y[2]=r->cam_y;q->span_y[3]=rows;
+  uint32_t tint=0xFF000000u|((colour&255u)<<16)|(colour&0xFF00u)|((colour>>16)&255u);
+  for(unsigned corner=0;corner<4u;corner++)q->corner_colour[corner]=tint;
+  GmlRenderDrawStateSnapshot state={.colour=0xFFFFFFFFu,.alpha=255u,.write_mask=15u,
+    .alpha_test_enabled=!!r->alpha_test_enable,.alpha_test_reference=r->alpha_test_ref,
+    .rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA,
+    .rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
+    .alpha_source_factor=GML_RENDER_BLEND_ONE,
+    .alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
+    .rgb_equation=GML_RENDER_BLEND_ADD,.alpha_equation=GML_RENDER_BLEND_ADD,
+    .coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA,.sampler_count=1u};
+  surface_source_over_alpha_state(r,&state);
+  int preserve_alpha=gml_render_modern_surface_blends_alpha(r);
+  state.samplers[0]=q->sampling;
+  GmlRenderDrawBatch batch={&op,1u,&state,1u};
+  if(gml_render_application_scene_submit(r,&batch,&source,1u)!=GML_RENDER_RESOURCE_EXEC_DEVICE)
+    return 0;
+  if(!r->app_draw_enable)r->composites_app=1;
+  if(preserve_alpha)r->fb_opaque_known=r->fb_all_opaque=0;
+  r->fb_all_transparent=0;
+  return 1;
+}
+
 int gml_render_resident_surface_tiled(GmlRender *r,int surf,double x,double y,
   double xs,double ys,uint32_t colour,double alpha){
   const GmlRenderDeviceServices *device=gml_render_device(r);
@@ -4276,7 +4328,11 @@ int gml_render_resident_surface_tiled(GmlRender *r,int surf,double x,double y,
    * CPU truncations can exceed the individual fixed-blend budget (measured4).
    * Copies and destination-factor presets do not enter that rounding chain. */
   if(normal && !classic_copy && (!opaque || (r->alphablend && alpha<1.0)) &&
-     lround(width)>width && lround(height)>height) return 0;
+     lround(width)>width && lround(height)>height){
+    return !full_normal && !unit && xs>0 && ys>0 &&
+      resident_surface_repeat_box(r,surf,sw,sh,first_x,first_y,width,height,columns,rows,
+                                  colour,alpha);
+  }
   if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
   gml_render_flush_pending_fill(r);if(r->pending_fill) return 0;
   ResidentSurfaceSelection selection={0,0,(double)sw,(double)sh};
