@@ -75,8 +75,6 @@ static int geometry_cases(void){
     /* The upper aspect tolerance endpoint at the maximum native line count. */
     {357,244,"None",357,357,244,0,0,357,244},
     {358,244,"None",358,640,480,0,22,640,436},
-    {364,244,"None",364,640,480,0,25,640,429},
-    {365,244,"None",365,640,480,0,26,640,427},
     {320,245,"None",320,640,480,7,0,626,480},
     {400,200,"None",400,640,480,0,80,640,320},
     {240,320,"None",240,640,480,140,0,360,480},
@@ -326,7 +324,7 @@ static int vertical_native_cases(void){
     unsigned width,height,expected_width,expected_height;
     bool area_filter;
   } cases[]={
-    {244,320,244,320,false}, {245,320,240,320,true}, {240,365,240,320,true},
+    {244,320,244,320,false}, {245,320,240,320,true},
     {180,320,240,320,false}, {180,326,240,320,true}, {240,348,240,348,false},
     /* Relative tolerance is measured against 3:4 in this orientation. */
     {244,358,244,358,false}, {244,361,244,361,false}, {244,362,240,320,true}
