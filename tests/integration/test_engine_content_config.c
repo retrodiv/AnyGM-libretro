@@ -401,7 +401,7 @@ static void defaults_do_not_hash_payload(void){
   write_text(ini,"[transforms]\ninput.probe=buffer decline(){return scratch_slice(0,0);}\n"
                  "[overrides]\n$count_marker=17\n");observed_bytes=0;
   assert(anygm_load(engine,&source,NULL)==ANYGM_OK);
-  assert(observed_bytes==baseline+size);frame(engine);
+  assert(observed_bytes==baseline+size+(size<131072?size:49152));frame(engine);
   assert(gml_global_num(&engine->vm,"count_marker")==17);
   anygm_destroy(engine);assert(!remove(ini));anygm_synthetic_content_destroy(&fixture);
 }

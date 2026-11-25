@@ -197,19 +197,19 @@ consumer: a transformed ZIP or source project must be loaded by path. Each succe
 memory result is privately owned, including a single-step identity copy. Unselected memory input remains
 borrowed. Rejection publishes neither an output image nor partially selected configuration.
 
-Path preparation reads a selected original once into a bounded buffer and leaves it
-untouched. Fast selector lookup samples only files with a declared candidate size. An actual adaptation's prepared cache key includes the original
-digest, effective program/pipeline identity and output digest. Source adaptation runs on every
-load; this cache is disposable storage, not permission to skip a selected operation or validation.
-An existing prepared data or archive image is reused when its length and imohash match the
-newly prepared bytes. Patch stages independently verify exact SHA-256 digests. Identical bytes are not republished, so a host rename need not
-replace an existing destination. A corrupt regular cache file is removed only after its replacement
-has been fully written and flushed; a failed publication never exposes a partial image. Non-regular
-destinations reject without removal.
-Hosts sharing a cache must serialize writes or give concurrent loads private cache directories.
-Assets and code companions remain relative to the original source directory, or to the extracted
-member directory for an archive result. Adapted Classic images are re-imported so a primary-file
-fingerprint cannot silently authorize reuse after an external resource changes.
+Path preparation samples the original and looks up the effective recipe before reading full
+source bytes. A reusable result matches the original size and imohash, the effective programs,
+parameters, pipeline steps and patch declarations, and the current producer. For Classic,
+the recorded external included files, extension metadata and fidelity companion must also match.
+A hit verifies the stored result's size and imohash and routes it directly. Source bytes beyond
+the samples and external patch bytes are read on a miss, where every executed patch still verifies
+its exact SHA-256 digests. A probe decline leaves no prepared cache entry.
+
+The original path supplies identity and asset lookup for adapted data and Classic content.
+A cached archive goes through ordinary archive routing. imohash is sampled recognition and
+can miss edits outside its samples. Clear the derived cache to recheck external patch files
+or unsampled content. Hosts sharing a cache must serialize writes or give concurrent loads
+private cache directories.
 
 Declare `input`, `input.probe` and `input.final` in defaults, anchors, or fast selector
 sections that match the bytes before preparation. ZIP selectors prepare the original outer

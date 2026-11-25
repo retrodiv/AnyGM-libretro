@@ -80,6 +80,9 @@ int anygm_content_transforms_share_bound_patch(AnygmContentTransforms *target,
 int anygm_content_transform_validate(const AnygmContentTransforms *set,const char *name,
                                       char *error,size_t error_size);
 void anygm_content_transforms_hash(const AnygmContentTransforms *set,uint8_t digest[32]);
+/* Include membership in a selected adapter scope for recipes that route its outputs. */
+void anygm_content_transforms_scoped_hash(const AnygmContentTransforms *set,unsigned priority,
+                                          uint8_t digest[32]);
 int anygm_content_transform_run(const AnygmContentTransforms *set,const char *name,
                                  const void *input,size_t input_size,
                                  const void *metadata,size_t metadata_size,

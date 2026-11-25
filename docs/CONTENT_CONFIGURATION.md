@@ -89,7 +89,7 @@ remain independent of recognition.
 
 The archive-extraction, embedded Studio-image, Classic conversion and source-project
 caches use the same default imohash for source and cached-payload identity.
-Schema-2 markers retain all 128 bits. Directory names retain their input stem
+Cache markers retain all 128 bits. Directory names retain their input stem
 and cache-kind suffix, with an eight-digit lowercase hexadecimal locator between
 them, for example `Example-01234567-anygm-archive`. Classic caches also use one
 eight-digit locator, rather than separate source and dependency fields.
@@ -104,12 +104,15 @@ a limit of 64 candidates, without overwriting that directory. Invalid unowned
 entries remain disposable and are removed by the normal cache-clearing controls.
 The short locator is never an INI selector or an integrity check.
 
-Sizes, producer identity and the applicable transformation/dependency signatures
-also participate in reuse. Loose
-source projects are rebuilt because their external dependencies can change.
-Prepared input-adapter images likewise use imohash identities after preparation
-and patch validation have completed. Small metadata and dependency signatures
-retain their existing algorithms; this does not replace every hash in the loader.
+Sizes, producer identity and the applicable transformation and dependency signatures also
+participate in reuse. Loose source projects are rebuilt because of their external dependencies.
+Prepared results use a source-and-recipe key computed before transformation. A schema-3
+marker identifies the resulting image or package by size and imohash. Classic package markers
+also record included files by relative path, size and imohash and check the extension and
+fidelity companion signatures against the original source. Both adapted and ordinary Classic
+packages can reuse these records without parsing a manifest. The prepared recipe includes the
+declared patch hashes, and a hit reuses the previously validated result without reopening the
+patch resources.
 
 These disposable caches use sampled checks, not complete-byte integrity proofs:
 a same-size modification outside the sampled regions may go undetected. Clear the

@@ -9,6 +9,7 @@
 #include "embedded_nsis.h"
 #include "engine_internal.h"
 #include "gml_hash.h"
+#include "gmlc_classic_fidelity.h"
 #include "memory_vfs.h"
 #include "synthetic_content.h"
 #include "stdio_vfs.h"
@@ -2201,7 +2202,12 @@ static int archive_patch_cases(const AnygmHostServices *services,const char *roo
   if(ok){
     char patch_path[1600];
     snprintf(patch_path,sizeof patch_path,"%s/update.xdelta",assets);
+    char recipe_marker[1600];
+    anygm_content_path_parent(resolved,recipe_marker,sizeof recipe_marker);
+    strcat(recipe_marker,"/.anygm_cache");
     ok=write_file(patch_path,"broken",6) &&
+      anygm_content_resolve_path(&router,path,resolved,sizeof resolved,assets,sizeof assets,
+        overrides,sizeof overrides)==ANYGM_CONTENT_RESOLVE_OK && !remove(recipe_marker) &&
       !anygm_content_resolve_path(&router,path,resolved,sizeof resolved,assets,sizeof assets,
         overrides,sizeof overrides) && !resolved[0];
   }
@@ -2905,7 +2911,7 @@ static int zip_adapter_scope_cases(const AnygmHostServices *services,const char 
          !read_prefix(resolved,magic,sizeof magic) || memcmp(magic,"FORM",4) ||
          !strstr(assets,route==1?"/payload-":"/content-") ||
          cache_observed_bytes[1]!=(route==0?patch_size:0) ||
-         (warm && cache_observed_bytes[0]!=2u*archive.size))
+         (warm && cache_observed_bytes[0]!=(route==1?archive.size:2u*archive.size)))
         goto failed;
     }
   }
@@ -2924,6 +2930,166 @@ static int zip_adapter_scope_cases(const AnygmHostServices *services,const char 
 failed:
   free(wrapped.data);free(archive.data);
   return fail("ZIP adapter scope, member preparation or archive read budget changed");
+}
+
+typedef struct {
+  unsigned preparations,manifests;
+} RecipeEvents;
+
+static void recipe_log(void *userdata,int level,const char *message){
+  (void)level;
+  RecipeEvents *events=userdata;
+  if(strstr(message,"executing source adapters")) events->preparations++;
+  if(strstr(message,"parsing source manifest")) events->manifests++;
+}
+
+static int recipe_case(const AnygmHostServices *services,const char *root,unsigned kind){
+  char directory[600],source[700],patch_path[700],ini[700],resolved[1536],cached[1536],text[2300];
+  snprintf(directory,sizeof directory,"%s/recipe-%u",root,kind);
+  if(mkdir(directory,0700)) return 0;
+  snprintf(source,sizeof source,"%s/original.win",directory);
+  snprintf(patch_path,sizeof patch_path,"%s/original.xdelta",directory);
+  snprintf(ini,sizeof ini,"%s/AnyGM.ini",directory);
+  uint8_t form[200];build_no_code_form(form);
+  Buffer archive={0};
+  ZipEntry member={(const uint8_t *)"data.win",8,form,sizeof form,sizeof form,0,0,0,0};
+  Fixture classic=manifest_fixture(800);
+  if(kind==1 && !build_zip(&member,1,&archive)) return 0;
+  const uint8_t *image=kind==0?form:kind==1?archive.data:classic.data;
+  size_t image_len=kind==0?sizeof form:kind==1?archive.size:classic.size;
+  size_t source_size=196608;
+  uint8_t *original=calloc(1,source_size+1u);
+  if(!original){ free(archive.data);return 0; }
+  store_u32(original,0,(uint32_t)image_len);
+  memcpy(original+16,image,image_len);
+  size_t patch_size=0;
+  uint8_t *patch=anygm_test_vcdiff_literal(form,sizeof form,&patch_size);
+  char patch_hash[65],image_hash[65];
+  anygm_test_sha256_hex(patch,patch_size,patch_hash);
+  anygm_test_sha256_hex(form,sizeof form,image_hash);
+  const char *rules=kind==2?
+    "input=buffer copy(){return slice(0,input_size);}\n"
+    "input.probe=buffer probe(){write64(scratch,0,16);write64(scratch,8,read32(input,0));"
+    "return scratch_slice(0,80);}\n"
+    "input.final=buffer same(){return slice(0,input_size);}\n":
+    "input=buffer unwrap(){return slice(16,read32(input,0));}\n";
+  const char *config="[transforms]\n%s[patches]\nfixture=xdelta|%s|%s|%s|%s|200\n";
+  const char *patch_name="original.xdelta";
+  AnygmHostServices observed=*services;
+  observed.file_open=cache_observe_open;observed.file_read=cache_observe_read;
+  observed.file_close=cache_observe_close;
+  cache_observed_vfs=*services;cache_observed_paths[0]=source;cache_observed_paths[1]=patch_path;
+  RecipeEvents events={0};
+  AnygmContentRouter router={0};
+  router.host=&observed;router.system_directory=directory;router.cache_directory=directory;
+  router.log=recipe_log;router.log_userdata=&events;
+  int ok=write_file(source,original,source_size) && write_file(patch_path,patch,patch_size);
+  for(unsigned step=0;ok && step<(kind==0?8u:2u);step++){
+    int hit=step==1;
+    if(step==2){ source_size++;ok=write_file(source,original,source_size); }
+    if(step==3){ original[8]=1;ok=write_file(source,original,source_size); }
+    if(step==4) rules="input=buffer unwrap(){if(input_size<16) reject();return slice(16,read32(input,0));}\n";
+    if(step==5){ patch_name="changed.xdelta";snprintf(patch_path,sizeof patch_path,"%s/%s",directory,patch_name);
+                  ok=write_file(patch_path,patch,patch_size); }
+    if(step==6 || step==7){
+      char marker[1600],parent[1536];
+      anygm_content_path_parent(cached,parent,sizeof parent);
+      snprintf(marker,sizeof marker,"%s/.anygm_cache",parent);
+      uint8_t *raw=NULL;size_t size=0;
+      ok=read_file(marker,&raw,&size) && size>=96;
+      if(ok){ raw[step==6?80:4]^=1;ok=write_file(marker,raw,size); }
+      free(raw);
+    }
+    snprintf(text,sizeof text,config,rules,patch_name,image_hash,patch_hash,image_hash);
+    ok=ok && write_file(ini,text,strlen(text));
+    events=(RecipeEvents){0};
+    memset(cache_observed_bytes,0,sizeof cache_observed_bytes);
+    ok=ok && anygm_content_resolve_path(&router,source,resolved,sizeof resolved,NULL,0,NULL,0)==ANYGM_CONTENT_RESOLVE_OK &&
+      events.preparations==(unsigned)!hit && events.manifests==(unsigned)(kind==2 && !hit) &&
+      cache_observed_bytes[1]==(hit?0:patch_size) &&
+      cache_observed_bytes[0]==(hit?49152u:source_size+2u*49152u);
+    if(hit) ok=ok && !strcmp(cached,resolved);
+    if(ok) snprintf(cached,sizeof cached,"%s",resolved);
+  }
+  free(original);free(archive.data);free(patch);
+  return ok?1:fail("input recipe reuse or invalidation did not match its work budget");
+}
+
+static int make_fidelity_companion(const Fixture *image,const void *original,size_t size,Buffer *out){
+  GmlcClassicManifest manifest={0};
+  char error[256]={0};
+  if(!gmlc_classic_manifest(NULL,image->data,image->size,&manifest,error,sizeof error)) return 0;
+  uint8_t header[GMLC_CLASSIC_FIDELITY_HEADER_SIZE]={'A','G','C','F'};
+  store_u32(header,4,GMLC_CLASSIC_FIDELITY_VERSION);
+  store_u32(header,8,sizeof header);
+  store_u32(header,16,800);
+  store_u32(header,24,(uint32_t)size);
+  gml_sha256(original,size,header+32);
+  int ok=buffer_bytes(out,header,sizeof header);
+  unsigned count=0;
+  for(unsigned type=0;ok && type<GMLC_CLASSIC_RESOURCE_TYPES;type++){
+    for(unsigned slot=0;ok && slot<manifest.inventory.resource_slots[type];slot++){
+      const GmlcClassicResourceSlot *record=&manifest.slots[type][slot];
+      if(!record->exists) continue;
+      uint8_t row[48]={0};
+      store_u32(row,0,type);store_u32(row,4,slot);store_u32(row,8,record->version);
+      store_u32(row,12,(record->executable_layout?GMLC_CLASSIC_FIDELITY_SLOT_EXECUTABLE_LAYOUT:0) |
+        (record->legacy_layout?GMLC_CLASSIC_FIDELITY_SLOT_LEGACY_LAYOUT:0));
+      ok=buffer_bytes(out,row,sizeof row);
+      count++;
+    }
+  }
+  if(ok) store_u32(out->data,20,count);
+  gmlc_classic_manifest_free(&manifest);
+  return ok;
+}
+
+static int classic_recipe_dependencies(const AnygmHostServices *services,const char *root,int adapted){
+  char directory[600],source[700],ini[700],sidecar[740],extension[700],included[720],resolved[1536];
+  snprintf(directory,sizeof directory,"%s/classic-deps-%d",root,adapted);
+  if(mkdir(directory,0700)) return 0;
+  snprintf(source,sizeof source,"%s/original.gmk",directory);
+  snprintf(ini,sizeof ini,"%s/AnyGM.ini",directory);
+  snprintf(sidecar,sizeof sidecar,"%s%s",source,GMLC_CLASSIC_FIDELITY_SUFFIX);
+  snprintf(extension,sizeof extension,"%s/fixture.gex",directory);
+  snprintf(included,sizeof included,"%s/source",directory);
+  if(mkdir(included,0700)) return 0;
+  strcat(included,"/fixture.dat");
+  Fixture image=manifest_fixture_external();
+  Buffer original={0},companion={0};
+  int ok=(!adapted || buffer_bytes(&original,"WRAP",4)) &&
+    buffer_bytes(&original,image.data,image.size) &&
+    write_file(source,original.data,original.size) && write_file(included,"first",5) &&
+    make_fidelity_companion(&image,original.data,original.size,&companion);
+  free(original.data);
+  const char rules[]="[transforms]\ninput=buffer copy(){return slice(0,input_size);}\n"
+    "input.probe=buffer probe(){write64(scratch,0,4);write64(scratch,8,input_size-4);"
+    "return scratch_slice(0,80);}\n";
+  if(adapted) ok=ok && write_file(ini,rules,sizeof rules-1u);
+  RecipeEvents events={0};
+  AnygmContentRouter router={0};
+  router.host=services;router.system_directory=directory;router.cache_directory=directory;
+  router.log=recipe_log;router.log_userdata=&events;
+  for(unsigned step=0;ok && step<7;step++){
+    int hit=step==1 || step==5;
+    if(step==2) ok=write_file(extension,"extension fixture",17);
+    if(step==3) ok=write_file(sidecar,companion.data,companion.size);
+    if(step==4) ok=write_file(included,"other",5);
+    if(step==6) ok=!remove(included);
+    events=(RecipeEvents){0};
+    AnygmContentResolveResult result=anygm_content_resolve_path(&router,source,resolved,sizeof resolved,
+                                                               NULL,0,NULL,0);
+    ok=ok && result==(step==6?ANYGM_CONTENT_RESOLVE_INVALID:ANYGM_CONTENT_RESOLVE_OK) &&
+      events.manifests==(unsigned)!hit && events.preparations==(unsigned)(adapted && !hit);
+    if(ok && step==4){
+      char export_path[1600];uint8_t data[5];
+      anygm_content_path_parent(resolved,export_path,sizeof export_path);
+      strcat(export_path,"/fixture.dat");
+      ok=read_prefix(export_path,data,sizeof data) && !memcmp(data,"other",sizeof data);
+    }
+  }
+  free(companion.data);
+  return ok?1:fail("Classic external dependencies did not rebuild the cached package");
 }
 
 int main(void){
@@ -2976,7 +3142,10 @@ int main(void){
          input_pipeline_cases(&services,root) &&
          selected_configuration_cases(&services,root) &&
          fast_configuration_cases(&services,root) &&
-         zip_adapter_scope_cases(&services,root);
+         zip_adapter_scope_cases(&services,root) &&
+         recipe_case(&services,root,0) && recipe_case(&services,root,1) &&
+         recipe_case(&services,root,2) && classic_recipe_dependencies(&services,root,0) &&
+         classic_recipe_dependencies(&services,root,1);
   ZipEntry pair[2]={traversal,safe};
   ok=ok&&invalid_case(&services,root,"traversal.zip",pair,2);
   pair[0]=absolute;

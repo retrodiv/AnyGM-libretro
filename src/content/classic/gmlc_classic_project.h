@@ -20,6 +20,15 @@ int gmlc_classic_project_load_image(const AnygmContentTransforms *transforms,Gml
                                     const AnygmHostServices *host,const char *project_path,
                                     const void *image,size_t image_size,const char *cache_dir,
                                     char *err,size_t errcap);
+/* Import an already parsed image. The caller retains and releases the manifest.
+ * Report outside files using the exact bytes consumed by the importer. */
+typedef void (*GmlcClassicIncludedObserver)(void *context,const char *path,
+                                            const void *data,size_t size);
+int gmlc_classic_project_import_manifest(const AnygmContentTransforms *transforms,
+    GmlcProject *project,const AnygmHostServices *host,const char *project_path,
+    const void *original,size_t original_size,GmlcClassicManifest *manifest,
+    const char *cache_dir,GmlcClassicIncludedObserver observe,void *context,
+    char *error,size_t error_size);
 int gmlc_classic_included_dependency_hash(const AnygmContentTransforms *transforms,const AnygmHostServices *host,
                                           const char *project_path,
                                           uint64_t seed,uint64_t *hash_out);

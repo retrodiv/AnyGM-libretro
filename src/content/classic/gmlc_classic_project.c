@@ -90,6 +90,7 @@ static char *classic_store_source(GmlcProject *project, const char *cache_dir,
 
 static int classic_import_metadata(const GmlcClassicManifest *manifest,
                                    GmlcProject *project, const char *cache_dir,
+                                   GmlcClassicIncludedObserver observe,void *context,
                                    char *err, size_t errcap){
   uint32_t live_triggers=0;
   for(uint32_t i=0;i<manifest->trigger_def_count;i++)
@@ -191,6 +192,7 @@ static int classic_import_metadata(const GmlcClassicManifest *manifest,
         char *path=gmlc_path_join(project->root_dir,source->source_path);
         (void)classic_read_file(project->host,path,&included->data,&included->data_size);
         free(path);
+        if(observe) observe(context,source->source_path,included->data,included->data_size);
       }
       if(!included->file_name || !included->custom_folder ||
          (source->data_size && !included->data) ||
@@ -282,46 +284,55 @@ int gmlc_classic_project_load_image(const AnygmContentTransforms *transforms,Gml
     if(err&&errcap) snprintf(err,errcap,"classic project: cannot read project file");
     return 0;
   }
-  GmlcClassicManifest manifest;
-  if(!gmlc_classic_manifest(transforms,image?image:project_data,image?image_size:project_size,
-                            &manifest,err,errcap)){
-    free(project_data); return 0;
-  }
-  if(!gmlc_classic_fidelity_apply(&manifest,host,project_path,project_data,project_size,
-                                  err,errcap)){
-    free(project_data); gmlc_classic_manifest_free(&manifest); return 0;
-  }
+  GmlcClassicManifest manifest={0};
+  int ok=gmlc_classic_manifest(transforms,image?image:project_data,image?image_size:project_size,
+                               &manifest,err,errcap) &&
+    gmlc_classic_project_import_manifest(transforms,project,host,project_path,project_data,
+      project_size,&manifest,cache_dir,NULL,NULL,err,errcap);
+  gmlc_classic_manifest_free(&manifest);
   free(project_data);
-  project->classic_version=(int)manifest.inventory.header.version;
-  project->game_id=manifest.inventory.header.game_id;
-  project->classic_scaling=manifest.inventory.settings.scaling;
-  project->classic_interpolate=manifest.inventory.settings.interpolate;
-  project->classic_swap_creation_events=manifest.inventory.settings.swap_creation_events;
-  project->classic_executable_layout=manifest.executable_layout;
-  project->classic_outside_color=manifest.inventory.settings.outside_color;
+  return ok;
+}
+
+int gmlc_classic_project_import_manifest(const AnygmContentTransforms *transforms,
+    GmlcProject *project,const AnygmHostServices *host,const char *project_path,
+    const void *original,size_t original_size,GmlcClassicManifest *manifest,
+    const char *cache_dir,GmlcClassicIncludedObserver observe,void *context,
+    char *err,size_t errcap){
+  gmlc_project_init(project);
+  project->host=host;
+  project->prefer_memory_files=1;
+  if(!gmlc_classic_fidelity_apply(manifest,host,project_path,original,original_size,err,errcap))
+    return 0;
+  project->classic_version=(int)manifest->inventory.header.version;
+  project->game_id=manifest->inventory.header.game_id;
+  project->classic_scaling=manifest->inventory.settings.scaling;
+  project->classic_interpolate=manifest->inventory.settings.interpolate;
+  project->classic_swap_creation_events=manifest->inventory.settings.swap_creation_events;
+  project->classic_executable_layout=manifest->executable_layout;
+  project->classic_outside_color=manifest->inventory.settings.outside_color;
   GmlcClassicBlob game_information={0};
   int game_information_ok=gmlc_classic_game_information_decode(
-    &manifest.game_information,&game_information,err,errcap);
+    &manifest->game_information,&game_information,err,errcap);
   project->classic_game_information=game_information.data;
   project->classic_game_information_size=game_information.size;
   project->name = classic_stem(project_path);
   project->root_dir = gmlc_path_dirname(project_path);
   project->yyp_path = gmlc_strdup(project_path);
   int ok = game_information_ok && project->name && project->root_dir && project->yyp_path &&
-    classic_import_metadata(&manifest, project, cache_dir, err, errcap) &&
-    gmlc_classic_import_scripts(&manifest, project, cache_dir, err, errcap) &&
-    gmlc_classic_import_extension_aliases(transforms,&manifest, project, project->root_dir, err, errcap) &&
-    gmlc_classic_import_sprites(&manifest, project, cache_dir, err, errcap) &&
-    gmlc_classic_import_backgrounds(&manifest, project, cache_dir, err, errcap) &&
-    gmlc_classic_import_sounds(&manifest, project, cache_dir, err, errcap) &&
-    gmlc_classic_import_paths(&manifest, project, err, errcap) &&
-    gmlc_classic_import_fonts(&manifest, project, cache_dir, err, errcap) &&
-    gmlc_classic_import_timelines(&manifest, project, cache_dir, err, errcap) &&
-    gmlc_classic_import_objects(&manifest, project, cache_dir, err, errcap) &&
-    gmlc_classic_import_rooms(&manifest, project, cache_dir, err, errcap);
+    classic_import_metadata(manifest,project,cache_dir,observe,context,err,errcap) &&
+    gmlc_classic_import_scripts(manifest, project, cache_dir, err, errcap) &&
+    gmlc_classic_import_extension_aliases(transforms,manifest, project, project->root_dir, err, errcap) &&
+    gmlc_classic_import_sprites(manifest, project, cache_dir, err, errcap) &&
+    gmlc_classic_import_backgrounds(manifest, project, cache_dir, err, errcap) &&
+    gmlc_classic_import_sounds(manifest, project, cache_dir, err, errcap) &&
+    gmlc_classic_import_paths(manifest, project, err, errcap) &&
+    gmlc_classic_import_fonts(manifest, project, cache_dir, err, errcap) &&
+    gmlc_classic_import_timelines(manifest, project, cache_dir, err, errcap) &&
+    gmlc_classic_import_objects(manifest, project, cache_dir, err, errcap) &&
+    gmlc_classic_import_rooms(manifest, project, cache_dir, err, errcap);
   if(ok) ok=classic_add_empty_room(project,cache_dir,err,errcap);
-  if(ok) ok=gmlc_classic_import_room_order(&manifest,project,err,errcap);
-  gmlc_classic_manifest_free(&manifest);
+  if(ok) ok=gmlc_classic_import_room_order(manifest,project,err,errcap);
   if(!ok){
     if(err && errcap && !err[0]) snprintf(err, errcap, "classic project: normalization failed");
     gmlc_project_free(project);

@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "engine_internal.h"
+#include "content_router.h"
 #include "gml_hash.h"
 #include "stdio_vfs.h"
 #include "synthetic_content.h"
@@ -152,8 +153,16 @@ static int dependency_rejection(void){
   PatchFixture f; setup(&f);
   assert(anygm_load(f.engine,&f.source,NULL)==ANYGM_OK); expect_payload(&f,2);
   anygm_unload(f.engine);
-  /* A warm output never substitutes for a missing or altered dependency. */
+  char marker[1536];
+  snprintf(marker,sizeof marker,"%s",f.engine->current_content_path);
+  char *leaf=strrchr(marker,'/');assert(leaf);
+  strcpy(leaf+1,".anygm_cache");
   assert(!remove(f.patch_path[1]));
+  /* The published recipe already verified the declared patch. */
+  assert(anygm_load(f.engine,&f.source,NULL)==ANYGM_OK); expect_payload(&f,2);
+  anygm_unload(f.engine);
+  /* Recovery without a marker still checks each actual patch. */
+  assert(!remove(marker));
   assert(anygm_load(f.engine,&f.source,NULL)==ANYGM_ERROR_INVALID_CONTENT);
   assert(!f.engine->win.data);
   f.patch[1][f.patch_size[1]-1]^=1;
@@ -184,12 +193,21 @@ static int memory_dependency_rejection(void){
 
 static int cache_reuse_and_repair(void){
   PatchFixture f; setup(&f);
+  f.source.save_directory=f.content[0].directory;
   assert(anygm_load(f.engine,&f.source,NULL)==ANYGM_OK); expect_payload(&f,2);
-  char cached[1536]; snprintf(cached,sizeof cached,"%s",f.engine->current_content_path);
+  char cached[1536],save[1536];
+  snprintf(cached,sizeof cached,"%s",f.engine->current_content_path);
+  snprintf(save,sizeof save,"%s",f.engine->win.save_dir);
+  char label[128],expected[1536];
+  anygm_content_save_label(f.content[0].path,label,sizeof label);
+  snprintf(expected,sizeof expected,"%s/AnyGM/%s-%08x",f.source.save_directory,label,
+           anygm_content_path_hash(f.content[0].path));
+  assert(!strcmp(save,expected));
   anygm_unload(f.engine);
   /* Exact cached bytes need no publication, even when renames are unavailable. */
   f.engine->host.path_rename=reject_publication;
   assert(anygm_load(f.engine,&f.source,NULL)==ANYGM_OK); expect_payload(&f,2);
+  assert(!strcmp(f.engine->win.save_dir,save));
   anygm_unload(f.engine);
   /* Temporarily hiding an anchor selects the original image. Restoring its
    * extension must recover the same prepared input without clearing caches. */

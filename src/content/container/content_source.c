@@ -156,7 +156,10 @@ int anygm_content_source_prepare_scoped(const AnygmContentTransforms *transforms
   if(ok && scope) scope->changed_outside_scope=changed_outside_scope ||
     (!anygm_content_transforms_has_priority(transforms,"input.final",scope->priority) &&
      bytes_changed(final_input,final_size,*output,*output_size));
-  free(selected);
+  if(ok && selected && !bytes_changed(selected,selected_size,*output,*output_size)){
+    free(*output);
+    *output=selected;
+  } else free(selected);
   return ok;
 }
 

@@ -45,6 +45,7 @@ int build_project_fixture(unsigned version, Fixture *out);
  * keep that code as plain text for compilation during loading, so this embeds the source rather
  * than compiling anything. `gml` may be NULL, which reproduces the plain fixture byte for byte.
  * Every fixture contains authored normalized bytes and loads without a source or record program. */
+Fixture manifest_fixture_external(void);
 Fixture manifest_fixture_source(unsigned container_version, const char *gml);
 Fixture legacy_fixture_source(unsigned container_version, const char *gml);
 int build_project_fixture_source(unsigned version, const char *gml, Fixture *out);

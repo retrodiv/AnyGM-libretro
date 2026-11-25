@@ -133,7 +133,7 @@ Fixture manifest_fixture(unsigned container_version){
   return manifest_fixture_source(container_version,NULL);
 }
 
-Fixture manifest_fixture_source(unsigned container_version, const char *gml){
+static Fixture manifest_fixture_with_include(unsigned container_version,const char *gml,int external){
   Fixture f = {{0}, 0};
   fixture_u32(&f, GMLC_CLASSIC_MAGIC); fixture_u32(&f, container_version);
   fixture_u32(&f, 9); fixture_zero(&f, 16);
@@ -174,10 +174,14 @@ Fixture manifest_fixture_source(unsigned container_version, const char *gml){
   { Fixture included={{0},0}; const unsigned char contents[]={4,5,6,7};
     fixture_zero(&included,8); fixture_u32(&included,800);
     fixture_string(&included,"fixture.dat"); fixture_string(&included,"source/fixture.dat");
-    fixture_u32(&included,1); fixture_u32(&included,sizeof(contents)); fixture_u32(&included,1);
-    fixture_u32(&included,sizeof(contents)); memcpy(included.data+included.size,contents,sizeof(contents)); included.size+=sizeof(contents);
+    fixture_u32(&included,1); fixture_u32(&included,sizeof(contents)); fixture_u32(&included,!external);
+    if(!external){
+      fixture_u32(&included,sizeof(contents));
+      memcpy(included.data+included.size,contents,sizeof contents);
+      included.size+=sizeof contents;
+    }
     fixture_u32(&included,2); fixture_string(&included,"");
-    fixture_u32(&included,1); fixture_u32(&included,0); fixture_u32(&included,0);
+    fixture_u32(&included,!external); fixture_u32(&included,0); fixture_u32(&included,0);
     fixture_compressed(&f,included.data,(int)included.size); }
   fixture_u32(&f, 700); fixture_u32(&f, 1); /* extensions */
   fixture_string(&f,"fixture_extension");
@@ -189,6 +193,14 @@ Fixture manifest_fixture_source(unsigned container_version, const char *gml){
   if(gml) fixture_string(&f,gml);
   fixture_u32(&f, 700); fixture_u32(&f, 0); /* executable rooms */
   return f;
+}
+
+Fixture manifest_fixture_source(unsigned container_version,const char *gml){
+  return manifest_fixture_with_include(container_version,gml,0);
+}
+
+Fixture manifest_fixture_external(void){
+  return manifest_fixture_with_include(800,NULL,1);
 }
 
 int build_executable_fixture(Fixture *executable){

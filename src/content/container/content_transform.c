@@ -406,7 +406,8 @@ int anygm_content_transforms_parse_layer_without_input(AnygmContentTransforms *s
   return parse_transform_layer(set,text,size,priority,1,error,error_size);
 }
 
-void anygm_content_transforms_hash(const AnygmContentTransforms *set,uint8_t digest[32]){
+static void transforms_hash(const AnygmContentTransforms *set,uint8_t digest[32],
+                            const unsigned *scope){
   /* Fixed per-entry hashes sorted by name make identity independent of INI order. */
   const TransformEntry *ordered[ANYGM_TRANSFORM_MAX_PROGRAMS];
   uint8_t records[ANYGM_TRANSFORM_MAX_PROGRAMS][192];
@@ -429,6 +430,21 @@ void anygm_content_transforms_hash(const AnygmContentTransforms *set,uint8_t dig
     if(entry->patch) anygm_content_patch_hash(entry->patch,records[i]+160);
   }
   gml_sha256(records,count*sizeof records[0],digest);
+  if(scope){
+    uint8_t identity[32+ANYGM_TRANSFORM_MAX_PROGRAMS]={0};
+    memcpy(identity,digest,32);
+    for(size_t i=0;i<count;i++) identity[32+i]=ordered[i]->priority==*scope;
+    gml_sha256(identity,32+count,digest);
+  }
+}
+
+void anygm_content_transforms_hash(const AnygmContentTransforms *set,uint8_t digest[32]){
+  transforms_hash(set,digest,NULL);
+}
+
+void anygm_content_transforms_scoped_hash(const AnygmContentTransforms *set,unsigned priority,
+                                          uint8_t digest[32]){
+  transforms_hash(set,digest,&priority);
 }
 
 typedef struct {

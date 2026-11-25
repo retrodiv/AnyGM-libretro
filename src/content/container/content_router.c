@@ -22,6 +22,7 @@
 #include "gml_image_codec.h"
 #include "anygm_producer_fingerprint.h"
 #include "anygm_vfs.h"
+#include "anygm_host.h"
 #include <ctype.h>
 #include <limits.h>
 #include <stdint.h>
@@ -52,6 +53,7 @@ typedef struct ContentConfigResolution {
   AnygmContentConfig *ini;
   int input_adapted;
   int archive_member;
+  char zip_patch_source[1536];
   uint64_t sampled_size;
   CacheFingerprint sampled_fingerprint;
   char sampled_path[1536];
@@ -88,6 +90,9 @@ static int bind_patch_resources(const AnygmContentRouter *router,const char *sou
   anygm_content_path_parent(source_path,parent,sizeof parent);
   size_t remaining=(size_t)ANYGM_TRANSFORM_MAX_INPUT_BYTES;
   ContentConfigResolution *config=router->configuration;
+  char outer_parent[1024];
+  if(config->zip_patch_source[0])
+    anygm_content_path_parent(config->zip_patch_source,outer_parent,sizeof outer_parent);
   for(size_t i=0;i<count;i++){
     AnygmContentPatchSpec spec;
     char name[64],path[1536],detail[256]={0};
@@ -100,7 +105,10 @@ static int bind_patch_resources(const AnygmContentRouter *router,const char *sou
       if(size>remaining) return 0;
       if(size){ remaining-=size; continue; }
     }
-    if(remaining<5u || !path_join_bounded(path,sizeof path,parent,spec.path) ||
+    const char *resource_root=parent;
+    if(config->archive_member && config->zip_patch_source[0] &&
+       anygm_content_transforms_has_priority(transforms,name,UINT_MAX)) resource_root=outer_parent;
+    if(remaining<5u || !path_join_bounded(path,sizeof path,resource_root,spec.path) ||
        !anygm_vfs_read_all(router->host,path,&bytes,&size,remaining)){
       if(error && error_size) snprintf(error,error_size,
         "patch '%s': could not read the declared resource within the shared byte limit",name);
@@ -277,6 +285,14 @@ static int file_imohash(const AnygmContentRouter *router,const char *path,CacheF
   return 1;
 }
 
+static void remember_source_fingerprint(ContentConfigResolution *config,const char *path,
+                                        uint64_t size,CacheFingerprint digest){
+  if(strlen(path)>=sizeof config->sampled_path) return;
+  snprintf(config->sampled_path,sizeof config->sampled_path,"%s",path);
+  config->sampled_size=size;
+  config->sampled_fingerprint=digest;
+}
+
 /* Share a source sample between selector lookup and the cache that consumes it.
  * Explicit post-read verification still uses file_imohash. */
 static int source_fingerprint(const AnygmContentRouter *router,const char *path,uint64_t size,
@@ -287,16 +303,13 @@ static int source_fingerprint(const AnygmContentRouter *router,const char *path,
     return 1;
   }
   if(!file_imohash(router,path,out)) return 0;
-  if(strlen(path)<sizeof config->sampled_path){
-    snprintf(config->sampled_path,sizeof config->sampled_path,"%s",path);
-    config->sampled_size=size;
-    config->sampled_fingerprint=*out;
-  }
+  remember_source_fingerprint(config,path,size,*out);
   return 1;
 }
 
 enum {
   ANYGM_CACHE_SCHEMA=2,
+  ANYGM_CLASSIC_RECIPE_SCHEMA=3,
   ANYGM_CACHE_PRODUCER_REVISION=3,
   ANYGM_CACHE_ARCHIVE=1,
   ANYGM_CACHE_SOURCE_PROJECT=2,
@@ -324,9 +337,14 @@ static uint32_t cache_get_u32(const uint8_t *p){
 static uint64_t cache_get_u64(const uint8_t *p){
   return (uint64_t)cache_get_u32(p)|((uint64_t)cache_get_u32(p+4)<<32);
 }
+static uint32_t cache_schema(uint32_t kind){
+  return kind==ANYGM_CACHE_INPUT_IMAGE || kind==ANYGM_CACHE_CLASSIC_PROJECT?
+    ANYGM_CLASSIC_RECIPE_SCHEMA:ANYGM_CACHE_SCHEMA;
+}
+
 static int cache_marker_source_matches(const uint8_t *header,uint32_t kind,
                                        CacheFingerprint source,uint64_t size,uint64_t context){
-  return !memcmp(header,"AGCH",4) && cache_get_u32(header+4)==ANYGM_CACHE_SCHEMA &&
+  return !memcmp(header,"AGCH",4) && cache_get_u32(header+4)==cache_schema(kind) &&
     cache_get_u32(header+8)==ANYGM_CACHE_HEADER_SIZE && cache_get_u32(header+12)==kind &&
     !memcmp(header+24,source.bytes,16) && cache_get_u64(header+40)==size &&
     cache_get_u64(header+88)==context;
@@ -348,7 +366,9 @@ static int cache_marker_read(const AnygmContentRouter *router,const char *path,u
      data_len>=data_cap){
     free(contents); return 0;
   }
-  if(contents_size!=ANYGM_CACHE_HEADER_SIZE+data_len) ok=0;
+  if(contents_size!=ANYGM_CACHE_HEADER_SIZE+data_len ||
+     (cache_schema(kind)==ANYGM_CLASSIC_RECIPE_SCHEMA &&
+      memchr(contents+ANYGM_CACHE_HEADER_SIZE,0,data_len))) ok=0;
   uint64_t stored_data_hash=ok?cache_get_u64(header+72):0;
   CacheFingerprint stored_payload_fingerprint={{0}};
   if(ok) memcpy(stored_payload_fingerprint.bytes,header+48,16);
@@ -370,7 +390,7 @@ static int cache_marker_write(const AnygmContentRouter *router,const char *path,
   if(data_len>UINT32_MAX) return 0;
   uint8_t header[ANYGM_CACHE_HEADER_SIZE]={0};
   memcpy(header,"AGCH",4);
-  cache_put_u32(header+4,ANYGM_CACHE_SCHEMA);
+  cache_put_u32(header+4,cache_schema(kind));
   cache_put_u32(header+8,ANYGM_CACHE_HEADER_SIZE);
   cache_put_u32(header+12,kind);
   cache_put_u32(header+16,ANYGM_CACHE_PRODUCER_REVISION);
@@ -1685,11 +1705,153 @@ static int validate_data_candidate(void *context,const void *data,size_t size,
   return ok;
 }
 
+typedef struct {
+  const AnygmContentRouter *router;
+  const AnygmContentTransforms *transforms;
+  GmlcClassicManifest manifest;
+  const void *validated_image;
+  size_t validated_size;
+} ClassicCandidate;
+
+static int parse_classic_manifest(ClassicCandidate *candidate,const void *data,size_t size,
+                                  char *error,size_t error_size){
+  content_log(candidate->router,ANYGM_CONTENT_LOG_INFO,"classic: parsing source manifest");
+  return gmlc_classic_manifest(candidate->transforms,data,size,&candidate->manifest,error,error_size);
+}
+
 static int validate_source_candidate(void *context,const void *data,size_t size,
                                       char *error,size_t error_size){
   if(size>=4u && !memcmp(data,"FORM",4))
     return validate_data_candidate(NULL,data,size,error,error_size);
-  return gmlc_classic_validate_image(context,data,size,error,error_size);
+  ClassicCandidate *candidate=context;
+  GmlcClassicManifest previous=candidate->manifest;
+  memset(&candidate->manifest,0,sizeof candidate->manifest);
+  if(!parse_classic_manifest(candidate,data,size,error,error_size)){
+    gmlc_classic_manifest_free(&candidate->manifest);
+    candidate->manifest=previous;
+    return 0;
+  }
+  gmlc_classic_manifest_free(&previous);
+  candidate->validated_image=data;
+  candidate->validated_size=size;
+  return 1;
+}
+
+enum { RECIPE_METADATA_CAP=256u*1024u, INPUT_METADATA_PREFIX=34u };
+typedef struct {
+  char *text;
+  size_t used,capacity;
+} ClassicDependencies;
+
+static void capture_included_dependency(void *context,const char *path,const void *data,size_t size){
+  ClassicDependencies *dependencies=context;
+  if(!dependencies->capacity) return;
+  char relative[ANYGM_CONTENT_MAX_MEMBER_PATH+1u];
+  CacheFingerprint digest;
+  size_t length=strlen(path);
+  if(!data || length>=sizeof relative || !gml_imohash(data,size,digest.bytes)){
+    dependencies->capacity=0;
+    return;
+  }
+  memcpy(relative,path,length+1u);
+  if(!anygm_content_member_normalize(relative,length)){
+    dependencies->capacity=0;
+    return;
+  }
+  char hex[33];
+  cache_fingerprint_hex(digest,hex);
+  size_t remaining=dependencies->capacity-dependencies->used;
+  int written=snprintf(dependencies->text+dependencies->used,remaining,
+    "%016llx %s %s\n",(unsigned long long)size,hex,relative);
+  if(written<0 || (size_t)written>=remaining) dependencies->capacity=0;
+  else dependencies->used+=(size_t)written;
+}
+
+static int classic_dependency_context(const AnygmContentRouter *router,const char *path,uint64_t *out){
+  /* Development package inputs can carry arbitrary external data. */
+  if(anygm_host_development_setting(router->host,"GMLC_REFERENCE_WIN") ||
+     anygm_host_development_setting(router->host,"GMLC_CODE_PLACEHOLDERS") ||
+     anygm_host_development_setting(router->host,"GMLC_FAIL_ON_PLACEHOLDER")) return 0;
+  char source_dir[4096];
+  anygm_content_path_parent(path,source_dir,sizeof source_dir);
+  /* The importer also derives the project name from the original filename. */
+  const char *name=path+strlen(path);
+  while(name>path && name[-1]!='/' && name[-1]!='\\') name--;
+  uint64_t hash=cache_hash_bytes(name,strlen(name));
+  return gmlc_classic_extension_dependency_hash(router->host,source_dir,hash,&hash) &&
+    gmlc_classic_fidelity_dependency_hash(router->host,path,hash,out);
+}
+
+static int file_matches(const AnygmContentRouter *router,const char *path,
+                        uint64_t size,CacheFingerprint digest){
+  uint64_t actual_size=0;CacheFingerprint actual;
+  return file_size64(router,path,&actual_size) && actual_size==size &&
+    file_imohash(router,path,&actual) && cache_fingerprint_equal(actual,digest);
+}
+
+static int classic_dependencies_match(const AnygmContentRouter *router,const char *path,
+                                       const char *text){
+  uint64_t context=0;char expected[18];
+  if(!classic_dependency_context(router,path,&context)) return 0;
+  snprintf(expected,sizeof expected,"%016llx\n",(unsigned long long)context);
+  if(strncmp(text,expected,17u)) return 0;
+  text+=17u;
+  char root[1024];anygm_content_path_parent(path,root,sizeof root);
+  while(*text){
+    const char *end=strchr(text,'\n');
+    if(!end || end-text<51 || text[16]!=' ' || text[49]!=' ') return 0;
+    uint64_t size=0;
+    for(unsigned i=0;i<16;i++){
+      unsigned c=(unsigned char)text[i];
+      if(c>='0' && c<='9') c-='0';
+      else if(c>='a' && c<='f') c=c-'a'+10u;
+      else return 0;
+      size=(size<<4)|c;
+    }
+    char relative[ANYGM_CONTENT_MAX_MEMBER_PATH+1u],included[1536];
+    size_t length=(size_t)(end-(text+50));
+    if(length>=sizeof relative) return 0;
+    memcpy(relative,text+50,length);relative[length]=0;
+    if(!anygm_content_member_normalize(relative,length) ||
+       !path_join_bounded(included,sizeof included,root,relative)) return 0;
+    uint64_t current=0;CacheFingerprint digest;char hex[33];
+    if(!file_size64(router,included,&current) || current!=size ||
+       !file_imohash(router,included,&digest)) return 0;
+    cache_fingerprint_hex(digest,hex);
+    if(memcmp(hex,text+17,32)) return 0;
+    text=end+1;
+  }
+  return 1;
+}
+
+static int write_classic_package(const AnygmContentRouter *router,ClassicCandidate *candidate,
+    const char *path,const void *original,size_t original_size,const void *image,size_t image_size,
+    const char *directory,const char *output,char *dependencies,size_t capacity,
+    char *error,size_t error_size){
+  if(candidate->validated_image!=image || candidate->validated_size!=image_size){
+    gmlc_classic_manifest_free(&candidate->manifest);
+    if(!parse_classic_manifest(candidate,image,image_size,error,error_size)) return 0;
+  }
+  uint64_t context=0;
+  ClassicDependencies record={dependencies,17u,0};
+  if(capacity>=18u && classic_dependency_context(router,path,&context)){
+    snprintf(dependencies,capacity,"%016llx\n",(unsigned long long)context);
+    record.capacity=capacity;
+  } else if(capacity) dependencies[0]=0;
+  GmlcProject project;
+  if(!gmlc_classic_project_import_manifest(candidate->transforms,&project,router->host,path,
+       original,original_size,&candidate->manifest,directory,capture_included_dependency,&record,
+       error,error_size)) return 0;
+  /* Exports in this directory are derived package files. Rebuilding must
+   * replace them even when the original runner's export was non-overwriting. */
+  for(int i=0;i<project.n_included_files;i++) project.included_files[i].overwrite_file=1;
+  int ok=gmlc_package_write_structural(&project,output,error,error_size);
+  gmlc_project_free(&project);
+  uint64_t current=0;
+  if(record.capacity && (!classic_dependency_context(router,path,&current) || current!=context))
+    record.capacity=0;
+  if(!record.capacity && capacity) dependencies[0]=0;
+  return ok;
 }
 
 static int publish_input_image(const AnygmContentRouter *router,const char *path,
@@ -1728,106 +1890,137 @@ static int publish_input_image(const AnygmContentRouter *router,const char *path
   return ok;
 }
 
-/* A selected source adapter returns a supported byte representation, never an
- * executable callback. It runs once before routing its result. A byte-identical
- * result declines adaptation and leaves ordinary member/adjacent-file selection
- * unchanged. Original paths remain authoritative for assets and fidelity data. */
+static int route_input_image(const AnygmContentRouter *router,const char *path,const char *output,
+    char kind,char *content_path,size_t content_size,char *asset_root,size_t asset_root_size,
+    char *overrides,size_t overrides_size,int depth){
+  ContentConfigResolution *config=router->configuration;
+  config->input_adapted=kind!='z';
+  if(kind=='Z' || kind=='z'){
+    if(!config->archive_member && config->zip_key[0])
+      snprintf(config->zip_patch_source,sizeof config->zip_patch_source,"%s",path);
+    return load_archive_content_depth(router,output,content_path,content_size,asset_root,
+                                      asset_root_size,overrides,overrides_size,depth);
+  }
+  snprintf(config->identity_path,sizeof config->identity_path,"%s",path);
+  if(snprintf(content_path,content_size,"%s",output)>=(int)content_size) return 0;
+  if(asset_root && asset_root_size) anygm_content_path_parent(path,asset_root,asset_root_size);
+  return 1;
+}
+
+/* A byte-identical result declines adaptation and resumes ordinary routing.
+ * Only changed output is eligible for the deterministic recipe cache. */
 static int load_input_pipeline(const AnygmContentRouter *router,const char *path,
                                 char *content_path,size_t content_size,
                                 char *asset_root,size_t asset_root_size,
                                 char *overrides,size_t overrides_size,int depth){
   ContentConfigResolution *config=router->configuration;
-  /* A lower-layer adaptation routes once. ZIP-scope adapters are filtered
-   * on member selection, leaving that member's own preparation available. */
   if(config->input_adapted)
     return select_fast_configuration(router,path,CONFIG_ROUTED_PAYLOAD)?0:-1;
   if(!select_fast_configuration(router,path,CONFIG_PIPELINE_SOURCE)) return -1;
   if(!anygm_content_source_configured(router->transforms)) return 0;
+
   int outer_zip_input=!config->archive_member && config->zip_key[0] &&
     anygm_content_config_key_has_input(config->ini,config->zip_key);
+  uint64_t source_size=0;
+  CacheFingerprint source_hash,recipe;
+  uint8_t identity[56];
+  if(!file_size64(router,path,&source_size) ||
+     !source_fingerprint(router,path,source_size,&source_hash)) return -1;
+  memcpy(identity,source_hash.bytes,16);
+  if(outer_zip_input) anygm_content_transforms_scoped_hash(router->transforms,UINT_MAX,identity+16);
+  else anygm_content_transforms_hash(router->transforms,identity+16);
+  cache_put_u64(identity+48,cache_producer_fingerprint());
+  if(!gml_imohash(identity,sizeof identity,recipe.bytes)) return -1;
+  const char *cache=router->cache_directory?router->cache_directory:"tmp";
+  char directory[1400],marker[1536],output[1536],error[256]={0};
+  int cache_paths=cache_directory(router,cache,"input",NULL,ANYGM_CACHE_INPUT_IMAGE,
+    recipe,source_size,0,directory,sizeof directory) &&
+    path_join_bounded(marker,sizeof marker,directory,".anygm_cache");
+  char *metadata=malloc(RECIPE_METADATA_CAP);
+  if(!metadata) return -1;
+  CacheFingerprint output_hash;uint64_t output_size;
+  if(cache_paths && cache_marker_read(router,marker,ANYGM_CACHE_INPUT_IMAGE,recipe,source_size,0,
+        &output_hash,&output_size,metadata,RECIPE_METADATA_CAP) &&
+     strlen(metadata)>=INPUT_METADATA_PREFIX && metadata[INPUT_METADATA_PREFIX-1u]=='\n'){
+    char kind=metadata[0];
+    int zip=kind=='Z' || kind=='z';
+    if((zip || kind=='D' || kind=='C') &&
+       (kind=='C'?classic_dependencies_match(router,path,metadata+INPUT_METADATA_PREFIX):
+                  !metadata[INPUT_METADATA_PREFIX]) &&
+       path_join_bounded(output,sizeof output,directory,zip?"payload.zip":"data.win") &&
+       file_matches(router,output,output_size,output_hash)){
+      char image_key[49];
+      if(kind=='C') snprintf(image_key,sizeof image_key,"imohash:payload:%.32s",metadata+1);
+      else payload_key(output_hash,image_key);
+      if(zip) remember_source_fingerprint(config,output,output_size,output_hash);
+      int ok=check_late_input(router,path,image_key);
+      free(metadata);
+      if(!ok) return -1;
+      content_log(router,ANYGM_CONTENT_LOG_INFO,"input pipeline: reusing prepared recipe at %s",output);
+      return route_input_image(router,path,output,kind,content_path,content_size,asset_root,
+                               asset_root_size,overrides,overrides_size,depth)?1:-1;
+    }
+  }
+
   AnygmContentSourceScope zip_scope={.priority=UINT_MAX};
   AnygmContentTransforms *selected=anygm_content_transforms_create();
+  ClassicCandidate candidate={.router=router,.transforms=selected};
   uint8_t *original=NULL,*image=NULL;
   size_t original_size=0,image_size=0;
-  char error[256]={0};
   int result=-1;
   if(!selected || !anygm_content_transforms_copy(selected,router->transforms)) goto done;
   if(!anygm_vfs_read_all(router->host,path,&original,&original_size,
                          (size_t)ANYGM_TRANSFORM_MAX_INPUT_BYTES)) goto done;
   if(!bind_patch_resources(router,path,selected,error,sizeof error)) goto done;
+  content_log(router,ANYGM_CONTENT_LOG_INFO,"input pipeline: executing source adapters");
   if(!anygm_content_source_prepare_scoped(selected,original,original_size,validate_source_candidate,
-       selected,outer_zip_input?&zip_scope:NULL,&image,&image_size,error,sizeof error)) goto done;
+       &candidate,outer_zip_input?&zip_scope:NULL,&image,&image_size,error,sizeof error)) goto done;
   int changed=image && (image_size!=original_size || memcmp(image,original,image_size));
-  int zip_result=changed && image_size>=4u && !memcmp(image,"PK\003\004",4);
-  if(!config->archive_member && config->zip_key[0] && (!changed || zip_result) &&
+  int zip=changed && image_size>=4u && !memcmp(image,"PK\003\004",4);
+  if(!config->archive_member && config->zip_key[0] && (!changed || zip) &&
      anygm_content_transforms_patch_count(selected)){
     config->zip_patches=anygm_content_transforms_create();
     if(!config->zip_patches ||
        !anygm_content_transforms_keep_bound_patches(config->zip_patches,selected,UINT_MAX)) goto done;
   }
   if(!changed){ result=0; goto done; }
-  int kind=image_size>=8u && !memcmp(image,"FORM",4)?1:
-    zip_result?2:
-    image_size>=8u && zu32(image)==GMLC_CLASSIC_MAGIC?3:
-    image_size>=2u && image[0]=='M' && image[1]=='Z'?3:0;
+  char kind=zip?(outer_zip_input && !zip_scope.changed_outside_scope?'z':'Z'):
+    image_size>=8u && !memcmp(image,"FORM",4)?'D':
+    (image_size>=8u && zu32(image)==GMLC_CLASSIC_MAGIC) ||
+    (image_size>=2u && image[0]=='M' && image[1]=='Z')?'C':0;
   if(!kind){ snprintf(error,sizeof error,"result is not a supported input representation"); goto done; }
-  if(!anygm_content_transforms_copy(router->transforms,selected)) goto done;
-  config->input_adapted=kind!=2 || !outer_zip_input || zip_scope.changed_outside_scope;
-  /* Only actual adaptation needs this cache identity. Include both complete
-   * imohash values and the independent transformation/dependency signature. */
-  CacheFingerprint original_fingerprint,image_fingerprint,key;
-  uint8_t identity[72];char hex[33];
-  if(config->sampled_size==original_size && !strcmp(config->sampled_path,path))
-    original_fingerprint=config->sampled_fingerprint;
-  else if(!gml_imohash(original,original_size,original_fingerprint.bytes)) goto done;
-  if(!gml_imohash(image,image_size,image_fingerprint.bytes)) goto done;
-  char image_key[49];
-  payload_key(image_fingerprint,image_key);
-  if(!check_late_input(router,path,image_key)) goto cleanup;
-  memcpy(identity,original_fingerprint.bytes,16);
-  anygm_content_transforms_hash(selected,identity+16);
-  memcpy(identity+48,image_fingerprint.bytes,16);
-  cache_put_u64(identity+64,cache_producer_fingerprint());
-  if(!gml_imohash(identity,sizeof identity,key.bytes)) goto done;
-  char directory[1400],output[1536];
-  const char *cache=router->cache_directory?router->cache_directory:"tmp";
-  if(!cache_directory(router,cache,"input",NULL,ANYGM_CACHE_INPUT_IMAGE,
-       key,image_size,0,directory,sizeof directory) ||
-     !path_join_bounded(output,sizeof output,directory,kind==2?"payload.zip":"data.win") ||
+  if(!cache_paths || !path_join_bounded(output,sizeof output,directory,zip?"payload.zip":"data.win") ||
      !anygm_vfs_mkdirs(router->host,directory)) goto done;
-  if(kind==3){
-    /* Always re-import an adapted project: companion files may have changed.
-     * No cache marker claims that the primary image covers those dependencies. */
-    GmlcProject project;
-    if(!gmlc_classic_project_load_image(selected,&project,router->host,path,image,image_size,
-         directory,error,sizeof error)) goto done;
-    int ok=gmlc_package_write_structural(&project,output,error,sizeof error);
-    gmlc_project_free(&project);
-    if(!ok) goto done;
-  } else if(!publish_input_image(router,output,image,image_size,image_fingerprint,error,sizeof error))
-    goto done;
-  char marker[1536];uint64_t output_size=image_size;CacheFingerprint output_fingerprint=image_fingerprint;
-  int output_identity_ok=kind!=3 ||
-    (file_size64(router,output,&output_size) && file_imohash(router,output,&output_fingerprint));
-  CacheFingerprint stored_fingerprint;uint64_t stored_size=0;char marker_data[1];
-  if(!path_join_bounded(marker,sizeof marker,directory,".anygm_cache") ||
-     !output_identity_ok ||
-     (!(cache_marker_read(router,marker,ANYGM_CACHE_INPUT_IMAGE,key,image_size,0,
-                           &stored_fingerprint,&stored_size,marker_data,sizeof marker_data) &&
-         stored_size==output_size && cache_fingerprint_equal(stored_fingerprint,output_fingerprint)) &&
-      !cache_marker_write(router,marker,ANYGM_CACHE_INPUT_IMAGE,key,image_size,0,
-                           output_fingerprint,output_size,NULL)))
-    content_log(router,ANYGM_CONTENT_LOG_WARN,"input pipeline: could not publish cache marker");
-  if(kind==2){
-    if(!load_archive_content_depth(router,output,content_path,content_size,asset_root,asset_root_size,
-                                   overrides,overrides_size,depth)) goto done;
-  } else {
-    snprintf(config->identity_path,sizeof config->identity_path,"%s",path);
-    if(snprintf(content_path,content_size,"%s",output)>=(int)content_size) goto done;
-    if(asset_root && asset_root_size)
-      anygm_content_path_parent(path,asset_root,asset_root_size);
+
+  CacheFingerprint image_hash,observed_source;
+  if(!gml_imohash(image,image_size,image_hash.bytes) ||
+     !gml_imohash(original,original_size,observed_source.bytes)) goto done;
+  if(original_size!=source_size || !cache_fingerprint_equal(source_hash,observed_source) ||
+     !file_matches(router,path,source_size,source_hash)){
+    snprintf(error,sizeof error,"source changed during preparation"); goto done;
   }
-  cache_fingerprint_hex(original_fingerprint,hex);
+  char hex[33],image_key[49];
+  cache_fingerprint_hex(image_hash,hex);
+  payload_key(image_hash,image_key);
+  if(!check_late_input(router,path,image_key)) goto cleanup;
+  snprintf(metadata,RECIPE_METADATA_CAP,"%c%s\n",kind,hex);
+  output_size=image_size;output_hash=image_hash;
+  int reusable=1;
+  if(kind=='C'){
+    if(!write_classic_package(router,&candidate,path,original,original_size,image,image_size,
+         directory,output,metadata+INPUT_METADATA_PREFIX,RECIPE_METADATA_CAP-INPUT_METADATA_PREFIX,
+         error,sizeof error)) goto done;
+    reusable=file_size64(router,output,&output_size) && file_imohash(router,output,&output_hash);
+  } else if(!publish_input_image(router,output,image,image_size,image_hash,error,sizeof error))
+    goto done;
+
+  int routed=route_input_image(router,path,output,kind,content_path,content_size,asset_root,
+                               asset_root_size,overrides,overrides_size,depth);
+  if(!routed) goto done;
+  if(reusable && !cache_marker_write(router,marker,ANYGM_CACHE_INPUT_IMAGE,recipe,source_size,0,
+                                     output_hash,output_size,metadata))
+    content_log(router,ANYGM_CONTENT_LOG_WARN,"input pipeline: could not publish cache marker");
+  cache_fingerprint_hex(source_hash,hex);
   content_log(router,ANYGM_CONTENT_LOG_INFO,"input pipeline: normalized %s imohash %s",path,hex);
   result=1;
 done:
@@ -1837,15 +2030,15 @@ done:
     content_log(router,ANYGM_CONTENT_LOG_ERROR,"input pipeline: %s",error[0]?error:"source preparation failed");
   }
 cleanup:
-  anygm_content_transforms_destroy(selected); free(original); free(image);
+  gmlc_classic_manifest_free(&candidate.manifest);
+  anygm_content_transforms_destroy(selected);free(metadata);free(original);free(image);
   return result;
 }
 
 static int load_classic_project_content(const AnygmContentRouter *router,const char *srcpath,
                                         char *content_path,size_t cpsz){
   if(!select_fast_configuration(router,srcpath,CONFIG_ROUTED_PAYLOAD)) return 0;
-  const char *base=router?router->cache_directory:NULL;
-  if(!base) base="tmp";
+  const char *base=router->cache_directory?router->cache_directory:"tmp";
   char stem[256];
   anygm_content_path_stem(srcpath,stem,sizeof stem);
   CacheFingerprint src_hash;
@@ -1855,48 +2048,46 @@ static int load_classic_project_content(const AnygmContentRouter *router,const c
   uint8_t transform_hash[32];
   anygm_content_transforms_hash(router->transforms,transform_hash);
   uint64_t source_context=cache_hash_bytes(transform_hash,sizeof transform_hash);
-  char source_dir[4096];
-  anygm_content_path_parent(srcpath,source_dir,sizeof(source_dir));
-  if(!gmlc_classic_extension_dependency_hash(router->host,source_dir,source_context,&source_context)) return 0;
-  if(!gmlc_classic_fidelity_dependency_hash(router->host,srcpath,source_context,&source_context)) return 0;
-  if(!gmlc_classic_included_dependency_hash(router->transforms,router->host,srcpath,source_context,&source_context)) return 0;
-  char outdir[768];
+  char outdir[768],outwin[900],marker[900];
   if(!cache_directory(router,base,stem,"anygm-classic",ANYGM_CACHE_CLASSIC_PROJECT,
-       src_hash,src_size,source_context,outdir,sizeof outdir)) return 0;
-  char outwin[900], marker[900];
-  snprintf(outwin,sizeof outwin,"%s/data.win",outdir);
-  snprintf(marker,sizeof marker,"%s/.anygm_cache",outdir);
-  char marker_data[1];
-  CacheFingerprint stored_hash,actual_hash;uint64_t stored_size=0,actual_size=0;
-  if(cache_marker_read(router,marker,ANYGM_CACHE_CLASSIC_PROJECT,src_hash,src_size,source_context,
-                       &stored_hash,&stored_size,marker_data,sizeof marker_data) &&
-     file_size64(router,outwin,&actual_size) && actual_size==stored_size &&
-     file_imohash(router,outwin,&actual_hash) && cache_fingerprint_equal(actual_hash,stored_hash)){
-    snprintf(content_path,cpsz,"%s",outwin);
-    snprintf(router->configuration->identity_path,sizeof router->configuration->identity_path,"%s",srcpath);
-    content_log(router,ANYGM_CONTENT_LOG_INFO,"classic: reusing cached package at %s",outwin);
-    return 1;
+       src_hash,src_size,source_context,outdir,sizeof outdir) ||
+     !path_join_bounded(outwin,sizeof outwin,outdir,"data.win") ||
+     !path_join_bounded(marker,sizeof marker,outdir,".anygm_cache")) return 0;
+  char *metadata=malloc(RECIPE_METADATA_CAP);
+  if(!metadata) return 0;
+  CacheFingerprint output_hash;uint64_t output_size=0;
+  int ok=cache_marker_read(router,marker,ANYGM_CACHE_CLASSIC_PROJECT,src_hash,src_size,
+      source_context,&output_hash,&output_size,metadata,RECIPE_METADATA_CAP) &&
+    classic_dependencies_match(router,srcpath,metadata) &&
+    file_matches(router,outwin,output_size,output_hash);
+  if(ok) content_log(router,ANYGM_CONTENT_LOG_INFO,"classic: reusing cached package at %s",outwin);
+  else {
+    ClassicCandidate candidate={.router=router,.transforms=router->transforms};
+    uint8_t *original=NULL;size_t original_size=0;
+    char error[1024]={0};
+    CacheFingerprint observed;
+    ok=anygm_vfs_read_all(router->host,srcpath,&original,&original_size,(size_t)GMLC_CLASSIC_FILE_LIMIT);
+    if(ok && (original_size!=src_size || !gml_imohash(original,original_size,observed.bytes) ||
+              !cache_fingerprint_equal(src_hash,observed))){
+      snprintf(error,sizeof error,"source changed while reading the project");
+      ok=0;
+    }
+    ok=ok && mkdirs_for(router,outdir,1) &&
+      write_classic_package(router,&candidate,srcpath,original,original_size,original,original_size,
+                           outdir,outwin,metadata,RECIPE_METADATA_CAP,error,sizeof error);
+    gmlc_classic_manifest_free(&candidate.manifest);free(original);
+    if(ok){
+      if(file_size64(router,outwin,&output_size) &&
+         file_imohash(router,outwin,&output_hash) &&
+         !cache_marker_write(router,marker,ANYGM_CACHE_CLASSIC_PROJECT,src_hash,src_size,source_context,
+                             output_hash,output_size,metadata))
+        content_log(router,ANYGM_CONTENT_LOG_WARN,"classic: could not publish cache marker");
+      content_log(router,ANYGM_CONTENT_LOG_INFO,"classic: compiled %s -> %s",srcpath,outwin);
+    } else content_log(router,ANYGM_CONTENT_LOG_ERROR,"classic: %s",error[0]?error:"project load failed");
   }
-  if(!mkdirs_for(router,outdir,1)) return 0;
-  GmlcProject project;
-  char err[1024]={0};
-  if(!gmlc_classic_project_load(router->transforms,&project,router->host,srcpath,outdir,err,sizeof err)){
-    content_log(router,ANYGM_CONTENT_LOG_ERROR,"classic: %s",err[0]?err:"project load failed");
-    return 0;
-  }
-  int ok=gmlc_package_write_structural(&project,outwin,err,sizeof err);
-  gmlc_project_free(&project);
-  if(!ok){
-    content_log(router,ANYGM_CONTENT_LOG_ERROR,"classic: %s",err[0]?err:"package write failed");
-    return 0;
-  }
-  if(file_size64(router,outwin,&actual_size) && file_imohash(router,outwin,&actual_hash) &&
-     !cache_marker_write(router,marker,ANYGM_CACHE_CLASSIC_PROJECT,src_hash,src_size,source_context,
-                         actual_hash,actual_size,NULL))
-    content_log(router,ANYGM_CONTENT_LOG_WARN,"classic: could not publish cache marker");
-  snprintf(content_path,cpsz,"%s",outwin);
+  free(metadata);
+  if(!ok || snprintf(content_path,cpsz,"%s",outwin)>=(int)cpsz) return 0;
   snprintf(router->configuration->identity_path,sizeof router->configuration->identity_path,"%s",srcpath);
-  content_log(router,ANYGM_CONTENT_LOG_INFO,"classic: compiled %s -> %s",srcpath,outwin);
   return 1;
 }
 
