@@ -170,7 +170,9 @@ void engine_state_prepared_discard(AnygmEngine *engine){
 static void cw_raw(CoreW *s, const void *p, size_t n){
   if(n>SIZE_MAX-s->pos){ s->ok=0; s->pos=SIZE_MAX; return; }
   if(s->data){
-    if(s->pos<=s->cap && n<=s->cap-s->pos && (!n || p)) memcpy(s->data+s->pos,p,n);
+    if(s->pos<=s->cap && n<=s->cap-s->pos && (!n || p)){
+      if(n) memcpy(s->data+s->pos,p,n);
+    }
     else s->ok=0;
   }
   s->pos+=n;
