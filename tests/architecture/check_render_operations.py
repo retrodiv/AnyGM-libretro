@@ -252,6 +252,7 @@ DISPATCH_PORTS = {
     "gml_render_surface_scene_submit",
     "gml_render_resource_submit",
     "gml_render_resource_submit_deferred",
+    "gml_render_resident_classic_phase_clear",
 }
 DISPATCH_PREFIXES = (
     "gml_draw_", "gml_render_primitive_", "gml_software3d_draw_",
