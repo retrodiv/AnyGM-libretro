@@ -157,12 +157,16 @@ int anygm_vfs_stat(const AnygmHostServices *host,const char *path,AnygmFileInfo 
 }
 
 int anygm_vfs_mkdirs(const AnygmHostServices *host,const char *path){
+  return anygm_vfs_mkdirs_from(host,path,0);
+}
+
+int anygm_vfs_mkdirs_from(const AnygmHostServices *host,const char *path,size_t root_size){
   if(!host || !host->directory_create || !path || !path[0]) return 0;
   size_t length=strlen(path);
-  if(length>=4096) return 0;
+  if(length>=4096 || root_size>length) return 0;
   char copy[4096];
   memcpy(copy,path,length+1);
-  for(char *cursor=copy+1;*cursor;cursor++){
+  for(char *cursor=copy+(root_size?root_size:1u);*cursor;cursor++){
     if(*cursor!='/'&&*cursor!='\\') continue;
     char saved=*cursor;
     *cursor=0;

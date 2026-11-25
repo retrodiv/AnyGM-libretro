@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "gml_builtin.h"
+#include "gml_builtin_internal.h"
 #include "anygm_test_runner.h"
 #include "memory_vfs.h"
 #include "gml_render_internal.h"
@@ -14,12 +15,15 @@
 typedef struct {
   AnygmMemoryVfs memory; /* first member also serves ordinary memory-VFS callbacks */
   AnygmHostServices base, host;
+  GmlWin roots;
   size_t read_limit, read_total, max_requested;
   int short_eof, fail_seek, fail_flush, fail_truncate, overread, shorter_extent, fail_rewind;
+  unsigned path_queries, path_changes, directory_opens;
   int opened, closed;
 } FileFixture;
 static void *fixture_open(void *userdata,const char *path,AnygmFileMode mode){
   FileFixture *f=userdata;
+  f->path_queries++;
   if(f->fail_truncate && (mode&ANYGM_FILE_TRUNCATE)) return NULL;
   void *file=f->base.file_open(&f->memory,path,mode);
   if(file) f->opened++;
@@ -50,6 +54,27 @@ static AnygmResult fixture_flush(void *userdata,void *file){
   FileFixture *f=userdata;
   return f->fail_flush?ANYGM_ERROR_IO:f->base.file_flush(&f->memory,file);
 }
+static AnygmResult fixture_stat(void *userdata,const char *path,AnygmFileInfo *info){
+  FileFixture *f=userdata;
+  f->path_queries++;
+  return f->base.file_stat(&f->memory,path,info);
+}
+static void *fixture_directory_open(void *userdata,const char *path){
+  FileFixture *f=userdata;
+  f->path_queries++;
+  f->directory_opens++;
+  return f->base.directory_open(&f->memory,path);
+}
+static AnygmResult fixture_remove(void *userdata,const char *path){
+  FileFixture *f=userdata;
+  f->path_changes++;
+  return f->base.path_remove(&f->memory,path);
+}
+static AnygmResult fixture_rename(void *userdata,const char *from,const char *to){
+  FileFixture *f=userdata;
+  f->path_changes++;
+  return f->base.path_rename(&f->memory,from,to);
+}
 static void fixture_init(FileFixture *f,GmlVM *vm){
   memset(f,0,sizeof *f); memset(vm,0,sizeof *vm);
   anygm_memory_vfs_init(&f->memory,&f->base);
@@ -57,6 +82,10 @@ static void fixture_init(FileFixture *f,GmlVM *vm){
   f->host.file_open=fixture_open; f->host.file_close=fixture_close;
   f->host.file_read=fixture_read; f->host.file_seek=fixture_seek;
   f->host.file_flush=fixture_flush; vm->host=&f->host;
+  f->host.file_stat=fixture_stat; f->host.directory_open=fixture_directory_open;
+  f->host.path_remove=fixture_remove; f->host.path_rename=fixture_rename;
+  snprintf(f->roots.content_dir,sizeof f->roots.content_dir,"/fixture");
+  vm->win=&f->roots;
 }
 static int fixture_destroy(FileFixture *f,GmlVM *vm){
   gml_vm_free(vm);
@@ -78,6 +107,93 @@ static int string_is(GmlVal value,const char *expected){
   return ok;
 }
 static int real_is(GmlVal value,double expected){ return value.t==V_REAL && value.d==expected; }
+static int file_starts_with(FileFixture *f,const char *path,char marker){
+  for(size_t i=0;i<f->memory.node_count;i++){
+    const AnygmMemoryVfsNode *node=&f->memory.nodes[i];
+    if(!strcmp(node->path,path)) return !node->directory && node->size && node->data[0]==marker;
+  }
+  return 0;
+}
+static int game_file_roots_case(void){
+  static const char *const rejected[]={
+    "../unbound.dat","nested\\..\\..\\unbound.dat","/fixture/../unbound.dat",
+    "/host/saves/game/../unbound.dat","D:unbound.dat","aux.txt","part. /file.txt",
+    "file.txt:stream"
+  };
+  int ok=1;
+  for(int cached=0;cached<2;cached++){
+    FileFixture f; GmlVM vm;
+    fixture_init(&f,&vm);
+    snprintf(f.roots.save_dir,sizeof f.roots.save_dir,"/host/saves/game");
+    snprintf(f.roots.payload_dir,sizeof f.roots.payload_dir,"/payload");
+    ok &= f.base.directory_create(&f.memory,"/fixture")==ANYGM_OK &&
+      f.base.directory_create(&f.memory,"/host/saves/game")==ANYGM_OK &&
+      anygm_memory_vfs_add_file(&f.memory,"/fixture/list.txt","C",1) &&
+      anygm_memory_vfs_add_file(&f.memory,"/payload/list.txt","P",1) &&
+      anygm_memory_vfs_add_file(&f.memory,"/host/saves/game/overlaid.txt","S",1) &&
+      anygm_memory_vfs_add_file(&f.memory,"/fixture/overlaid.txt","C",1) &&
+      anygm_memory_vfs_add_file(&f.memory,"/fixture-neighbor/a.txt","O",1) &&
+      anygm_memory_vfs_add_file(&f.memory,"/host/saves/game/fixture-neighbor/a.txt","R",1);
+
+    GmlVal path=vstr("sub\\..\\list.txt");
+    ok &= string_is(invoke(&vm,"filename_absolute",&path,1,cached,&ok),"/payload/list.txt");
+    path=vstr("/fixture/overlaid.txt");
+    ok &= string_is(invoke(&vm,"filename_absolute",&path,1,cached,&ok),"/host/saves/game/overlaid.txt");
+    path=vstr("/fixture-neighbor/a.txt");
+    GmlVal handle=invoke(&vm,"file_text_open_read",&path,1,cached,&ok);
+    ok &= handle.t==V_REAL && handle.d>0;
+    ok &= string_is(invoke(&vm,"file_text_read_string",&handle,1,cached,&ok),"R");
+    invoke(&vm,"file_text_close",&handle,1,cached,&ok);
+
+    path=vstr("D:\\portable\\folder");
+    ok &= real_is(invoke(&vm,"directory_create",&path,1,cached,&ok),1);
+    AnygmFileInfo info={.struct_size=sizeof info};
+    ok &= f.base.file_stat(&f.memory,"/host",&info)!=ANYGM_OK;
+    path=vstr("D:\\portable\\folder\\notes.txt");
+    handle=invoke(&vm,"file_text_open_write",&path,1,cached,&ok);
+    GmlVal text[]={handle,vstr("W")};
+    invoke(&vm,"file_text_write_string",text,2,cached,&ok);
+    invoke(&vm,"file_text_close",&handle,1,cached,&ok);
+    ok &= file_starts_with(&f,"/host/saves/game/portable/folder/notes.txt",'W');
+    path=vstr("/fixture/*.txt");
+    ok &= string_is(invoke(&vm,"file_find_first",&path,1,cached,&ok),"list.txt");
+    invoke(&vm,"file_find_close",NULL,0,cached,&ok);
+    unsigned directories=f.directory_opens;
+    path=vstr("/fixture");
+    ok &= string_is(invoke(&vm,"file_find_first",&path,1,cached,&ok),"") &&
+      directories==f.directory_opens;
+
+    unsigned queries=f.path_queries,changes=f.path_changes;
+    for(size_t i=0;i<sizeof rejected/sizeof *rejected;i++){
+      path=vstr(rejected[i]);
+      ok &= real_is(invoke(&vm,"file_exists",&path,1,cached,&ok),0) &&
+        real_is(invoke(&vm,"file_text_open_write",&path,1,cached,&ok),-1) &&
+        real_is(invoke(&vm,"file_delete",&path,1,cached,&ok),0) &&
+        string_is(invoke(&vm,"file_find_first",&path,1,cached,&ok),"");
+      GmlVal pair[]={path,vstr("allowed.txt")};
+      ok &= real_is(invoke(&vm,"file_rename",pair,2,cached,&ok),0);
+    }
+    ok &= queries==f.path_queries && changes==f.path_changes;
+
+    /* State fields contain already bound names. A restored name must still belong to a root. */
+    vm.pending_game_load=strdup("/fixture-neighbor/a.txt");
+    gml_builtin_finish_game_load(&vm);
+    ok &= !vm.pending_game_load && queries==f.path_queries;
+    path=vstr("[settings]\nvalue=12\n");
+    invoke(&vm,"ini_open_from_string",&path,1,cached,&ok);
+    snprintf(vm.builtins->ini_path,sizeof vm.builtins->ini_path,"/fixture-neighbor/a.txt");
+    GmlVal closed=invoke(&vm,"ini_close",NULL,0,cached,&ok);
+    if(closed.t==V_STR && closed.d!=0) free((void *)closed.s);
+    ok &= queries==f.path_queries && file_starts_with(&f,"/fixture-neighbor/a.txt",'O');
+
+    f.roots.save_dir[0]=f.roots.content_dir[0]=f.roots.payload_dir[0]=0;
+    path=vstr("unbound.txt");
+    ok &= real_is(invoke(&vm,"file_text_open_write",&path,1,cached,&ok),-1) &&
+      real_is(invoke(&vm,"file_exists",&path,1,cached,&ok),0) && queries==f.path_queries;
+    ok &= fixture_destroy(&f,&vm);
+  }
+  return ok;
+}
 static double saved_marker(GmlVM *vm){
   GmlVal *value=gml_varmap_get(&vm->globals,"saved_marker");
   return value && value->t==V_REAL?value->d:-1;
@@ -171,8 +287,8 @@ static int text_signature_case(void){
     for(size_t input=0;input<sizeof inputs/sizeof inputs[0];input++){
       FileFixture f; GmlVM vm; fixture_init(&f,&vm);
       f.read_limit=1;
-      ok &= anygm_memory_vfs_add_file(&f.memory,"/text.txt",inputs[input],strlen(inputs[input]));
-      GmlVal path=vstr("/text.txt");
+      ok &= anygm_memory_vfs_add_file(&f.memory,"/fixture/text.txt",inputs[input],strlen(inputs[input]));
+      GmlVal path=vstr("text.txt");
       GmlVal handle=invoke(&vm,"file_text_open_read",&path,1,cached,&ok);
       ok &= handle.t==V_REAL && handle.d>0;
       ok &= string_is(invoke(&vm,"file_text_read_string",&handle,1,cached,&ok),expected[input]);
@@ -234,13 +350,13 @@ static int digest_failure_case(void){
   const char *names[]={"md5_file","sha1_file"};
   for(int fault=0;fault<9;fault++){
     FileFixture f; GmlVM vm; fixture_init(&f,&vm);
-    anygm_memory_vfs_add_file(&f.memory,"/input.bin","abc",3);
+    anygm_memory_vfs_add_file(&f.memory,"/fixture/input.bin","abc",3);
     f.read_limit=1; f.short_eof=fault==0; f.fail_seek=fault==1;
     if(fault==2) f.host.file_read=NULL;
     if(fault==4) f.host.file_seek=NULL;
     f.overread=fault==5; f.shorter_extent=fault==6; f.fail_rewind=fault==7;
     if(fault==8) f.host.file_open=NULL;
-    GmlVal path=vstr(fault==3?"/missing.bin":"/input.bin");
+    GmlVal path=vstr(fault==3?"missing.bin":"input.bin");
     for(int algorithm=0;algorithm<2;algorithm++){
       f.read_total=0;
       ok &= string_is(invoke(&vm,names[algorithm],&path,1,1,&ok),"");
@@ -253,8 +369,8 @@ static int rewrite_case(void){
   int ok=1;
   for(int cached=0;cached<2;cached++){
     FileFixture f; GmlVM vm; fixture_init(&f,&vm);
-    anygm_memory_vfs_add_file(&f.memory,"/input.bin","abcdef",6);
-    GmlVal args[]={vstr("/input.bin"),vreal(2)};
+    anygm_memory_vfs_add_file(&f.memory,"/fixture/input.bin","abcdef",6);
+    GmlVal args[]={vstr("input.bin"),vreal(2)};
     GmlVal file=gml_builtin_call(&vm,"file_bin_open",args,2);
     GmlVal seek[]={file,vreal(3)};
     gml_builtin_call(&vm,"file_bin_seek",seek,2);
@@ -274,8 +390,8 @@ static int rewrite_failure_case(void){
   int ok=1;
   for(int fault=0;fault<5;fault++){
     FileFixture f; GmlVM vm; fixture_init(&f,&vm);
-    anygm_memory_vfs_add_file(&f.memory,"/input.bin","abc",3);
-    GmlVal args[]={vstr("/input.bin"),vreal(fault==0?0:2)};
+    anygm_memory_vfs_add_file(&f.memory,"/fixture/input.bin","abc",3);
+    GmlVal args[]={vstr("input.bin"),vreal(fault==0?0:2)};
     GmlVal file=gml_builtin_call(&vm,"file_bin_open",args,2);
     GmlVal seek[]={file,vreal(1)};
     gml_builtin_call(&vm,"file_bin_seek",seek,2);
@@ -358,7 +474,7 @@ static int image_save_case(void){
     gml_surface_reset_target(&render);
     args[1]=vstr("/other/explicit.png");
     invoke(&vm,"surface_save",args,2,cached,&ok);
-    ok &= image_is(&f,"/other/explicit.png",2,1,surface,0);
+    ok &= image_is(&f,"/save/other/explicit.png",2,1,surface,0);
     /* No frontend save directory: retain ordinary content-directory fallback. */
     win.save_dir[0]=0; path=vstr("fallback.png");
     invoke(&vm,"screen_save",&path,1,cached,&ok);
@@ -424,6 +540,7 @@ static int image_save_failure_case(void){
 }
 int main(void){
   static const AnygmTestCase cases[]={
+    {"game_file_roots",game_file_roots_case},
     {"legacy_save_load_files_and_deferred_boundary",legacy_save_actions_case},
     {"legacy_load_pending_state_and_rejected_files",legacy_load_request_state_case},
     {"text_signature_and_binary_preservation",text_signature_case},

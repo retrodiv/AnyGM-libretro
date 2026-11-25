@@ -395,8 +395,7 @@ completed game drawing; an earlier call observes the screen available at that
 point. Frontend menus, shaders, and subsequent frontend scaling are outside the
 core's captured image.
 
-Relative filenames and absolute filenames beneath the content's working directory
-are routed to its writable namespace:
+Game image filenames use the same writable namespace as other game files:
 
 ```text
 <save_directory>/AnyGM/<sanitized-label>-<path-hash>/<filename>
@@ -406,10 +405,11 @@ For a libretro host, `save_directory` comes from
 `RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY`. It is the frontend's save-file directory,
 not its save-state or screenshot directory, and its UI label may vary. Filename
 subdirectories are retained and must already be writable. Absolute paths outside
-the content directory retain ordinary file-write behavior and depend on the host's
-permissions. Without a save root, relative writes fall back to the content
-directory. The adapter's existing system-directory fallback still applies when
-the frontend supplies no save directory.
+the game roots are interpreted within the writable namespace after dropping the
+volume prefix and leading separators. With no save root, the explicitly named
+content directory provides the writable root. The adapter's system-directory
+fallback applies when the frontend supplies no save directory. See the
+[game file resolution rules](SECURITY_MODEL.md#vfs-confinement).
 
 Invalid or unavailable surfaces, a missing screen, and unavailable or failed
 filesystem writes do not produce a successful capture; export failures are logged

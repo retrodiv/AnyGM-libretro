@@ -17,6 +17,8 @@ int anygm_vfs_write_all(const AnygmHostServices *host,const char *path,
 int anygm_vfs_copy(const AnygmHostServices *host,const char *source,const char *destination);
 int anygm_vfs_stat(const AnygmHostServices *host,const char *path,AnygmFileInfo *info);
 int anygm_vfs_mkdirs(const AnygmHostServices *host,const char *path);
+/* The caller supplies a validated path and the length of its trusted root. */
+int anygm_vfs_mkdirs_from(const AnygmHostServices *host,const char *path,size_t root_size);
 int anygm_vfs_publish(const AnygmHostServices *host,const char *temporary,const char *destination);
 void anygm_vfs_remove(const AnygmHostServices *host,const char *path);
 /* Recover the on-disk spelling of a path whose components differ only in case, which is what a

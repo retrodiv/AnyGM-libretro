@@ -197,10 +197,23 @@ cache, and save roots are passed explicitly in `AnygmContentSource`; the core
 does not infer sibling repositories, a home directory, or a process working
 directory.
 
-Writable content files are confined below the explicit save root in
-`anygm/<sanitized-label>-<path-hash>/`. The human-readable label contains only
-ASCII letters, digits, dots, hyphens, and underscores. It is descriptive only;
-the path hash keeps separate source identities from colliding by label alone.
+The game file resolver normalizes separators and dot components before invoking
+the VFS. A name that climbs above its root, uses drive-relative or stream syntax,
+or names a platform device is rejected. Relative reads check the per-content save,
+payload, and source content directories. Writes use the per-content save directory
+or, when no save directory was supplied, the explicitly named content directory.
+An absolute name within these roots retains its root-relative meaning. Other
+absolute names use the writable directory with their original volume prefix and
+leading separators removed. Subdirectories remain part of the name. Writes require
+a name beneath the writable directory. The game never acquires an implicit root
+from the process working directory. Reopened INI files and deferred game files
+validate their stored root and suffix before use.
+
+The frontend-provided save directory holds the namespace
+`AnyGM/<sanitized-label>-<path-hash>/`. The human-readable label uses ASCII
+letters, digits, dots, hyphens, and underscores. The path hash keeps separate
+source identities from colliding by label alone. The host VFS remains responsible
+for resolved containment, including symbolic links and mount points.
 
 The portable nsfs adapter applies an additional content/save-root check before
 using the ordinary overlay resolver. Absolute names outside those roots and any

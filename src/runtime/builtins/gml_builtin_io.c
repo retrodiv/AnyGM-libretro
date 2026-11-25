@@ -37,11 +37,14 @@ static int path_readable(GmlVM *vm,const char *p){
          (info.flags&ANYGM_FILE_INFO_REGULAR)!=0;
 }
 
+static char *resolve_bound_path(GmlVM *vm,const char *path,int writable);
+
 /* No user event is executing at this boundary. Keep the existing VM codec and
  * VFS namespace; a rejected file restores the snapshot taken before its read. */
 void gml_builtin_finish_game_load(GmlVM *vm){
   if(!vm || !vm->pending_game_load) return;
-  char *path=vm->pending_game_load;
+  char *path=resolve_bound_path(vm,vm->pending_game_load,0);
+  free(vm->pending_game_load);
   vm->pending_game_load=NULL;
   uint8_t *data=NULL,*snapshot=NULL;size_t length=0,written=0,used=0;
   if(anygm_vfs_read_all(vm->host,path,&data,&length,256u*1024u*1024u) && length){
@@ -60,8 +63,19 @@ void gml_builtin_finish_game_load(GmlVM *vm){
   }
   free(snapshot);free(data);free(path);
 }
-static int path_absolute(const char *p){
-  return p && (p[0]=='/' || (p[0] && p[1]==':'));
+static int path_separator(char c){
+  return c=='/' || c=='\\';
+}
+
+/* Host roots can use a drive letter or a VFS mount name. A drive-relative name has
+ * no such root and is rejected as a relative component containing a colon. */
+static const char *path_absolute_suffix(const char *path){
+  if(!path || !*path) return NULL;
+  if(path_separator(*path)) return path;
+  if(!isalpha((unsigned char)*path)) return NULL;
+  const char *end=path+1;
+  while(isalnum((unsigned char)*end) || *end=='_' || *end=='-' || *end=='.') end++;
+  return *end==':' && path_separator(end[1])?end+1:NULL;
 }
 static int path_stat(GmlVM *vm,const char *p,AnygmFileInfo *info){
   memset(info,0,sizeof *info);
@@ -72,18 +86,15 @@ static int path_stat(GmlVM *vm,const char *p,AnygmFileInfo *info){
 }
 static int path_present(GmlVM *vm,const char *p);
 static char *path_under(const char *dir,const char *p){
-  if(!dir || !dir[0]) return strdup(p?p:"");
-  size_t n=strlen(dir)+1+strlen(p?p:"")+1;
-  char *out=malloc(n);
-  if(!out) return strdup(p?p:"");
-  snprintf(out,n,"%s/%s",dir,p?p:"");
-  /* GameMaker paths are authored with Windows separators even on a
-   * non-Windows host.  A backslash cannot name a distinct path component in the original
-   * environment, so preserve that contract at the sandbox boundary instead of creating files
-   * whose literal names contain backslashes on Unix.  Forward slashes are accepted by the
-   * Windows CRT as well, which keeps this representation portable across host targets. */
-  for(char *cursor=out+strlen(dir)+1;*cursor;cursor++)
-    if(*cursor=='\\') *cursor='/';
+  if(!dir || !*dir || !p) return NULL;
+  if(!*p) return strdup(dir);
+  size_t root_size=strlen(dir),size=strlen(p);
+  if(size>SIZE_MAX-root_size-2u) return NULL;
+  char *out=malloc(root_size+size+2u);
+  if(!out) return NULL;
+  memcpy(out,dir,root_size);
+  if(!path_separator(out[root_size-1])) out[root_size++]='/';
+  memcpy(out+root_size,p,size+1u);
   return out;
 }
 static int path_component_equal_folded(const char *left,size_t left_size,
@@ -93,6 +104,65 @@ static int path_component_equal_folded(const char *left,size_t left_size,
     if(tolower((unsigned char)left[index])!=
        tolower((unsigned char)right[index])) return 0;
   return 1;
+}
+
+static int path_component_safe(const char *component,size_t size){
+  if(!size || component[size-1]=='.' || component[size-1]==' ') return 0;
+  size_t stem=size;
+  for(size_t i=0;i<size;i++){
+    unsigned char c=(unsigned char)component[i];
+    if(c<0x20u || c==0x7fu || c==':' || path_separator((char)c)) return 0;
+    if(c=='.' && stem==size) stem=i;
+  }
+  while(stem && component[stem-1]==' ') stem--;
+  char device[8];
+  if(stem<3 || stem>=sizeof device) return 1;
+  for(size_t i=0;i<stem;i++){
+    char c=component[i];
+    device[i]=(c>='A' && c<='Z')?(char)(c-'A'+'a'):c;
+  }
+  device[stem]=0;
+  if(!strcmp(device,"con") || !strcmp(device,"prn") || !strcmp(device,"aux") ||
+     !strcmp(device,"nul") || !strcmp(device,"conin$") || !strcmp(device,"conout$")) return 0;
+  if((stem==4 || stem==5) &&
+     (!strncmp(device,"com",3) || !strncmp(device,"lpt",3))){
+    unsigned char digit=(unsigned char)component[stem-1];
+    if((stem==4 && digit>='1' && digit<='9') ||
+       ((stem==4 || (unsigned char)component[3]==0xc2u) &&
+        (digit==0xb9u || digit==0xb2u || digit==0xb3u))) return 0;
+  }
+  return 1;
+}
+
+/* Interpret both slash spellings before handing a game-controlled name to the host. */
+static char *path_normalize(const char *path){
+  if(!path) return NULL;
+  char *result=malloc(strlen(path)+1u);
+  if(!result) return NULL;
+  size_t used=0;
+  while(*path){
+    while(path_separator(*path)) path++;
+    if(!*path) break;
+    const char *end=path;
+    while(*end && !path_separator(*end)) end++;
+    size_t size=(size_t)(end-path);
+    if(size==2 && path[0]=='.' && path[1]=='.'){
+      if(!used) goto reject;
+      while(used && result[used-1]!='/') used--;
+      if(used) used--;
+    }else if(size!=1 || *path!='.'){
+      if(!path_component_safe(path,size)) goto reject;
+      if(used) result[used++]='/';
+      memcpy(result+used,path,size);
+      used+=size;
+    }
+    path=end;
+  }
+  result[used]=0;
+  return result;
+reject:
+  free(result);
+  return NULL;
 }
 static int path_component_casefold(GmlVM *vm,const char *directory,
                                    const char *component,size_t component_size,
@@ -142,7 +212,7 @@ static char *path_under_read(GmlVM *vm,const char *directory,const char *relativ
   size_t used=0;
   if(directory && directory[0]){
     used=strlen(directory);
-    while(used>0 && (directory[used-1]=='/' || directory[used-1]=='\\')) used--;
+    while(used>1 && path_separator(directory[used-1])) used--;
     memcpy(resolved,directory,used);
   }
   resolved[used]=0;
@@ -154,17 +224,14 @@ static char *path_under_read(GmlVM *vm,const char *directory,const char *relativ
     const char *end=cursor;
     while(*end && *end!='/' && *end!='\\') end++;
     size_t component_size=(size_t)(end-cursor);
-    /* Parent traversal can change what a normalizing host exposes below this spelling. */
-    if(component_size==2 && cursor[0]=='.' && cursor[1]=='.') missing=0;
-    size_t directory_size=used;
-    if(used && used+1<capacity){
+    if(used && !path_separator(resolved[used-1]) && used+1<capacity){
       resolved[used++]='/';
       resolved[used]=0;
     }
     char candidate[sizeof(((AnygmDirectoryEntry *)0)->name)]={0};
     int absent=0;
     if(missing || component_size>=sizeof candidate ||
-       !path_component_casefold(vm,directory_size?resolved:"",cursor,component_size,
+       !path_component_casefold(vm,resolved,cursor,component_size,
                                 candidate,sizeof candidate,&absent)){
       if(used+component_size>=capacity){
         free(resolved);
@@ -206,115 +273,136 @@ static int path_present(GmlVM *vm,const char *p){
 static const char *path_relative_to_root(const char *path,const char *root){
   if(!path || !root || !*root) return NULL;
   size_t n=strlen(root);
-  while(n>0 && (root[n-1]=='/' || root[n-1]=='\\')) n--;
-  if(!n || strncmp(path,root,n)) return NULL;
-  if(path[n] && path[n]!='/' && path[n]!='\\') return NULL;
+  while(n>0 && path_separator(root[n-1])) n--;
+  int folded=root[1]==':' || (root[0]=='\\' && root[1]=='\\');
+  for(size_t i=0;i<n;i++){
+    if(!path[i]) return NULL;
+    if(path_separator(path[i]) && path_separator(root[i])) continue;
+    if(folded ? tolower((unsigned char)path[i])!=tolower((unsigned char)root[i])
+              : path[i]!=root[i]) return NULL;
+  }
+  if(!n && !path_separator(path[0])) return NULL;
+  if(path[n] && !path_separator(path[n])) return NULL;
   const char *relative=path+n;
-  while(*relative=='/' || *relative=='\\') relative++;
+  while(path_separator(*relative)) relative++;
   return relative;
 }
+
+enum { PATH_SAVE,PATH_CONTENT,PATH_PAYLOAD,PATH_ROOTS,PATH_RELATIVE,PATH_FOREIGN };
+
+static int path_matching_root(const char *path,const char *const roots[PATH_ROOTS],
+                              const char **relative){
+  int selected=PATH_ROOTS;
+  for(int i=0;i<PATH_ROOTS;i++){
+    const char *rest=path_relative_to_root(path,roots[i]);
+    if(rest && (selected==PATH_ROOTS || rest>*relative)){
+      selected=i;
+      *relative=rest;
+    }
+  }
+  return selected;
+}
+
+static int path_input_root(const char *path,const char *const roots[PATH_ROOTS],
+                           const char **relative){
+  *relative=path;
+  const char *suffix=path_absolute_suffix(path);
+  if(!suffix) return PATH_RELATIVE;
+  int selected=path_matching_root(path,roots,relative);
+  if(selected<PATH_ROOTS) return selected;
+  *relative=suffix;
+  return PATH_FOREIGN;
+}
+
+static const char *path_writable_root(const GmlWin *win){
+  return win->save_dir[0]?win->save_dir:win->content_dir;
+}
+
+/* State may contain a previously resolved file name. Keep its exact root selection and
+ * validate the suffix before reopening it. */
+static char *resolve_bound_path(GmlVM *vm,const char *path,int writable){
+  if(!vm || !vm->win || !path || !*path) return NULL;
+  const GmlWin *win=vm->win;
+  const char *roots[PATH_ROOTS]={path_writable_root(win),
+    writable?NULL:win->content_dir,writable?NULL:win->payload_dir};
+  const char *relative=path;
+  int selected=path_matching_root(path,roots,&relative);
+  if(selected==PATH_ROOTS) return NULL;
+  char *name=path_normalize(relative);
+  char *bound=name && *name?path_under(roots[selected],name):NULL;
+  free(name);
+  return bound;
+}
+
 static char *resolve_read_path_with_info(GmlVM *vm,const char *p,AnygmFileInfo *info){
   if(info){ memset(info,0,sizeof *info); info->struct_size=sizeof *info; }
-  if(!p || !*p) return strdup("");
-  if(path_absolute(p)){
-    if(vm && vm->win){
-      AnygmFileInfo observed;
-      const char *relative=path_relative_to_root(p,vm->win->content_dir);
-      if(relative){
-        if(vm->win->save_dir[0]){
-          char *save=path_under_read(vm,vm->win->save_dir,relative,&observed);
-          if(observed.flags&ANYGM_FILE_INFO_EXISTS){
-            if(info) *info=observed;
-            return save;
-          }
-          free(save);
-        }
-        return path_under_read(vm,vm->win->content_dir,relative,info);
-      }
-      relative=path_relative_to_root(p,vm->win->save_dir);
-      if(relative){
-        char *save=path_under_read(vm,vm->win->save_dir,relative,&observed);
-        if(observed.flags&ANYGM_FILE_INFO_EXISTS){
-          if(info) *info=observed;
-          return save;
-        }
-        free(save);
-        if(vm->win->content_dir[0]){
-          char *content=path_under_read(vm,vm->win->content_dir,relative,&observed);
-          if(observed.flags&ANYGM_FILE_INFO_EXISTS){
-            if(info) *info=observed;
-            return content;
-          }
-          free(content);
-        }
-        return path_under(vm->win->save_dir,relative);
-      }
-    }
-    if(info) path_stat(vm,p,info);
-    return strdup(p);
+  if(!p || !*p || !vm || !vm->win) return NULL;
+  const GmlWin *win=vm->win;
+  const char *roots[PATH_ROOTS]={win->save_dir,win->content_dir,win->payload_dir};
+  const char *relative;
+  int selected=path_input_root(p,roots,&relative);
+  char *name=path_normalize(relative);
+  if(!name) return NULL;
+  if(selected==PATH_FOREIGN || selected==PATH_PAYLOAD){
+    const char *root=selected==PATH_FOREIGN?path_writable_root(win):win->payload_dir;
+    char *candidate=path_under_read(vm,root,name,info);
+    free(name);
+    return candidate;
   }
-  /* Relative reads check the writable root, the loaded payload's root,
-   * then the source content root. Reuse only observations from this lookup;
-   * the next file operation starts with fresh host queries. */
-  if(vm && vm->win){
-    const char *roots[3]; int root_count=0;
-    if(vm->win->save_dir[0]) roots[root_count++]=vm->win->save_dir;
-    if(vm->win->payload_dir[0] &&
-       (!vm->win->content_dir[0] || strcmp(vm->win->payload_dir,vm->win->content_dir)))
-      roots[root_count++]=vm->win->payload_dir;
-    if(vm->win->content_dir[0]) roots[root_count++]=vm->win->content_dir;
-    char *fallback=NULL;
-    for(int i=0;i<root_count;i++){
+
+  /* An explicitly named content or save path keeps the overlay. Relative names also
+   * see the loaded payload's directory and the flattened included-file spelling. */
+  if(selected!=PATH_RELATIVE || !strcmp(win->payload_dir,win->content_dir))
+    roots[PATH_PAYLOAD]="";
+  if(!strcmp(win->save_dir,win->content_dir)) roots[PATH_CONTENT]="";
+  const int order[]={PATH_SAVE,PATH_PAYLOAD,PATH_CONTENT};
+  const char *fallback=*roots[PATH_CONTENT]?roots[PATH_CONTENT]:path_writable_root(win);
+  if(selected==PATH_SAVE || !*fallback) fallback=win->save_dir;
+  if(!*fallback) fallback=roots[PATH_PAYLOAD];
+  char *result=NULL;
+  for(int attempt=0;name && attempt<2;attempt++){
+    for(size_t i=0;i<sizeof order/sizeof *order;i++){
+      const char *root=roots[order[i]];
+      if(!*root) continue;
       AnygmFileInfo observed;
-      char *candidate=path_under_read(vm,roots[i],p,&observed);
+      char *candidate=path_under_read(vm,root,name,&observed);
       if(observed.flags&ANYGM_FILE_INFO_EXISTS){
         if(info) *info=observed;
+        free(result);free(name);
         return candidate;
       }
-      if(vm->win->content_dir[0] && i+1==root_count) fallback=candidate;
+      if(attempt==0 && root==fallback) result=candidate;
       else free(candidate);
     }
-    /* Only once no root holds the name as written, so nothing that resolves today moves. */
-    char *flat=flattened_included_name(p);
-    if(flat){
-      for(int i=0;i<root_count;i++){
-        AnygmFileInfo observed;
-        char *candidate=path_under_read(vm,roots[i],flat,&observed);
-        if(observed.flags&ANYGM_FILE_INFO_EXISTS){
-          if(info) *info=observed;
-          free(flat);free(fallback);
-          return candidate;
-        }
-        free(candidate);
-      }
-      free(flat);
-    }
-    if(vm->win->content_dir[0]) return fallback;
-    if(vm->win->save_dir[0]) return path_under(vm->win->save_dir,p);
+    char *next=attempt==0 && selected==PATH_RELATIVE?flattened_included_name(name):NULL;
+    free(name);
+    name=next;
   }
-  if(info) path_stat(vm,p,info);
-  return strdup(p);
+  return result;
 }
 char *resolve_read_path(GmlVM *vm,const char *p){
   return resolve_read_path_with_info(vm,p,NULL);
 }
 char *resolve_write_path(GmlVM *vm, const char *p){
-  if(!p || !*p) return strdup("");
-  if(path_absolute(p)){
-    if(vm && vm->win && vm->win->save_dir[0]){
-      const char *relative=path_relative_to_root(p,vm->win->content_dir);
-      if(relative) return path_under(vm->win->save_dir,relative);
-    }
-    return strdup(p);
-  }
-  if(vm && vm->win){
-    if(vm->win->save_dir[0]) return path_under(vm->win->save_dir,p);
-    if(vm->win->content_dir[0]) return path_under(vm->win->content_dir,p);
-  }
-  return strdup(p);
+  if(!p || !*p || !vm || !vm->win) return NULL;
+  const GmlWin *win=vm->win;
+  const char *roots[PATH_ROOTS]={win->save_dir,win->content_dir,win->payload_dir};
+  const char *relative;
+  path_input_root(p,roots,&relative);
+  char *name=path_normalize(relative);
+  char *result=name && *name?path_under(path_writable_root(win),name):NULL;
+  free(name);
+  return result;
 }
 static int copy_file_path(GmlVM *vm,const char *src,const char *dst){
   return vm && anygm_vfs_copy(vm->host,src,dst);
+}
+
+static int create_game_directory(GmlVM *vm,const char *path){
+  if(!vm || !vm->win) return 0;
+  const char *root=path_writable_root(vm->win);
+  return path_relative_to_root(path,root) &&
+    anygm_vfs_mkdirs_from(vm->host,path,strlen(root));
 }
 
 /* Portable nsfs operations must not acquire ambient desktop filesystem authority. Accept only
@@ -330,7 +418,7 @@ static int extension_path_safe(GmlVM *vm,const char *raw){
     if((size_t)(end-cursor)==2 && cursor[0]=='.' && cursor[1]=='.') return 0;
     cursor=end;
   }
-  if(!path_absolute(raw)) return 1;
+  if(!path_absolute_suffix(raw)) return 1;
   if(!vm || !vm->win) return 0;
   return path_relative_to_root(raw,vm->win->content_dir)!=NULL ||
          path_relative_to_root(raw,vm->win->save_dir)!=NULL;
@@ -354,8 +442,7 @@ typedef struct {
 } ExtensionDirectoryBudget;
 
 static int extension_entry_name_safe(const char *name){
-  return name && name[0] && strcmp(name,".") && strcmp(name,"..") &&
-         !strchr(name,'/') && !strchr(name,'\\');
+  return name && path_component_safe(name,strlen(name));
 }
 
 static char *extension_join_path(const char *directory,const char *name){
@@ -382,7 +469,7 @@ static int extension_directory_copy(GmlVM *vm,const char *source,const char *des
   if(!vm || !vm->host || !source || !destination || !budget ||
      depth>EXTENSION_DIRECTORY_MAX_DEPTH ||
      !vm->host->directory_open || !vm->host->directory_read ||
-     !vm->host->directory_close || !anygm_vfs_mkdirs(vm->host,destination)) return 0;
+     !vm->host->directory_close || !create_game_directory(vm,destination)) return 0;
   void *handle=vm->host->directory_open(vm->host->userdata,source);
   if(!handle) return 0;
   int ok=1;
@@ -797,7 +884,8 @@ GmlVal builtin_ini_open_file(GmlVM *vm, GmlVal *a, int n){
   vm->builtins->ini_open=1;
   char *fn=resolve_read_path(vm,S(vm,a,n,0));
   char *write_fn=resolve_write_path(vm,S(vm,a,n,0));
-  snprintf(vm->builtins->ini_path,sizeof vm->builtins->ini_path,"%s",write_fn?write_fn:"");
+  if(write_fn && strlen(write_fn)<sizeof vm->builtins->ini_path)
+    memcpy(vm->builtins->ini_path,write_fn,strlen(write_fn)+1u);
   free(write_fn);
   uint8_t *data=NULL;
   size_t size=0;
@@ -1282,7 +1370,9 @@ GmlVal gml_builtin_try_io_ini(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!ok){ free(text); return vstr(""); }
     vm->builtins->ini_open=0;
     if(vm->builtins->ini_path[0]){
-      int id=vm_file_open(vm,vm->builtins->ini_path,"w");
+      char *path=resolve_bound_path(vm,vm->builtins->ini_path,1);
+      int id=vm_file_open(vm,path,"w");
+      free(path);
       if(id>=0){
         int slot=id-1;
         (void)vm_file_write(vm,slot,text,used);
@@ -1556,7 +1646,7 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   if(!strcmp(nm,"directory_create_ns")){
     char *path=extension_write_path(vm,S(vm,a,n,0));
-    int ok=path && anygm_vfs_mkdirs(vm->host,path);
+    int ok=create_game_directory(vm,path);
     free(path); return vreal(ok);
   }
   if(!strcmp(nm,"directory_copy_ns")||!strcmp(nm,"directory_copy")){
@@ -1612,8 +1702,8 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     char *path=resolve_read_path_with_info(vm,S(vm,a,n,0),&info);
     int ok=path && (info.flags&ANYGM_FILE_INFO_DIRECTORY)!=0;
     free(path); return vreal(ok); }
-  if(!strcmp(nm,"directory_create")){ char *path=resolve_write_path(vm,S(vm,a,n,0)); int ok=0;
-    if(path && path[0]) ok=anygm_vfs_mkdirs(vm->host,path);
+  if(!strcmp(nm,"directory_create")){ char *path=resolve_write_path(vm,S(vm,a,n,0));
+    int ok=create_game_directory(vm,path);
     free(path); return vreal(ok); }
   if(!strcmp(nm,"directory_destroy")){ char *path=resolve_write_path(vm,S(vm,a,n,0));
     int ok=path && vm->host && vm->host->path_remove &&
@@ -1755,23 +1845,41 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!state) return vstr("");
     file_find_reset(state);
     char *mask=resolve_read_path(vm,S(vm,a,n,0));
+    if(!mask) return vstr("");
+    const char *roots[PATH_ROOTS]={vm->win->save_dir,vm->win->content_dir,vm->win->payload_dir};
+    const char *relative=mask;
+    if(path_matching_root(mask,roots,&relative)==PATH_ROOTS || !*relative){
+      free(mask);
+      return vstr("");
+    }
     char *slash=strrchr(mask,'/');
+    char *backslash=strrchr(mask,'\\');
+    if(backslash && (!slash || backslash>slash)) slash=backslash;
     const char *pat = slash ? slash+1 : mask;
-    char dirbuf[1024];
-    if(slash){ size_t dl=(size_t)(slash-mask); if(dl>=sizeof dirbuf) dl=sizeof dirbuf-1;
-      memcpy(dirbuf,mask,dl); dirbuf[dl]=0; } else snprintf(dirbuf,sizeof dirbuf,".");
-    void *directory=vm->host && vm->host->directory_open?
-      vm->host->directory_open(vm->host->userdata,dirbuf):NULL;
+    char *parent=NULL;
+    if(slash && *pat){
+      size_t size=(size_t)(slash-mask);
+      if(!size || mask[size-1]==':') size++;
+      parent=malloc(size+1u);
+      if(parent){ memcpy(parent,mask,size); parent[size]=0; }
+    }
+    void *directory=parent && vm->host && vm->host->directory_open &&
+      vm->host->directory_read && vm->host->directory_close?
+      vm->host->directory_open(vm->host->userdata,parent):NULL;
+    free(parent);
     if(directory){
       AnygmDirectoryEntry entry={.struct_size=sizeof entry};
       while(state->file_find_count<GML_FF_MAX &&
             vm->host->directory_read(vm->host->userdata,directory,&entry)==ANYGM_OK){
         if(entry.name[0]=='.') continue;
-        if(wild_match(pat,entry.name))
-          state->file_find_name[state->file_find_count++]=strdup(entry.name);
+        if(wild_match(pat,entry.name)){
+          char *name=strdup(entry.name);
+          if(!name) break;
+          state->file_find_name[state->file_find_count++]=name;
+        }
         entry.struct_size=sizeof entry;
       }
-      if(vm->host->directory_close) vm->host->directory_close(vm->host->userdata,directory);
+      vm->host->directory_close(vm->host->userdata,directory);
       /* Directory iteration order is host-dependent, so normalize it. */
       for(int i=0;i<state->file_find_count;i++) for(int j=i+1;j<state->file_find_count;j++)
         if(strcmp(state->file_find_name[j],state->file_find_name[i])<0){
@@ -1796,7 +1904,7 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(0);
   }
   if(!strcmp(nm,"file_rename")){ char *oldp=resolve_write_path(vm,S(vm,a,n,0)); char *newp=resolve_write_path(vm,S(vm,a,n,1));
-    int ok=vm->host && vm->host->path_rename &&
+    int ok=oldp && newp && vm->host && vm->host->path_rename &&
       vm->host->path_rename(vm->host->userdata,oldp,newp)==ANYGM_OK;
     free(oldp); free(newp); return vreal(ok); }
   if(!strcmp(nm,"game_save") || !strcmp(nm,"action_save_game")){

@@ -690,6 +690,12 @@ int expect_portable_extension_io(void){
     fixture_read_text(outside,observed,sizeof observed) && !strcmp(observed,"outside");
   if(outside_loaded.t==V_STR && outside_loaded.d!=0) free((void*)outside_loaded.s);
 
+  GmlVal joined=vstr("nested/../note.txt");
+  GmlVal regular_match=gml_builtin_call(&vm,"file_exists",&joined,1);
+  GmlVal strict_match=gml_builtin_call(&vm,"file_exists_ns",&joined,1);
+  ok=ok && regular_match.t==V_REAL && regular_match.d==1 &&
+    strict_match.t==V_REAL && strict_match.d==0;
+
   char tree_path[512],tree_file[768],copied_tree_file[768],moved_tree[512];
   snprintf(tree_path,sizeof tree_path,"%s/tree",content_root);
   snprintf(tree_file,sizeof tree_file,"%s/a.txt",tree_path);
