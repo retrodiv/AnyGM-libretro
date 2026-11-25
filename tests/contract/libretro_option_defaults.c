@@ -320,7 +320,7 @@ static void graphics_settings_are_independent(void){
      scene->values[0].label || scene->values[1].label ||
      strcmp(scene->default_value,"CPU") || !strstr(scene->info,"closing and reopening"))
     complain("the scene setting does not expose CPU and OpenGL in Video");
-  if(strcmp(shaders->desc,"Game shaders (GLSL)") || strcmp(shaders->category_key,"video") ||
+  if(strcmp(shaders->desc,"Game Shaders (GLSL)") || strcmp(shaders->category_key,"video") ||
      value_count(shaders)!=4 || strcmp(shaders->values[0].value,"Performance") ||
      strcmp(shaders->values[1].value,"Exact") ||
      strcmp(shaders->values[2].value,"Off (but report available)") ||
@@ -549,27 +549,45 @@ static void crt_adjustment_forces_the_logical_raster(void){
   begin(2,3);
   const struct retro_core_option_v2_definition *raster=definition("anygm_render_game_resolution");
   const struct retro_core_option_v2_definition *crt=definition("anygm_adjust_crt_tv");
-  const struct retro_core_option_v2_definition *oversize=definition("anygm_crt_oversize_handling");
+  const struct retro_core_option_v2_definition *width=definition("anygm_crt_oversize_canvas_width");
+  const struct retro_core_option_v2_definition *height=definition("anygm_crt_oversize_canvas_height");
+  const struct retro_core_option_v2_definition *aspect=definition("anygm_aspect_ratio_force");
   const struct retro_core_option_v2_definition *orientation=definition("anygm_os_screen_orientation");
   const struct retro_core_option_v2_definition *rotation=definition("anygm_image_rotation");
   const struct retro_core_option_v2_definition *shaders=definition("anygm_content_shader_readback");
-  if(!crt || !raster || raster!=crt+3 || strcmp(crt->desc,"Adjust for 4:3 CRT TV") ||
+  if(!crt || !raster || raster!=crt+4 || strcmp(crt->desc,"Adjust for 4:3 CRT TV") ||
      strcmp(crt->default_value,"Off"))
     complain("CRT adjustment must precede game resolution and default to Off");
-  if(!oversize || !orientation || !rotation || !shaders ||
-     oversize!=crt+1 || orientation!=oversize+1 || shaders!=rotation+1)
+  if(definition("anygm_crt_oversize_handling")) complain("retired CRT oversize selector is exposed");
+  if(!aspect || strcmp(aspect->desc,"Aspect Ratio Force (Experimental)"))
+    complain("aspect selector label differs");
+  if(!crt || !width || !height || !orientation || !rotation || !shaders ||
+     width!=crt+1 || height!=width+1 || orientation!=height+1 || shaders!=rotation+1)
     complain("CRT and rotation options must be next to their related settings");
-  else if(strcmp(oversize->category_key,"video") || strcmp(orientation->category_key,"video") ||
-          strcmp(rotation->category_key,"video") || strcmp(oversize->desc,"CRT Oversize Handling") ||
+  else if(strcmp(width->category_key,"video") || strcmp(height->category_key,"video") ||
+          strcmp(orientation->category_key,"video") || strcmp(rotation->category_key,"video") ||
+          strcmp(width->desc,"CRT Oversize Canvas Width") ||
+          strcmp(height->desc,"CRT Oversize Canvas Height") ||
           strcmp(orientation->desc,"OS Screen Orientation") || strcmp(rotation->desc,"Image Rotation") ||
-          strcmp(oversize->default_value,"W:640 H:480") || strcmp(orientation->default_value,"Horizontal") ||
-          strcmp(rotation->default_value,"None"))
+          strcmp(width->default_value,"640px") || strcmp(height->default_value,"448px") ||
+          strcmp(orientation->default_value,"Horizontal") || strcmp(rotation->default_value,"None"))
     complain("CRT and rotation labels, categories and defaults must match their menu");
+  static const char *const widths[]={"Keep Game Width","320px","512px","640px"};
+  static const char *const heights[]={"Keep Game Height","224px","240px","360px","384px","448px","480px"};
+  if(!width || !height || value_count(width)!=sizeof widths/sizeof widths[0] ||
+     value_count(height)!=sizeof heights/sizeof heights[0])
+    complain("CRT canvas selector value counts differ");
+  else{
+    for(size_t i=0;i<sizeof widths/sizeof widths[0];i++)
+      if(strcmp(width->values[i].value,widths[i])) complain("CRT canvas width order differs");
+    for(size_t i=0;i<sizeof heights/sizeof heights[0];i++)
+      if(strcmp(height->values[i].value,heights[i])) complain("CRT canvas height order differs");
+  }
   if(!menu_time_visibility){ complain("CRT visibility callback missing"); return; }
   libretro_options_apply(true);
   expect("CRT default",applied_config.values.adjust_crt_tv,0u);
-  expect("CRT oversize default",applied_config.values.crt_oversize_small,0u);
-  expect("CRT keep-axis default",applied_config.values.crt_oversize_keep,0u);
+  expect("CRT canvas width default",applied_config.values.crt_canvas_width,640u);
+  expect("CRT canvas height default",applied_config.values.crt_canvas_height,448u);
   expect("OS orientation default",applied_config.values.crt_vertical,0u);
   expect("image rotation default",applied_config.values.image_rotation,ANYGM_IMAGE_ROTATION_NONE);
   answered_monitor_value="1920";
@@ -582,7 +600,8 @@ static void crt_adjustment_forces_the_logical_raster(void){
       libretro_options_apply(false);
       unsigned effective=raster_on || crt_on;
       expect("CRT always visible",shown("anygm_adjust_crt_tv"),1u);
-      expect("CRT size visibility",shown("anygm_crt_oversize_handling"),crt_on);
+      expect("CRT canvas width visibility",shown("anygm_crt_oversize_canvas_width"),crt_on);
+      expect("CRT canvas height visibility",shown("anygm_crt_oversize_canvas_height"),crt_on);
       expect("OS orientation visibility",shown("anygm_os_screen_orientation"),crt_on);
       expect("image rotation always visible",shown("anygm_image_rotation"),1u);
       expect("raster selector visibility",shown("anygm_render_game_resolution"),!crt_on);
@@ -608,9 +627,12 @@ static void crt_adjustment_forces_the_logical_raster(void){
   const char *flat=flat_text("anygm_adjust_crt_tv");
   if(!flat || strcmp(flat,"Adjust for 4:3 CRT TV; Off|On"))
     complain("legacy CRT option declaration differs");
-  flat=flat_text("anygm_crt_oversize_handling");
-  if(!flat || strcmp(flat,"CRT Oversize Handling; W:640 H:480|W:Keep H:480|W:320 H:240|W:Keep H:240"))
-    complain("legacy CRT oversize declaration differs");
+  flat=flat_text("anygm_crt_oversize_canvas_width");
+  if(!flat || strcmp(flat,"CRT Oversize Canvas Width; 640px|Keep Game Width|320px|512px"))
+    complain("legacy CRT canvas width declaration differs");
+  flat=flat_text("anygm_crt_oversize_canvas_height");
+  if(!flat || strcmp(flat,"CRT Oversize Canvas Height; 448px|Keep Game Height|224px|240px|360px|384px|480px"))
+    complain("legacy CRT canvas height declaration differs");
   flat=flat_text("anygm_os_screen_orientation");
   if(!flat || strcmp(flat,"OS Screen Orientation; Horizontal|Vertical"))
     complain("legacy OS orientation declaration differs");

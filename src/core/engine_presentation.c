@@ -1017,35 +1017,46 @@ static int content_keeps_aspect_ratio(const AnygmEngine *engine){
          !anygm_policy_uses_classic_runtime(&engine->win) &&
          engine->win.option_scaling<0;
 }
-/* Use the fixed canvas for the picture's visual proportions, with native samples along the
- * variable axis. For a narrow picture, add samples to the margins rather than scaling that axis.
- * When padding would exceed the maximum host extent, the host can add the remaining bars. */
+static void set_crt_display_aspect(AnygmEngine *engine,double aspect){
+  engine->host_display_aspect=(engine->host_rotation&1u)?1.0/aspect:aspect;
+}
+
+/* Keep samples along one axis and fit the other to the chosen size. When both axes are
+ * kept, the fixed size is already native and only padding can change the extent.
+ * If the padding exceeds the framebuffer capacity, the frontend supplies the rest. */
 static void fit_crt_keep_axis(AnygmEngine *engine,unsigned source_width,unsigned source_height,
-                             int vertical,unsigned scale,int cropped){
-  unsigned kept=vertical?source_height:source_width;
-  unsigned other=vertical?source_width:source_height;
-  unsigned fixed=3u*scale;
+                             unsigned aspect_width,unsigned aspect_height,bool keep_width,
+                             unsigned fixed,bool keep_both,int cropped){
+  unsigned kept=keep_width?source_width:source_height;
+  unsigned other=keep_width?source_height:source_width;
+  unsigned kept_ratio=keep_width?aspect_width:aspect_height;
+  unsigned fixed_ratio=keep_width?aspect_height:aspect_width;
   unsigned fitted=fixed;
-  unsigned ideal=(other*4u+2u)/3u;
+  unsigned ideal=(other*kept_ratio+fixed_ratio-1u)/fixed_ratio;
   if(kept>=ideal){
     ideal=kept;
-    fitted=4u*scale*other/kept;
-    if(!fitted) fitted=1;
+    if(!keep_both){
+      fitted=fixed*kept_ratio*other/(kept*fixed_ratio);
+      if(!fitted) fitted=1;
+    }
   }
-  unsigned extent=ideal>FB_MAX_W?FB_MAX_W:ideal;
+  unsigned limit=(FB_MAX_W*FB_MAX_H)/fixed;
+  if(limit>FB_MAX_W) limit=FB_MAX_W;
+  unsigned extent=ideal>limit?limit:ideal;
   unsigned kept_margin=(extent-kept)/2u;
   unsigned fixed_margin=(fixed-fitted)/2u;
-  engine->host_output_width=vertical?fixed:extent;
-  engine->host_output_height=vertical?extent:fixed;
-  engine->host_canvas_x=(int)(vertical?fixed_margin:kept_margin);
-  engine->host_canvas_y=(int)(vertical?kept_margin:fixed_margin);
-  engine->host_canvas_width=(int)(vertical?fitted:kept);
-  engine->host_canvas_height=(int)(vertical?kept:fitted);
+  engine->host_output_width=keep_width?extent:fixed;
+  engine->host_output_height=keep_width?fixed:extent;
+  engine->host_canvas_x=(int)(keep_width?kept_margin:fixed_margin);
+  engine->host_canvas_y=(int)(keep_width?fixed_margin:kept_margin);
+  engine->host_canvas_width=(int)(keep_width?kept:fitted);
+  engine->host_canvas_height=(int)(keep_width?fitted:kept);
   engine->host_canvas_active=cropped || engine->host_output_width!=source_width ||
                             engine->host_output_height!=source_height ||
                             fitted!=other;
-  double aspect=(4.0*extent)/(3.0*ideal);
-  engine->host_display_aspect=vertical!=((engine->host_rotation&1u)!=0)?1.0/aspect:aspect;
+  double aspect=(double)aspect_width/aspect_height;
+  aspect*=keep_width?(double)extent/ideal:(double)ideal/extent;
+  set_crt_display_aspect(engine,aspect);
 }
 
 void engine_update_host_canvas(AnygmEngine *engine){
@@ -1056,6 +1067,7 @@ void engine_update_host_canvas(AnygmEngine *engine){
   unsigned host_width=source_width;
   unsigned host_height=source_height;
   int native_padding=0,declared=0;
+  unsigned fit_width=0,fit_height=0;
   /* output and its declared crop already include the forced aspect. The TV is only a final
    * destination; it must not become the window, GUI or camera extent seen by content. */
   /* Keep CRT fitting in the user's coordinates, then pack the frame in the host's order. */
@@ -1088,15 +1100,29 @@ void engine_update_host_canvas(AnygmEngine *engine){
     }
     /* A declared mode states its own extent; the automatic limits size only undeclared rasters. */
     if(!declared && (host_width>limit_width || host_height>limit_height)){
-      unsigned scale=engine->config.crt_oversize_small?80u:160u;
-      engine->host_crt_area_filter=engine->config.crt_oversize_small;
+      unsigned canvas_width=engine->config.crt_canvas_width;
+      unsigned canvas_height=engine->config.crt_canvas_height;
+      engine->host_crt_area_filter=canvas_height==224u || canvas_height==240u ||
+        (canvas_height==ANYGM_CRT_CANVAS_KEEP && canvas_width==320u);
       engine->host_crt_active=1;
-      if(engine->config.crt_oversize_keep){
-        fit_crt_keep_axis(engine,source_width,source_height,vertical,scale,cropped);
+      host_width=vertical?canvas_height:canvas_width;
+      host_height=vertical?canvas_width:canvas_height;
+      bool keep_width=host_width==ANYGM_CRT_CANVAS_KEEP;
+      bool keep_height=host_height==ANYGM_CRT_CANVAS_KEEP;
+      if(keep_width || keep_height){
+        bool keep_both=keep_width && keep_height;
+        if(keep_both)
+          keep_width=(uint64_t)source_width*aspect_height<=(uint64_t)source_height*aspect_width;
+        unsigned fixed=keep_width?(keep_both?source_height:host_height):
+                                  (keep_both?source_width:host_width);
+        fit_crt_keep_axis(engine,source_width,source_height,aspect_width,aspect_height,
+                          keep_width,fixed,keep_both,cropped);
         return;
       }
-      host_width=aspect_width*scale;
-      host_height=aspect_height*scale;
+      /* Fit in display space. The selected raster can have rectangular samples. */
+      fit_width=aspect_width;
+      fit_height=aspect_height;
+      set_crt_display_aspect(engine,(double)fit_width/fit_height);
       native_padding=0;
     }
   }
@@ -1127,19 +1153,22 @@ void engine_update_host_canvas(AnygmEngine *engine){
     shape_width=engine->width;
     shape_height=engine->height;
   }
+  if(!fit_width){
+    fit_width=host_width;
+    fit_height=host_height;
+  }
+  uint64_t width_limited=(uint64_t)fit_width*shape_height;
+  uint64_t height_limited=(uint64_t)fit_height*shape_width;
   /* Nothing to fit when the destination already is the composed raster and carries its shape. */
-  if(!engine->host_canvas_active &&
-     (uint64_t)shape_width*host_height==(uint64_t)shape_height*host_width) return;
-  uint64_t width_limited=(uint64_t)host_width*shape_height;
-  uint64_t height_limited=(uint64_t)host_height*shape_width;
+  if(!engine->host_canvas_active && width_limited==height_limited) return;
   if(width_limited<=height_limited){
     engine->host_canvas_width=(int)host_width;
-    engine->host_canvas_height=(int)(((uint64_t)shape_height*host_width+
-                                      (engine->host_crt_active?0u:shape_width/2u))/shape_width);
+    engine->host_canvas_height=(int)((width_limited*host_height+
+                                     (engine->host_crt_active?0u:height_limited/2u))/height_limited);
   } else {
     engine->host_canvas_height=(int)host_height;
-    engine->host_canvas_width=(int)(((uint64_t)shape_width*host_height+
-                                     (engine->host_crt_active?0u:shape_height/2u))/shape_height);
+    engine->host_canvas_width=(int)((height_limited*host_width+
+                                    (engine->host_crt_active?0u:width_limited/2u))/width_limited);
   }
   if(engine->host_canvas_width<1) engine->host_canvas_width=1;
   if(engine->host_canvas_height<1) engine->host_canvas_height=1;

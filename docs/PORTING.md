@@ -89,7 +89,8 @@ display the canvas with the intended proportions.
 | **Adjust for 4:3 CRT TV** (`adjust_crt_tv`) | Off by default. On forces game-resolution rendering, hides **Render at game resolution** and enables CRT fitting. |
 | **OS Screen Orientation** (`crt_vertical`) | Set **Horizontal** (default) for a system rotation of 0° or 180°, and **Vertical** for a system rotation of 90° or 270°. This supplies the CRT axes. The system setting determines its own rotation angle. |
 | **Image Rotation** (`image_rotation`) | Turns the picture and GUI **Left** or **Right** by 90°, or **Upside Down** by 180°. **None** (default) applies zero extra rotation. This option also works with CRT adjustment off. Pointer coordinates follow the displayed picture. |
-| **CRT Oversize Handling** | Chooses the destination for an image that exceeds the CRT limits. The default is `W:640 H:480`. Images that fit remain at native sample density. |
+| **CRT Oversize Canvas Width** | Selects **Keep Game Width**, **320px**, **512px**, or **640px** (default). |
+| **CRT Oversize Canvas Height** | Selects **Keep Game Height**, **224px**, **240px**, **360px**, **384px**, **448px** (default), or **480px**. |
 
 CRT adjustment exposes the OS orientation and oversize controls. AnyGM checks the CRT limits
 after aspect forcing and presentation cropping. Left and Right swap
@@ -112,30 +113,38 @@ its own native canvas when the picture fits it.
 
 ### Oversize modes
 
-The following example uses a 1920×1080 game raster, a horizontal screen and no image rotation.
-The picture keeps its visual aspect, centered in the 4:3 canvas with black margins.
+A numeric selection fixes the canvas extent on its CRT axis. The display aspect describes the
+canvas independently of its raster dimensions, so a 640×448 canvas still displays at 4:3.
+The picture keeps its visual aspect and is centered with black margins. This example uses a
+1920×1080 game raster, a horizontal screen and no image rotation.
 
-| CRT Oversize Handling | Frame sent to the frontend | Picture inside the frame | Black lines at the top and bottom |
-| --- | --- | --- | --- |
-| `W:640 H:480` | 640×480 | 640×360 | 60 each |
-| `W:Keep H:480` | 1920×480 | 1920×360 | 60 each |
-| `W:320 H:240` | 320×240 | 320×180 | 30 each |
-| `W:Keep H:240` | 1920×240 | 1920×180 | 30 each |
+| Canvas width | Canvas height | Frame sent to the frontend | Picture inside the frame | Black lines at the top and bottom |
+| --- | --- | --- | --- | --- |
+| 640px | 448px (default) | 640×448 | 640×336 | 56 each |
+| 640px | 480px | 640×480 | 640×360 | 60 each |
+| Keep Game Width | 480px | 1920×480 | 1920×360 | 60 each |
+| 320px | 224px | 320×224 | 320×168 | 28 each |
+| 320px | 240px | 320×240 | 320×180 | 30 each |
+| 512px | 360px | 512×360 | 512×270 | 45 each |
+| 512px | 384px | 512×384 | 512×288 | 48 each |
+| Keep Game Width | Keep Game Height | 1920×1440 | 1920×1080 | 180 each |
 
-The 480-line modes use sharp bilinear filtering. The 240-line modes use a weighted area filter.
-**Keep** preserves the samples along the variable axis. It adds black samples to that axis
-when a narrow image needs side margins. The display aspect describes the canvas independently of
-its raster dimensions. If the ideal padded extent exceeds the host's maximum, the reported
-aspect accounts for the remaining margins supplied by the frontend.
+The 360-, 384-, 448- and 480-line modes use sharp bilinear filtering. The 224- and 240-line modes use a
+weighted area filter. With **Keep Game Height**, a 320px width also uses area filtering.
+Each **Keep Game** selection preserves the samples along its axis and allows black margins
+on that axis. Keeping both axes preserves every pixel. If the ideal padded extent exceeds
+the framebuffer capacity, the reported aspect accounts for the remaining margins supplied
+by the frontend.
 
-The vertical fit uses a 3:4 canvas in game coordinates. For a 1080×1920 portrait image,
-`W:Keep H:480` keeps all 1920 source lines and fits the picture into 360×1920 within a
-480×1920 canvas. Each side gets 60 black columns. When the frontend accepts paired rotation,
-the core sends the canvas in scanout order as 1920×480, with the 480-line axis fixed.
+The vertical fit uses a 3:4 canvas in game coordinates and swaps the selector axes. For a
+1080×1920 portrait image, **Keep Game Width** with a **480px** height keeps all 1920 source
+lines and fits the picture into 360×1920 within a 480×1920 canvas. Each side gets 60 black
+columns. When the frontend accepts paired rotation, the core sends the canvas in scanout
+order as 1920×480, with the 480-line axis fixed.
 
 ### Native portrait and landscape examples
 
-These examples use `W:640 H:480` and a frontend that accepts core rotation requests.
+These examples select a 640px width and 480px height and use a frontend that accepts core rotation requests.
 **Canvas before rotation** describes the fit in game coordinates. **Frame sent** describes
 the framebuffer the frontend receives.
 

@@ -3819,7 +3819,7 @@ static int forced_owned_scene_case(void){
 }
 
 static int presentation_filter_variant(
-    const char *name,int (*create_fixture)(AnygmSyntheticContent *),int variant){
+    const char *name,int (*create_fixture)(AnygmSyntheticContent *),int variant,unsigned selected_crt_height){
   Session plain={0},selected={0};
   AnygmInputFrame input={0};
   AnygmConfigDelta presentation={0};
@@ -3834,6 +3834,10 @@ static int presentation_filter_variant(
   presentation.fields=ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_ADJUST_CRT_TV;
   presentation.values.present_logical_raster=variant!=2;
   presentation.values.adjust_crt_tv=variant!=2;
+  if(selected_crt_height){
+    presentation.fields|=ANYGM_CONFIG_CRT_CANVAS_HEIGHT;
+    presentation.values.crt_canvas_height=selected_crt_height;
+  }
   if(variant==2){
     presentation.fields|=ANYGM_CONFIG_MONITOR_WIDTH|ANYGM_CONFIG_MONITOR_HEIGHT;
     presentation.values.monitor_width=64u;
@@ -3887,7 +3891,8 @@ static int presentation_filter_variant(
       unsigned source_width=variant==0?64u:variant==1?400u:128u;
       unsigned source_height=variant==0?32u:variant==1?300u:96u;
       unsigned host_width=variant==0?64u:variant==1?640u:64u;
-      unsigned host_height=variant==0?48u:variant==1?480u:64u;
+      unsigned crt_height=selected_crt_height?selected_crt_height:448u;
+      unsigned host_height=variant==0?48u:variant==1?crt_height:64u;
       unsigned fallback=variant==2?GML_PLAN_FALLBACK_BOX_REDUCTION:
                                    GML_PLAN_FALLBACK_UNSUPPORTED_OPERATION;
       int resident_crt=variant!=2;
@@ -3939,11 +3944,13 @@ static int presentation_filter_variant(
 
 static int presentation_filter_case(void){
   return presentation_filter_variant(
-           "CRT native",anygm_synthetic_crt_native_content_create,0) &&
+           "CRT native",anygm_synthetic_crt_native_content_create,0,0) &&
          presentation_filter_variant(
-           "CRT scaled",anygm_synthetic_crt_scaled_content_create,1) &&
+           "CRT scaled to the default canvas",anygm_synthetic_crt_scaled_content_create,1,0) &&
          presentation_filter_variant(
-           "host box",anygm_synthetic_host_box_content_create,2);
+           "CRT scaled to 480 lines",anygm_synthetic_crt_scaled_content_create,1,480) &&
+         presentation_filter_variant(
+           "host box",anygm_synthetic_host_box_content_create,2,0);
 }
 
 static int scene_canvas_cpu_source_case(void){

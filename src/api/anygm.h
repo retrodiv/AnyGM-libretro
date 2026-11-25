@@ -15,8 +15,8 @@ extern "C" {
  * runtime library version, and every publishable metadata file declares the literal "Git" instead
  * of a number, so no copy can promise a value that has gone stale. CONTRIBUTING.md owns the single
  * increment step. */
-#define ANYGM_VERSION "0.1.1039"
-#define ANYGM_API_VERSION 12u
+#define ANYGM_VERSION "0.1.1040"
+#define ANYGM_API_VERSION 13u
 #define ANYGM_HOST_SERVICES_VERSION 4u
 #define ANYGM_STATE_SCHEMA 70u
 #define ANYGM_MAX_GAMEPADS 4u
@@ -433,17 +433,23 @@ typedef struct AnygmConfig {
    * and is not part of game state. A missing graphics context keeps ordinary OpenGL on CPU;the explicit
    * omission policy still skips its unsupported draws. */
   uint32_t scene_renderer;
-  /* Host presentation options. Zero selects the 640x480 fit, horizontal OS orientation and no
-   * rotation. The CRT settings apply only to CRT presentation. */
-  uint32_t crt_oversize_small;
+  /* Host oversize CRT canvas in screen axes. Zero uses the default for each axis.
+   * Width accepts 320, 512 or 640, and height accepts 224, 240, 360, 384, 448 or 480.
+   * Either can use ANYGM_CRT_CANVAS_KEEP to preserve the game samples along that axis. */
+  uint32_t crt_canvas_width;
   uint32_t crt_vertical;
   uint32_t image_rotation;
-  /* Keep native samples on the 640/320 axis of the CRT fit, before rotation. */
-  uint32_t crt_oversize_keep;
+  uint32_t crt_canvas_height;
   /* A quarter turn the host will apply to the delivered frame. The engine counter-rotates
    * after fitting the image. Pointer coordinates still describe the image after the host turn. */
   uint32_t frontend_rotation;
 } AnygmConfig;
+
+enum {
+  ANYGM_CRT_CANVAS_DEFAULT_WIDTH=640,
+  ANYGM_CRT_CANVAS_DEFAULT_HEIGHT=448,
+  ANYGM_CRT_CANVAS_KEEP=1
+};
 
 enum {
   ANYGM_SCENE_RENDERER_CPU=0,
@@ -485,10 +491,10 @@ enum {
   ANYGM_CONFIG_HYBRID_GPU_PRESENTATION=1ull<<22,
   ANYGM_CONFIG_ADJUST_CRT_TV=1ull<<23,
   ANYGM_CONFIG_SCENE_RENDERER=1ull<<24,
-  ANYGM_CONFIG_CRT_OVERSIZE_SMALL=1ull<<25,
+  ANYGM_CONFIG_CRT_CANVAS_WIDTH=1ull<<25,
   ANYGM_CONFIG_CRT_VERTICAL=1ull<<26,
   ANYGM_CONFIG_IMAGE_ROTATION=1ull<<27,
-  ANYGM_CONFIG_CRT_OVERSIZE_KEEP=1ull<<28,
+  ANYGM_CONFIG_CRT_CANVAS_HEIGHT=1ull<<28,
   ANYGM_CONFIG_FRONTEND_ROTATION=1ull<<29
 };
 

@@ -10,7 +10,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int crt_on=1,logical_on=1,changed,negotiation,vertical,small,keep_axis;
+static int crt_on=1,logical_on=1,changed,negotiation,vertical;
+/* Keep the original geometry witnesses on their selected 480-line canvas. */
+static const char *canvas_width="640px",*canvas_height="480px";
 static const char *rotation;
 static const char *aspect="None";
 static unsigned video_width,video_height,geometry_width,geometry_height;
@@ -44,8 +46,8 @@ static bool environment(unsigned command,void *data){
     if(!strcmp(v->key,"anygm_render_game_resolution")) v->value=logical_on?"On":"Off";
     if(!strcmp(v->key,"anygm_adjust_crt_tv")) v->value=crt_on?"On":"Off";
     if(!strcmp(v->key,"anygm_aspect_ratio_force")) v->value=aspect;
-    if(!strcmp(v->key,"anygm_crt_oversize_handling"))
-      v->value=keep_axis?(small?"W:Keep H:240":"W:Keep H:480"):(small?"320x240":NULL);
+    if(!strcmp(v->key,"anygm_crt_oversize_canvas_width")) v->value=canvas_width;
+    if(!strcmp(v->key,"anygm_crt_oversize_canvas_height")) v->value=canvas_height;
     if(!strcmp(v->key,"anygm_os_screen_orientation")) v->value=vertical?"Vertical":NULL;
     if(!strcmp(v->key,"anygm_image_rotation")) v->value=rotation;
     if(!strcmp(v->key,"anygm_width_resolution")) v->value="1280";
@@ -157,13 +159,14 @@ static int rotation_cases(void){
   static const char *const turns[]={NULL,"Left","Upside Down","Right"};
   AnygmSyntheticContent fixture={0};
   int ok=1;
-  crt_on=0; logical_on=1; changed=0; negotiation=0; vertical=small=1; aspect="None";
+  crt_on=0; logical_on=1; changed=0; negotiation=0; vertical=1; aspect="None";
   REQUIRE(anygm_synthetic_sized_content_create(&fixture,400,300),"rotation fixture");
   retro_set_environment(environment); retro_set_video_refresh(video); retro_init();
   struct retro_game_info info={fixture.path,NULL,0,NULL};
   REQUIRE(retro_load_game(&info),"rotation load");
   for(int crt=0;crt<2;crt++) for(vertical=0;vertical<2;vertical++)
-    for(small=0;small<2;small++) for(unsigned turn=0;turn<4;turn++){
+    for(int small=0;small<2;small++) for(unsigned turn=0;turn<4;turn++){
+      canvas_width=small?"320px":"640px"; canvas_height=small?"240px":"480px";
       unsigned w=400,h=300;
       bool portrait=vertical!=((turn&1u)!=0);
       crt_on=crt; rotation=turns[turn]; changed=1;
@@ -219,23 +222,24 @@ static int rotation_cases(void){
         }
       }
     }
-  crt_on=logical_on=0; vertical=small=1; rotation="Right"; changed=1;
+  crt_on=logical_on=0; vertical=1; rotation="Right"; changed=1;
   retro_run();
   REQUIRE(video_width==960 && video_height==1280 && !g_libretro.engine->host_crt_active,
           "CRT off rotates the configured monitor raster");
 done:
-  vertical=small=0; rotation=NULL;
+  vertical=0; rotation=NULL; canvas_width="640px"; canvas_height="480px";
   retro_unload_game(); retro_deinit(); anygm_synthetic_content_destroy(&fixture);
   return ok;
 }
 
-static int frontend_portrait_case(bool supported){
+static int frontend_portrait_case(bool supported,unsigned canvas_lines){
   AnygmSyntheticContent fixture={0};
   int ok=1;
   const unsigned native_width=228,native_height=304;
   unsigned packed_width=supported?native_height:native_width;
   unsigned packed_height=supported?native_width:native_height;
-  crt_on=logical_on=vertical=1; small=keep_axis=0; rotation=NULL; aspect="None";
+  crt_on=logical_on=vertical=1; rotation=NULL; aspect="None";
+  canvas_height=canvas_lines==448?NULL:"480px";
   frontend_rotation_supported=supported;
   frontend_rotation=frontend_rotation_requests=0;
   REQUIRE(anygm_synthetic_sized_content_create(&fixture,native_width,native_height),"portrait fixture");
@@ -270,8 +274,8 @@ static int frontend_portrait_case(bool supported){
   engine_input_poll_mouse(engine);
   REQUIRE(engine->mouse_pixel_x==20 && engine->mouse_pixel_y==30,"portrait pointer uses visible axes");
   rotation="Right"; changed=1; retro_run();
-  REQUIRE(frontend_rotation==(supported?3u:0u) && video_width==(supported?640u:480u) &&
-          video_height==(supported?480u:640u),
+  REQUIRE(frontend_rotation==(supported?3u:0u) && video_width==(supported?640u:canvas_lines) &&
+          video_height==(supported?canvas_lines:640u),
           "a quarter turn that cancels the system turn uses the horizontal CRT fit");
   REQUIRE(fabs(geometry_aspect-3.0/4.0)<1e-6,
           "the frontend receives the display aspect after its requested turn");
@@ -280,7 +284,7 @@ static int frontend_portrait_case(bool supported){
   REQUIRE(frontend_rotation==(supported?1u:0u) && video_width==packed_width && video_height==packed_height,
           "returning to no rotation restores portrait transport");
   vertical=0; changed=1; retro_run();
-  REQUIRE(frontend_rotation==0 && video_width==640 && video_height==480,
+  REQUIRE(frontend_rotation==0 && video_width==640 && video_height==canvas_lines,
           "horizontal CRT restores the ordinary oversize path");
   REQUIRE(engine->host_canvas_width==cancelled_fit_width &&
           engine->host_canvas_height==cancelled_fit_height,
@@ -311,7 +315,7 @@ done:
   if(frontend_rotation!=0) ok=0;
   retro_deinit(); anygm_synthetic_content_destroy(&fixture);
   frontend_rotation_supported=false;
-  vertical=0; rotation=NULL;
+  vertical=0; rotation=NULL; canvas_height="480px";
   return ok;
 }
 
@@ -323,7 +327,8 @@ static int vertical_native_cases(void){
   for(size_t i=0;i<sizeof cases/sizeof cases[0];i++){
     AnygmSyntheticContent fixture={0};
     int ok=1;
-    crt_on=logical_on=vertical=small=1; rotation=NULL; aspect="None"; negotiation=0; changed=0;
+    crt_on=logical_on=vertical=1; rotation=NULL;
+    canvas_width="320px"; canvas_height="240px"; aspect="None"; negotiation=0; changed=0;
     REQUIRE(anygm_synthetic_sized_content_create(&fixture,cases[i].width,cases[i].height),
             "vertical fixture");
     retro_set_environment(environment); retro_set_video_refresh(video); retro_init();
@@ -335,7 +340,7 @@ static int vertical_native_cases(void){
     REQUIRE(g_libretro.engine->host_crt_area_filter==(i==1 || i==2 || i==4),
             "a native-size image keeps its pixels unless post-padding overflows");
 done:
-    vertical=small=0;
+    vertical=0; canvas_width="640px"; canvas_height="480px";
     retro_unload_game(); retro_deinit(); anygm_synthetic_content_destroy(&fixture);
     if(!ok) return 0;
   }
@@ -363,8 +368,10 @@ static int keep_axis_cases(void){
   for(size_t i=0;i<sizeof cases/sizeof cases[0];i++){
     AnygmSyntheticContent fixture={0};
     int ok=1;
-    crt_on=logical_on=keep_axis=1; changed=0; negotiation=0; aspect="None";
-    vertical=cases[i].vertical; small=cases[i].small; rotation=cases[i].rotation;
+    canvas_width="Keep Game Width";
+    crt_on=logical_on=1; changed=0; negotiation=0; aspect="None";
+    vertical=cases[i].vertical; rotation=cases[i].rotation;
+    canvas_height=cases[i].small?"240px":"480px";
     REQUIRE(anygm_synthetic_sized_content_create(&fixture,cases[i].sw,cases[i].sh),"Keep fixture");
     retro_set_environment(environment); retro_set_video_refresh(video); retro_init();
     struct retro_game_info info={fixture.path,NULL,0,NULL};
@@ -398,17 +405,90 @@ static int keep_axis_cases(void){
               "Keep preserves every sample on its variable axis and centers black margins");
     }
 done:
-    vertical=small=keep_axis=0; rotation=NULL;
+    vertical=0; rotation=NULL; canvas_width="640px"; canvas_height="480px";
     retro_unload_game(); retro_deinit(); anygm_synthetic_content_destroy(&fixture);
     if(!ok) return 0;
   }
   return 1;
 }
 
+static int canvas_selector_cases(void){
+  static const struct {
+    const char *width_value,*height_value;
+    unsigned width,height,top,picture_height;
+    bool area_filter,keep_width,keep_height,vertical;
+  } cases[]={
+    {NULL,NULL,640,448,56,336,false,false,false,false},
+    {"320px","224px",320,224,28,168,true,false,false,false},
+    {"640px","240px",640,240,30,180,true,false,false,false},
+    {"512px","360px",512,360,45,270,false,false,false,false},
+    {"512px","384px",512,384,48,288,false,false,false,false},
+    {"320px","480px",320,480,60,360,false,false,false,false},
+    {"Keep Game Width","224px",640,224,28,168,true,true,false,false},
+    {"320px","Keep Game Height",320,480,60,360,true,false,true,false},
+    {"Keep Game Width","Keep Game Height",640,480,60,360,false,true,true,false},
+    /* The selector axes are reversed in game coordinates for a vertical CRT. */
+    {"640px","448px",448,640,185,270,false,false,false,true},
+    {"512px","360px",360,512,148,216,false,false,false,true},
+    {"512px","384px",384,512,148,216,false,false,false,true},
+    {"Keep Game Width","224px",224,854,247,360,true,false,true,true},
+    {"320px","Keep Game Height",640,320,92,135,true,true,false,true}
+  };
+  AnygmSyntheticContent fixture={0};
+  int ok=1;
+  crt_on=logical_on=1; changed=0; negotiation=0; aspect="None";
+  canvas_width=canvas_height=NULL;
+  REQUIRE(anygm_synthetic_sized_content_create(&fixture,640,360),"canvas selector fixture");
+  retro_set_environment(environment); retro_set_video_refresh(video); retro_init();
+  struct retro_game_info info={fixture.path,NULL,0,NULL};
+  REQUIRE(retro_load_game(&info),"canvas selector load");
+  struct retro_system_av_info av={0};
+  retro_get_system_av_info(&av);
+  REQUIRE(av.geometry.base_width==640 && av.geometry.base_height==448 &&
+          fabs(av.geometry.aspect_ratio-4.0/3.0)<1e-6,"cold default canvas and display aspect");
+  geometry_width=av.geometry.base_width; geometry_height=av.geometry.base_height;
+  geometry_aspect=av.geometry.aspect_ratio;
+  for(size_t i=0;i<sizeof cases/sizeof cases[0];i++){
+    canvas_width=cases[i].width_value; canvas_height=cases[i].height_value;
+    vertical=cases[i].vertical;
+    changed=1; retro_run();
+    AnygmEngine *engine=g_libretro.engine;
+    double display_aspect=cases[i].vertical?3.0/4.0:4.0/3.0;
+    REQUIRE(video_width==cases[i].width && video_height==cases[i].height &&
+            geometry_width==video_width && geometry_height==video_height &&
+            fabs(geometry_aspect-display_aspect)<1e-6,"live canvas extent and display aspect");
+    REQUIRE(engine->host_canvas_x==0 && engine->host_canvas_y==(int)cases[i].top &&
+            engine->host_canvas_width==(int)cases[i].width &&
+            engine->host_canvas_height==(int)cases[i].picture_height &&
+            engine->host_crt_area_filter==cases[i].area_filter,"canvas picture rectangle and filter");
+    for(unsigned y=0;y<360;y++) for(unsigned x=0;x<640;x++){
+      unsigned stripe=(cases[i].keep_width?(x&1u)*0x550000u:0u) |
+                      (cases[i].keep_height?(y&1u)*0x55u:0u);
+      engine->screen[(size_t)y*640+x]=0xff003300u|stripe;
+    }
+    const uint32_t *pixels=NULL;
+    unsigned width=0,height=0;
+    REQUIRE(resolve_host_frame(engine,&pixels,&width,&height) &&
+            width==cases[i].width && height==cases[i].height,"canvas selector composed extent");
+    for(unsigned y=0;y<height;y++) for(unsigned x=0;x<width;x++){
+      unsigned row=y-cases[i].top,expected=0;
+      if(row<cases[i].picture_height)
+        expected=0x3300u | (cases[i].keep_width?(x&1u)*0x550000u:0u) |
+                          (cases[i].keep_height?(row&1u)*0x55u:0u);
+      REQUIRE((pixels[(size_t)y*width+x]&0xffffffu)==expected,"bars and retained-axis samples");
+    }
+  }
+done:
+  vertical=0; canvas_width="640px"; canvas_height="480px";
+  retro_unload_game(); retro_deinit(); anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int keep_aspect_reset_case(void){
   AnygmSyntheticContent fixture={0};
   int ok=1;
-  crt_on=0; logical_on=keep_axis=1; changed=0; negotiation=0; aspect="None";
+  canvas_width="Keep Game Width";
+  crt_on=0; logical_on=1; changed=0; negotiation=0; aspect="None";
   REQUIRE(anygm_synthetic_sized_content_create(&fixture,1920,480),"aspect-only Reset fixture");
   retro_set_environment(environment); retro_set_video_refresh(video); retro_init();
   struct retro_game_info info={fixture.path,NULL,0,NULL};
@@ -426,7 +506,7 @@ static int keep_aspect_reset_case(void){
   REQUIRE(video_width==1920 && video_height==480 && geometry_aspect==4.0f,
           "live CRT disable restores the aspect at the same extent");
 done:
-  keep_axis=0;
+  canvas_width="640px";
   retro_unload_game(); retro_deinit(); anygm_synthetic_content_destroy(&fixture);
   return ok;
 }
@@ -514,6 +594,7 @@ static int live_state_case(int response,unsigned source_width,unsigned source_he
   uint8_t *ring=NULL,*native=NULL,*adjusted=NULL;
   size_t initial=0,capacity=0,state_size=0,written=0;
   int ok=1;
+  canvas_width=canvas_height=NULL;
   crt_on=0; logical_on=1; changed=0; negotiation=response; aspect="None";
   video_width=video_height=geometry_width=geometry_height=0;
   REQUIRE(anygm_synthetic_sized_content_create(&fixture,source_width,source_height),"state fixture");
@@ -542,14 +623,14 @@ static int live_state_case(int response,unsigned source_width,unsigned source_he
           "live CRT geometry notification");
   REQUIRE(snapshot(&ring,&capacity,initial),"CRT snapshot");
   if(source_width==1920 && source_height==1080){
-    keep_axis=1; changed=1; retro_run();
-    REQUIRE(video_width==1920 && video_height==480 && snapshot(&ring,&capacity,initial),
+    canvas_width="Keep Game Width"; changed=1; retro_run();
+    REQUIRE(video_width==1920 && video_height==448 && snapshot(&ring,&capacity,initial),
             "the original ring accepts a Keep frame");
     REQUIRE(retro_unserialize(native,state_size),"restore the original frame under Keep");
     retro_run();
-    REQUIRE(video_width==1920 && video_height==480 &&
+    REQUIRE(video_width==1920 && video_height==448 &&
             fabs(geometry_aspect-4.0/3.0)<1e-6,"restored frame uses Keep and its display aspect");
-    keep_axis=0; changed=1; retro_run();
+    canvas_width=NULL; changed=1; retro_run();
   }
   REQUIRE(retro_unserialize(native,state_size),"restore native state while CRT enabled");
   retro_run();
@@ -579,7 +660,7 @@ static int live_state_case(int response,unsigned source_width,unsigned source_he
           geometry_width==source_width && geometry_height==source_height,
           "live native geometry restored");
   REQUIRE(snapshot(&ring,&capacity,initial),"native snapshot after CRT");
-  rotation="Right"; vertical=small=1; changed=1; retro_run();
+  rotation="Right"; vertical=1; changed=1; retro_run();
   REQUIRE(video_width==source_height && video_height==source_width &&
           geometry_width==source_height && geometry_height==source_width &&
           snapshot(&ring,&capacity,initial),"live rotation uses the existing frontend ring");
@@ -597,7 +678,7 @@ static int live_state_case(int response,unsigned source_width,unsigned source_he
   printf("CRT state transport: source=%ux%u negotiation=%d cold=%zu final=%zu\n",
          source_width,source_height,response,initial,capacity);
 done:
-  rotation=NULL; vertical=small=keep_axis=0;
+  rotation=NULL; vertical=0; canvas_width="640px"; canvas_height="480px";
   free(ring); free(native); free(adjusted);
   retro_unload_game(); retro_deinit(); anygm_synthetic_content_destroy(&fixture);
   return ok;
@@ -607,13 +688,14 @@ int main(void){
   if(!geometry_cases()) return 1;
   if(!aspect_tolerance_cases()) return 1;
   if(!crop_padding_case() || !rotation_cases() || !vertical_native_cases() ||
-     !keep_axis_cases() || !keep_aspect_reset_case() ||
-     !frontend_portrait_case(false) || !frontend_portrait_case(true)) return 1;
+     !keep_axis_cases() || !canvas_selector_cases() || !keep_aspect_reset_case()) return 1;
+  if(!frontend_portrait_case(false,480) || !frontend_portrait_case(true,480) ||
+     !frontend_portrait_case(false,448) || !frontend_portrait_case(true,448)) return 1;
   for(int response=-1;response<=1;response++){
-    if(!live_state_case(response,1920,1080,640,480) ||
+    if(!live_state_case(response,1920,1080,640,448) ||
        !live_state_case(response,320,180,320,240) ||
        !live_state_case(response,240,240,320,240) ||
-       !live_state_case(response,360,180,640,480)) return 1;
+       !live_state_case(response,360,180,640,448)) return 1;
   }
   puts("CRT output: thresholds, aspect, margins, live options, state and Reset passed");
   return 0;

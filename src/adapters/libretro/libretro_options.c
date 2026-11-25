@@ -38,13 +38,21 @@ static struct retro_core_option_v2_definition g_definitions[]={
    NULL,"video",
    {{"Off",NULL},{"On",NULL},{NULL,NULL}},
    "Off"},
-  {"anygm_crt_oversize_handling","CRT Oversize Handling",NULL,
-   "Selects the canvas for oversized images. The 480-line fit uses sharp bilinear and the "
-   "240-line fit uses area filtering. Keep preserves native samples along the width. "
-   "A vertical CRT canvas swaps the fixed and preserved axes. Use the core's aspect ratio.",
+  {"anygm_crt_oversize_canvas_width","CRT Oversize Canvas Width",NULL,
+   "Sets the horizontal extent of the CRT canvas for oversized images. Keep Game Width preserves "
+   "native samples on that axis and allows black margins. The canvas axes follow CRT orientation. "
+   "Use the core's aspect ratio in the frontend.",
    NULL,"video",
-   {{"W:640 H:480",NULL},{"W:Keep H:480",NULL},{"W:320 H:240",NULL},{"W:Keep H:240",NULL},{NULL,NULL}},
-   "W:640 H:480"},
+   {{"Keep Game Width",NULL},{"320px",NULL},{"512px",NULL},{"640px",NULL},{NULL,NULL}},
+   "640px"},
+  {"anygm_crt_oversize_canvas_height","CRT Oversize Canvas Height",NULL,
+   "Sets the vertical extent of the CRT canvas for oversized images. Keep Game Height preserves "
+   "native samples on that axis and allows black margins. The canvas axes follow CRT orientation. "
+   "Use the core's aspect ratio in the frontend.",
+   NULL,"video",
+   {{"Keep Game Height",NULL},{"224px",NULL},{"240px",NULL},{"360px",NULL},{"384px",NULL},
+    {"448px",NULL},{"480px",NULL},{NULL,NULL}},
+   "448px"},
   {"anygm_os_screen_orientation","OS Screen Orientation",NULL,
    "Match the screen orientation already set in the operating system. This option only selects "
    "the axes for CRT fitting. The operating system controls its own rotation. Vertical swaps "
@@ -89,7 +97,7 @@ static struct retro_core_option_v2_definition g_definitions[]={
     {"1200",NULL},{"1280",NULL},{"1350",NULL},{"1440",NULL},{"1536",NULL},{"1600",NULL},
     {"1800",NULL},{"1920",NULL},{"2160",NULL},{NULL,NULL}},
    "Game Base"},
-  {"anygm_aspect_ratio_force","Aspect Ratio force (Experimental)",NULL,
+  {"anygm_aspect_ratio_force","Aspect Ratio Force (Experimental)",NULL,
    "With Render at game resolution on, overrides the shape of the game's own raster before this "
    "program hands it over. Shapes within +/-10% of the selected aspect are left unchanged. "
    "None keeps the shape the game draws. Off that path the monitor "
@@ -115,7 +123,7 @@ static struct retro_core_option_v2_definition g_definitions[]={
    NULL,"video",
    {{"None",NULL},{"Left",NULL},{"Right",NULL},{"Upside Down",NULL},{NULL,NULL}},
    "None"},
-  {"anygm_content_shader_readback","Game shaders (GLSL)",NULL,
+  {"anygm_content_shader_readback","Game Shaders (GLSL)",NULL,
    "Controls the game's GLSL programs that the software renderer does not already recognize. "
 #if ANYGM_HARDWARE_RENDER
    "Performance runs them on OpenGL, uses the previous frame's result for draws inside a frame, "
@@ -418,6 +426,18 @@ static struct retro_core_option_v2_definition *definition_for(const char *key){
   return NULL;
 }
 
+static uint32_t option_crt_canvas_extent(const char *key){
+  const struct retro_core_option_v2_definition *definition=definition_for(key);
+  const char *value=option_value(key);
+  if(value){
+    /* Both declarations list their Keep choice first. */
+    if(!strcmp(value,definition->values[0].value)) return ANYGM_CRT_CANVAS_KEEP;
+    for(size_t i=1;definition->values[i].value;i++)
+      if(!strcmp(value,definition->values[i].value)) return (uint32_t)strtoul(value,NULL,10);
+  }
+  return (uint32_t)strtoul(definition->default_value,NULL,10);
+}
+
 static char **g_page_choice_text;
 static size_t g_page_choice_count;
 static uint32_t g_room_count;
@@ -575,7 +595,9 @@ static int update_option_visibility(void){
   display.key="anygm_image_rotation";
   delivered=g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display) && delivered;
   display.visible=crt!=0;
-  display.key="anygm_crt_oversize_handling";
+  display.key="anygm_crt_oversize_canvas_width";
+  delivered=g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display) && delivered;
+  display.key="anygm_crt_oversize_canvas_height";
   delivered=g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display) && delivered;
   display.key="anygm_os_screen_orientation";
   delivered=g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display) && delivered;
@@ -759,10 +781,8 @@ void libretro_options_apply(bool all_fields){
      available for content and host-monitor layouts that depend on it. */
   config->present_logical_raster=present_logical_raster;
   config->adjust_crt_tv=crt;
-  value=option_value("anygm_crt_oversize_handling");
-  config->crt_oversize_small=value && (!strcmp(value,"W:320 H:240") ||
-    !strcmp(value,"W:Keep H:240") || !strcmp(value,"320x240"));
-  config->crt_oversize_keep=value && (!strcmp(value,"W:Keep H:480") || !strcmp(value,"W:Keep H:240"));
+  config->crt_canvas_width=option_crt_canvas_extent("anygm_crt_oversize_canvas_width");
+  config->crt_canvas_height=option_crt_canvas_extent("anygm_crt_oversize_canvas_height");
   value=option_value("anygm_os_screen_orientation");
   config->crt_vertical=value && !strcmp(value,"Vertical");
   value=option_value("anygm_image_rotation");
@@ -794,8 +814,8 @@ void libretro_options_apply(bool all_fields){
       ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_ADJUST_CRT_TV|ANYGM_CONFIG_CLEAR_LOCAL_DATA|
       ANYGM_CONFIG_CONTENT_OVERRIDES|ANYGM_CONFIG_CONTENT_SHADER_READBACK|
       ANYGM_CONFIG_CONTENT_SHADER_DEVICE_EXPECTED|ANYGM_CONFIG_HYBRID_GPU_PRESENTATION|
-      ANYGM_CONFIG_SCENE_RENDERER|ANYGM_CONFIG_CRT_OVERSIZE_SMALL|ANYGM_CONFIG_CRT_VERTICAL|
-      ANYGM_CONFIG_IMAGE_ROTATION|ANYGM_CONFIG_CRT_OVERSIZE_KEEP|ANYGM_CONFIG_FRONTEND_ROTATION;
+      ANYGM_CONFIG_SCENE_RENDERER|ANYGM_CONFIG_CRT_CANVAS_WIDTH|ANYGM_CONFIG_CRT_VERTICAL|
+      ANYGM_CONFIG_IMAGE_ROTATION|ANYGM_CONFIG_CRT_CANVAS_HEIGHT|ANYGM_CONFIG_FRONTEND_ROTATION;
   if(g_libretro.loaded || g_libretro.prepared)
     delta.fields&=~(ANYGM_CONFIG_REPORT_ALL_SHADERS_COMPILED|
                     ANYGM_CONFIG_CONTENT_SHADER_READBACK|
