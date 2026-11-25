@@ -1902,7 +1902,7 @@
   "      bool covered=texelFetch(u_image,low,0).a>0.0 || texelFetch(u_image,high,0).a>0.0 ||\n" \
   "        texelFetch(u_image,ivec2(low.x,high.y),0).a>0.0 || texelFetch(u_image,ivec2(high.x,low.y),0).a>0.0;\n" \
   "      if(covered){\n" \
-  "        vec3 rgb=sample_value.rgb*(255.0*sample_value.a)+vec3(prior.rgb)*(1.0-sample_value.a);\n" \
+  "        vec3 rgb=(u_surface_rule.z&2)!=0?sample_value.rgb*255.0:sample_value.rgb*(255.0*sample_value.a)+vec3(prior.rgb)*(1.0-sample_value.a);\n" \
   "        prior=ivec4(ivec3(floor(rgb+0.5)),255);\n" \
   "      }\n" \
   "      continue;\n" \

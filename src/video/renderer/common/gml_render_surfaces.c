@@ -4238,7 +4238,7 @@ static int resident_surface_repeat(GmlRender *r,int surf,int sw,int sh,
   int magnified=dw>=sw && dh>=sh;
   int classic_filtered_application=r->classic && r->interp && surf==0;
   int classic_linear=classic_filtered_application && full_source &&
-    dw>sw && dh>sh && r->alphablend && !r->alpha_test_enable;
+    dw>sw && dh>sh && (!r->alpha_test_enable || !r->alpha_test_ref);
   int classic_aspect=full_source && magnified && r->classic && !classic_linear &&
     anygm_policy_classic_modern_presentation(r->win) && r->win->classic_scaling<0;
   if((!r->alphablend && r->blendmode) || resident_surface_shader_selected(r) ||

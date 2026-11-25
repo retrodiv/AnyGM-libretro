@@ -609,8 +609,9 @@ static int repeat_quad_valid(const GmlRenderDrawOp *op,
              GML_RENDER_REPEAT_ROUND_APP_POINT|GML_RENDER_REPEAT_CLASSIC_ASPECT|
              GML_RENDER_REPEAT_CLASSIC_ASPECT_APPLICATION|GML_RENDER_REPEAT_CLASSIC_LINEAR_APPLICATION) ||
      (classic_linear!=(q->sampling.filter==GML_RENDER_FILTER_BILINEAR)) ||
-     (classic_linear && (!full_source || classic_aspect || classic_app || disabled || round_app_point || blend!=1 ||
-       state->alpha_test_enabled || op->sources[0].resource_class==GML_RENDER_RESOURCE_SURFACE)) ||
+     (classic_linear && (!full_source || classic_aspect || classic_app || round_app_point || blend!=1 ||
+       (state->alpha_test_enabled && state->alpha_test_reference) ||
+       op->sources[0].resource_class==GML_RENDER_RESOURCE_SURFACE)) ||
      ((disabled || round_app_point) && blend!=1) ||
      (round_app_point && (!full_source || disabled)) ||
      (classic_app && !classic_aspect) ||
