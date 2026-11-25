@@ -5309,6 +5309,19 @@ static int resident_modern_unit_surface_alpha(void){
     GmlRenderDispatchMetrics dispatch={0};CHECK(gml_render_dispatch_metrics(r,&dispatch) &&
       !dispatch.skipped && !dispatch.failed && dispatch.gpu[GML_RENDER_SCENE_SURFACE]==1u);
     for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)CHECK(!dispatch.cpu[GML_RENDER_SCENE_SURFACE][reason]);
+    /* The earlier channel-masked unit writer uses unsquared source alpha,
+     * independently of the generic modern sampled-target policy. */
+    for(unsigned mask=7u;mask<=8u;mask++){
+      r->color_write_mask=(uint8_t)mask;
+      gml_draw_surface_part_ext(r,source,0,0,4,4,1,1,1,1,0xFFFFFFu,1);
+      CHECK(gml_render_scene_submit_pending(r) && fake.readbacks==reads &&
+        fake.last_quad_state.write_mask==mask && fake.last_quad_state.coverage_policy==0u &&
+        fake.last_quad_state.alpha_source_factor==GML_RENDER_BLEND_ONE &&
+        fake.last_quad_state.alpha_destination_factor==GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA);
+    }
+    CHECK(gml_render_dispatch_metrics(r,&dispatch) && !dispatch.skipped && !dispatch.failed &&
+      dispatch.gpu[GML_RENDER_SCENE_SURFACE]==3u);
+    for(unsigned reason=0;reason<GML_RENDER_DISPATCH_REASON_COUNT;reason++)CHECK(!dispatch.cpu[GML_RENDER_SCENE_SURFACE][reason]);
     if(captured)gml_render_layer_filter_end(r,&filter,1);
     gml_render_free(r);free(r);
   }
@@ -21965,8 +21978,8 @@ static int resident_surface_rotated_authority(void){
   const int generations[]={530,700,800,13,15,17};
   for(unsigned generation=0;generation<6u;generation++) for(unsigned kind=0;kind<4u;kind++)
   for(unsigned gui=0;gui<2u;gui++) for(unsigned mode=0;mode<12u;mode++)
-  for(unsigned alias=0;alias<2u;alias++){
-    if(alias && !kind) continue;
+  for(unsigned alias=0;alias<2u;alias++) for(unsigned placed=0;placed<2u;placed++){
+    if((placed && mode) || (alias && !kind)) continue;
     FakeDevice fake={.on_demand=1,.supported_operations=UINT64_C(1)<<GML_RENDER_OP_COPY_IMAGE};
     GmlRenderDeviceServices device=service(&fake);device.observe_on_demand=fake_observe_on_demand;
     GmlRender *r=calloc(1,sizeof *r);GmlWin content={0};
@@ -22003,7 +22016,7 @@ static int resident_surface_rotated_authority(void){
     memcpy(source_shadow,pixels,(size_t)source_count*4u);memcpy(shadow,r->fb,sizeof shadow);
     GmlRenderJournalMetrics before={0},after={0},metrics={0};
     gml_render_resource_journal_metrics(sample,&before);
-    r->blendmode=(int)mode;r->alphablend=mode%4u!=0;r->interp=mode&1u;
+    r->blendmode=(int)mode;r->alphablend=placed || mode%4u!=0;r->interp=mode&1u;
     r->color_write_mask=mode&1u?5u:15u;
     if(mode>=9u){r->blend_equation=1+(int)(mode%5u);r->blend_equation_alpha=5;}
     int submits=fake.submits,uploads=fake.uploads,retires=fake.retires;
@@ -22020,7 +22033,9 @@ static int resident_surface_rotated_authority(void){
     CHECK(fake.submits==submits+(alias?3:0) && fake.retires==retires+(int)alias);
     CHECK(gml_render_scene_submit_pending(r) && fake.submits==submits+(alias?3:1) &&
       fake.uploads==uploads+(alias?0:1) && !fake.readbacks && !fake.rgb_queries &&
-      fake.last_quantisation==GML_RENDER_QUANTISE_SURFACE_ROTATED_POINT);
+      fake.last_quantisation==(placed?GML_RENDER_QUANTISE_AFFINE_SURFACE_POINT:GML_RENDER_QUANTISE_SURFACE_ROTATED_POINT));
+    if(placed) CHECK(fake.last_batch_operations==1u && fake.last_quad.shape==GML_RENDER_QUAD_GENERAL &&
+      fake.last_quad.span_active==0u);
     gml_render_resource_journal_metrics(target,&metrics);gml_render_resource_journal_metrics(sample,&after);
     CHECK(metrics.authority==GML_RENDER_RESOURCE_GPU_RESIDENT && !metrics.cpu_replays &&
       !metrics.journal_bytes && !metrics.retained_mutable_bytes && before.cpu_version==after.cpu_version &&
@@ -22943,6 +22958,7 @@ int main(void){
     else if(!strcmp(selected,"metadata-pending-state")) passed=metadata_state_capacity_preserves_pending_pixels();
     else if(!strcmp(selected,"zero-base-runtime-state")) passed=zero_base_runtime_sprite_state();
     else if(!strcmp(selected,"opaque-clear-complement")) passed=opaque_rectangle_clear_complement();
+    else if(!strcmp(selected,"rotated-surface-authority")) passed=resident_surface_rotated_authority();
     else if(!strcmp(selected,"large-rotated-multiply")) passed=resident_large_rotated_multiply();
     else if(!strcmp(selected,"borrowed-screen-handoff")) passed=resident_borrowed_application_screen_handoff();
     else if(!strcmp(selected,"deferred-borrowed-screen")) passed=resident_deferred_borrowed_screen_materialization();

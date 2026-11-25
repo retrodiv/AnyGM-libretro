@@ -488,8 +488,13 @@ int gml_render_view_surface_quad_valid(const GmlRenderDrawOp *op,
      op->payload.quad.sampling.source_region.y ||
      op->payload.quad.sampling.source_region.width!=width ||
      op->payload.quad.sampling.source_region.height!=height) return 0;
-  return view_texture_quad_valid(op,state,width,height,GML_RENDER_SCENE_SURFACE,
-                                 GML_RENDER_QUANTISE_VIEW_SURFACE);
+  unsigned quantisation=op->payload.quad.sampling.quantisation;
+  if(quantisation==GML_RENDER_QUANTISE_AFFINE_SURFACE_POINT){
+    const GmlRenderQuad *q=&op->payload.quad;
+    if(q->sampling.filter!=GML_RENDER_FILTER_NEAREST || q->u[0]!=0.0 || q->v[0]!=0.0 ||
+       q->u[1]!=1.0 || q->v[2]!=1.0)return 0;
+  }else if(quantisation!=GML_RENDER_QUANTISE_VIEW_SURFACE)return 0;
+  return view_texture_quad_valid(op,state,width,height,GML_RENDER_SCENE_SURFACE,quantisation);
 }
 
 int gml_render_view_background_quad_valid(const GmlRenderDrawOp *op,

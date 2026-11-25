@@ -1,3 +1,13 @@
+`common/gml_render_surfaces.c::resident_view_surface_quad` shares resource and
+feedback preparation for selected views and ordinary affine nearest surfaces.
+The latter uses AFFINE_SURFACE_POINT: a full placed quad carries its basis to
+`gpu/opengl/gml_render_gpu_opengl_blit.c`, and the existing shader owner derives
+point coordinates from each device fragment before reusing the established
+surface tint/blend body. Three compact programs own normal, opaque-alpha and
+stamp execution. Selected-view UVs and the original CPU writer remain unchanged;
+no CPU coverage rows or per-texel packets are prepared by this new path.
+Actual-driver image/state evidence is separate from metadata/stream guards.
+
 `gpu/opengl/gml_gpu_opengl_layer_glow.h` reuses neighbourhood axes for two
 blur pairs per quality step, performs paired device RGB maxima, and accumulates
 normal/gamma/additive results in two private byte images before one publication.

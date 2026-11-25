@@ -993,16 +993,27 @@
   "    o_color=vec4(rgb,alpha)/255.0; return;\n" \
   "  }\n" \
   "  // R03_SHADER_SURFACE_ROTATED_POINT: CPU-selected geometry,device texels/colour.\n" \
-  "  if(u_filter>=133 && u_filter<=136){\n" \
-  "    ivec2 size=textureSize(u_image,0),at=ivec2(floor(v_texcoord*vec2(size)));\n" \
+  "  // R03_SHADER_SURFACE_AFFINE_POINT: one placed quad, device affine coordinates.\n" \
+  "  if((u_filter>=133 && u_filter<=136)||(u_filter>=186 && u_filter<=188)){\n" \
+  "    bool affine=u_filter>=186;\n" \
+  "    ivec2 size=textureSize(u_image,0),at;\n" \
+  "    if(affine){\n" \
+  "      vec2 p=vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y)-v_map.xy;\n" \
+  "      vec2 u=v_map.zw,v=v_step;float det=u.x*v.y-u.y*v.x;\n" \
+  "      vec2 numerator=vec2(p.x*v.y-p.y*v.x,u.x*p.y-u.y*p.x);\n" \
+  "      vec2 point=(numerator*vec2(size))/det;\n" \
+  "      if(any(lessThan(point,vec2(0.0)))||any(greaterThanEqual(point,vec2(size))))discard;\n" \
+  "      at=ivec2(floor(point));if(v_margin!=0.0)at.y=size.y-1-at.y;\n" \
+  "    }else at=ivec2(floor(v_texcoord*vec2(size)));\n" \
   "    uvec4 sampled=uvec4(floor(source_texel(at,0)*255.0+0.5));\n" \
   "    if(u_alpha_test>=0 && sampled.a<=uint(u_alpha_test)) discard;\n" \
-  "    if(sampled.a==0u && v_span_y.x==0.0) discard;\n" \
-  "    if(u_filter==134){o_color=vec4(0.0,0.0,0.0,1.0);return;}\n" \
+  "    if(sampled.a==0u && (affine || v_span_y.x==0.0)) discard;\n" \
+  "    if(affine && v_colour.a<0.0)discard;\n" \
+  "    if(u_filter==134 || u_filter==188){o_color=vec4(0.0,0.0,0.0,1.0);return;}\n" \
   "    uvec3 tint=uvec3(floor(v_colour.rgb*255.0+0.5));\n" \
   "    vec3 rgb=vec3(sampled.rgb*tint/255u)/255.0;\n" \
   "    float alpha=float(sampled.a)*v_colour.a;\n" \
-  "    if(v_span_y.y!=0.0) alpha=floor(alpha+0.5);\n" \
+  "    if(!affine && v_span_y.y!=0.0) alpha=floor(alpha+0.5);\n" \
   "    o_color=vec4(rgb,u_filter==135?1.0:alpha/255.0);return;\n" \
   "  }\n" \
   "  // R03_SHADER_SURFACE_TILED_AREA: bounded integer box taps with fixed blending.\n" \
@@ -1239,10 +1250,28 @@
   "#endif\n" \
   "    vec4 sampled=margin!=0?hardware_background_sample(v_texcoord,\n" \
   "      ivec2(v_clamp.xy),ivec2(v_clamp.zw),margin):source_texture(uv);\n" \
+  "    float support=sampled.a;\n" \
+  "    // R03_SHADER_SURFACE_FILTERED_SUPPORT: alpha support survives sampler rounding.\n" \
+  "    if(v_span_y.z==1.0 && (u_filter==21 || u_filter==22)){\n" \
+  "      ivec2 size=textureSize(u_image,0),extent=ivec2(v_span_x.zw);\n" \
+  "      ivec2 pixel=ivec2(floor(vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y)-v_span_x.xy));\n" \
+  "      bool leading=v_span_y.y!=0.0;\n" \
+  "      ivec2 den=leading?extent:2*extent;\n" \
+  "      ivec2 numerator=leading?pixel*size:(2*pixel+ivec2(1))*size-extent;\n" \
+  "      numerator=clamp(numerator,ivec2(0),(size-ivec2(1))*den);\n" \
+  "      ivec2 low=numerator/den,remainder=numerator%den;\n" \
+  "      support=0.0;\n" \
+  "      for(int y=0;y<2;y++)for(int x=0;x<2;x++){\n" \
+  "        if((x!=0 && remainder.x==0)||(y!=0 && remainder.y==0))continue;\n" \
+  "        ivec2 at=min(low+ivec2(x,y),size-ivec2(1));\n" \
+  "        if(v_span_y.x!=0.0)at.y=size.y-1-at.y;\n" \
+  "        support=max(support,source_texel(at,0).a);\n" \
+  "      }\n" \
+  "    }\n" \
   "    float alpha=sampled.a*v_colour.a;\n" \
   "#ifndef GML_SCENE_ZERO_ALPHA_BLEND\n" \
-  "    if(u_alpha_test>=0 && sampled.a*255.0<=float(u_alpha_test)) discard;\n" \
-  "    if(alpha<=0.0) discard;\n" \
+  "    if(u_alpha_test>=0 && (u_alpha_test==0?support<=0.0:sampled.a*255.0<=float(u_alpha_test))) discard;\n" \
+  "    if(support<=0.0 || v_colour.a<=0.0) discard;\n" \
   "#endif\n" \
   "#ifndef GML_SCENE_WHITE_TINT\n" \
   "    if(u_filter==25){\n" \

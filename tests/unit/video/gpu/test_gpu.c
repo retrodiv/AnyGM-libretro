@@ -3259,7 +3259,7 @@ static int scene_hot_constant_programs_case(void){
   const unsigned filters[]={32u,33u,153u,21u,22u,25u,26u,51u,53u,55u,147u,149u,30u,23u,24u,34u,35u,36u,39u,41u,40u,37u,42u,84u,31u,
     GL_SCENE_NATIVE_TEXTURE_NEAREST_FILTER,GL_SCENE_NATIVE_TEXTURE_LINEAR_FILTER,
     GL_SCENE_NATIVE_TEXTURE_STAMP_NEAREST_FILTER,GL_SCENE_NATIVE_TEXTURE_STAMP_LINEAR_FILTER,
-    GL_SCENE_NATIVE_TEXTURE_SURFACE_NEAREST_FILTER,GL_SCENE_NATIVE_TEXTURE_SURFACE_LINEAR_FILTER,49u,56u,8u,128u};
+    GL_SCENE_NATIVE_TEXTURE_SURFACE_NEAREST_FILTER,GL_SCENE_NATIVE_TEXTURE_SURFACE_LINEAR_FILTER,49u,56u,8u,128u,186u,187u,188u};
   for(unsigned api=0;api<2u;api++)for(unsigned selected=0;selected<sizeof filters/sizeof filters[0];selected++)
   for(unsigned failure=0;failure<2u;failure++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGL_CORE:GML_GPU_API_OPENGLES3);
@@ -3486,17 +3486,18 @@ static int scene_white_tint_batches_case(void){
 
 static int scene_opaque_unit_surface_copy_case(void){
   enum { W=16,H=12 };
-  for(unsigned api=0;api<2u;api++) for(unsigned variant=0;variant<16u;variant++){
+  for(unsigned api=0;api<2u;api++) for(unsigned variant=0;variant<22u;variant++){
     anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
     GmlRenderDeviceServices device={0};
     REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"unit surface context");
     gml_gpu_device_services(gpu,&device);
     uint32_t pixels[W*H];for(unsigned i=0;i<W*H;i++) pixels[i]=0xFF13579Bu;
-    GmlRenderImageRef source={variant==8u?GML_RENDER_RESOURCE_SCREEN:GML_RENDER_RESOURCE_APPLICATION,231u,1u,1u};
+    GmlRenderImageRef source={variant>=20u?GML_RENDER_RESOURCE_ATLAS:variant==8u?GML_RENDER_RESOURCE_SCREEN:GML_RENDER_RESOURCE_APPLICATION,231u,1u,1u};
     GmlRenderImageUpload upload={.image=source,.storage_width=W,.storage_height=H,
-      .region={0,0,W,H},.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+      .region={0,0,W,H},.pixel_format=variant>=20u?GML_RENDER_PIXEL_RGBA8888:GML_RENDER_PIXEL_ARGB8888,
       .bytes=pixels,.byte_capacity=sizeof pixels,.stride_bytes=W*4u};
+    if(variant>=20u)pixels[0]&=0x00FFFFFFu;
     REQUIRE(device.upload(device.context,&upload),"unit surface source");
     GmlRenderDrawStateSnapshot states[2]={{.colour=0xFFFFFFFFu,.alpha=255u,.write_mask=15u},
       {.colour=0xFFFFFFFFu,.alpha=255u,.write_mask=15u,.sampler_count=1u,
@@ -3506,7 +3507,7 @@ static int scene_opaque_unit_surface_copy_case(void){
        .alpha_source_factor=GML_RENDER_BLEND_ONE,
        .alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
        .rgb_equation=GML_RENDER_BLEND_ADD,.alpha_equation=GML_RENDER_BLEND_ADD}};
-    if(variant!=7u){
+    if(variant!=7u && variant<16u){
       GmlRenderDrawOp clear={.opcode=GML_RENDER_OP_CLEAR,
         .target={.image=source,.storage_version=1u,.width=W,.height=H,
           .pixel_format=GML_RENDER_PIXEL_ARGB8888,.region={0,0,W,H}}};
@@ -3540,8 +3541,9 @@ static int scene_opaque_unit_surface_copy_case(void){
     if(variant>=10u){
       q->sampling.filter=GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT;
       q->sampling.quantisation=0u;q->source_opaque=1u;
-      double x=variant==11u?1.25:variant==12u?-1.0:1.0,y=1.0;
-      double width=W-2.0,height=H-2.0;
+      double x=variant==16u?0.0:variant==11u?1.25:variant==12u?-1.0:1.0;
+      double y=variant==16u?0.0:1.0;
+      double width=variant==16u?W:W-2.0,height=variant==16u?H:H-2.0;
       q->inverse_anchor[0]=x;q->inverse_anchor[1]=y;
       q->inverse_x[0]=width;q->inverse_y[1]=height;
       for(unsigned c=0;c<4u;c++){
@@ -3551,6 +3553,23 @@ static int scene_opaque_unit_surface_copy_case(void){
       }
       if(variant==14u){states[1].alpha_test_enabled=1u;states[1].alpha_test_reference=255u;}
       if(variant==15u) states[1].write_mask=7u;
+    }
+    if(variant>=18u){
+      q->sampling.filter=GML_RENDER_FILTER_NEAREST;q->sampling.quantisation=0u;
+      q->filtered_draw_alpha=.7;
+      for(unsigned c=0;c<4u;c++){
+        q->x[c]=(c==1u || c==2u?W:0)+(variant==19u?1:0);
+        q->y[c]=(c>=2u?H:0)+(variant==19u?1:0);
+        q->u[c]=c==1u || c==2u;q->v[c]=c>=2u;q->corner_colour[c]=0xB3FFFFFFu;
+      }
+    }
+    if(variant>=20u){
+      ops[1].scene_family=variant==20u?GML_RENDER_SCENE_SPRITE:GML_RENDER_SCENE_TEXT;
+      q->source_opaque=0u;q->filtered_draw_alpha=1.0;q->span_y[3]=1.0;
+      for(unsigned c=0;c<4u;c++){
+        q->x[c]=c==1u || c==2u?W:0;q->y[c]=c>=2u?H:0;
+        q->corner_colour[c]=0xFFFFFFFFu;
+      }
     }
     states[1].samplers[0]=q->sampling;
     if(variant==5u) states[1].write_mask=7u;
@@ -3574,6 +3593,15 @@ static int scene_opaque_unit_surface_copy_case(void){
     unsigned expected=(variant==0u || variant==10u)?1u:variant==8u?2u:0u;
     REQUIRE(anygm_test_graphics_scene_copies()==copies_before+expected &&
       !anygm_test_graphics_read_pixels(),"only opaque identity or contained physical-point surfaces use raw copies");
+    if(variant>=16u){
+      GlSceneImage *image=gml_gpu_opengl_scene_image(gpu->backend,ops[1].target.image);
+      if(image && variant>=20u && image->alpha_opaque)
+        fprintf(stderr,"atlas opacity certificate: variant=%u family=%u opaque=%d expected=0\n",
+          variant,ops[1].scene_family,image->alpha_opaque);
+      REQUIRE(image && image->alpha_opaque==(variant==16u || variant==18u) &&
+        anygm_test_graphics_scene_draw_calls()==(variant>=18u?2:1),
+        "only a complete opaque point draw certifies an initially partial SCREEN");
+    }
     if(variant==10u){
       int actual[8],expected[8]={0,0,W,H,1,1,W-1,H-1};
       anygm_test_graphics_last_blit(actual);
@@ -4840,6 +4868,228 @@ static int scene_native_masked_rotation_case(void){
       REQUIRE(factors[0]==GL_ONE && factors[1]==GL_ONE && factors[2]==GL_ONE && factors[3]==GL_ONE,
         "an additive native rotation keeps fixed additive blending");
     }
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
+/* Metadata and stream ownership only; actual pixels require a real driver. */
+static int scene_surface_filtered_support_case(void){
+  GmlRenderDrawOp op={.opcode=GML_RENDER_OP_TEXTURED_QUAD,
+    .scene_family=GML_RENDER_SCENE_SURFACE,.reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT};
+  op.target.width=48u;op.target.height=36u;
+  GmlRenderDrawStateSnapshot state={.alpha=255u,.write_mask=15u,
+    .coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA};
+  GmlRenderQuad *q=&op.payload.quad;q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+  q->sampling=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_HARDWARE_BILINEAR,
+    GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,8u,6u},0u,0u};
+  q->filtered_draw_alpha=1.0;
+  const unsigned modes[]={0u,GML_RENDER_QUANTISE_HARDWARE_SURFACE_LEADING,
+    GML_RENDER_QUANTISE_SURFACE_TILED_FILTERED,GML_RENDER_QUANTISE_SURFACE_TILED_LEADING};
+  for(unsigned mode=0;mode<4u;mode++)for(unsigned flip=0;flip<2u;flip++){
+    unsigned leading=mode&1u;
+    q->sampling.quantisation=modes[mode];
+    for(unsigned c=0;c<4u;c++){
+      int right=c==1u || c==2u,bottom=c>=2u;
+      q->x[c]=right?23:-1;q->y[c]=bottom?18:0;
+      q->u[c]=right+(leading?.5/8-.5/24:0);
+      q->v[c]=bottom+(leading?.5/6-.5/18:0);
+      q->corner_colour[c]=0xFFFFFFFFu;
+    }
+    float vertices[6u*GL_SCENE_VERTEX_FLOATS];
+    REQUIRE(gml_render_gpu_opengl_draw_textured_quad(&op,&state,8u,6u,(int)flip,vertices),
+      "filtered surface carries one complete rectangle in either source orientation");
+    for(unsigned c=0;c<6u;c++){
+      const float *v=vertices+c*GL_SCENE_VERTEX_FLOATS;
+      REQUIRE(v[19]==-1 && v[20]==0 && v[21]==24 && v[22]==18 &&
+        v[23]==(float)flip && v[24]==(float)leading && v[25]==1,
+        "device support retains unclipped extent, sampling phase and storage orientation");
+    }
+    op.scene_family=GML_RENDER_SCENE_BACKGROUND;
+    REQUIRE(gml_render_gpu_opengl_draw_textured_quad(&op,&state,8u,6u,(int)flip,vertices) &&
+      vertices[25]==0,"unrelated background sampling retains its existing coverage policy");
+    op.scene_family=GML_RENDER_SCENE_SURFACE;
+  }
+  return 1;
+}
+
+static int scene_affine_surface_point_case(void){
+  const unsigned classes[]={GML_RENDER_RESOURCE_SCREEN,GML_RENDER_RESOURCE_APPLICATION,
+    GML_RENDER_RESOURCE_SURFACE,GML_RENDER_RESOURCE_SCRATCH};
+  for(unsigned api=0;api<2u;api++)for(unsigned preserve=0;preserve<2u;preserve++)
+  for(unsigned source_kind=0;source_kind<4u;source_kind++)
+  for(unsigned opacity=0;opacity<3u;opacity++){
+    const double alphas[]={.61,1e-100,1e-300};
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"affine point context");
+    gml_gpu_device_services(gpu,&device);
+    uint32_t pixels[48];for(unsigned i=0;i<48u;i++)pixels[i]=0x803579B1u+i;
+    GmlRenderImageRef source={classes[source_kind],181u,1u,1u};
+    GmlRenderImageUpload upload={.image=source,.storage_width=8u,.storage_height=6u,
+      .region={0,0,8u,6u},.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+      .stride_bytes=32u,.byte_capacity=sizeof pixels,.bytes=pixels};
+    REQUIRE(device.upload(device.context,&upload),"affine point independently versioned source");
+    GmlRenderDrawStateSnapshot states[2]={
+      {.write_mask=15u,.colour=0xffffffffu,.alpha=255u},
+      {.write_mask=15u,.colour=0xffffffffu,.alpha=255u,.sampler_count=1u,
+       .rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA,
+       .rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
+       .alpha_source_factor=preserve?GML_RENDER_BLEND_SOURCE_ALPHA:GML_RENDER_BLEND_ONE,
+       .alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
+       .rgb_equation=GML_RENDER_BLEND_ADD,.alpha_equation=GML_RENDER_BLEND_ADD,
+       .coverage_policy=preserve?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA}};
+    states[1].samplers[0]=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_NEAREST,
+      GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,8u,6u},GML_RENDER_QUANTISE_AFFINE_SURFACE_POINT,0u};
+    GmlRenderDrawOp ops[2]={0};
+    ops[0].opcode=GML_RENDER_OP_CLEAR;ops[0].reconstruction_mode=GML_RENDER_REPLAY_EXACT;
+    ops[0].target=(GmlRenderTargetRef){{GML_RENDER_RESOURCE_SURFACE,182u,1u,1u},1u,16u,16u,
+      GML_RENDER_PIXEL_ARGB8888,{0,0,16u,16u}};ops[0].payload.clear_colour=0x55315779u;
+    GmlRenderDrawBatch seed={ops,1u,states,1u};
+    REQUIRE(device.submit(device.context,&seed).status==GML_RENDER_EXEC_ACCEPTED,"affine target seed");
+    GmlRenderImageRef alias=ops[0].target.image;ops[0].target.image.content_version=2u;
+    ops[1].opcode=GML_RENDER_OP_TEXTURED_QUAD;ops[1].state_index=1u;
+    ops[1].scene_family=GML_RENDER_SCENE_SURFACE;ops[1].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
+    ops[1].target=ops[0].target;ops[1].target.image.content_version=3u;
+    ops[1].source_count=1u;ops[1].sources=&source;
+    GmlRenderQuad *q=&ops[1].payload.quad;q->shape=GML_RENDER_QUAD_GENERAL;
+    q->sampling=states[1].samplers[0];q->filtered_draw_alpha=alphas[opacity];
+    const double x[]={5.25,5.25,2.25,2.25},y[]={11.25,5.25,5.25,11.25};
+    for(unsigned c=0;c<4u;c++){
+      q->x[c]=x[c];q->y[c]=y[c];q->u[c]=c==1u || c==2u;q->v[c]=c>=2u;
+      q->corner_colour[c]=((uint32_t)lround(q->filtered_draw_alpha*255.0)<<24)|0xA8C4E0u;
+    }
+    float vertices[6u*GL_SCENE_VERTEX_FLOATS];
+    for(unsigned flip=0;flip<2u;flip++){
+      REQUIRE(gml_render_gpu_opengl_draw_textured_quad(&ops[1],&states[1],8u,6u,(int)flip,vertices),
+        "affine point vertex conversion accepts both storage origins");
+      REQUIRE(vertices[12]==5.25f && vertices[13]==11.25f && vertices[14]==0 &&
+        vertices[15]==-6 && vertices[16]==-3 && vertices[17]==0 && vertices[18]==(float)flip,
+        "affine basis and storage orientation stay separate from interpolated UVs");
+    }
+    int clears=anygm_test_graphics_clear_calls(),draws=anygm_test_graphics_scene_draw_calls();
+    for(unsigned invalid=0;invalid<12u;invalid++){
+      GmlRenderDrawOp wrong[2]={ops[0],ops[1]};GmlRenderDrawStateSnapshot state[2]={states[0],states[1]};
+      switch(invalid){
+        case 0:wrong[1].payload.quad.sampling.filter=GML_RENDER_FILTER_HARDWARE_BILINEAR;break;
+        case 1:wrong[1].payload.quad.sampling.source_region.width=7u;break;
+        case 2:wrong[1].payload.quad.u[0]=.1;break;
+        case 3:wrong[1].payload.quad.x[3]=wrong[1].payload.quad.x[0];
+               wrong[1].payload.quad.y[3]=wrong[1].payload.quad.y[0];break;
+        case 4:wrong[1].payload.quad.x[2]+=.25;break;
+        case 5:wrong[1].payload.quad.x[0]=NAN;break;
+        case 6:wrong[1].payload.quad.span_active=1u;break;
+        case 7:wrong[1].payload.quad.span_x[0]=1;break;
+        case 8:wrong[1].payload.quad.inverse_anchor[0]=1;break;
+        case 9:state[1].alpha_test_enabled=1u;break;
+        case 10:state[1].write_mask=16u;break;
+        case 11:wrong[1].sources=&alias;break;
+      }
+      GmlRenderDrawBatch refused={wrong,2u,state,2u};
+      GmlRenderExecutionResult result=device.submit(device.context,&refused);
+      REQUIRE(result.status==GML_RENDER_EXEC_UNSUPPORTED && !result.accepted_prefix &&
+        !result.uncertain_target_count && anygm_test_graphics_clear_calls()==clears &&
+        anygm_test_graphics_scene_draw_calls()==draws,"malformed affine suffix cannot execute a clear prefix");
+    }
+    GmlRenderDrawBatch batch={ops,2u,states,2u};
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED,
+      "one affine surface point packet is admitted in both alpha policies");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
+static int scene_modern_filtered_surface_case(void){
+  const unsigned classes[]={GML_RENDER_RESOURCE_SCREEN,GML_RENDER_RESOURCE_APPLICATION,
+    GML_RENDER_RESOURCE_SURFACE,GML_RENDER_RESOURCE_SCRATCH};
+  for(unsigned api=0;api<2u;api++)for(unsigned kind=0;kind<4u;kind++)
+  for(unsigned target_kind=0;target_kind<2u;target_kind++)
+  for(unsigned feedback=0;feedback<2u;feedback++){
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"modern filtered surface context");
+    gml_gpu_device_services(gpu,&device);
+    uint32_t pixels[]={0x001267B9u,0x552679B3u,0xAAC39526u,0xFF7193C5u};
+    GmlRenderImageRef source={classes[kind],185u,1u,1u};
+    GmlRenderImageUpload upload={.image=source,.storage_width=2u,.storage_height=2u,
+      .region={0,0,2u,2u},.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+      .stride_bytes=8u,.byte_capacity=sizeof pixels,.bytes=pixels};
+    REQUIRE(device.upload(device.context,&upload),"modern filtered surface source");
+    GmlRenderDrawStateSnapshot state={.colour=0xFFFFFFFFu,.alpha=255u,.write_mask=15u,
+      .sampler_count=1u,.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA,
+      .rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
+      .alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA,
+      .alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
+      .rgb_equation=GML_RENDER_BLEND_ADD,.alpha_equation=GML_RENDER_BLEND_ADD};
+    state.samplers[0]=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_HARDWARE_BILINEAR,
+      GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,2u,2u},
+      feedback?GML_RENDER_QUANTISE_SURFACE_TILED_FILTERED:0u,0u};
+    GmlRenderDrawOp ops[2]={0};
+    for(unsigned i=0;i<2u;i++)ops[i].target=(GmlRenderTargetRef){
+      {target_kind?GML_RENDER_RESOURCE_APPLICATION:GML_RENDER_RESOURCE_SURFACE,186u,1u,i+1u},
+      1u,8u,8u,GML_RENDER_PIXEL_ARGB8888,{0,0,8u,8u}};
+    ops[0].opcode=GML_RENDER_OP_CLEAR;ops[0].payload.clear_colour=0x78273859u;
+    ops[1].opcode=GML_RENDER_OP_TEXTURED_QUAD;ops[1].scene_family=GML_RENDER_SCENE_SURFACE;
+    ops[1].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;ops[1].sources=&source;ops[1].source_count=1u;
+    GmlRenderQuad *q=&ops[1].payload.quad;q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+    q->sampling=state.samplers[0];q->filtered_draw_alpha=.61;
+    for(unsigned c=0;c<4u;c++){
+      q->x[c]=c==1u || c==2u?7:-1;q->y[c]=c>=2u?8:0;
+      q->u[c]=c==1u || c==2u;q->v[c]=c>=2u;q->corner_colour[c]=0x9CA8C4E0u;
+    }
+    GmlRenderDrawBatch batch={ops,2u,&state,1u};
+    state.alpha_test_enabled=1u;state.alpha_test_reference=127u;
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_UNSUPPORTED &&
+      !anygm_test_graphics_clear_calls(),"unqualified filtered cutoff refuses before the prefix clear");
+    state.alpha_test_enabled=0u;state.alpha_test_reference=0u;
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED &&
+      anygm_test_graphics_scene_draw_calls()==1 && !anygm_test_graphics_scene_mask_draws(8u) &&
+      !anygm_test_graphics_read_pixels(),"modern filtered source-over draws once without opaque stamp or readback");
+    gml_gpu_destroy(gpu,1);
+  }
+  return 1;
+}
+
+static int scene_modern_rotated_surface_point_case(void){
+  for(unsigned api=0;api<2u;api++){
+    anygm_test_graphics_reset();GmlGpu *gpu=gml_gpu_create();GmlRenderDeviceServices device={0};
+    GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
+    REQUIRE(gpu && gml_gpu_context_reset(gpu,&context),"modern rotated point context");
+    gml_gpu_device_services(gpu,&device);
+    uint32_t pixels[]={0x001267B9u,0x552679B3u,0xAAC39526u,0xFF7193C5u};
+    GmlRenderImageRef source={GML_RENDER_RESOURCE_SURFACE,183u,1u,1u};
+    GmlRenderImageUpload upload={.image=source,.storage_width=2u,.storage_height=2u,
+      .region={0,0,2u,2u},.pixel_format=GML_RENDER_PIXEL_ARGB8888,
+      .stride_bytes=8u,.byte_capacity=sizeof pixels,.bytes=pixels};
+    REQUIRE(device.upload(device.context,&upload),"modern rotated point source");
+    GmlRenderDrawStateSnapshot state={.colour=0xFFFFFFFFu,.alpha=255u,.write_mask=15u,
+      .sampler_count=1u,.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA,
+      .rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
+      .alpha_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA,
+      .alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA,
+      .rgb_equation=GML_RENDER_BLEND_ADD,.alpha_equation=GML_RENDER_BLEND_ADD};
+    state.samplers[0]=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_NEAREST,
+      GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,2u,2u},GML_RENDER_QUANTISE_SURFACE_ROTATED_POINT,0u};
+    GmlRenderDrawOp ops[2]={0};
+    for(unsigned i=0;i<2u;i++)ops[i].target=(GmlRenderTargetRef){
+      {GML_RENDER_RESOURCE_APPLICATION,184u,1u,i+1u},1u,8u,8u,GML_RENDER_PIXEL_ARGB8888,{0,0,8u,8u}};
+    ops[0].opcode=GML_RENDER_OP_CLEAR;ops[0].payload.clear_colour=0x78273859u;
+    ops[1].opcode=GML_RENDER_OP_TEXTURED_QUAD;ops[1].scene_family=GML_RENDER_SCENE_SURFACE;
+    ops[1].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;ops[1].sources=&source;ops[1].source_count=1u;
+    GmlRenderQuad *q=&ops[1].payload.quad;q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
+    q->sampling=state.samplers[0];q->filtered_draw_alpha=.61;
+    for(unsigned c=0;c<4u;c++){
+      q->x[c]=c==1u || c==2u?3:1;q->y[c]=c>=2u?2:1;
+      q->u[c]=q->v[c]=.25;q->corner_colour[c]=0x9CA8C4E0u;
+    }
+    GmlRenderDrawBatch batch={ops,2u,&state,1u};
+    state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_UNSUPPORTED &&
+      !anygm_test_graphics_clear_calls(),"modern squared alpha cannot masquerade as opaque coverage");
+    state.coverage_policy=0u;
+    REQUIRE(device.submit(device.context,&batch).status==GML_RENDER_EXEC_ACCEPTED &&
+      anygm_test_graphics_scene_draw_calls()==1 && !anygm_test_graphics_read_pixels(),
+      "existing point packet admits modern source-over without an opaque stamp or observation");
     gml_gpu_destroy(gpu,1);
   }
   return 1;
@@ -7731,7 +7981,8 @@ static int scene_native_stretched_cell_case(void){
   const uint32_t pixels[12]={0xFF112233u,0x80445566u,0x00778899u};
   for(unsigned api=0;api<2u;api++)for(unsigned trim=0;trim<2u;trim++)
   for(unsigned margin=0;margin<2u;margin++)
-  for(unsigned failed=0;failed<(trim?1u:2u);failed++){
+  for(unsigned box=0;box<2u;box++)for(unsigned opaque=0;opaque<2u;opaque++)
+  for(unsigned failed=0;failed<(!trim && !box && !opaque?2u:1u);failed++){
     GmlGpuContext context=fake_context(api?GML_GPU_API_OPENGLES3:GML_GPU_API_OPENGL_CORE);
     GmlRenderDeviceServices device={0};GmlRenderDrawOp ops[2]={{0}};
     GmlRenderDrawStateSnapshot state={0};
@@ -7744,7 +7995,7 @@ static int scene_native_stretched_cell_case(void){
     if(failed)anygm_test_graphics_fail_compile_containing("#define GML_SCENE_CONSTANT_FILTER 22");
     gml_gpu_device_services(gpu,&device);
     REQUIRE(device.upload(device.context,&upload),"native stretched source uploaded");
-    ops[0].opcode=GML_RENDER_OP_CLEAR;
+    ops[0].opcode=GML_RENDER_OP_CLEAR;ops[0].payload.clear_colour=opaque?0xFF123456u:0u;
     ops[0].target=(GmlRenderTargetRef){{GML_RENDER_RESOURCE_SCREEN,72u,1u,1u},
       1u,8u,6u,GML_RENDER_PIXEL_ARGB8888,{0,0,8u,6u}};
     ops[1]=ops[0];ops[1].opcode=GML_RENDER_OP_TEXTURED_QUAD;
@@ -7752,7 +8003,7 @@ static int scene_native_stretched_cell_case(void){
     ops[1].scene_family=GML_RENDER_SCENE_SPRITE;
     ops[1].reconstruction_mode=GML_RENDER_DEVICE_CHECKPOINT;
     GmlRenderQuad *q=&ops[1].payload.quad;q->shape=GML_RENDER_QUAD_AXIS_ALIGNED;
-    q->sampling=(GmlRenderSamplingPolicy){GML_RENDER_FILTER_HARDWARE_BILINEAR,
+    q->sampling=(GmlRenderSamplingPolicy){box?GML_RENDER_FILTER_BOX:GML_RENDER_FILTER_HARDWARE_BILINEAR,
       GML_RENDER_EDGE_TRANSPARENT,{0,0,4u,3u},GML_RENDER_QUANTISE_FIXED_STRETCHED,margin};
     q->x[0]=q->x[3]=-2;q->x[1]=q->x[2]=6;
     q->y[0]=q->y[1]=-1;q->y[2]=q->y[3]=5;
@@ -7785,12 +8036,12 @@ static int scene_native_stretched_cell_case(void){
       gml_gpu_destroy(gpu,1);continue;
     }
     REQUIRE(result.status==GML_RENDER_EXEC_ACCEPTED && result.accepted_prefix==2u &&
-      anygm_test_graphics_scene_draw_calls()==2 && !anygm_test_graphics_scene_copies() &&
+      anygm_test_graphics_scene_draw_calls()==(opaque?1:2) && !anygm_test_graphics_scene_copies() &&
       !anygm_test_graphics_read_pixels(),"stretched cell and alpha stamp remain resident");
-    REQUIRE(anygm_test_graphics_scene_sampler()==(trim?78:22),
+    REQUIRE(anygm_test_graphics_scene_sampler()==(box?(opaque?75:76):trim?(opaque?77:78):(opaque?21:22)),
       "complete cells use native sampling; logical transparent margins retain their owner");
     const char *fragment=anygm_test_graphics_shader_source(1);
-    REQUIRE(fragment && (!!strstr(fragment,"#define GML_SCENE_PLAIN_NATIVE 1")==(!trim && !margin)),
+    REQUIRE(fragment && (!!strstr(fragment,"#define GML_SCENE_PLAIN_NATIVE 1")==(!trim && !margin && !box)),
       "only complete margin-free stretched cells use the plain native program");
     float position[3];
     REQUIRE(anygm_test_graphics_quad_position(0,position) && position[0]==-2 && position[1]==-1,
@@ -10096,6 +10347,10 @@ int main(int argc,char **argv){
     {"scene_nearest_rows",scene_nearest_rows_case},
     {"scene_nearest_surface_fringe",scene_nearest_surface_fringe_case},
     {"scene_nearest_surface_function",scene_nearest_surface_function_case},
+    {"scene_surface_filtered_support",scene_surface_filtered_support_case},
+    {"scene_affine_surface_point",scene_affine_surface_point_case},
+    {"scene_modern_filtered_surface",scene_modern_filtered_surface_case},
+    {"scene_modern_rotated_surface_point",scene_modern_rotated_surface_point_case},
     {"scene_rotated_surface_point",scene_rotated_surface_point_case},
     {"scene_native_surface_multiply",scene_native_surface_multiply_case},
     {"scene_native_masked_rotation",scene_native_masked_rotation_case},

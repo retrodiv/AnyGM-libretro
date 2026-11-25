@@ -729,7 +729,8 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
     operation->scene_family==GML_RENDER_SCENE_SURFACE &&
     operation->reconstruction_mode==GML_RENDER_DEVICE_CHECKPOINT &&
     operation->opcode==GML_RENDER_OP_TEXTURED_QUAD &&
-    ((state && operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_VIEW_SURFACE &&
+    ((state && (operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_VIEW_SURFACE ||
+        operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_AFFINE_SURFACE_POINT) &&
       gml_render_view_surface_quad_valid(operation,state,source->width,source->height)) ||
      (operation->payload.quad.sampling.filter==GML_RENDER_FILTER_NEAREST &&
       (operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION ||
@@ -3507,7 +3508,7 @@ static int resident_surface_nearest_selection(GmlRender *r,int surf,double dx,do
     if(!gml_render_blend_snapshot_extended(&state,r->blendmode,r->blend_equation,
        r->blend_equation_alpha,!gml_render_target_preserves_alpha(r)))return 0;
     q->span_y[0]=4.0;
-  }else surface_source_over_alpha_state(r,&state);
+  }else if(!masked_unit) surface_source_over_alpha_state(r,&state);
   int retains_opaque=surface_scene_retains_opaque(r,&state);
   if(native_factors){
     GmlRenderDrawBatch batch={&operation,1u,&state,1u};
@@ -3761,6 +3762,7 @@ static int resident_surface_filtered_resolved(GmlRender *r,int surf,double dx,do
     }
   }
   else if(resolved_canvas==2) quad->sampling.quantisation=GML_RENDER_QUANTISE_SURFACE_TILED_FILTERED;
+  if(unit_gui_blend && unit) quad->source_opaque=1u;
   if(point_presentation){
     quad->source_opaque=1u;
     quad->inverse_anchor[0]=dx-r->cam_x;quad->inverse_anchor[1]=dy-r->cam_y;
@@ -4433,6 +4435,10 @@ static int resident_surface_rotated_multiply(GmlRender *r,int surf,
   return 0;
 }
 
+static int resident_view_surface_quad(GmlRender *r,int surf,
+  double sx,double sy,double sw,double sh,const double x[4],const double y[4],
+  uint32_t colour,double alpha,int affine_point);
+
 /* Resolve only affine coverage/selected texels. No source pixel is inspected,
  * and the original CPU colour/filter/blend writer remains below the facade. */
 static int resident_surface_rotated_function(GmlRender *r,int surf,double x,double y,
@@ -4498,6 +4504,10 @@ static int resident_surface_rotated_function(GmlRender *r,int surf,double x,doub
   if(y1>r->fbh) y1=r->fbh;
   if(x1<=x0 || y1<=y0) return 1;
   if((uint64_t)(unsigned)(x1-x0)*(unsigned)(y1-y0)>16777216u) return 0;
+  /* The device places one affine nearest draw. Keep the existing CPU writer
+   * and the separately measured filtered/special-state owners intact. */
+  if(!r->interp && !r->blendmode && r->alphablend && !r->alpha_test_enable &&
+     resident_view_surface_quad(r,surf,0.0,0.0,sw,sh,placed_x,placed_y,colour,alpha,1))return 1;
   if((uint64_t)(unsigned)(x1-x0)*(unsigned)(y1-y0)>GML_SCENE_SURFACE_RUN_LIMIT &&
      r->blendmode==3 && !r->interp && colour==0xFFFFFFu && alpha==1.0 &&
      resident_surface_rotated_multiply(r,surf,pixels,sw,sh,placed_x,placed_y)) return 1;
@@ -4623,7 +4633,7 @@ rotated_done:
  * device rasterizes one placed quad; CPU retains its existing source writer. */
 static int resident_view_surface_quad(GmlRender *r,int surf,
   double sx,double sy,double sw,double sh,const double x[4],const double y[4],
-  uint32_t colour,double alpha){
+  uint32_t colour,double alpha,int affine_point){
   const GmlRenderDeviceServices *device=gml_render_device(r);
   int slot=surface_slot(surf);
   if(!r->win || !device || !r->resident_application_pass ||
@@ -4669,7 +4679,7 @@ static int resident_view_surface_quad(GmlRender *r,int surf,
   q->shape=GML_RENDER_QUAD_GENERAL;
   q->sampling=(GmlRenderSamplingPolicy){r->interp?GML_RENDER_FILTER_HARDWARE_BILINEAR:GML_RENDER_FILTER_NEAREST,
     GML_RENDER_EDGE_CLAMP_SUBIMAGE,{0,0,(uint32_t)width,(uint32_t)height},
-    GML_RENDER_QUANTISE_VIEW_SURFACE,0u};
+    affine_point?GML_RENDER_QUANTISE_AFFINE_SURFACE_POINT:GML_RENDER_QUANTISE_VIEW_SURFACE,0u};
   q->filtered_draw_alpha=alpha;
   uint32_t tint=((uint32_t)lround(alpha*255.0)<<24)|
     ((colour&255u)<<16)|(colour&0xFF00u)|((colour>>16)&255u);
@@ -4717,7 +4727,7 @@ static int resident_view_surface(GmlRender *r,int surf,
     gml_render_view_rotate_point(r,&px[i],&py[i]);
     if(!isfinite(px[i]) || !isfinite(py[i])) return 1;
   }
-  if(!resident_view_surface_quad(r,surf,sx,sy,sw,sh,px,py,colour,alpha)){
+  if(!resident_view_surface_quad(r,surf,sx,sy,sw,sh,px,py,colour,alpha,0)){
     if(!gml_render_cpu_draw_barrier(r)) return 1;
     gml_render_cpu_draw_surface_view(r,surf,sx,sy,sw,sh,px,py,colour,alpha);
   }

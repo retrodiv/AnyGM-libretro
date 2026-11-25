@@ -119,7 +119,8 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
   half_gui=!rendered_source_origin &&
     gml_gpu_opengl_half_gui_point_valid(op,state,source_width,source_height);
   native_uv=quad->shape==GML_RENDER_QUAD_GENERAL &&
-    (quad->sampling.quantisation==GML_RENDER_QUANTISE_VIEW_SURFACE ||
+    (quad->sampling.quantisation==GML_RENDER_QUANTISE_AFFINE_SURFACE_POINT ||
+     quad->sampling.quantisation==GML_RENDER_QUANTISE_VIEW_SURFACE ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_VIEW_BACKGROUND ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_VIEW_TEXT ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_VIEW_TILE ||
@@ -332,6 +333,12 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
       vertex[19+span]=(float)quad->span_x[span];
       vertex[23+span]=(float)quad->span_y[span];
     }
+    if(quad->sampling.quantisation==GML_RENDER_QUANTISE_AFFINE_SURFACE_POINT){
+      vertex[12]=(float)quad->x[0];vertex[13]=(float)quad->y[0];
+      vertex[14]=(float)(quad->x[1]-quad->x[0]);vertex[15]=(float)(quad->y[1]-quad->y[0]);
+      vertex[16]=(float)(quad->x[3]-quad->x[0]);vertex[17]=(float)(quad->y[3]-quad->y[0]);
+      vertex[18]=rendered_source_origin?1.0f:0.0f;
+    }
     if(!rotated && !native_uv && state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
        quad->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_NEAREST_FUNCTION &&
        quad->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_TILED_POINT &&
@@ -354,6 +361,34 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
       vertex[23]=(float)(phase_y-(double)vertex[15]);
       vertex[24]=(float)(step_y-(double)vertex[17]);
     }
+    /* Surface float filtering owns every positive source-alpha contribution,
+     * even when the hardware sampler rounds that contribution to zero. Carry
+     * one rectangle for a device tap-support test; colour stays hardware filtered. */
+    if(op->scene_family==GML_RENDER_SCENE_SURFACE && !quad->span_active &&
+       quad->shape==GML_RENDER_QUAD_AXIS_ALIGNED &&
+       quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
+       (quad->sampling.quantisation==0u ||
+        quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SURFACE_LEADING ||
+        quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_FILTERED ||
+        quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_LEADING) &&
+       state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
+       source_width<=16384u && source_height<=16384u &&
+       quad->x[1]-quad->x[0]<=16384.0 && quad->y[2]-quad->y[0]<=16384.0){
+      vertex[19]=(float)quad->x[0];vertex[20]=(float)quad->y[0];
+      vertex[21]=(float)(quad->x[1]-quad->x[0]);
+      vertex[22]=(float)(quad->y[2]-quad->y[0]);
+      vertex[23]=rendered_source_origin?1.0f:0.0f;
+      vertex[24]=(quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SURFACE_LEADING ||
+                  quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_LEADING)?1.0f:0.0f;
+      vertex[25]=1.0f;
+    }
+    /* A qualified opaque-source unit GUI draw can certify full target alpha
+     * after its required coverage pass, without observing source pixels. */
+    if(op->scene_family==GML_RENDER_SCENE_SURFACE &&
+       quad->shape==GML_RENDER_QUAD_AXIS_ALIGNED &&
+       quad->sampling.filter==GML_RENDER_FILTER_NEAREST && !quad->sampling.quantisation &&
+       state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA)
+      vertex[26]=quad->source_opaque==1u?1.0f:0.0f;
     vertex[27]=quad->span_active?1.0f:0.0f;
     if(runtime_source_colour){
       /* Keep one native rectangle and evaluate its affine UVs on device.

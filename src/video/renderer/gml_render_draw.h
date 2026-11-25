@@ -212,7 +212,9 @@ enum {
   GML_RENDER_QUANTISE_VIEW_SURFACE=27u,
   GML_RENDER_QUANTISE_VIEW_BACKGROUND=28u,
   GML_RENDER_QUANTISE_VIEW_TILE=29u,
-  GML_RENDER_QUANTISE_VIEW_TEXT=30u
+  GML_RENDER_QUANTISE_VIEW_TEXT=30u,
+  /* Full affine surfaces derive point coordinates on the device. */
+  GML_RENDER_QUANTISE_AFFINE_SURFACE_POINT=31u
 };
 
 /* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors

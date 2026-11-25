@@ -306,6 +306,9 @@ static GlSceneProgramVariant scene_program_variant(uint32_t filter,int native_fl
     return (GlSceneProgramVariant)(GL_SCENE_PROGRAM_CONSTANT_180+
       filter-GL_SCENE_NATIVE_TEXTURE_NEAREST_FILTER);
   switch(filter){
+  case 186u:return GL_SCENE_PROGRAM_CONSTANT_186;
+  case 187u:return GL_SCENE_PROGRAM_CONSTANT_187;
+  case 188u:return GL_SCENE_PROGRAM_CONSTANT_188;
   case 38u:
     return plain && (native_flags&GL_SCENE_NATIVE_WHITE_TINT)?
       GL_SCENE_PROGRAM_CONSTANT_38_PLAIN_WHITE:GL_SCENE_PROGRAM_CONSTANT_38;

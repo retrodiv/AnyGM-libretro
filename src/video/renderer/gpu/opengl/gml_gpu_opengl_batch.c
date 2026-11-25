@@ -326,6 +326,9 @@ static int native_numbered_point(const GmlRenderDrawOp *op,
 
 static uint32_t scene_filter(const GmlRenderQuad *quad,
                              const GmlRenderDrawStateSnapshot *state,uint32_t family){
+  if(quad->sampling.quantisation==GML_RENDER_QUANTISE_AFFINE_SURFACE_POINT)
+    return state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA
+      ?GL_SCENE_AFFINE_SURFACE_POINT_OPAQUE_FILTER:GL_SCENE_AFFINE_SURFACE_POINT_FILTER;
   if(quad->sampling.quantisation==GML_RENDER_QUANTISE_VIEW_SURFACE ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_VIEW_BACKGROUND ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_VIEW_TEXT ||
@@ -478,6 +481,12 @@ static uint32_t scene_filter(const GmlRenderQuad *quad,
        quad->shape==GML_RENDER_QUAD_AXIS_ALIGNED)) &&
      quad->sampling.filter==GML_RENDER_FILTER_NEAREST &&
      state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) return 25u;
+  if(family==GML_RENDER_SCENE_SURFACE &&
+     quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
+     (quad->sampling.quantisation==0u ||
+      quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_FILTERED) &&
+     !state->coverage_policy && qualified_blend(state)==3)
+    return 79u;
   if(quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR)
     return state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA
       ?(family==GML_RENDER_SCENE_BACKGROUND?99u:21u):quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_COMBINED
@@ -632,7 +641,8 @@ static int rotated_surface_point_valid(const GmlRenderDrawOp *op,
   int blend=qualified_blend(state);
   int destination=blend>=GL_SCENE_BLEND_SURFACE_DEST_BASE && blend<=GL_SCENE_BLEND_SURFACE_DEST_LIMIT;
   int ordinary=blend==0 || blend==1 || blend==13 || blend==14;
-  int paint_zero=blend!=1;
+  int preserving=blend==3;
+  int paint_zero=blend!=1 && !preserving;
   int rounded_alpha=destination || blend==19 || blend==21 || blend==24 || blend==25;
   if(!source || op->scene_family!=GML_RENDER_SCENE_SURFACE ||
      op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT || op->source_count!=1u || !op->sources ||
@@ -652,8 +662,9 @@ static int rotated_surface_point_valid(const GmlRenderDrawOp *op,
      !full_region(q->sampling.source_region,source->width,source->height) || !exact_rect(op,NULL,NULL,NULL,NULL,1) ||
      q->x[0]<0 || q->y[0]<0 || q->x[1]>op->target.width || q->y[2]>op->target.height ||
      q->y[2]-q->y[0]!=1 || q->x[1]-q->x[0]>16384 ||
-     (!ordinary && blend!=19 && blend!=21 && (blend<22 || blend>25) && !destination) ||
+     (!ordinary && !preserving && blend!=19 && blend!=21 && (blend<22 || blend>25) && !destination) ||
      (ordinary && state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) ||
+     (preserving && state->coverage_policy) ||
      (state->coverage_policy && state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA) ||
      !state->write_mask || state->write_mask>15u || state->alpha_test_enabled>1u ||
      state->alpha_test_reference>255u || (state->alpha_test_enabled && !destination) ||
@@ -1117,6 +1128,12 @@ static int hardware_surface_quad_valid(const GmlRenderDrawOp *op,
   const GmlRenderQuad *quad=&op->payload.quad;
   int destination_blend=qualified_blend(state)==11;
   int point=quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_PIXEL_CENTRE_POINT;
+  int preserving=qualified_blend(state)==3 && !state->coverage_policy &&
+    quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
+    (quad->sampling.quantisation==0u ||
+     quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_FILTERED) &&
+    !state->alpha_test_enabled &&
+    state->write_mask==15u && op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN;
   int leading=quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SURFACE_LEADING ||
     quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_LEADING;
   int tiled=quad->sampling.quantisation==GML_RENDER_QUANTISE_SURFACE_TILED_FILTERED ||
@@ -1156,8 +1173,8 @@ static int hardware_surface_quad_valid(const GmlRenderDrawOp *op,
      !full_region(quad->sampling.source_region,source->width,source->height) ||
      (destination_blend?state->coverage_policy>GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
                         quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR:
-                        state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA ||
-                        (qualified_blend(state)!=1 &&
+                        (state->coverage_policy!=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA && !preserving) ||
+                        (qualified_blend(state)!=1 && !preserving &&
                          (!tiled || qualified_blend(state)!=0 || quad->sampling.filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR))) ||
      !exact_rect(op,NULL,NULL,NULL,NULL,1) ||
      (!point && !destination_blend && !integer_screen && (quad->sampling.filter==GML_RENDER_FILTER_NEAREST
@@ -2006,11 +2023,13 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
           sampling->filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR ||
           !isfinite(op->payload.quad.font_sdf_width) ||
           op->payload.quad.font_sdf_width<1.0 || op->payload.quad.font_sdf_width>255.0)) return 0;
-      if(sampling->quantisation==GML_RENDER_QUANTISE_VIEW_SURFACE ||
+      if(sampling->quantisation==GML_RENDER_QUANTISE_AFFINE_SURFACE_POINT ||
+         sampling->quantisation==GML_RENDER_QUANTISE_VIEW_SURFACE ||
          sampling->quantisation==GML_RENDER_QUANTISE_VIEW_BACKGROUND ||
          sampling->quantisation==GML_RENDER_QUANTISE_VIEW_TILE ||
          sampling->quantisation==GML_RENDER_QUANTISE_VIEW_TEXT){
-        int atlas=sampling->quantisation!=GML_RENDER_QUANTISE_VIEW_SURFACE;
+        int atlas=sampling->quantisation!=GML_RENDER_QUANTISE_VIEW_SURFACE &&
+          sampling->quantisation!=GML_RENDER_QUANTISE_AFFINE_SURFACE_POINT;
         if(!source || (source->pixel_format!=GML_RENDER_PIXEL_ARGB8888 &&
                        source->pixel_format!=GML_RENDER_PIXEL_XRGB8888 &&
                        source->pixel_format!=GML_RENDER_PIXEL_RGBA8888) ||
@@ -2247,7 +2266,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
                        !isfinite(op->payload.quad.filtered_draw_alpha) ||
                        op->payload.quad.filtered_draw_alpha<=0.0 ||
                        op->payload.quad.filtered_draw_alpha>1.0)) ||
-         (!hardware_sprite && !hardware_gui_background && (blend==10 || (blend==3 && sampling->filter==GML_RENDER_FILTER_HARDWARE_BILINEAR)) &&
+         (!hardware_surface && !hardware_sprite && !hardware_gui_background && (blend==10 || (blend==3 && sampling->filter==GML_RENDER_FILTER_HARDWARE_BILINEAR)) &&
                        (sampling->filter!=GML_RENDER_FILTER_HARDWARE_BILINEAR ||
                         sampling->quantisation!=(blend==3?GML_RENDER_QUANTISE_HARDWARE_COMBINED:0u) ||
                         (blend==3 && !hardware_combined_quad_valid(op,source)) ||
@@ -3164,14 +3183,14 @@ static int flush_quads_target(GmlGpuBackend *backend,GlSceneImage *target,GlScen
     backend->gl.Enable(GL_BLEND);
     blended_alpha_equation=alpha_equation;
   } else backend->gl.Disable(GL_BLEND);
-  int stamp_alpha=(blend&GL_SCENE_BLEND_NATIVE_OPAQUE)!=0 || native_texture_stamp || blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE || filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==133u || filter==130u || filter==104u || filter==107u || filter==99u || filter==77u || filter==75u || filter==9u || filter==12u || filter==21u || filter==23u ||
+  int stamp_alpha=(blend&GL_SCENE_BLEND_NATIVE_OPAQUE)!=0 || native_texture_stamp || blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE || (filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==GL_SCENE_AFFINE_SURFACE_POINT_OPAQUE_FILTER) || filter==133u || filter==130u || filter==104u || filter==107u || filter==99u || filter==77u || filter==75u || filter==9u || filter==12u || filter==21u || filter==23u ||
                   filter==25u || (filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER) || filter==35u || filter==39u || filter==40u ||
                   filter==46u || filter==47u || filter==53u || filter==60u ||
                   filter==66u || filter==69u || filter==71u || filter==80u ||
                   filter==86u || filter==93u || filter==110u || filter==112u ||
                   filter==138u || filter==141u || filter==143u || filter==148u || filter==152u ||
                   filter==156u || filter==158u || filter==161u || filter==162u || filter==168u || filter==GL_SCENE_VIEW_SDF_OPAQUE_FILTER;
-  int skip_alpha=opaque && (native_texture_stamp || blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE || filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==40u || filter==21u || filter==25u || (filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER) || filter==35u || filter==66u || filter==80u);
+  int skip_alpha=opaque && (native_texture_stamp || blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE || (filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==GL_SCENE_AFFINE_SURFACE_POINT_OPAQUE_FILTER) || filter==75u || filter==77u || filter==40u || filter==21u || filter==25u || (filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER) || filter==35u || filter==66u || filter==80u);
   int prior_nonzero=target->valid && target->alpha_nonzero;
   int keep_nonzero=prior_nonzero &&
     (!((!stamp_alpha || filter==110u) && (write_mask&8u)) ||
@@ -3255,7 +3274,7 @@ static int flush_quads_target(GmlGpuBackend *backend,GlSceneImage *target,GlScen
   int surface_alpha_stamp=blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE && filter==51u;
   int atlas_alpha_stamp=(blend==GL_SCENE_BLEND_SOURCE_COLOUR_ALPHA_OPAQUE ||
     (blend&GL_SCENE_BLEND_NATIVE_OPAQUE)) && (filter==44u || filter==45u);
-  if(stamp_alpha && !skip_alpha && !rectangle_alpha_stamp && !surface_alpha_stamp && !atlas_alpha_stamp && (write_mask&8u) && filter!=GL_SCENE_NATIVE_POINT_OPAQUE_FILTER && filter!=23u && filter!=35u && filter!=39u && filter!=40u && filter!=53u && filter!=66u && filter!=21u && filter!=25u && filter!=32u && filter!=GL_SCENE_VIEW_BILINEAR_FILTER && filter!=80u){
+  if(stamp_alpha && !skip_alpha && !rectangle_alpha_stamp && !surface_alpha_stamp && !atlas_alpha_stamp && (write_mask&8u) && (filter!=GL_SCENE_NATIVE_POINT_OPAQUE_FILTER && filter!=GL_SCENE_AFFINE_SURFACE_POINT_OPAQUE_FILTER) && filter!=23u && filter!=35u && filter!=39u && filter!=40u && filter!=53u && filter!=66u && filter!=21u && filter!=25u && filter!=32u && filter!=GL_SCENE_VIEW_BILINEAR_FILTER && filter!=80u){
     /* The CPU screen writer keeps alpha opaque at every covered texel,
      * even when its prior alpha is unknown. Reuse the sampled vertices and
      * the same sampler and cutout in an alpha-only pass, preserving that recipe's coverage. */
@@ -3306,6 +3325,18 @@ restore_stream_state:
   int unit_alpha_overwrite=filter==31u && blend==0;
   for(size_t vertex=0;unit_alpha_overwrite && vertex<(size_t)count*6u;vertex++)
     if(scene->vertices[vertex*GL_SCENE_VERTEX_FLOATS+7u]!=1.0f) unit_alpha_overwrite=0;
+  /* The validated application point program writes alpha one. The qualified
+   * opaque-source unit program reaches the same result after its coverage
+   * pass. A single complete rectangle proves opacity without an observation. */
+  const float *point=scene->vertices;
+  int full_opaque_point=(filter==30u || (filter==25u && source && source->ref.resource_class!=GML_RENDER_RESOURCE_ATLAS &&
+    point[26]==1.0f && point[7]>0.0f &&
+    !source_alpha_key && (!palette || !palette->enabled) && alpha_test<255)) &&
+    blend==1 && (write_mask&8u) && count==1u &&
+    point[0]==0.0f && point[1]==0.0f &&
+    point[GL_SCENE_VERTEX_FLOATS]==(float)target->width && point[GL_SCENE_VERTEX_FLOATS+1u]==0.0f &&
+    point[2u*GL_SCENE_VERTEX_FLOATS]==(float)target->width &&
+    point[2u*GL_SCENE_VERTEX_FLOATS+1u]==(float)target->height;
   target->alpha_opaque=opaque && filter!=110u &&
     (!(write_mask&8u) || stamp_alpha || filter==149u || filter==153u || blend==22 || blend==24 ||
      (blend==1 && filter!=15u && filter!=17u) || unit_alpha_overwrite);
@@ -3326,9 +3357,10 @@ restore_stream_state:
   if(atlas_alpha_stamp && !skip_alpha && (write_mask&8u) &&
      !flush_quads_target(backend,target,source,48u,0,count,8u,alpha_test,
                   source_alpha_key,palette,reflected)) return 0;
-  if(!skip_alpha && (filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==23u || filter==35u || filter==39u || filter==40u || filter==53u || filter==66u || filter==21u || filter==25u || (filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER) || filter==80u) && (write_mask&8u))
-    if(!flush_quads_target(backend,target,source,filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER?GL_SCENE_NATIVE_POINT_STAMP_FILTER:filter==23u?24u:filter==35u?36u:(filter==39u || filter==40u)?41u:filter==53u?55u:filter==21u?22u:filter==25u?26u:(filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER)?33u:filter==80u?82u:72u,0,count,8u,alpha_test,
+  if(!skip_alpha && ((filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==GL_SCENE_AFFINE_SURFACE_POINT_OPAQUE_FILTER) || filter==23u || filter==35u || filter==39u || filter==40u || filter==53u || filter==66u || filter==21u || filter==25u || (filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER) || filter==80u) && (write_mask&8u))
+    if(!flush_quads_target(backend,target,source,filter==GL_SCENE_AFFINE_SURFACE_POINT_OPAQUE_FILTER?GL_SCENE_AFFINE_SURFACE_POINT_STAMP_FILTER:filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER?GL_SCENE_NATIVE_POINT_STAMP_FILTER:filter==23u?24u:filter==35u?36u:(filter==39u || filter==40u)?41u:filter==53u?55u:filter==21u?22u:filter==25u?26u:(filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER)?33u:filter==80u?82u:72u,0,count,8u,alpha_test,
                     source_alpha_key,palette,reflected)) return 0;
+  if(full_opaque_point)target->alpha_opaque=target->alpha_nonzero=1;
   if(surface_bounded && program->identity_surface_body && filter!=55u) backend->bounded_surface_draws++;
   if(native_flags&GL_SCENE_NATIVE_WHITE_TINT) backend->white_tint_quads+=count;
   if(native_flags&GL_SCENE_NATIVE_ZERO_ALPHA_BLEND) backend->zero_alpha_blend_quads+=count;
