@@ -201,6 +201,7 @@ CORE_RUNTIME_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(ANYGM_CORE_SOURCES
 LIBRETRO_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(ANYGM_LIBRETRO_SOURCES))
 LIBRETRO_CONTRACT_HEADERS := src/api/anygm.h \
 	src/adapters/libretro/libretro_internal.h \
+	src/host/anygm_development_settings.h src/host/anygm_development_settings.def \
 	src/third_party/libretro/include/libretro.h
 TEST_HOST_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(ANYGM_TEST_HOST_SOURCES))
 VENDORED_BZIP2_OBJECTS := $(filter $(BUILD_DIR)/obj/src/third_party/bzip2/%,$(RUNTIME_OBJECTS))
@@ -907,6 +908,7 @@ architecture-check: builtin-registry-check provenance-check notices-check audio-
 	python3 tests/architecture/check_cab_boundaries.py
 	python3 tests/architecture/check_nsis_boundaries.py
 	tests/architecture/check_numeric_conversions.sh
+	python3 tests/architecture/check_development_settings.py
 
 .PHONY: delta-vendor-check
 delta-vendor-check:

@@ -5,6 +5,7 @@
 #define ANYGM_LIBRETRO_INTERNAL_H
 
 #include "anygm.h"
+#include "anygm_development_settings.h"
 #include "libretro.h"
 
 #include <stdbool.h>
@@ -150,15 +151,17 @@ typedef struct LibretroAdapter {
    * host_development_setting */
   char locale_variable[40];
   uint64_t seed_counter;
-  /* memoised development settings; see host_development_setting */
-  struct { uint32_t hash; const char *value; char name[52]; } setting_cache[128];
-  int setting_cache_count;
+  /* Registered developer settings are owned by the loaded content session. */
+  char *development_settings[ANYGM_DEVELOPMENT_COUNT];
+  bool development_settings_captured;
 } LibretroAdapter;
 
 extern LibretroAdapter g_libretro;
 
 void libretro_log(enum retro_log_level level,const char *format,...);
 void libretro_host_services_init(AnygmHostServices *services);
+void libretro_development_settings_capture(void);
+void libretro_development_settings_clear(void);
 void libretro_vfs_request(void);
 void libretro_vfs_services_init(AnygmHostServices *services);
 #ifdef __linux__

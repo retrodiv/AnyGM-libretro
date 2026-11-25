@@ -512,6 +512,25 @@ static void gml_vm_release_builtin_value(void *userdata,GmlVal value){
   gml_val_free((GmlValueFreeContext *)userdata,value);
 }
 
+_Static_assert(GML_VM_SETTING_COUNT<=32,"VM setting mask capacity");
+const char *gml_vm_load_development_text(GmlVM *vm,unsigned index){
+  static const char *const names[GML_VM_SETTING_COUNT]={
+#define GML_VM_TEXT_QUERY(name)
+#define GML_VM_TEXT_VM_TEXT(name) "GML_" #name,
+#define ANYGM_DEVELOPMENT_SETTING(name,purpose,retention) GML_VM_TEXT_##retention(name)
+#include "anygm_development_settings.def"
+#undef ANYGM_DEVELOPMENT_SETTING
+#undef GML_VM_TEXT_VM_TEXT
+#undef GML_VM_TEXT_QUERY
+  };
+  const char *value=anygm_host_development_setting(vm->host,names[index]);
+  /* Hosts can return a scratch pointer valid only until their next query. */
+  char *copy=value?strdup(value):NULL;
+  vm->diagnostics.cached_settings[index]=copy;
+  vm->diagnostics.cached_setting_mask|=UINT32_C(1)<<index;
+  return copy;
+}
+
 void gml_vm_free(GmlVM *vm){
   /* Report optional per-code measurements before releasing VM state. */
   gml_vm_code_profile_report(vm);
@@ -520,6 +539,11 @@ void gml_vm_free(GmlVM *vm){
           free(vm->diagnostics.code_profile_hits); vm->diagnostics.code_profile_hits=NULL;
           free(vm->diagnostics.code_seen); vm->diagnostics.code_seen=NULL; }
   GML_VM_DIAGNOSTIC_DESTROY(vm);
+  for(unsigned i=0;i<GML_VM_SETTING_COUNT;i++){
+    free(vm->diagnostics.cached_settings[i]);
+    vm->diagnostics.cached_settings[i]=NULL;
+  }
+  vm->diagnostics.cached_setting_mask=0;
   gml_vm_wait_cancel(vm);   /* a run parked by a blocking input wait owns locals and strings */
   gml_vm_execution_frames_free(vm);
   gml_vm_input_text_release(vm);

@@ -288,6 +288,7 @@ void retro_deinit(void){
     anygm_destroy(g_libretro.engine);
     g_libretro.engine=NULL;
   }
+  libretro_development_settings_clear();
   libretro_display_release();
   libretro_cache_end();
   libretro_options_release();
@@ -508,16 +509,14 @@ bool libretro_content_start(bool deferred){
   g_libretro.startup_resume_capacity=0;
   g_libretro.state_capacity_growth_reported=false;
   g_libretro.state_snapshot_failure_reported=false;
-  /* Preparation consulted one-shot setting names. Clear them before the first frame so live names
-   * always find a free cache slot. */
-  memset(g_libretro.setting_cache,0,sizeof g_libretro.setting_cache);
-  g_libretro.setting_cache_count=0;
   AnygmHostServices profile_services;
   libretro_host_services_init(&profile_services);
   g_libretro.frame_profile_clock=profile_services.monotonic_time_ns;
   g_libretro.frame_profile_userdata=profile_services.userdata;
   const char *profile_setting=profile_services.development_setting?
     profile_services.development_setting(profile_services.userdata,"GML_PROFILE_LIBRETRO_FRAME"):NULL;
+  g_libretro.frame_profile_detailed=g_libretro.log && profile_setting &&
+    profile_setting[0] && strcmp(profile_setting,"0");
   const char *summary_setting=profile_services.development_setting?
     profile_services.development_setting(profile_services.userdata,
                                          "GML_PROFILE_LIBRETRO_FRAME_SUMMARY"):NULL;
@@ -526,8 +525,6 @@ bool libretro_content_start(bool deferred){
     strtoull(summary_setting,&summary_end,10):0;
   bool summary_enabled=summary_setting && summary_setting[0] &&
     strcmp(summary_setting,"0") && summary_end && !summary_end[0];
-  g_libretro.frame_profile_detailed=g_libretro.log && profile_setting &&
-    profile_setting[0] && strcmp(profile_setting,"0");
   g_libretro.frame_profile_enabled=g_libretro.log && g_libretro.frame_profile_clock &&
     (g_libretro.frame_profile_detailed || summary_enabled);
   g_libretro.frame_profile_tick=0;
@@ -566,12 +563,14 @@ bool retro_load_game(const struct retro_game_info *info){
   g_libretro.provisional_av_exposed=false;
   g_libretro.startup_av_notification_pending=false;
   g_libretro.announced_aspect=0.0f;
-  memset(g_libretro.setting_cache,0,sizeof g_libretro.setting_cache);
-  g_libretro.setting_cache_count=0;
+  libretro_development_settings_capture();
   update_directories();
   update_locale();
   libretro_options_apply(true);
-  if(!libretro_cache_begin()) return false;
+  if(!libretro_cache_begin()){
+    libretro_development_settings_clear();
+    return false;
+  }
   AnygmContentSource source;
   memset(&source,0,sizeof source);
   source.struct_size=sizeof source;
@@ -596,6 +595,7 @@ bool retro_load_game(const struct retro_game_info *info){
     libretro_log(RETRO_LOG_ERROR,"Content load failed (%d): %s\n",result,error);
     notify_content_load_failure(error);
     libretro_cache_end();
+    libretro_development_settings_clear();
     return false;
   }
   g_libretro.prepared=true;
@@ -622,6 +622,7 @@ bool retro_load_game(const struct retro_game_info *info){
     libretro_memory_stop();
     return true;
   }
+  libretro_development_settings_clear();
   return false;
 }
 
@@ -639,6 +640,7 @@ void libretro_abort_for_memory(void){
     anygm_destroy(g_libretro.engine);
     g_libretro.engine=NULL;
   }
+  libretro_development_settings_clear();
   libretro_display_release();
   libretro_cache_abandon();
   g_libretro.prepared=false;
@@ -651,6 +653,7 @@ void libretro_abort_for_memory(void){
 void retro_unload_game(void){
   clear_delivered_frame();
   if(!g_libretro.loaded && !g_libretro.prepared){
+    libretro_development_settings_clear();
     memset(&g_libretro.pressure,0,sizeof g_libretro.pressure);
     return;
   }
@@ -676,6 +679,7 @@ void retro_unload_game(void){
   libretro_options_release_rotation();
   libretro_hw_render_release();
   anygm_unload(g_libretro.engine);
+  libretro_development_settings_clear();
   libretro_display_release();
   libretro_cache_end();
   g_libretro.prepared=false;

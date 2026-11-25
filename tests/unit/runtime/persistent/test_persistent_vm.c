@@ -4159,8 +4159,10 @@ static int expect_persistent_lifecycle_exit_code(void){
     GmlVal datetime=gml_builtin_call(&vm,"date_datetime_string",&now,1);
     GmlVal env_name=vstr("GML_ENVIRONMENT_FIXTURE");
     GmlVal environment=gml_builtin_call(&vm,"environment_get_variable",&env_name,1);
+    int environment_ok=environment.t==V_STR && environment.s && !strcmp(environment.s,"visible");
+    if(environment.t==V_STR && environment.d!=0) free((void *)environment.s);
     if(weekday.t!=V_REAL || weekday.d<0 || weekday.d>6 || datetime.t!=V_STR ||
-       !datetime.s || !datetime.s[0] || environment.t!=V_STR || strcmp(environment.s,"visible")){
+       !datetime.s || !datetime.s[0] || !environment_ok){
       fprintf(stderr,"date/environment query fixture failed\n"); return 1;
     }
   }

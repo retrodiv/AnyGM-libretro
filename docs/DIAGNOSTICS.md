@@ -3,6 +3,26 @@
 
 # Opt-in VM diagnostics
 
+## Host development settings
+
+The [registry](../src/host/anygm_development_settings.def) lists the `GML_*`
+names used by the runtime and adapter. Each entry records its purpose and
+whether the VM retains the text on a hot path. `make architecture-check`
+checks that declarations and source uses agree.
+
+The optional `AnygmHostServices.development_setting` callback supplies values
+to diagnostics, behavior overrides, tests, and tuning. This service is
+available in release builds. Libretro captures the registered environment
+values before preparing content and owns them for the loaded session. A fresh
+content load takes a new snapshot. Locale variables still follow the current
+frontend selection, and the existing environment builtin can query other
+names through the host. VM filters keep copies of text so a host can reuse
+its callback buffer immediately after a query.
+
+Native hosts can provide tuning such as `GML_ROW_THREADS` and `GML_ATLAS_THREADS`
+through the same callback. Leaving those values unset keeps automatic worker
+selection.
+
 ## Cold room entry
 
 `GML_DIAGNOSTIC_START_ROOM` is an optional host development setting, disabled when

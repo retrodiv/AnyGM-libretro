@@ -474,7 +474,8 @@ GmlVal gml_builtin_try_platform(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   if(!strcmp(nm,"environment_get_variable")){
     const char *value=builtin_setting(vm,S(vm,a,n,0));
-    return vstr(value?value:"");
+    char *copy=value?strdup(value):NULL;
+    return copy?vstr_owned(copy):vstr("");
   }
   if(!strcmp(nm,"os_get_info")){
     /* Expose the documented Windows-shaped metadata map without leaking host identity or

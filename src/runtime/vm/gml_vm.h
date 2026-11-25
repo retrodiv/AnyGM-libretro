@@ -24,6 +24,17 @@ struct GmlRoomVisualState;
 #define GML_PARAMETER_TEXT_MAX 256
 #define GML_VM_INSTANCE_FIELD_NAMES 38
 
+enum {
+#define GML_VM_TEXT_QUERY(name)
+#define GML_VM_TEXT_VM_TEXT(name) GML_VM_SETTING_##name,
+#define ANYGM_DEVELOPMENT_SETTING(name,purpose,retention) GML_VM_TEXT_##retention(name)
+#include "anygm_development_settings.def"
+#undef ANYGM_DEVELOPMENT_SETTING
+#undef GML_VM_TEXT_VM_TEXT
+#undef GML_VM_TEXT_QUERY
+  GML_VM_SETTING_COUNT
+};
+
 typedef struct {
   int     active;      /* slot in use */
   int     marked;      /* pending destroy */
@@ -256,13 +267,10 @@ typedef struct {
   int collision_line_setting_initialized;
   char collision_line_setting[16];
   int collision_event_time_enabled;
-  /* Development settings read on every builtin call, code run or drawn instance. Their values are
-   * fixed for the session, so each is read once: -1 until then. */
+  /* Hot paths resolve scalar settings once and own the cached strings. */
   int builtin_dispatch_settings;
-  int code_args_setting_read;
-  const char *code_args_setting;
-  int draw_skip_setting_read;
-  const char *draw_skip_setting;
+  uint32_t cached_setting_mask;
+  char *cached_settings[GML_VM_SETTING_COUNT];
   int rng_call_logging;
   /* How many values the sequence has produced. A change in consumption moves the whole scene
    * downstream without necessarily moving any single frame, so it is the one number that catches a
@@ -280,20 +288,6 @@ typedef struct {
   unsigned char unset_reads_logging;  /* 0 not resolved yet, 1 off, 2 on: the VM starts zeroed */
   uint32_t unset_seen[128];
   int unset_seen_count;
-  /* Development settings resolved once per VM: these three sit on the per-array-write and
-   * per-code-entry paths, where re-reading them made the host lookup itself measurable. */
-  int arrayset_filter_initialized;
-  const char *varset_filter;
-  int varset_filter_initialized;
-  const char *arrayset_filter;
-  int arrayget_filter_initialized;
-  const char *arrayget_filter;
-  int view_log_initialized;
-  const char *view_log;
-  int trace_filter_initialized;
-  const char *trace_filter;
-  int trace_call_initialized;
-  const char *trace_call;
 } GmlVmDiagnostics;
 
 /* A parked direct event run retains its operand stack, locals, arguments, resume point and owned strings across frames. Nested direct calls form an innermost-first bounded chain. */

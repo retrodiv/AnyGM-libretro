@@ -260,13 +260,29 @@ static uint64_t host_random_seed(void *userdata){
   return value^(value>>31);
 }
 
-/* Development settings are consulted from per-item hot paths — the VM asks
- * per script call, the blitter per sprite — thousands of times a frame, and
- * getenv walks the whole environment block per call; the Windows C runtimes
- * additionally pay a locale-aware comparison per entry on that walk. The
- * environment cannot change while the frontend runs the core, so the first
- * answer per name is the answer. Missing names are memoised too: almost every
- * hot lookup is a miss. The cache resets on retro_load_game. */
+static const char *const development_names[ANYGM_DEVELOPMENT_COUNT]={
+#define ANYGM_DEVELOPMENT_SETTING(name,purpose,retention) "GML_" #name,
+#include "anygm_development_settings.def"
+#undef ANYGM_DEVELOPMENT_SETTING
+};
+
+void libretro_development_settings_clear(void){
+  for(size_t i=0;i<ANYGM_DEVELOPMENT_COUNT;i++){
+    free(g_libretro.development_settings[i]);
+    g_libretro.development_settings[i]=NULL;
+  }
+  g_libretro.development_settings_captured=false;
+}
+
+void libretro_development_settings_capture(void){
+  libretro_development_settings_clear();
+  for(size_t i=0;i<ANYGM_DEVELOPMENT_COUNT;i++){
+    const char *value=getenv(development_names[i]);
+    if(value) g_libretro.development_settings[i]=strdup(value);
+  }
+  g_libretro.development_settings_captured=true;
+}
+
 static const char *host_development_setting(void *userdata,const char *name){
   (void)userdata;
   if(!name || !name[0]) return NULL;
@@ -284,26 +300,18 @@ static const char *host_development_setting(void *userdata,const char *name){
              g_libretro.language,g_libretro.region[0]?g_libretro.region:"US");
     return g_libretro.locale_variable;
   }
-  uint32_t hash=2166136261u;
-  size_t len=0;
-  for(;name[len];len++) hash=(hash^(unsigned char)name[len])*16777619u;
-  if(len>=sizeof g_libretro.setting_cache[0].name) return getenv(name);
-  enum { CACHE_SLOTS=sizeof g_libretro.setting_cache/sizeof g_libretro.setting_cache[0] };
-  uint32_t slot=hash&(CACHE_SLOTS-1);
-  while(g_libretro.setting_cache[slot].name[0]){
-    if(g_libretro.setting_cache[slot].hash==hash &&
-       !strcmp(g_libretro.setting_cache[slot].name,name))
-      return g_libretro.setting_cache[slot].value;
-    slot=(slot+1)&(CACHE_SLOTS-1);
+  if(g_libretro.development_settings_captured){
+    size_t first=0,last=ANYGM_DEVELOPMENT_COUNT;
+    while(first<last){
+      size_t middle=first+(last-first)/2;
+      int order=strcmp(name,development_names[middle]);
+      if(!order) return g_libretro.development_settings[middle];
+      if(order<0) last=middle;
+      else first=middle+1;
+    }
   }
-  const char *value=getenv(name);
-  if(g_libretro.setting_cache_count<CACHE_SLOTS-16){   /* keep probes short */
-    g_libretro.setting_cache[slot].hash=hash;
-    g_libretro.setting_cache[slot].value=value;
-    memcpy(g_libretro.setting_cache[slot].name,name,len+1);
-    g_libretro.setting_cache_count++;
-  }
-  return value;
+  /* Authored environment queries and callbacks outside content have no snapshot. */
+  return getenv(name);
 }
 
 static void host_rumble(void *userdata,uint32_t port,uint16_t strong,uint16_t weak){

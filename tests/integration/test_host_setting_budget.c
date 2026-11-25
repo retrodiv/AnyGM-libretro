@@ -13,10 +13,13 @@
  * the case stays discriminating on a small synthetic game, where a whole-frame budget would not
  * separate a cached consumer from an uncached one. */
 #include "anygm.h"
+#include "gml_builtin.h"
+#include "gml_vm_internal.h"
 #include "stdio_vfs.h"
 #include "synthetic_content.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* Settings consumed from per-opcode, per-call or per-array-write paths. */
@@ -25,6 +28,8 @@ static const char *const hot_path_settings[]={
   "GML_TRACE",          /* code entry */
   "GML_DBG_ARRAYSET",   /* every array write */
   "GML_LOG_VIEW",       /* every view-array write */
+  "GML_LOG_CODE_ARGS",  /* code entry and micro-operations */
+  "GML_SKIP",           /* each drawn instance */
 };
 #define HOT_SETTING_COUNT ((int)(sizeof hot_path_settings/sizeof *hot_path_settings))
 
@@ -140,8 +145,40 @@ static int setting_budget_case(void){
   return 1;
 }
 
+typedef struct ScratchSetting {
+  char text[32];
+  unsigned queries;
+} ScratchSetting;
+
+static const char *scratch_setting(void *userdata,const char *name){
+  ScratchSetting *setting=userdata;
+  if(strcmp(name,"GML_TRACE") && strcmp(name,"GML_SKIP") &&
+     strcmp(name,"DYNAMIC_TEST_SETTING") && strcmp(name,"changed")) return NULL;
+  setting->queries++;
+  snprintf(setting->text,sizeof setting->text,"%s",name);
+  return setting->text;
+}
+
+static int setting_ownership_case(void){
+  ScratchSetting setting={0};
+  AnygmHostServices host={.userdata=&setting,.development_setting=scratch_setting};
+  GmlVM vm={.host=&host};
+  const char *trace=gml_vm_development_text(&vm,GML_VM_SETTING_TRACE);
+  const char *skip=gml_vm_development_text(&vm,GML_VM_SETTING_SKIP);
+  GmlVal name=vstr("DYNAMIC_TEST_SETTING");
+  GmlVal value=gml_builtin_call(&vm,"environment_get_variable",&name,1);
+  scratch_setting(&setting,"changed");
+  int ok=trace && !strcmp(trace,"GML_TRACE") && skip && !strcmp(skip,"GML_SKIP") &&
+    value.t==V_STR && value.s && value.d!=0 && !strcmp(value.s,"DYNAMIC_TEST_SETTING") &&
+    trace==gml_vm_development_text(&vm,GML_VM_SETTING_TRACE) && setting.queries==4;
+  if(value.t==V_STR && value.d!=0) free((void *)value.s);
+  gml_vm_free(&vm);
+  if(!ok) fputs("development settings did not retain host scratch text\n",stderr);
+  return ok;
+}
+
 int main(void){
-  if(!setting_budget_case()) return 1;
+  if(!setting_budget_case() || !setting_ownership_case()) return 1;
   puts("host setting budget: ok");
   return 0;
 }

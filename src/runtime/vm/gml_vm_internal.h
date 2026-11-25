@@ -56,6 +56,13 @@ typedef struct GmlExceptionContext {
 void gml_vm_exception_state_clear(GmlExceptionState *state);
 void gml_vm_execution_frames_free(GmlVM *vm);
 
+const char *gml_vm_load_development_text(GmlVM *vm,unsigned index);
+static inline const char *gml_vm_development_text(GmlVM *vm,unsigned index){
+  if(vm->diagnostics.cached_setting_mask&(UINT32_C(1)<<index))
+    return vm->diagnostics.cached_settings[index];
+  return gml_vm_load_development_text(vm,index);
+}
+
 double gml_vm_classic_round_even(double value);
 double gml_vm_value_as_number(GmlVal value);
 int gml_vm_value_is_true(GmlVal value);

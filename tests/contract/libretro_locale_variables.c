@@ -51,6 +51,7 @@ static void expect(const char *what,const char *got,const char *want){
 
 /* Each case starts from an adapter that has resolved a locale and remembers nothing. */
 static void begin(const char *language,const char *region,const char *chosen){
+  libretro_development_settings_clear();
   memset(&g_libretro,0,sizeof g_libretro);
   snprintf(g_libretro.language,sizeof g_libretro.language,"%s",language);
   snprintf(g_libretro.region,sizeof g_libretro.region,"%s",region);
@@ -108,6 +109,23 @@ int main(void){
   snprintf(g_libretro.language,sizeof g_libretro.language,"pt");
   snprintf(g_libretro.region,sizeof g_libretro.region,"PT");
   expect("chosen after auto",answer("LANG"),"pt_PT");
+
+  /* One load snapshots present and absent registry names without pinning locale. */
+  unsetenv("GML_ATLAS_THREADS");
+  setenv("GML_ROW_THREADS","3",1);
+  libretro_development_settings_capture();
+  setenv("GML_ATLAS_THREADS","4",1);
+  setenv("GML_ROW_THREADS","2",1);
+  expect("registered value stays pinned during content",answer("GML_ROW_THREADS"),"3");
+  expect("registered absence stays pinned during content",answer("GML_ATLAS_THREADS"),NULL);
+  expect("locale stays available alongside the snapshot",answer("LANG"),"pt_PT");
+  expect("an unrelated environment query still resolves",answer("ANYGM_TEST_SETTING"),"visible");
+  libretro_development_settings_capture();
+  expect("new content reads the updated value",answer("GML_ROW_THREADS"),"2");
+  expect("new content reads a previously missing value",answer("GML_ATLAS_THREADS"),"4");
+  libretro_development_settings_clear();
+  unsetenv("GML_ATLAS_THREADS");
+  unsetenv("GML_ROW_THREADS");
 
   if(failures){
     printf("libretro locale variables: %d failure(s)\n",failures);
