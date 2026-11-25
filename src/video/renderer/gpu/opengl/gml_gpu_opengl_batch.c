@@ -454,10 +454,13 @@ static uint32_t scene_filter(const GmlRenderQuad *quad,
      * Opaque-target variants must therefore write alpha in this same draw,
      * not defer the ordinary source-over alpha stamp until a batch ends. */
     else if(qualified_blend(state)==20 || qualified_blend(state)==21) filter=base+5u;
-    /* The tile CPU leaves keep nonzero binary64 opacity even when its float
-     * packet alpha underflows. Preserve RGB factors and opaque additive
-     * coverage; their raw-zero source rejection is explicit in the state. */
-    else if(family==GML_RENDER_SCENE_TILE &&
+    /* Point leaves keep nonzero binary64 opacity even when its float packet
+     * alpha underflows. Preserve RGB factors and opaque additive coverage;
+     * their raw-zero source rejection is explicit in the state. */
+    else if((family==GML_RENDER_SCENE_TILE ||
+      (family==GML_RENDER_SCENE_BACKGROUND && quad->filtered_draw_alpha>0.0 &&
+       quad->filtered_draw_alpha<0x1p-32 && !state->source_alpha_key &&
+       !state->source_palette.enabled)) &&
       (qualified_blend(state)==14 || qualified_blend(state)==18 ||
        qualified_blend(state)==19 || qualified_blend(state)==24 || qualified_blend(state)==25))
       filter=base+7u+(state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA?2u:0u);
@@ -863,6 +866,7 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
         op->target.image.resource_class!=GML_RENDER_RESOURCE_SCRATCH)))) return 0;
   double width=q->x[1]-q->x[0],height=q->y[2]-q->y[0];
   if(width>16384.0 || height>16384.0) return 0;
+  int clamped_point=gml_gpu_opengl_clamped_point_valid(op,state,source->width,source->height);
   double u0=(double)region.x/source->width,u1=((double)region.x+region.width)/source->width;
   double v0=(double)region.y/source->height,v1=((double)region.y+region.height)/source->height;
   /* The shared point producer can clip a phased nearest interval or
@@ -903,7 +907,8 @@ static int integer_function_sprite_valid(const GmlRenderDrawOp *op,
     if(q->corner_colour[c]!=q->corner_colour[0] ||
        (q->corner_colour[c]>>24)!=(uint32_t)lround(q->filtered_draw_alpha*255.0) ||
        !isfinite(q->u[c]) || !isfinite(q->v[c]) ||
-       q->u[c]<u0-1e-12 || q->u[c]>u1+1e-12 || q->v[c]<v0-1e-12 || q->v[c]>v1+1e-12 ||
+       (!clamped_point && (q->u[c]<u0-1e-12 || q->u[c]>u1+1e-12 ||
+                           q->v[c]<v0-1e-12 || q->v[c]>v1+1e-12)) ||
        fabs(q->u[c]-u)>1e-12 || fabs(q->v[c]-v)>1e-12) return 0;
   }
   return 1;
@@ -2475,6 +2480,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       if(op->payload.quad.shape==GML_RENDER_QUAD_AXIS_ALIGNED &&
          sampling->filter==GML_RENDER_FILTER_NEAREST &&
          !gml_gpu_opengl_half_gui_point_valid(op,state,source->width,source->height) &&
+         !gml_gpu_opengl_clamped_point_valid(op,state,source->width,source->height) &&
          !full_region(sampling->source_region,source->width,source->height)){
         double u0=(double)sampling->source_region.x/source->width;
         double u1=(double)((uint32_t)sampling->source_region.x+

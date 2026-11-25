@@ -49,6 +49,39 @@ int gml_gpu_opengl_clamped_atlas_valid(const GmlRenderDrawOp *op,
      (uint64_t)(uint32_t)region.y+region.height>source_height);
 }
 
+/* A tiny positive background point keeps its affine UVs across crop edges.
+ * The fragment sampler clamps to the declared immutable source rectangle. */
+int gml_gpu_opengl_clamped_point_valid(const GmlRenderDrawOp *op,
+                                        const GmlRenderDrawStateSnapshot *state,
+                                        uint32_t width,uint32_t height){
+  if(!op || !state || !width || !height || width>16384u || height>16384u ||
+     op->opcode!=GML_RENDER_OP_TEXTURED_QUAD ||
+     op->scene_family!=GML_RENDER_SCENE_BACKGROUND ||
+     op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
+     op->source_count!=1u || !op->sources ||
+     op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS ||
+     state->source_alpha_key || state->source_palette.enabled) return 0;
+  const GmlRenderQuad *q=&op->payload.quad;
+  GmlRenderRect region=q->sampling.source_region;
+  if(q->shape!=GML_RENDER_QUAD_AXIS_ALIGNED || q->span_active ||
+     q->sampling.filter!=GML_RENDER_FILTER_NEAREST ||
+     q->sampling.quantisation!=GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||
+     q->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
+     q->sampling.logical_margin_mask ||
+     !isfinite(q->filtered_draw_alpha) || q->filtered_draw_alpha<=0.0 ||
+     q->filtered_draw_alpha>=0x1p-32 ||
+     region.x<0 || region.y<0 || !region.width || !region.height ||
+     (uint64_t)(uint32_t)region.x+region.width>width ||
+     (uint64_t)(uint32_t)region.y+region.height>height) return 0;
+  for(unsigned c=0;c<4u;c++){
+    double u=q->u[c]*width,v=q->v[c]*height;
+    if(!isfinite(u) || !isfinite(v) ||
+       u<region.x-8.000000001 || u>region.x+region.width+8.000000001 ||
+       v<region.y-8.000000001 || v>region.y+region.height+8.000000001) return 0;
+  }
+  return 1;
+}
+
 /* R03-SPR-FIRSTGEN-GUI-HALF-POINT: only this independently certified
  * reciprocal map can extrapolate a vertex by half a texel at an atlas edge.
  * Fragment centres still sample contained odd texels, never that vertex. */
@@ -239,6 +272,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
        quad->x[corner]<-10000000.0 || quad->x[corner]>10000000.0 ||
        quad->y[corner]<-10000000.0 || quad->y[corner]>10000000.0 ||
        (!rotated && !warped && !half_gui &&
+        !gml_gpu_opengl_clamped_point_valid(op,state,source_width,source_height) &&
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN &&
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN &&
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SURFACE_LEADING &&

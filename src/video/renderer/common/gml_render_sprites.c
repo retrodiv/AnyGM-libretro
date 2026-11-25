@@ -1520,7 +1520,8 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     state.alpha_test_enabled=(effective_cutout && !!r->alpha_test_enable) ||
       (physical_sprite_page==12 && r->blendmode==2);
     state.alpha_test_reference=effective_cutout && r->alpha_test_enable?r->alpha_test_ref:0u;
-    if(tile_function && r->alphablend &&
+    if((tile_function || (integer_background && draw_alpha>0.0 && draw_alpha<0x1p-32)) &&
+       r->alphablend &&
        (r->blendmode==1 || r->blendmode==4 || r->blendmode==7 || r->blendmode==8))
       state.alpha_test_enabled=1u;
     if(rotated_sample_rows || (quarter_tile && !tile_exact_unit && r->alphablend && !r->blendmode)){
@@ -1995,15 +1996,19 @@ static int resident_selected_part_page(GmlRender *r,GmlTpag *page,
   double left,double top,double xs,double ys,uint32_t colour,double alpha,int filtered_page,
   GmlRenderSceneFamily family,int whole_page){
   if(!r || !page || !r->resident_application_pass) return 0;
-  /* The Classic interpolation hint still selects its point-colour owner.
-   * Keep the measured tiny-opacity preset boundary before either executor. */
-  if(family!=GML_RENDER_SCENE_TILE && r->interp && r->blendmode!=0 && r->blendmode!=2 &&
+  /* Classic backgrounds keep their integer point owner under the interpolation
+   * hint. Filtered ports retain their separately measured numerical fence. */
+  int classic_background_point=r->classic && family==GML_RENDER_SCENE_BACKGROUND &&
+    r->active_shader<0;
+  if(family!=GML_RENDER_SCENE_TILE && !classic_background_point &&
+     r->interp && r->blendmode!=0 && r->blendmode!=2 &&
      alpha>0.0 && alpha<0x1p-32) return 0;
   if(r->blendmode!=6 || !r->alphablend ||
      !(page->tx || page->ty || page->sw<page->bw || page->sh<page->bh))
     return resident_selected_part_execute(r,page,left,top,xs,ys,colour,alpha,filtered_page,family,whole_page);
   GmlRenderRect region={0};GmlSprite geometry={0};
-  if(((page->tx || page->ty) && family!=GML_RENDER_SCENE_TEXT && !whole_page) ||
+  if(((page->tx || page->ty) && family!=GML_RENDER_SCENE_TEXT && !whole_page &&
+      !(classic_background_point && alpha>0.0 && alpha<0x1p-32)) ||
      page->tx<0 || page->ty<0 || page->bw<=0 || page->bh<=0 ||
      !isfinite(xs) || !isfinite(ys) ||
      page->bw*fabs(xs)>16384.0 || page->bh*fabs(ys)>16384.0 ||
@@ -2491,6 +2496,23 @@ static int resident_modern_point_regions(GmlRender *r,GmlTpag *page,
     int stable_y=modern_nearest_axis_bias(top,y0,ys,phase_y,y1-y0,page->sh,1,clamp,&bias_y);
     double u0=page->sx+(x0-anchor_x)/xs-bias_x,u1=page->sx+(x1-anchor_x)/xs-bias_x;
     double v0=page->sy+(y0-anchor_y)/ys-bias_y,v1=page->sy+(y1-anchor_y)/ys-bias_y;
+    /* Crop edges belong to the sampler, not to a tessellation of the draw.
+     * Keep the established phase correction and submit its full rectangle. */
+    if(r->classic && operation->scene_family==GML_RENDER_SCENE_BACKGROUND &&
+       original->filtered_draw_alpha>0.0 && original->filtered_draw_alpha<0x1p-32 &&
+       original->sampling.filter==GML_RENDER_FILTER_NEAREST &&
+       !alpha_regions && source->borrowed_immutable &&
+       !state->source_alpha_key && !state->source_palette.enabled){
+      GmlRenderDrawOp placed=*operation;
+      GmlRenderQuad *quad=&placed.payload.quad;
+      quad->x[0]=quad->x[3]=x0;quad->x[1]=quad->x[2]=x1;
+      quad->y[0]=quad->y[1]=y0;quad->y[2]=quad->y[3]=y1;
+      quad->u[0]=quad->u[3]=u0/source->width;
+      quad->u[1]=quad->u[2]=u1/source->width;
+      quad->v[0]=quad->v[1]=v0/source->height;
+      quad->v[2]=quad->v[3]=v1/source->height;
+      return gml_render_application_scene_enqueue_quads(r,&placed,1u,state,source);
+    }
     int constant_x=fmin(u0,u1)<0.0 || fmax(u0,u1)>source->width;
     int constant_y=fmin(v0,v1)<0.0 || fmax(v0,v1)>source->height;
     /* Direct hardware nearest must keep every vertex inside its physical

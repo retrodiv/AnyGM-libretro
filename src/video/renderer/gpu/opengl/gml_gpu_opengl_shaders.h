@@ -1062,6 +1062,8 @@
   "        vec2 pixel=vec2(gl_FragCoord.x,v_step.x-gl_FragCoord.y);\n" \
   "        uv=(pixel-v_map.xy)/v_map.zw;\n" \
   "      }\n" \
+  "      vec2 extent=vec2(textureSize(u_image,0));\n" \
+  "      uv=clamp(uv,(v_clamp.xy+vec2(0.5))/extent,(v_clamp.zw+vec2(0.5))/extent);\n" \
   "      sampled=uvec4(floor(source_texture(uv)*255.0+0.5));\n" \
   "    }\n" \
   "    if(u_alpha_test>=0 && sampled.a<=uint(u_alpha_test)) discard;\n" \
