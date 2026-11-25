@@ -601,10 +601,16 @@ static int repeat_quad_valid(const GmlRenderDrawOp *op,
   int full_source=(flags&GML_RENDER_REPEAT_FULL_SOURCE)!=0;
   int disabled=(flags&GML_RENDER_REPEAT_BLEND_DISABLED)!=0;
   int round_app_point=(flags&GML_RENDER_REPEAT_ROUND_APP_POINT)!=0;
+  int classic_aspect=(flags&GML_RENDER_REPEAT_CLASSIC_ASPECT)!=0;
+  int classic_app=(flags&GML_RENDER_REPEAT_CLASSIC_ASPECT_APPLICATION)!=0;
   if(flags&~(GML_RENDER_REPEAT_FULL_SOURCE|GML_RENDER_REPEAT_BLEND_DISABLED|
-             GML_RENDER_REPEAT_ROUND_APP_POINT) ||
+             GML_RENDER_REPEAT_ROUND_APP_POINT|GML_RENDER_REPEAT_CLASSIC_ASPECT|
+             GML_RENDER_REPEAT_CLASSIC_ASPECT_APPLICATION) ||
      ((disabled || round_app_point) && blend!=1) ||
-     (round_app_point && (!full_source || disabled))) return 0;
+     (round_app_point && (!full_source || disabled)) ||
+     (classic_app && !classic_aspect) ||
+     (classic_aspect && (!full_source || disabled || round_app_point || blend!=1 ||
+       (classic_app!=(op->sources[0].resource_class!=GML_RENDER_RESOURCE_SURFACE))))) return 0;
   if(full_source && (q->u[0]!=0.0 || q->v[0]!=0.0 || q->filtered_draw_alpha!=1.0 ||
      q->corner_colour[0]!=0xffffffffu)) return 0;
   if((q->u[0]!=0.0 && q->u[0]!=1.0) || (q->v[0]!=0.0 && q->v[0]!=1.0)) return 0;
@@ -625,7 +631,8 @@ static int repeat_quad_valid(const GmlRenderDrawOp *op,
        (span[2]!=0.0 && fabs(span[2])<0x1p-900) ||
        span[3]!=ceil((target_extent-span[0])/span[1])+1 || span[3]>8192.0 ||
        ((q->sampling.filter==GML_RENDER_FILTER_BOX) && source_extent>8*lround(span[1])) ||
-       (full_source && lround(span[1])>=target_extent)) return 0;
+       (full_source && lround(span[1])>=target_extent) ||
+       (classic_aspect && lround(span[1])<source_extent)) return 0;
   }
   return q->span_x[3]*q->span_y[3]<=8192.0 &&
     (full_source || lround(q->span_x[1])<source->width || lround(q->span_y[1])<source->height);

@@ -4236,18 +4236,18 @@ static int resident_surface_repeat(GmlRender *r,int surf,int sw,int sh,
   int flip_x,int flip_y,uint32_t colour,double alpha,int full_source){
   long dw=lround(width),dh=lround(height);
   int magnified=dw>=sw && dh>=sh;
-  /* The full-source normal path keeps leading-edge point sampling on enlarged axes.
-   * Classic aspect presentation and filtered application magnification use different owners. */
-  int classic_magnification=r->classic &&
-    ((r->interp && surf==0) ||
-     (anygm_policy_classic_modern_presentation(r->win) && r->win->classic_scaling<0));
+  int classic_aspect=full_source && magnified && r->classic &&
+    anygm_policy_classic_modern_presentation(r->win) && r->win->classic_scaling<0;
+  /* Filtered Classic application magnification retains its bilinear compositor. */
+  int classic_filtered_application=r->classic && r->interp && surf==0;
   if((!r->alphablend && r->blendmode) || resident_surface_shader_selected(r) ||
      ((full_source || !r->alphablend) && r->interp && !flip_x && !flip_y &&
        !r->target_sp && r->fb==r->base_fb &&
        r->classic_interp_phase[0] && r->classic_interp_phase[1] && r->classic_interp_phase[2]) ||
      (full_source && (dw>=r->fbw || dh>=r->fbh)) ||
      (r->interp && (sw>8*dw || sh>8*dh)) ||
-     (magnified && (!full_source || classic_magnification))) return 0;
+     (magnified && (!full_source || classic_filtered_application)) ||
+     (classic_aspect && !r->alphablend)) return 0;
   if(r->pending_underlay && !gml_render_compose_resident_underlay(r)) return 0;
   gml_render_flush_pending_fill(r);
   if(r->pending_fill || !r->resident_application_pass) return 0;
@@ -4275,6 +4275,10 @@ static int resident_surface_repeat(GmlRender *r,int surf,int sw,int sh,
   q->v[0]=q->v[1]=flip_y;q->v[2]=q->v[3]=!flip_y;
   q->filtered_draw_alpha=fmin(alpha,1.0);
   if(full_source)q->surface_repeat_flags|=GML_RENDER_REPEAT_FULL_SOURCE;
+  if(classic_aspect){
+    q->surface_repeat_flags|=GML_RENDER_REPEAT_CLASSIC_ASPECT;
+    if(!surf)q->surface_repeat_flags|=GML_RENDER_REPEAT_CLASSIC_ASPECT_APPLICATION;
+  }
   if(!r->alphablend)q->surface_repeat_flags|=GML_RENDER_REPEAT_BLEND_DISABLED;
   if(full_source && r->alphablend && !surf && anygm_policy_uses_first_generation_studio(r->win))
     q->surface_repeat_flags|=GML_RENDER_REPEAT_ROUND_APP_POINT;

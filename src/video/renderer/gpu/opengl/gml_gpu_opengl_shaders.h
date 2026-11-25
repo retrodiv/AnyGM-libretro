@@ -1892,7 +1892,12 @@
   "    if((u_underlay_flags&2)!=0)local.x=extent.x-1-local.x;\n" \
   "    if((u_underlay_flags&4)!=0)local.y=extent.y-1-local.y;\n" \
   "    ivec2 lo=local*size/extent,hi=lo+ivec2(1);\n" \
-  "    if((u_underlay_flags&1)==0)hi=max(hi,(local+ivec2(1))*size/extent);\n" \
+  "    if((u_surface_rule.z&8)!=0){\n" \
+  "      ivec2 add=ivec2(extent.x%size.x==0?size.x:extent.x,extent.y%size.y==0?size.y:extent.y);\n" \
+  "      lo=clamp((local*2*size+add)/(extent*2),ivec2(0),size-ivec2(1));\n" \
+  "      hi=lo+ivec2(1);\n" \
+  "    }\n" \
+  "    else if((u_underlay_flags&1)==0)hi=max(hi,(local+ivec2(1))*size/extent);\n" \
   "    else if((u_surface_rule.z&1)!=0){\n" \
   "      ivec2 centres=((local*2+1)*size-1)/(extent*2);\n" \
   "      if(extent.x<size.x)lo.x=centres.x;\n" \
@@ -1909,6 +1914,11 @@
   "    ivec3 rgb=(total.rgb/count)*u_surface_tint.rgb/255;\n" \
   "    if(u_surface_rule.z!=0 && (total.a==count*255 || (u_surface_rule.z&3)==3)){\n" \
   "      prior=ivec4(rgb,255);continue;\n" \
+  "    }\n" \
+  "    if((u_surface_rule.z&8)!=0){\n" \
+  "      if((u_surface_rule.z&16)!=0)prior=ivec4(rgb,255);\n" \
+  "      else prior=ivec4((rgb*total.a+prior.rgb*(255-total.a))/255,255);\n" \
+  "      continue;\n" \
   "    }\n" \
   "    if((u_surface_rule.z&4)!=0 && count==1){\n" \
   "      prior=ivec4((rgb*total.a+prior.rgb*(255-total.a)+127)/255,255);continue;\n" \
