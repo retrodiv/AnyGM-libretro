@@ -916,6 +916,16 @@ static int runtime_font_styles_case(void){
   return ok;
 }
 
+static int append_test_atlas_pixel(GmlRender *render){
+  int id=render->n_atlas;
+  GmlAtlas *atlases=realloc(render->atlas,(size_t)(id+1)*sizeof *atlases);
+  if(!atlases) return -1;
+  render->atlas=atlases;
+  render->n_atlas++;
+  atlases[id]=(GmlAtlas){.px=malloc(4),.w=1,.h=1};
+  return atlases[id].px?id:-1;
+}
+
 static int inverse_destination_colour_case(void){
   int ok=1;
   for(int cached=0;cached<2;cached++){
@@ -923,16 +933,15 @@ static int inverse_destination_colour_case(void){
     if(gml_render_init(&render,&win)) return 0;
     vm.render=&render;
     uint32_t *pixels=malloc(512u*384u*sizeof *pixels);
-    render.atlas=calloc(1,sizeof *render.atlas); render.n_atlas=1;
+    int atlas_id=append_test_atlas_pixel(&render);
     render.tpag=calloc(1,sizeof *render.tpag); render.n_tpag=1;
     render.spr=calloc(1,sizeof *render.spr); render.n_spr=render.spr_cap=1;
-    if(!pixels || !render.atlas || !render.tpag || !render.spr) return 0;
-    render.atlas[0].px=malloc(4); render.atlas[0].w=render.atlas[0].h=1;
+    if(!pixels || atlas_id<0 || !render.tpag || !render.spr) return 0;
     render.spr[0].frame=malloc(sizeof(int));
-    if(!render.atlas[0].px || !render.spr[0].frame) return 0;
-    memset(render.atlas[0].px,255,4); render.spr[0].frame[0]=0;
+    if(!render.spr[0].frame) return 0;
+    memset(render.atlas[atlas_id].px,255,4); render.spr[0].frame[0]=0;
     render.spr[0].w=render.spr[0].h=render.spr[0].n_frames=1;
-    render.tpag[0]=(GmlTpag){.sw=1,.sh=1,.bw=1,.bh=1,.atlas=0};
+    render.tpag[0]=(GmlTpag){.sw=1,.sh=1,.bw=1,.bh=1,.atlas=atlas_id};
     uint8_t *runtime_pixels=malloc(4); if(!runtime_pixels) return 0;
     memset(runtime_pixels,255,4);
     int runtime=gml_sprite_append_from_rgba(&render,runtime_pixels,1,1,0,0,NULL);
@@ -1000,19 +1009,17 @@ static int source_colour_source_alpha_case(void){
     gml_render_begin(&render,screen,4,4,0,0);
     int target=gml_surface_create(&render,4,4);
     int source=gml_surface_create(&render,1,1);
-    render.atlas=calloc(1,sizeof *render.atlas); render.n_atlas=1;
+    int atlas_id=append_test_atlas_pixel(&render);
     render.tpag=calloc(1,sizeof *render.tpag); render.n_tpag=1;
     render.spr=calloc(1,sizeof *render.spr);
     render.n_spr=render.spr_cap=render.base_n_spr=1;
     uint8_t *rgba=malloc(4);
-    if(target<0 || source<0 || !rgba || !render.atlas || !render.tpag || !render.spr) return 0;
-    render.atlas[0].px=malloc(4);
-    render.atlas[0].w=render.atlas[0].h=1;
+    if(target<0 || source<0 || !rgba || atlas_id<0 || !render.tpag || !render.spr) return 0;
     render.spr[0].frame=malloc(sizeof(int));
-    if(!render.atlas[0].px || !render.spr[0].frame) return 0;
+    if(!render.spr[0].frame) return 0;
     render.spr[0].frame[0]=0;
     render.spr[0].w=render.spr[0].h=render.spr[0].n_frames=1;
-    render.tpag[0]=(GmlTpag){.sw=1,.sh=1,.tw=1,.th=1,.bw=1,.bh=1,.atlas=0};
+    render.tpag[0]=(GmlTpag){.sw=1,.sh=1,.tw=1,.th=1,.bw=1,.bh=1,.atlas=atlas_id};
     memset(rgba,255,4);
     int sprite=gml_sprite_append_from_rgba(&render,rgba,1,1,0,0,NULL);
     if(sprite<0) return 0;
@@ -1032,7 +1039,7 @@ static int source_colour_source_alpha_case(void){
       gml_render_sprite_cache_free(&render.spr[sprite]);
       gml_render_sprite_cache_free(&render.spr[0]);
       for(unsigned channel=0;channel<4u;channel++) rgba[channel]=(uint8_t)channels[channel];
-      memcpy(render.atlas[0].px,rgba,4);
+      memcpy(render.atlas[atlas_id].px,rgba,4);
       if(!gml_surface_write_rgba8(&render,source,rgba,4)) return 0;
       for(int path=0;path<7;path++){
         if(!gml_surface_set_target(&render,target)) return 0;
@@ -1108,20 +1115,18 @@ static int mirrored_source_over_target_policy_case(void){
       GmlRender render;
       uint32_t pixels[16],reference=0;
       if(gml_render_init(&render,&win)) return 0;
-      render.atlas=calloc(1,sizeof *render.atlas);
+      int atlas_id=append_test_atlas_pixel(&render);
       render.tpag=calloc(1,sizeof *render.tpag);
       render.spr=calloc(1,sizeof *render.spr);
-      render.n_atlas=render.n_tpag=render.n_spr=render.spr_cap=render.base_n_spr=1;
-      if(!render.atlas || !render.tpag || !render.spr) return 0;
-      render.atlas[0].px=malloc(4);
+      render.n_tpag=render.n_spr=render.spr_cap=render.base_n_spr=1;
+      if(atlas_id<0 || !render.tpag || !render.spr) return 0;
       render.spr[0].frame=malloc(sizeof(int));
-      if(!render.atlas[0].px || !render.spr[0].frame) return 0;
-      render.atlas[0].w=render.atlas[0].h=1;
-      render.atlas[0].px[0]=(uint8_t)(colours[colour]>>16);
-      render.atlas[0].px[1]=(uint8_t)(colours[colour]>>8);
-      render.atlas[0].px[2]=(uint8_t)colours[colour];
-      render.atlas[0].px[3]=(uint8_t)alphas[alpha];
-      render.tpag[0]=(GmlTpag){.sw=1,.sh=1,.tw=1,.th=1,.bw=1,.bh=1,.atlas=0};
+      if(!render.spr[0].frame) return 0;
+      render.atlas[atlas_id].px[0]=(uint8_t)(colours[colour]>>16);
+      render.atlas[atlas_id].px[1]=(uint8_t)(colours[colour]>>8);
+      render.atlas[atlas_id].px[2]=(uint8_t)colours[colour];
+      render.atlas[atlas_id].px[3]=(uint8_t)alphas[alpha];
+      render.tpag[0]=(GmlTpag){.sw=1,.sh=1,.tw=1,.th=1,.bw=1,.bh=1,.atlas=atlas_id};
       render.spr[0].frame[0]=0;
       render.spr[0].w=render.spr[0].h=render.spr[0].n_frames=1;
       if(application){

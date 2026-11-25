@@ -4,6 +4,7 @@
 #include "software3d_test_fixture.h"
 #include "gml_render_texture.h"
 #include "gml_render_cpu_backend.h"
+#include "memory_vfs.h"
 
 int constant_uv_depth_fixture(void){
   static const int generations[]={800,15,17};
@@ -15,11 +16,14 @@ int constant_uv_depth_fixture(void){
     if(gml_render_init(&render,NULL))return 0;
     render.win=&content;render.classic=content.classic_version!=0;
     vm.render=&render;vm.win=&content;gml_vm_software3d_reset(&vm);
-    render.atlas=calloc(1,sizeof *render.atlas);render.n_atlas=1;
-    if(!render.atlas)goto constant_done;
-    render.atlas[0].w=render.atlas[0].h=4;render.atlas[0].px=malloc(64u);
-    if(!render.atlas[0].px)goto constant_done;
-    memset(render.atlas[0].px,255,64u);render.atlas[0].px[(2u*4u+1u)*4u+3u]=0;
+    int atlas_id=render.n_atlas;
+    GmlAtlas *atlases=realloc(render.atlas,(size_t)(atlas_id+1)*sizeof *atlases);
+    if(!atlases)goto constant_done;
+    render.atlas=atlases;render.n_atlas++;
+    GmlAtlas *atlas=&atlases[atlas_id];
+    *atlas=(GmlAtlas){.w=4,.h=4,.px=malloc(64u)};
+    if(!atlas->px)goto constant_done;
+    memset(atlas->px,255,64u);atlas->px[(2u*4u+1u)*4u+3u]=0;
     gml_render_begin(&render,pixels,24,24,0,0);render.interp=(int)filter;
     call_numbers(&vm,"d3d_start",NULL,0);
     call_numbers(&vm,"d3d_set_projection_ortho",(double[]){0,0,24,24,0},5);
@@ -32,7 +36,8 @@ int constant_uv_depth_fixture(void){
     for(unsigned shape=0;shape<2u;shape++){
       for(unsigned p=0;p<24u*24u;p++)pixels[p]=0xff102030u;
       if(!gml_software3d_clear_depth(&render,1))goto constant_done;
-      call_numbers(&vm,"d3d_primitive_begin_texture",(double[]){shape?4:1,(double)GML_TEX_ATLAS_TAG},2);
+      call_numbers(&vm,"d3d_primitive_begin_texture",
+                   (double[]){shape?4:1,(double)(GML_TEX_ATLAS_TAG | atlas_id)},2);
       for(unsigned i=0;i<(shape?3u:1u);i++)call_numbers(&vm,"d3d_vertex_texture_colour",
         (double[]){shape?xy[i][0]:point,shape?xy[i][1]:point,-4000,.375,.625,0xffffff,1},7);
       call_numbers(&vm,"d3d_primitive_end",NULL,0);
@@ -1120,6 +1125,35 @@ int software3d_case_projection(Software3dRasterFixture *fixture){
 }
 
 
+static int model_file_fixture(GmlVM *vm,const char *legacy_text){
+  AnygmMemoryVfs *memory=malloc(sizeof *memory);
+  if(!memory) return 0;
+  AnygmHostServices services;
+  anygm_memory_vfs_init(memory,&services);
+  GmlWin content={.save_dir="/saves"};
+  GmlWin *original_content=vm->win;
+  const AnygmHostServices *original_host=vm->host;
+  vm->win=&content;
+  vm->host=&services;
+  GmlVal file_args[2]={vreal(0),vstr("model.bin")};
+  int ready=anygm_vfs_mkdirs(&services,content.save_dir);
+  if(ready && legacy_text)
+    ready=anygm_vfs_write_all(&services,"/saves/model.bin",legacy_text,strlen(legacy_text));
+  else if(ready){
+    ready=call_values(vm,"d3d_model_save",file_args,2).d==1;
+    if(ready) call_values(vm,"d3d_model_clear",file_args,1);
+  }
+  int loaded=ready && call_values(vm,"d3d_model_load",file_args,2).d==1;
+  vm->win=original_content;
+  vm->host=original_host;
+  anygm_memory_vfs_destroy(memory);
+  free(memory);
+  if(!loaded)
+    fprintf(stderr,"software D3 %smodel %s mismatch\n",
+            legacy_text?"legacy ":"",ready?"load":"save");
+  return loaded;
+}
+
 int software3d_case_primitive_model(Software3dRasterFixture *fixture){
   const double far_depth[]={10},farther_depth[]={20},near_depth[]={-10};
   const double triangle_kind[]={4};
@@ -1394,18 +1428,7 @@ int software3d_case_primitive_model(Software3dRasterFixture *fixture){
     fprintf(stderr,"software D3 model draw mismatch\n");
     return 0;
   }
-  const char *model_path="/tmp/anygm_d3_model_fixture.bin";
-  GmlVal file_args[2]={vreal(0),vstr(model_path)};
-  if(call_values(&fixture->vm,"d3d_model_save",file_args,2).d!=1){
-    fprintf(stderr,"software D3 model save mismatch\n");
-    return 0;
-  }
-  call_numbers(&fixture->vm,"d3d_model_clear",model_id,1);
-  if(call_values(&fixture->vm,"d3d_model_load",file_args,2).d!=1){
-    fprintf(stderr,"software D3 model load mismatch\n");
-    anygm_vfs_remove(fixture->vm.host,model_path); return 0;
-  }
-  anygm_vfs_remove(fixture->vm.host,model_path);
+  if(!model_file_fixture(&fixture->vm,NULL)) return 0;
   size_t model_state_size=gml_vm_state_size(&fixture->vm),model_written=0,model_used=0;
   void *model_state=malloc(model_state_size);
   if(!model_state || !gml_vm_state_save(&fixture->vm,model_state,model_state_size,&model_written)){
@@ -1433,15 +1456,8 @@ int software3d_case_primitive_model(Software3dRasterFixture *fixture){
     return 0;
   }
   static const char legacy_model[]="100\n1\n15 8 6 0 24 18 0 1 1\n";
-  if(!anygm_vfs_write_all(fixture->vm.host,model_path,legacy_model,sizeof legacy_model-1)){
-    fprintf(stderr,"software D3 legacy model fixture write mismatch\n");
-    return 0;
-  }
-  if(call_values(&fixture->vm,"d3d_model_load",file_args,2).d!=1){
-    fprintf(stderr,"software D3 legacy model load mismatch\n");
-    anygm_vfs_remove(fixture->vm.host,model_path); return 0;
-  }
-  anygm_vfs_remove(fixture->vm.host,model_path); memset(fixture->pixels,0,sizeof(fixture->pixels));
+  if(!model_file_fixture(&fixture->vm,legacy_model)) return 0;
+  memset(fixture->pixels,0,sizeof(fixture->pixels));
   call_numbers(&fixture->vm,"d3d_model_draw",model_draw,5);
   if(colored_pixels(fixture->pixels,SOFTWARE3D_WIDTH*SOFTWARE3D_HEIGHT)<150){
     fprintf(stderr,"software D3 legacy model raster mismatch\n");

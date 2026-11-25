@@ -250,6 +250,7 @@ int main(void){
   ok &= expect("a suffix is not a prefix",
                gml_builtin_call(&vm,"string_starts_with",suffix_not_prefix,2),0.0);
 
+  gml_vm_free(&vm);
   if(ok) printf("value math: logarithms, dot products, the two predicates and the prefix test\n");
   return ok?0:1;
 }

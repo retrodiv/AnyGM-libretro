@@ -18,7 +18,7 @@ int main(void){
 
   GmlVal make[]={vreal(3),vreal(2)};
   GmlVal grid=gml_builtin_call(&vm,"ds_grid_create",make,2);
-  if(grid.t!=V_REAL){ fprintf(stderr,"could not create a grid\n"); return 1; }
+  if(grid.t!=V_REAL){ fprintf(stderr,"could not create a grid\n"); gml_vm_free(&vm); return 1; }
 
   /* Reals in most cells and a string in one, so the variable-length entry is covered. */
   for(int x=0;x<3;x++) for(int y=0;y<2;y++){
@@ -32,6 +32,8 @@ int main(void){
   GmlVal written=gml_builtin_call(&vm,"ds_grid_write",one,1);
   if(!(written.t==V_STR && written.s && written.s[0])){
     fprintf(stderr,"ds_grid_write produced nothing\n");
+    gml_values_release_owned(&written,1);
+    gml_vm_free(&vm);
     return 1;
   }
 
@@ -64,13 +66,13 @@ int main(void){
     }
   }
 
-  gml_values_release(&written,1);
+  gml_values_release_owned(&written,1);
 
   /* The priority queue shares the encoder and the same two value types, and its reader walks the
    * buffer in two passes - every priority first, then every value - so a writer that interleaved
    * them would produce something only it could read. Round-trip it the same way. */
   GmlVal pq=gml_builtin_call(&vm,"ds_priority_create",NULL,0);
-  if(pq.t!=V_REAL){ fprintf(stderr,"could not create a priority queue\n"); return 1; }
+  if(pq.t!=V_REAL){ fprintf(stderr,"could not create a priority queue\n"); gml_vm_free(&vm); return 1; }
   GmlVal add_a[]={pq,vstr("low"),vreal(1)};
   GmlVal add_b[]={pq,vreal(42),vreal(9)};
   gml_builtin_call(&vm,"ds_priority_add",add_a,3);
@@ -99,9 +101,10 @@ int main(void){
       fprintf(stderr,"the top entry came back as type %d\n",(int)top.t);
       ok=0;
     }
-    gml_values_release(&pq_written,1);
   }
 
+  gml_values_release_owned(&pq_written,1);
+  gml_vm_free(&vm);
   if(ok) printf("ds_grid and ds_priority: written and read back, values against priorities\n");
   return ok?0:1;
 }

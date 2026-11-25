@@ -21,9 +21,9 @@ static GmlVal read_array_slot(GmlVM *vm,const char *name,int index,int classic_v
   unsigned char data[20]={0};
   fixture_word(data,0,(0x84u<<24)|(DT_INT16<<16)|(uint16_t)IT_SELF);
   fixture_word(data,1,(0x84u<<24)|(DT_INT16<<16)|(uint16_t)index);
-  fixture_word(data,2,(OP_PUSH<<24)|(DT_VAR<<16));
+  fixture_word(data,2,((uint32_t)OP_PUSH<<24)|(DT_VAR<<16));
   fixture_word(data,3,0);
-  fixture_word(data,4,(OP_RET<<24)|(DT_VAR<<16));
+  fixture_word(data,4,((uint32_t)OP_RET<<24)|(DT_VAR<<16));
   uint32_t reference_address=12;
   const char *reference_name=name;
   GmlCode code={0};
@@ -80,7 +80,7 @@ int expect_background_slot_dimensions(void){
             width.t==V_REAL?width.d:-1.0,
             height.t==V_REAL?height.d:-1.0,
             missing.t==V_REAL?missing.d:-1.0);
-  gml_varmap_free(&vm.globals);
+  gml_vm_free(&vm);
   return ok;
 }
 
@@ -93,10 +93,10 @@ static GmlVal background_scale_access(GmlVM *vm,GmlInstance *self,const char *na
   if(write) fixture_word(data,words++,(0x84u<<24)|(DT_INT16<<16)|(uint16_t)value);
   fixture_word(data,words++,(0x84u<<24)|(DT_INT16<<16)|(uint16_t)IT_SELF);
   fixture_word(data,words++,(0x84u<<24)|(DT_INT16<<16));
-  fixture_word(data,words++,((write?OP_POP:OP_PUSH)<<24)|(DT_VAR<<16));
+  fixture_word(data,words++,((uint32_t)(write?OP_POP:OP_PUSH)<<24)|(DT_VAR<<16));
   uint32_t reference=(uint32_t)words*4;
   fixture_word(data,words++,0);
-  fixture_word(data,words++,((write?OP_EXIT:OP_RET)<<24)|(DT_VAR<<16));
+  fixture_word(data,words++,((uint32_t)(write?OP_EXIT:OP_RET)<<24)|(DT_VAR<<16));
   GmlCode code={0};
   code.name="gml_Script_room_scale_fixture";
   code.length=(uint32_t)words*4; code.cache_bad=(uint8_t)uncached;
@@ -158,8 +158,8 @@ int expect_room_background_scales(void){
       }
     }
   cleanup_scale:
-    gml_vm_frame_cleanup(&vm);
-    gml_varmap_free(&vm.globals);
+    gml_render_texture_page_cache_clear(&render,&page);
+    gml_vm_free(&vm);
     gml_varmap_free(&writer.vars); gml_varmap_free(&reader.vars);
   }
   return ok;
@@ -213,7 +213,7 @@ static int expect_early_background_opacity_and_order(void){
     ok=0;
   }
   gml_render_texture_page_cache_clear(&render,&page);
-  gml_vm_frame_cleanup(&vm); gml_varmap_free(&vm.globals);
+  gml_vm_free(&vm);
   return ok;
 }
 
@@ -286,7 +286,7 @@ int expect_room_background_compositing(void){
       }
     }
     gml_render_texture_page_cache_clear(&render,&page);
-    gml_vm_frame_cleanup(&vm); gml_varmap_free(&vm.globals);
+    gml_vm_free(&vm);
   }
   return expect_early_background_opacity_and_order() && ok;
 }
@@ -321,6 +321,7 @@ int expect_background_exists_builtin(void){
             negative_exists.t==V_REAL?negative_exists.d:-1.0,
             past_end_exists.t==V_REAL?past_end_exists.d:-1.0,
             without_renderer.t==V_REAL?without_renderer.d:-1.0);
+  gml_vm_free(&vm);
   return ok;
 }
 
@@ -356,7 +357,7 @@ int expect_classic_view_array_aliases(void){
             hollow.t==V_REAL?hollow.d:-1.0,solid.t==V_REAL?solid.d:-1.0);
     ok=0;
   }
-  gml_varmap_free(&vm.globals);
+  gml_vm_free(&vm);
   return ok;
 }
 
@@ -377,7 +378,7 @@ int expect_classic_hollow_rectangle(void){
   if(!ok)
     fprintf(stderr,"classic hollow rectangle mismatch: edge=%08x,%08x centre=%08x outside=%08x\n",
             framebuffer[1*8+1],framebuffer[6*8+6],framebuffer[3*8+3],framebuffer[0]);
-  gml_varmap_free(&vm.globals);
+  gml_vm_free(&vm);
   gml_render_free(&render);
   return ok;
 }
@@ -426,6 +427,7 @@ int expect_legacy_sprite_text_builtin(void){
   GmlValueFreeContext free_context={0};
   gml_val_free(&free_context,args[2]);
   gml_val_free(&free_context,spaced[2]);
+  gml_vm_free(&vm);
   return ok;
 }
 
@@ -475,6 +477,7 @@ int expect_legacy_sprite_assign_builtin(void){
     fprintf(stderr,"legacy sprite assignment mismatch: result=%.0f pixel=%06x origin=%d,%d\n",
             assigned.t==V_REAL?assigned.d:-1.0,assigned_color,
             render.spr[0].originx,render.spr[0].originy);
+  gml_vm_free(&vm);
   gml_render_free(&render);
   return ok;
 }
@@ -776,6 +779,7 @@ static int expect_renderer_semantics_exit_code(void){
       fprintf(stderr,"sprite playback cadence mismatch: fps=%.6f frame=%.6f legacy=%.6f\n",
         per_second,per_frame,legacy); return 1;
     }
+    gml_vm_free(&sprite_vm);
   }
   {
     GmlRender render={0};
@@ -1020,6 +1024,7 @@ static int expect_renderer_semantics_exit_code(void){
       fprintf(stderr,"radial colour primitive mismatch: centre=%08x edge=%08x outside=%08x\n",
               centre,edge,outside); return 1;
     }
+    gml_vm_free(&draw_vm);
   }
   {
     /* First-generation point and line primitives use pixel-centre quantisation after the logical
@@ -1079,6 +1084,7 @@ static int expect_renderer_semantics_exit_code(void){
               framebuffer[19*20+5],framebuffer[19*20+15],
               framebuffer[19*20+10],framebuffer[6*20+5]); return 1;
     }
+    gml_vm_free(&draw_vm);
   }
   {
     /* Line colour builtins interpolate both endpoint colours; the second colour must survive
@@ -1099,6 +1105,7 @@ static int expect_renderer_semantics_exit_code(void){
       fprintf(stderr,"line endpoint gradient mismatch: first=%08x middle=%08x last=%08x\n",
               first,middle,last); return 1;
     }
+    gml_vm_free(&draw_vm);
   }
   {
     /* The basic maximum preset uses source alpha and inverse source colour factors.  It is not
@@ -1125,6 +1132,7 @@ static int expect_renderer_semantics_exit_code(void){
               framebuffer,active.d);
       return 1;
     }
+    gml_vm_free(&draw_vm);
   }
   {
     /* The basic bm_subtract preset uses (bm_zero,bm_inv_src_colour).  It scales each destination
@@ -1140,6 +1148,7 @@ static int expect_renderer_semantics_exit_code(void){
       fprintf(stderr,"bm_subtract inverse-source blend mismatch: pixel=%08x mode=%.0f\n",
               framebuffer,active.d); return 1;
     }
+    gml_vm_free(&draw_vm);
   }
   {
     /* Fixed-function colour factors still run for a sampled texel whose alpha is zero. The alpha
@@ -1161,6 +1170,7 @@ static int expect_renderer_semantics_exit_code(void){
                 "with interpolation %d: pixel=%08x\n",interpolation,framebuffer); return 1;
       }
     }
+    gml_render_texture_page_cache_clear(&render,&page);
   }
   {
     /* The application surface is sampled later by Draw GUI, so its alpha is real render-target
@@ -1193,6 +1203,9 @@ static int expect_renderer_semantics_exit_code(void){
       fprintf(stderr,"application-surface composite ignored retained alpha: pixel=%08x\n",screen);
       return 1;
     }
+    gml_render_texture_page_cache_clear(&render,&page);
+    free(render.app_presentation_coverage);
+    free(render.app_presentation_alpha_scratch);
   }
   {
     /* Second-generation Studio renders its application target as an opaque screen stage. The same
@@ -1218,6 +1231,7 @@ static int expect_renderer_semantics_exit_code(void){
               application);
       return 1;
     }
+    gml_render_texture_page_cache_clear(&render,&page);
   }
   return 0;
 }

@@ -28,8 +28,9 @@ test, and widen validation at architectural milestones.
 | Host contract | `make contract-check` | Exercise the public API and synthetic source |
 | Instance integration | `make integration-check` | Prove ownership and two-engine isolation |
 | Security corpus | `make security-check` | Exercise bounded malformed state, VFS, cache, archive, normalized data, bytecode, and overrides |
-| Unit suite | `make check` | Run parser, compatibility, VM, and runtime tests |
-| Instrumented suite | `make sanitizer-check` | Run parser and contract gates with ASan/UBSan |
+| Unit suite | `make unit-check` | Run parser, compatibility, VM, renderer, and audio unit tests |
+| Instrumented suite | `make sanitizer-check` | Run security, contract, integration, and unit tests with ASan/UBSan in C and C++ |
+| Coverage-guided parsers | `make fuzz-check` | Build three Clang libFuzzer targets with ASan/UBSan and run their synthetic seed corpora |
 | Core link | `make` | Produce the libretro shared library |
 
 Use the smallest relevant target while developing. Before declaring a release
@@ -37,6 +38,14 @@ candidate, run a clean sequential build, all non-diagnostic tests, export
 inspection, policy scans, license/provenance scans, and a source-language scan.
 Diagnostic tests are opt-in because they are investigation tools rather than
 release gates.
+
+`make -j1 fuzz-check FUZZ_RUNS=1000` requires Clang, its libFuzzer runtime and
+the sanitizer runtimes. Set `FUZZ_CC` and `FUZZ_CXX` to select that toolchain.
+The build creates synthetic FORM, ZIP routing, and savestate seeds under
+`$(BUILD_DIR)/fuzzer/fuzz-corpus`. The container target uses a fresh memory VFS
+for each input. The state target tests raw transport bytes and checksummed
+mutations to the generated payload. It restores the fixture state between
+attempts. The fuzzer binaries and updated corpora can be reused for longer runs.
 
 The large runtime characterization binaries expose ownership-level filters:
 

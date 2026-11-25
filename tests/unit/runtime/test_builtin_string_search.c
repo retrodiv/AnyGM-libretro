@@ -23,7 +23,7 @@ static int expect_string(const char *label, GmlVal actual, const char *want){
   if(!ok)
     fprintf(stderr,"%s: expected \"%s\", got %s\n",label,want,
             actual.t==V_STR && actual.s?actual.s:"<non-string>");
-  gml_values_release(&actual,1);
+  gml_values_release_owned(&actual,1);
   return ok;
 }
 
@@ -134,6 +134,7 @@ int main(void){
   ok &= expect("the created minute reads back",gml_builtin_call(&vm,"date_get_minute",back,1),30);
   ok &= expect("the created second reads back",gml_builtin_call(&vm,"date_get_second",back,1),15);
 
+  gml_vm_free(&vm);
   if(ok) printf("string search: positional and backward searches answer GameMaker positions\n");
   return ok?0:1;
 }

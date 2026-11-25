@@ -72,6 +72,8 @@ int expect_frame_clock_ignores_host_time(void){
       " second=(%.0f,%.0f,%.0f calls=%u)\n",
       first_values[0],first_values[1],first_values[2],first_clock.calls,
       second_values[0],second_values[1],second_values[2],second_clock.calls);
+  gml_vm_free(&first);
+  gml_vm_free(&second);
   return ok;
 }
 
@@ -266,10 +268,7 @@ int expect_authored_long_layer_background_binding(void){
       "authored long layer did not bind its background: layers=%d elements=%d listed=%d\n",
       vm.n_rtl,vm.n_rte,element_count);
   gml_values_release(&elements,1);
-  gml_vm_rooms_clear_tilemaps(&vm);
-  free(vm.tilemaps);
-  free(vm.rtl);
-  free(vm.rte);
+  gml_vm_free(&vm);
   return ok;
 }
 
@@ -347,6 +346,8 @@ int expect_deactivated_instance_reference(void){
   int found=0;
   GmlVal x=gml_inst_var_get_val(&vm,vreal(instance.id),"x",&found);
   GmlInstance *resolved=gml_vm_instance_by_id(&vm,instance.id);
+  vm.inst=NULL; vm.inst_count=vm.inst_cap=0;
+  gml_vm_free(&vm);
   if(!found || x.t!=V_REAL || x.d!=73 || resolved!=&instance){
     fprintf(stderr,"deactivated explicit-id lookup mismatch: found=%d x=%.0f resolved=%d\n",
             found,x.t==V_REAL?x.d:-1.0,resolved==&instance);
@@ -364,15 +365,15 @@ int expect_destroy_callback_reference(void){
   GmlCode code[2]={{0}};
   for(int event=0;event<2;event++){
     int word=event*9;
-    fixture_word(data,word+0,(OP_PUSH<<24)|(DT_INT32<<16));
+    fixture_word(data,word+0,((uint32_t)OP_PUSH<<24)|(DT_INT32<<16));
     fixture_word(data,word+1,100001);
-    fixture_word(data,word+2,(OP_PUSH<<24)|(DT_VAR<<16));
+    fixture_word(data,word+2,((uint32_t)OP_PUSH<<24)|(DT_VAR<<16));
     fixture_word(data,word+3,0x80000000u);
-    fixture_word(data,word+4,(OP_POP<<24)|(DT_VAR<<16)|(DT_VAR<<20)|(uint16_t)IT_GLOBAL);
+    fixture_word(data,word+4,((uint32_t)OP_POP<<24)|(DT_VAR<<16)|(DT_VAR<<20)|(uint16_t)IT_GLOBAL);
     fixture_word(data,word+5,0xa0000000u);
-    fixture_word(data,word+6,(OP_CALL<<24));
+    fixture_word(data,word+6,((uint32_t)OP_CALL<<24));
     fixture_word(data,word+7,0);
-    fixture_word(data,word+8,(OP_EXIT<<24)|(DT_VAR<<16));
+    fixture_word(data,word+8,((uint32_t)OP_EXIT<<24)|(DT_VAR<<16));
     refs[event*3+0]=(uint32_t)(word+3)*4;
     refs[event*3+1]=(uint32_t)(word+5)*4;
     refs[event*3+2]=(uint32_t)(word+7)*4;
@@ -477,15 +478,15 @@ int expect_indexed_instance_queries(void){
 int expect_destroy_callback_population(void){
   /* Query the receiver's family while its Destroy event is still executing. */
   uint8_t data[36]={0};
-  fixture_word(data,0,(OP_PUSH<<24)|(DT_INT32<<16));
+  fixture_word(data,0,((uint32_t)OP_PUSH<<24)|(DT_INT32<<16));
   fixture_word(data,1,0);
-  fixture_word(data,2,(OP_CALL<<24)|1u);
+  fixture_word(data,2,((uint32_t)OP_CALL<<24)|1u);
   fixture_word(data,3,0);
-  fixture_word(data,4,(OP_POP<<24)|(DT_VAR<<16)|(DT_VAR<<20)|(uint16_t)IT_GLOBAL);
+  fixture_word(data,4,((uint32_t)OP_POP<<24)|(DT_VAR<<16)|(DT_VAR<<20)|(uint16_t)IT_GLOBAL);
   fixture_word(data,5,0xa0000000u);
-  fixture_word(data,6,(OP_CALL<<24));
+  fixture_word(data,6,((uint32_t)OP_CALL<<24));
   fixture_word(data,7,0);
-  fixture_word(data,8,(OP_EXIT<<24)|(DT_VAR<<16));
+  fixture_word(data,8,((uint32_t)OP_EXIT<<24)|(DT_VAR<<16));
   uint32_t refs[]={12,20,28};
   const char *names[]={"instance_number","destroy_population","instance_destroy"};
   GmlCode code={0};
@@ -3196,7 +3197,9 @@ int expect_hash_layer_gpu_gap_closure(void){
   ok=ok && object.visible==0 && vm.inst[0].visible==1 &&
      object_visible.t==V_REAL && object_visible.d==0;
   vm.objects=NULL; vm.n_objects=0;
-  free(vm.rtl); free(vm.inst);
+  GmlVal matrices[]={view_matrix,projection_matrix};
+  gml_values_release_owned(matrices,sizeof matrices/sizeof matrices[0]);
+  gml_vm_free(&vm);
   if(!ok) fprintf(stderr,"hash/layer/GPU gap-closure fixture failed (filter=%d camera=%d matrix=%d layer_shader=%d interp=%d get=%.0f surface=%d pixels=%08X,%08X)\n",
     filter_ok,camera_ok,matrix_camera_ok,layer_shader_ok,render.interp,texfilter_get.t==V_REAL?texfilter_get.d:-1.0,
     surface_alpha_ok,target[0],target[1]);
@@ -3229,6 +3232,7 @@ int expect_array_function_gap_closure(void){
   gml_arr_set(nested_a,1,array); gml_arr_set(nested_b,1,array);
   GmlVal equal_args[2]={nested_a,nested_b};
   GmlVal equal=gml_builtin_call(&vm,"array_equals",equal_args,2);
+  ok=ok && gml_array_heap_adopt(&vm.array_heap,nested_b);
   gml_arr_set(nested_b,0,vstr("different"));
   GmlVal different=gml_builtin_call(&vm,"array_equals",equal_args,2);
   GmlVal nan_a=gml_arr_new(1,vreal(NAN)), nan_b=gml_arr_new(1,vreal(NAN));
@@ -3294,6 +3298,10 @@ int expect_array_function_gap_closure(void){
     for(int i=0;i<gml_val_array_length(range);i++) sum+=gml_arr_get(range,i).d;
   ok=ok && gml_val_array_length(range)==2 && sum==7; /* source indices 3 then 2: values 4+3 */
   if(!ok) fprintf(stderr,"array insert/equivalence fixture failed\n");
+  GmlVal arrays[]={array,negative,nested_a,nested_b,nan_a,nan_b,union_left,union_right,
+                   union_result,matrix,ordered,shuffled,range};
+  gml_values_release_owned(arrays,sizeof arrays/sizeof arrays[0]);
+  gml_vm_free(&vm);
   return ok;
 }
 
@@ -3302,11 +3310,11 @@ int expect_array_function_gap_closure(void){
  * matrix[i] bytecode as a flattened legacy cell accessor. */
 int expect_array_2d_preserves_nested_rows(void){
   unsigned char data[24]={0};
-  fixture_word(data,0,(OP_PUSH<<24)|(DT_INT16<<16)|(uint16_t)IT_GLOBAL);
-  fixture_word(data,1,(OP_PUSH<<24)|(DT_INT16<<16)|1u);
-  fixture_word(data,2,(OP_PUSH<<24)|(DT_VAR<<16));
+  fixture_word(data,0,((uint32_t)OP_PUSH<<24)|(DT_INT16<<16)|(uint16_t)IT_GLOBAL);
+  fixture_word(data,1,((uint32_t)OP_PUSH<<24)|(DT_INT16<<16)|1u);
+  fixture_word(data,2,((uint32_t)OP_PUSH<<24)|(DT_VAR<<16));
   fixture_word(data,3,0u);
-  fixture_word(data,4,(OP_RET<<24)|(DT_VAR<<16));
+  fixture_word(data,4,((uint32_t)OP_RET<<24)|(DT_VAR<<16));
   uint32_t reference=12;
   const char *name="matrix";
   GmlCode code={0}; code.name="gml_Script_nested_rows_fixture"; code.length=20;
@@ -3344,10 +3352,11 @@ int expect_array_2d_preserves_nested_rows(void){
     gml_arr_get_2d(flat,1,2).d==43 && gml_val_array_length_2d(flat,1)==3;
   ok=ok && compact_ok && flat_ok;
   if(!ok) fprintf(stderr,"nested row accessor changed after cell update: type=%d\n",row.t);
-  gml_varmap_free(&vm.globals);
+  gml_vm_free(&vm);
   gml_values_release(&compact,1);
   gml_values_release(&flat,1);
   free(code.insn); free(code.insn_pc); free(code.branch_index); free(win.ref_hix);
+  free(win.code_hix);
   return ok;
 }
 
@@ -3363,21 +3372,21 @@ static int expect_array_compound_shape(int retained_reference){
   EMIT_WORD(0xA0000000u); \
 } while(0)
   EMIT_ARGUMENT();
-  EMIT_WORD((OP_PUSH<<24)|(DT_INT16<<16));
-  EMIT_WORD((OP_CONV<<24)|(((DT_INT32<<4)|DT_VAR)<<16));
-  if(retained_reference) EMIT_WORD((OP_DUP<<24)|(DT_INT32<<16)|4u);
-  EMIT_WORD((OP_BREAK<<24)|(DT_INT16<<16)|(uint16_t)-8);
-  EMIT_WORD((OP_BREAK<<24)|(DT_INT16<<16)|(uint16_t)-2);
-  EMIT_WORD((OP_PUSH<<24)|(DT_INT16<<16)|7u);
-  EMIT_WORD((OP_CONV<<24)|(((DT_VAR<<4)|DT_INT16)<<16));
-  EMIT_WORD((OP_SUB<<24)|(((DT_VAR<<4)|DT_VAR)<<16));
-  EMIT_WORD((OP_BREAK<<24)|(DT_INT16<<16)|(uint16_t)-9);
-  if(retained_reference) EMIT_WORD((OP_DUP<<24)|(DT_INT32<<16)|0xA804u);
-  EMIT_WORD((OP_BREAK<<24)|(DT_INT16<<16)|(uint16_t)-3);
+  EMIT_WORD(((uint32_t)OP_PUSH<<24)|(DT_INT16<<16));
+  EMIT_WORD(((uint32_t)OP_CONV<<24)|(((DT_INT32<<4)|DT_VAR)<<16));
+  if(retained_reference) EMIT_WORD(((uint32_t)OP_DUP<<24)|(DT_INT32<<16)|4u);
+  EMIT_WORD(((uint32_t)OP_BREAK<<24)|(DT_INT16<<16)|(uint16_t)-8);
+  EMIT_WORD(((uint32_t)OP_BREAK<<24)|(DT_INT16<<16)|(uint16_t)-2);
+  EMIT_WORD(((uint32_t)OP_PUSH<<24)|(DT_INT16<<16)|7u);
+  EMIT_WORD(((uint32_t)OP_CONV<<24)|(((DT_VAR<<4)|DT_INT16)<<16));
+  EMIT_WORD(((uint32_t)OP_SUB<<24)|(((DT_VAR<<4)|DT_VAR)<<16));
+  EMIT_WORD(((uint32_t)OP_BREAK<<24)|(DT_INT16<<16)|(uint16_t)-9);
+  if(retained_reference) EMIT_WORD(((uint32_t)OP_DUP<<24)|(DT_INT32<<16)|0xA804u);
+  EMIT_WORD(((uint32_t)OP_BREAK<<24)|(DT_INT16<<16)|(uint16_t)-3);
   EMIT_ARGUMENT();
-  EMIT_WORD((OP_PUSH<<24)|(DT_INT16<<16));
-  EMIT_WORD((OP_BREAK<<24)|(DT_INT16<<16)|(uint16_t)-2);
-  EMIT_WORD((OP_RET<<24)|(DT_VAR<<16));
+  EMIT_WORD(((uint32_t)OP_PUSH<<24)|(DT_INT16<<16));
+  EMIT_WORD(((uint32_t)OP_BREAK<<24)|(DT_INT16<<16)|(uint16_t)-2);
+  EMIT_WORD(((uint32_t)OP_RET<<24)|(DT_VAR<<16));
 #undef EMIT_ARGUMENT
 #undef EMIT_WORD
 
@@ -3407,6 +3416,7 @@ static int expect_array_compound_shape(int retained_reference){
   if(!ok) fprintf(stderr,"compound array fixture failed: retained=%d result=%.0f stored=%.0f\n",
     retained_reference,result.t==V_REAL?result.d:-1.0,gml_arr_get(array,0).d);
   gml_values_release(&array,1);
+  gml_vm_free(&vm);
   free(code.insn);
   free(code.insn_pc);
   free(code.branch_index);
@@ -3420,17 +3430,17 @@ static int expect_array_compound_shape(int retained_reference){
 int expect_typed_stack_dup(void){
   unsigned char data[64]={0};
   const uint32_t normal[]={
-    (OP_PUSH<<24)|(DT_INT16<<16)|10u,
-    (OP_CONV<<24)|(((DT_VAR<<4)|DT_INT16)<<16),
-    (OP_PUSH<<24)|(DT_INT16<<16)|20u,
-    (OP_PUSH<<24)|(DT_INT16<<16)|30u,
-    (OP_DUP<<24)|(DT_INT32<<16)|5u,
-    (OP_POPZ<<24)|(DT_INT16<<16),
-    (OP_POPZ<<24)|(DT_INT16<<16),
-    (OP_POPZ<<24)|(DT_VAR<<16),
-    (OP_ADD<<24)|(((DT_INT16<<4)|DT_INT16)<<16),
-    (OP_ADD<<24)|(((DT_VAR<<4)|DT_INT16)<<16),
-    (OP_RET<<24)|(DT_VAR<<16)
+    ((uint32_t)OP_PUSH<<24)|(DT_INT16<<16)|10u,
+    ((uint32_t)OP_CONV<<24)|(((DT_VAR<<4)|DT_INT16)<<16),
+    ((uint32_t)OP_PUSH<<24)|(DT_INT16<<16)|20u,
+    ((uint32_t)OP_PUSH<<24)|(DT_INT16<<16)|30u,
+    ((uint32_t)OP_DUP<<24)|(DT_INT32<<16)|5u,
+    ((uint32_t)OP_POPZ<<24)|(DT_INT16<<16),
+    ((uint32_t)OP_POPZ<<24)|(DT_INT16<<16),
+    ((uint32_t)OP_POPZ<<24)|(DT_VAR<<16),
+    ((uint32_t)OP_ADD<<24)|(((DT_INT16<<4)|DT_INT16)<<16),
+    ((uint32_t)OP_ADD<<24)|(((DT_VAR<<4)|DT_INT16)<<16),
+    ((uint32_t)OP_RET<<24)|(DT_VAR<<16)
   };
   for(int i=0;i<(int)(sizeof normal/sizeof *normal);i++) fixture_word(data,i,normal[i]);
   GmlCode code={0}; code.name=(char*)"gml_Script_typed_stack_fixture";
@@ -3443,13 +3453,13 @@ int expect_typed_stack_dup(void){
 
   memset(data,0,sizeof data); memset(&code,0,sizeof code);
   const uint32_t swapped[]={
-    (OP_PUSH<<24)|(DT_INT16<<16)|1u,
-    (OP_CONV<<24)|(((DT_VAR<<4)|DT_INT16)<<16),
-    (OP_PUSH<<24)|(DT_INT16<<16)|2u,
-    (OP_CONV<<24)|(((DT_VAR<<4)|DT_INT16)<<16),
-    (OP_DUP<<24)|(DT_VAR<<16)|0x8801u,
-    (OP_SUB<<24)|(((DT_VAR<<4)|DT_VAR)<<16),
-    (OP_RET<<24)|(DT_VAR<<16)
+    ((uint32_t)OP_PUSH<<24)|(DT_INT16<<16)|1u,
+    ((uint32_t)OP_CONV<<24)|(((DT_VAR<<4)|DT_INT16)<<16),
+    ((uint32_t)OP_PUSH<<24)|(DT_INT16<<16)|2u,
+    ((uint32_t)OP_CONV<<24)|(((DT_VAR<<4)|DT_INT16)<<16),
+    ((uint32_t)OP_DUP<<24)|(DT_VAR<<16)|0x8801u,
+    ((uint32_t)OP_SUB<<24)|(((DT_VAR<<4)|DT_VAR)<<16),
+    ((uint32_t)OP_RET<<24)|(DT_VAR<<16)
   };
   for(int i=0;i<(int)(sizeof swapped/sizeof *swapped);i++) fixture_word(data,i,swapped[i]);
   code.name=(char*)"gml_Script_typed_stack_swap_fixture";
@@ -3460,12 +3470,12 @@ int expect_typed_stack_dup(void){
 
   memset(data,0,sizeof data); memset(&code,0,sizeof code);
   const uint32_t zero_argument_shuffle[]={
-    (OP_PUSH<<24)|(DT_INT16<<16)|7u,                  /* enclosing loop counter */
-    (OP_PUSH<<24)|(DT_INT16<<16)|9u,                  /* member receiver */
-    (OP_CONV<<24)|(((DT_VAR<<4)|DT_INT16)<<16),
-    (OP_DUP<<24)|(DT_VAR<<16)|0x8800u,                /* move receiver over zero args */
-    (OP_POPZ<<24)|(DT_VAR<<16),                       /* stand in for the completed call */
-    (OP_RET<<24)|(DT_VAR<<16)
+    ((uint32_t)OP_PUSH<<24)|(DT_INT16<<16)|7u,                  /* enclosing loop counter */
+    ((uint32_t)OP_PUSH<<24)|(DT_INT16<<16)|9u,                  /* member receiver */
+    ((uint32_t)OP_CONV<<24)|(((DT_VAR<<4)|DT_INT16)<<16),
+    ((uint32_t)OP_DUP<<24)|(DT_VAR<<16)|0x8800u,                /* move receiver over zero args */
+    ((uint32_t)OP_POPZ<<24)|(DT_VAR<<16),                       /* stand in for the completed call */
+    ((uint32_t)OP_RET<<24)|(DT_VAR<<16)
   };
   for(int i=0;i<(int)(sizeof zero_argument_shuffle/sizeof *zero_argument_shuffle);i++)
     fixture_word(data,i,zero_argument_shuffle[i]);
@@ -3482,17 +3492,18 @@ int expect_typed_stack_dup(void){
                   "typed stack DUP fixture failed: sum=%.0f swap=%.0f zero=%.0f retained=%d saved=%d\n",
                   sum.t==V_REAL?sum.d:-1.0,difference.t==V_REAL?difference.d:-1.0,
                   retained_counter.t==V_REAL?retained_counter.d:-1.0,retained_ok,saved_ok);
+  gml_vm_free(&vm);
   return ok;
 }
 
 int expect_member_callable_receiver(void){
   unsigned char data[24]={0};
-  fixture_word(data,0,(OP_PUSH<<24)|(DT_VAR<<16)|(uint16_t)IT_ARG);
+  fixture_word(data,0,((uint32_t)OP_PUSH<<24)|(DT_VAR<<16)|(uint16_t)IT_ARG);
   fixture_word(data,1,0xA0000000u);
-  fixture_word(data,2,(OP_PUSH<<24)|(DT_VAR<<16)|(uint16_t)IT_SELF);
+  fixture_word(data,2,((uint32_t)OP_PUSH<<24)|(DT_VAR<<16)|(uint16_t)IT_SELF);
   fixture_word(data,3,0xA0000000u);
-  fixture_word(data,4,(OP_MUL<<24)|((DT_VAR<<4)|DT_VAR)<<16);
-  fixture_word(data,5,(OP_RET<<24)|(DT_VAR<<16));
+  fixture_word(data,4,((uint32_t)OP_MUL<<24)|((DT_VAR<<4)|DT_VAR)<<16);
+  fixture_word(data,5,((uint32_t)OP_RET<<24)|(DT_VAR<<16));
   uint32_t reference_addresses[2]={4,12};
   const char *reference_names[2]={"argument0","factor"};
   GmlCode code={0};
@@ -3544,6 +3555,7 @@ int expect_member_callable_receiver(void){
   free(code.insn_pc);
   free(code.branch_index);
   free(win.ref_hix);
+  free(win.code_hix);
   return ok;
 }
 
@@ -4005,7 +4017,7 @@ static int expect_persistent_lifecycle_exit_code(void){
        gml_arr_get(mapped,4).d!=5){
       fprintf(stderr,"array_foreach callback/range fixture failed\n"); return 1;
     }
-    GmlVal words=gml_arr_new(9,vstr(""));
+    GmlVal words=gml_arr_new(9,vreal(0));
     const char *word_values[9]={"a","b","c","d","e","d","c","b","a"};
     for(int i=0;i<9;i++) gml_arr_set(words,i,vstr(word_values[i]));
     GmlVal first_args[2]={words,vstr("d")};
@@ -4018,6 +4030,8 @@ static int expect_persistent_lifecycle_exit_code(void){
     GmlVal reverse=gml_builtin_call(&vm,"array_get_index",reverse_args,4);
     GmlVal clamped=gml_builtin_call(&vm,"array_get_index",clamped_args,4);
     GmlVal empty=gml_builtin_call(&vm,"array_get_index",empty_args,4);
+    GmlVal temporary_arrays[]={generated,mapped,words};
+    gml_values_release_owned(temporary_arrays,sizeof temporary_arrays/sizeof temporary_arrays[0]);
     if(first.t!=V_REAL || first.d!=3 || omitted.t!=V_REAL || omitted.d!=-1 ||
        reverse.t!=V_REAL || reverse.d!=5 || clamped.t!=V_REAL || clamped.d!=8 ||
        empty.t!=V_REAL || empty.d!=-1){
@@ -4026,6 +4040,7 @@ static int expect_persistent_lifecycle_exit_code(void){
     *gml_varmap_put(&vm.globals,"time_source_fixture")=vreal(0);
     GmlVal timer_args=gml_arr_new(2,vreal(0));
     gml_arr_set(timer_args,1,vreal(3));
+    if(!gml_array_heap_adopt(&vm.array_heap,timer_args)) return 1;
     GmlVal timer_create_args[7]={vreal(0),vreal(1),vreal(1),callback,timer_args,vreal(2),vreal(1)};
     GmlVal timer=gml_builtin_call(&vm,"time_source_create",timer_create_args,7);
     (void)gml_builtin_call(&vm,"time_source_start",&timer,1);
@@ -4051,13 +4066,14 @@ static int expect_persistent_lifecycle_exit_code(void){
     if(!timer_total || timer_total->t!=V_REAL || timer_total->d!=9){
       fprintf(stderr,"string_foreach Unicode position fixture failed\n"); return 1;
     }
-    GmlVal letters=gml_arr_new(10,vstr(""));
+    GmlVal letters=gml_arr_new(10,vreal(0));
     const char *letter_values[10]={"a","b","c","d","e","f","g","h","i","j"};
     for(int i=0;i<10;i++) gml_arr_set(letters,i,vstr(letter_values[i]));
     GmlVal concatenate_args[3]={letters,vreal(-5),vreal(-3)};
     GmlVal concatenated=gml_builtin_call(&vm,"string_concat_ext",concatenate_args,3);
     GmlVal suffix_args[2]={letters,vreal(8)};
     GmlVal suffix=gml_builtin_call(&vm,"string_concat_ext",suffix_args,2);
+    gml_values_release_owned(&letters,1);
     if(concatenated.t!=V_STR || strcmp(concatenated.s?concatenated.s:"","fed") ||
        suffix.t!=V_STR || strcmp(suffix.s?suffix.s:"","ij")){
       fprintf(stderr,"string_concat_ext range fixture failed\n"); return 1;
@@ -4132,6 +4148,8 @@ static int expect_persistent_lifecycle_exit_code(void){
       fabs(gml_arr_get(perspective,11).d-1)<1e-9 &&
       fabs(gml_arr_get(perspective,14).d+1.01)<1e-9 &&
       fabs(gml_arr_get(perspective,15).d)<1e-9;
+    GmlVal matrix_arrays[]={matrix,xyz,reuse,vector,look,eye,target,perspective};
+    gml_values_release_owned(matrix_arrays,sizeof matrix_arrays/sizeof matrix_arrays[0]);
     if(!matrix_ok){ fprintf(stderr,"matrix construction/vertex transform fixture failed\n"); return 1; }
   }
   {
@@ -4160,9 +4178,10 @@ static int expect_persistent_lifecycle_exit_code(void){
     GmlVal env_name=vstr("GML_ENVIRONMENT_FIXTURE");
     GmlVal environment=gml_builtin_call(&vm,"environment_get_variable",&env_name,1);
     int environment_ok=environment.t==V_STR && environment.s && !strcmp(environment.s,"visible");
-    if(environment.t==V_STR && environment.d!=0) free((void *)environment.s);
-    if(weekday.t!=V_REAL || weekday.d<0 || weekday.d>6 || datetime.t!=V_STR ||
-       !datetime.s || !datetime.s[0] || !environment_ok){
+    GmlVal text_values[]={datetime,environment};
+    int datetime_ok=datetime.t==V_STR && datetime.s && datetime.s[0];
+    gml_values_release_owned(text_values,sizeof text_values/sizeof text_values[0]);
+    if(weekday.t!=V_REAL || weekday.d<0 || weekday.d>6 || !datetime_ok || !environment_ok){
       fprintf(stderr,"date/environment query fixture failed\n"); return 1;
     }
   }
@@ -4186,6 +4205,8 @@ static int expect_persistent_lifecycle_exit_code(void){
       gml_val_array_length(names)==2 && count.t==V_REAL && count.d==2 &&
       exists.t==V_REAL && exists.d==1 && is_method.t==V_REAL && is_method.d==1 &&
       method_names.t==V_ARR && gml_val_array_length(method_names)==0;
+    GmlVal name_arrays[]={names,method_names};
+    gml_values_release_owned(name_arrays,sizeof name_arrays/sizeof name_arrays[0]);
     (void)gml_builtin_call(&vm,"struct_remove",key_args,2);
     exists=gml_builtin_call(&vm,"variable_struct_exists",key_args,2);
     if(!struct_ok || exists.t!=V_REAL || exists.d!=0){

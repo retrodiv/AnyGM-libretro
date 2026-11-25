@@ -75,7 +75,7 @@ static int grid_object_identity(void){
   gml_values_release(&array,1);
   gml_values_release(&distinct,1);
   vm.cur_self=NULL;
-  gml_builtin_state_destroy(vm.builtins);
+  gml_vm_free(&vm);
   return ok;
 }
 
@@ -87,6 +87,7 @@ static int grid_value_fixtures(void){
   GmlVal created=call(&vm,"ds_grid_create",create_args,2);
   if(created.t!=V_REAL || created.d<0){
     fprintf(stderr,"ds_grid_create failed\n");
+    gml_vm_free(&vm);
     return 0;
   }
   GmlVal grid=created;
@@ -149,6 +150,7 @@ static int grid_value_fixtures(void){
   GmlVal destroy_args[]={grid};
   call(&vm,"ds_grid_destroy",destroy_args,1);
   ok&=expect_real("destroyed grid",call(&vm,"ds_grid_value_exists",whole_grid,6),0);
+  gml_vm_free(&vm);
   return ok;
 }
 
@@ -192,6 +194,7 @@ static int grid_region_aggregates(void){
 
   GmlVal destroy[]={grid};
   call(&vm,"ds_grid_destroy",destroy,1);
+  gml_vm_free(&vm);
   return ok;
 }
 
@@ -242,6 +245,7 @@ static int grid_region_mutators(void){
 
   GmlVal d1[]={grid}, d2[]={grid2}, d3[]={grid3};
   call(&vm,"ds_grid_destroy",d1,1); call(&vm,"ds_grid_destroy",d2,1); call(&vm,"ds_grid_destroy",d3,1);
+  gml_vm_free(&vm);
   return ok;
 }
 
@@ -295,6 +299,7 @@ static int grid_row_sort(void){
 
   GmlVal destroy[]={grid};
   call(&vm,"ds_grid_destroy",destroy,1);
+  gml_vm_free(&vm);
   return ok;
 }
 
@@ -337,7 +342,7 @@ static int grid_handles_grow(void){
     GmlVal stale[]={grids[0],vreal(2),vreal(0)};
     ok&=expect_real("destroyed grid handle stays invalid",call(&vm,"ds_grid_get",stale,3),0);
   }
-  gml_builtin_state_destroy(vm.builtins);
+  gml_vm_free(&vm);
   return ok;
 }
 

@@ -316,10 +316,7 @@ int expect_sequence_asset_keys_and_parameters(void){
         fputs("sequence element move did not reach the layer sprite draw\n",stderr);
         ok=0;
       }
-      gml_vm_frame_cleanup(&vm);
-      gml_varmap_free(&vm.globals);
-      gml_builtin_state_destroy(vm.builtins);
-      vm.builtins=NULL;
+      for(int i=0;i<render.n_tpag;i++) gml_render_texture_page_cache_clear(&render,&pages[i]);
       vm.render=NULL; vm.rtl=NULL; vm.n_rtl=0; vm.rte=NULL; vm.n_rte=0;
     }
   }
@@ -352,6 +349,7 @@ int expect_sequence_asset_keys_and_parameters(void){
     ok=0;
   }
   gml_vm_sequences_clear(&vm);
+  gml_vm_free(&vm);
   return ok;
 }
 

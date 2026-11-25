@@ -205,6 +205,7 @@ int main(void){
   ok &= says("a key never set does not exist",
              gml_builtin_call(&vm,"variable_struct_exists",q_missing,2),0);
 
+  gml_vm_free(&vm);
   printf("%s\n", ok?"ok":"FAILED");
   return ok?0:1;
 }

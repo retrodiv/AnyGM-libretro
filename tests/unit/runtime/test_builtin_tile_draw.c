@@ -52,6 +52,10 @@ static void setup(TileFixture *f){
 static void cleanup(TileFixture *f){
   f->vm.render=NULL; f->vm.tilemaps=NULL; f->vm.n_tilemaps=0;
   f->vm.rtl=NULL; f->vm.n_rtl=0; gml_vm_free(&f->vm);
+  if(f->vm.win){
+    free(f->vm.win->str_hix);
+    free(f->vm.win->str_hix_hash);
+  }
   gml_render_texture_page_cache_clear(&f->render,&f->page);
   free(f->render.rotated_batch);
 }

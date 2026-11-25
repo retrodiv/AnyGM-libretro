@@ -23,7 +23,7 @@ static int expect(const char *label, GmlVal actual, const char *want){
   if(!ok)
     fprintf(stderr,"%s: expected \"%s\", got %s\n",label,want,
             actual.t==V_STR && actual.s?actual.s:"<non-string>");
-  gml_values_release(&actual,1);
+  gml_values_release_owned(&actual,1);
   return ok;
 }
 
@@ -88,6 +88,7 @@ int main(void){
   ok &= expect("a name with no extension gains one",
                gml_builtin_call(&vm,"filename_change_ext",added,2),"LICENSE.txt");
 
+  gml_vm_free(&vm);
   if(ok) printf("filename parts: synthetic path splitting passed\n");
   return ok?0:1;
 }

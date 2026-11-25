@@ -50,15 +50,16 @@ int main(void){
             first.t==V_STR && first.s?first.s:"<non-string>");
     ok=0;
   }
-  gml_values_release(&first,1);
+  gml_values_release_owned(&first,1);
 
   GmlVal second=gml_builtin_call(&vm,"clipboard_get_text",NULL,0);
   if(!(second.t==V_STR && second.s && !strcmp(second.s,"a longer clipboard string"))){
     fprintf(stderr,"the replacement did not read back\n");
     ok=0;
   }
-  gml_values_release(&second,1);
+  gml_values_release_owned(&second,1);
 
+  gml_vm_free(&vm);
   if(ok) printf("clipboard: text set is text read, and a read survives the next set\n");
   return ok?0:1;
 }

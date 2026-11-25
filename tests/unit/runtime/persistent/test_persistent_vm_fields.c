@@ -30,16 +30,16 @@ static GmlVal alarm_array_access(GmlVM *vm,GmlInstance *self,GmlInstance *other,
   for(int operation=write?0:1;operation<2;operation++){
     if(!operation)
       fixture_word(data,words++,(0x84u<<24)|(DT_INT16<<16)|3u);
-    fixture_word(data,words++,(OP_PUSH<<24)|(DT_INT32<<16));
+    fixture_word(data,words++,((uint32_t)OP_PUSH<<24)|(DT_INT32<<16));
     fixture_word(data,words++,(uint32_t)scope);
     if(explicit_receiver)
       fixture_word(data,words++,(0x84u<<24)|(DT_INT16<<16)|(uint16_t)IT_STACK);
     fixture_word(data,words++,(0x84u<<24)|(DT_INT16<<16)|(uint16_t)index);
-    fixture_word(data,words++,((operation?OP_PUSH:OP_POP)<<24)|(DT_VAR<<16));
+    fixture_word(data,words++,((uint32_t)(operation?OP_PUSH:OP_POP)<<24)|(DT_VAR<<16));
     references[refs++]=(uint32_t)words*4;
     fixture_word(data,words++,0);
   }
-  fixture_word(data,words++,(OP_RET<<24)|(DT_VAR<<16));
+  fixture_word(data,words++,((uint32_t)OP_RET<<24)|(DT_VAR<<16));
   GmlCode code={0};
   code.name="gml_Script_array_namespace_fixture";
   code.length=(uint32_t)words*4;code.cache_bad=(uint8_t)uncached;
@@ -312,10 +312,14 @@ int expect_bounding_box_far_edges_by_generation(void){
     fprintf(stderr,"adjacent bbox collision mismatch: exact=%.0f enlarged=%.0f\n",
       adjacent_hit.t==V_REAL?adjacent_hit.d:-99.0,
       enlarged_hit.t==V_REAL?enlarged_hit.d:-99.0);
-    gml_builtin_state_destroy(vm.builtins);
+    vm.inst=NULL; vm.inst_count=vm.inst_cap=0;
+    vm.objects=NULL; vm.n_objects=0; vm.cur_self=NULL;
+    gml_vm_free(&vm);
     return 0;
   }
-  gml_builtin_state_destroy(vm.builtins);
+  vm.inst=NULL; vm.inst_count=vm.inst_cap=0;
+  vm.objects=NULL; vm.n_objects=0; vm.cur_self=NULL;
+  gml_vm_free(&vm);
   return 1;
 }
 
@@ -427,7 +431,9 @@ int expect_studio_transformed_mask_bounds(void){
       }
     }
   }
-  gml_builtin_state_destroy(vm.builtins);
+  vm.inst=NULL; vm.inst_count=vm.inst_cap=0;
+  vm.objects=NULL; vm.n_objects=0; vm.cur_self=NULL;
+  gml_vm_free(&vm);
   return ok;
 }
 
@@ -507,10 +513,14 @@ int expect_bounding_box_far_edges_at_a_fractional_position(void){
     if(touching!=readings[i].touching){
       fprintf(stderr,"%s: y=%.2f touching=%d, expected %d\n",
         readings[i].label,readings[i].y,touching,readings[i].touching);
-      gml_builtin_state_destroy(vm.builtins);
+      vm.inst=NULL; vm.inst_count=vm.inst_cap=0;
+      vm.objects=NULL; vm.n_objects=0; vm.cur_self=NULL;
+      gml_vm_free(&vm);
       return 0;
     }
   }
-  gml_builtin_state_destroy(vm.builtins);
+  vm.inst=NULL; vm.inst_count=vm.inst_cap=0;
+  vm.objects=NULL; vm.n_objects=0; vm.cur_self=NULL;
+  gml_vm_free(&vm);
   return 1;
 }

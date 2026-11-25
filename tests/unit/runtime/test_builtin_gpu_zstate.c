@@ -52,6 +52,7 @@ int main(void){
     ok &= same("d3d_set_hidden", "gpu_set_ztestenable", on, viaD3D, viaGPU);
   }
 
+  gml_vm_free(&vm);
   if(ok) printf("gpu z-state: the GMS2 spellings reach the same control as the d3d ones\n");
   return ok ? 0 : 1;
 }

@@ -184,7 +184,7 @@ static int room_audio_condition_fixture(int streamed){
   if(!ok) fprintf(stderr,"%s\n",streamed
     ?"room audio prefetch forced complete stream PCM or lost playback/observation"
     :"room audio classification lost a later matching condition or admitted a different branch");
-  free(vm.audio_room_warm_scan);gml_audio_free(audio);
+  gml_vm_free(&vm);gml_audio_free(audio);
   return ok;
 }
 /* An embedded Vorbis entry whose SOND keeps IsCompressed decodes as its voices consume it, with
@@ -262,8 +262,8 @@ static void fixture_write_u16(unsigned char *data,size_t off,uint16_t value){
 int expect_room_audio_scan_cache_ownership(void){
   unsigned char data[12]={0};
   fixture_write_u32(data,0,5);
-  fixture_write_u32(data,4,(OP_PUSH<<24)|(DT_INT16<<16)|23u);
-  fixture_write_u32(data,8,(OP_RET<<24)|(DT_VAR<<16));
+  fixture_write_u32(data,4,((uint32_t)OP_PUSH<<24)|(DT_INT16<<16)|23u);
+  fixture_write_u32(data,8,((uint32_t)OP_RET<<24)|(DT_VAR<<16));
   GmlInsn hot_insn[1]={{.kind=OP_EXIT}};
   uint32_t hot_pc[1]={0};
   int32_t hot_branch[1]={-1};
@@ -295,7 +295,7 @@ int expect_room_audio_scan_cache_ownership(void){
   ok=ok && code[0].insn==executed && code[1].insn==hot_insn;
   if(!ok) fprintf(stderr,"audio scan retained temporary negative code or discarded an execution cache\n");
   free(code[0].insn);free(code[0].insn_pc);free(code[0].branch_index);
-  free(vm.audio_room_warm_scan);gml_audio_free(audio);
+  gml_vm_free(&vm);gml_audio_free(audio);
   return ok;
 }
 

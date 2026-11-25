@@ -154,8 +154,7 @@ static int global_lookup_semantics(void){
     ok=0;
   }
 
-  gml_varmap_free(&vm.globals);
-  free(vm.special_var_hash);
+  gml_vm_free(&vm);
   if(!ok) failures++;
   return ok;
 }

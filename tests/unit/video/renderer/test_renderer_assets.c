@@ -158,30 +158,35 @@ static int surface_subimages_retain_existing_frames(void){
           !gml_sprite_collision(&render,sprite,1,1,1),
           "explicit mask rebuilding adopts the appended frame alpha");
   free(state);
+  gml_vm_free(&vm);
   gml_render_free(&restored);gml_render_free(&render);
   return 0;
 }
 
 static int bbox_authored_fixture(GmlRender *render,GmlWin *win){
   if(gml_render_init(render,win)) return 0;
+  int atlas_index=render->n_atlas;
+  GmlAtlas *atlas=realloc(render->atlas,((size_t)atlas_index+1u)*sizeof *atlas);
+  if(!atlas) return 0;
+  render->atlas=atlas;
+  render->n_atlas=atlas_index+1;
+  atlas[atlas_index]=(GmlAtlas){.w=4,.h=3,.decode_attempted=1};
   render->spr=calloc(1,sizeof *render->spr);
   render->tpag=calloc(1,sizeof *render->tpag);
-  render->atlas=calloc(1,sizeof *render->atlas);
-  if(!render->spr || !render->tpag || !render->atlas) return 0;
+  if(!render->spr || !render->tpag) return 0;
   render->n_spr=render->spr_cap=render->base_n_spr=1;
-  render->n_tpag=render->n_atlas=1;
+  render->n_tpag=1;
   GmlSprite *s=&render->spr[0];
   s->name="authored_bounds";s->w=4;s->h=3;s->n_frames=1;
   s->originx=5;s->originy=7;s->mr=3;s->mb=2;s->bbox_mode=2;
   s->collision_kind=1;s->collision_tolerance=63;
   s->frame=calloc(1,sizeof *s->frame);
-  *render->tpag=(GmlTpag){.sw=4,.sh=3,.tw=4,.th=3,.bw=4,.bh=3,.atlas=0};
-  render->atlas[0].w=4;render->atlas[0].h=3;render->atlas[0].decode_attempted=1;
-  render->atlas[0].px=calloc(12,4);
-  if(!s->frame || !render->atlas[0].px) return 0;
-  render->atlas[0].px[(1*4+1)*4+3]=255;
-  render->atlas[0].px[(1*4+2)*4+3]=255;
-  render->atlas[0].px[(2*4+3)*4+3]=32;
+  *render->tpag=(GmlTpag){.sw=4,.sh=3,.tw=4,.th=3,.bw=4,.bh=3,.atlas=atlas_index};
+  atlas[atlas_index].px=calloc(12,4);
+  if(!s->frame || !atlas[atlas_index].px) return 0;
+  atlas[atlas_index].px[(1*4+1)*4+3]=255;
+  atlas[atlas_index].px[(1*4+2)*4+3]=255;
+  atlas[atlas_index].px[(2*4+3)*4+3]=32;
   return 1;
 }
 

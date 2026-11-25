@@ -1787,6 +1787,7 @@ static int internal_value_helpers_contract(void){
   GmlVal *root=gml_varmap_put(&vm.globals,"helper_values");
   if(values.t!=V_ARR || !root){gml_vm_free(&vm);return 0;}
   *root=values;
+  if(!gml_array_heap_adopt(&vm.array_heap,values)){gml_vm_free(&vm);return 0;}
   gml_arr_set(values,1,vstr("leaf"));
   gml_arr_set(values,2,vint64(INT64_C(9007199254740993)));
   gml_arr_set(values,3,gml_arr_new(1,vreal(77)));
@@ -1836,8 +1837,8 @@ static int internal_value_helpers_contract(void){
                         :gml_builtin_call(&vm,"@@string@@",&inputs[i],1);
       ok=expect_string("internal scalar conversion",strings[i],expected[i]) && ok;
     }
-    gml_values_release(strings,3);
-    gml_values_release(&text,1);
+    gml_values_release_owned(strings,3);
+    gml_values_release_owned(&text,1);
     const GmlVal invalid[][2]={
       {vreal(0),vreal(0)}, {values,vreal(-1)}, {values,vreal(4)},
       {values,vreal(NAN)}, {values,vreal(1e30)}
@@ -1857,16 +1858,16 @@ static int internal_value_helpers_contract(void){
     GmlVal formatted=cached?call_fast(&vm,"@@string@@",format,3,&ok)
                            :gml_builtin_call(&vm,"@@string@@",format,3);
     ok=expect_string("internal interpolation keeps literal outer braces",formatted,"{leaf}:9") && ok;
-    gml_values_release(&formatted,1);
+    gml_values_release_owned(&formatted,1);
     GmlVal undefined=vundef();
     GmlVal converted=cached?call_fast(&vm,"@@string@@",&undefined,1,&ok)
                            :gml_builtin_call(&vm,"@@string@@",&undefined,1);
     ok=expect_string("internal undefined conversion",converted,"undefined") && ok;
-    gml_values_release(&converted,1);
+    gml_values_release_owned(&converted,1);
     GmlVal empty=cached?call_fast(&vm,"@@string@@",NULL,0,&ok)
                        :gml_builtin_call(&vm,"@@string@@",NULL,0);
     ok=expect_string("internal empty conversion",empty,"") && ok;
-    gml_values_release(&empty,1);
+    gml_values_release_owned(&empty,1);
     GmlVal legacy_args[]={legacy,vreal(GML_2D_STRIDE+2)};
     GmlVal cell=cached?call_fast(&vm,"@@array_get@@",legacy_args,2,&ok)
                       :gml_builtin_call(&vm,"@@array_get@@",legacy_args,2);

@@ -38,6 +38,16 @@ jobs:
           free -h; nproc; cat /proc/loadavg; df -h /tmp
           make -j4 check
 
+  linux-sanitizers:
+    name: linux-x64 address and undefined behavior sanitizers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the instrumented C and C++ suite
+        run: |
+          free -h; nproc; cat /proc/loadavg; df -h /tmp
+          make -j1 VIDEO_PROVIDER=none sanitizer-check
+
   mingw:
     name: windows cross build
     runs-on: ubuntu-latest

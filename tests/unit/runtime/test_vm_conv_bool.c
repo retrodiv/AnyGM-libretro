@@ -71,6 +71,7 @@ int main(void){
     says_real("numeric builtin does not read array as text",gml_builtin_call(&vm,"abs",&array,1),0);
     says_real("numeric string still parses",vreal(gml_vm_value_as_number(vstr("12.5"))),12.5);
     says_real("nonempty string still tests true",vreal(gml_vm_value_is_true(vstr("ok"))),1);
+    gml_vm_free(&vm);
   }
 
   printf(failures?"FAILED\n":"PASSED\n");

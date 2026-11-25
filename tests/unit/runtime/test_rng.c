@@ -417,9 +417,7 @@ int main(void){
     }
     gml_particle_state_destroy(other.particles);
   }
-  gml_builtin_state_destroy(vm.builtins);
-  vm.builtins=NULL;
-  gml_particle_state_destroy(vm.particles);
+  gml_vm_free(&vm);
   puts("RNG fixtures: ok");
   return 0;
 }

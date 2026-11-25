@@ -48,6 +48,9 @@ int main(void){
   ok &= expect("a tilemap that does not exist answers -1, not a plausible 0",
                gml_builtin_call(&vm,"tilemap_tileset",missing,2), -1);
 
+  vm.tilemaps=NULL;
+  vm.n_tilemaps=0;
+  gml_vm_free(&vm);
   if(ok) printf("tilemap_tileset: set and get agree, and a missing tilemap says so\n");
   return ok ? 0 : 1;
 }

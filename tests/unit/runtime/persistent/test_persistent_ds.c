@@ -43,6 +43,7 @@ int expect_ds_list_text_roundtrip(void){
   (void)gml_builtin_call(&vm,"ds_list_destroy",&parent,1);
   (void)gml_builtin_call(&vm,"ds_list_destroy",&restored,1);
   if(!ok) fprintf(stderr,"ds_list text round-trip fixture failed\n");
+  gml_vm_free(&vm);
   return ok;
 }
 
@@ -113,6 +114,7 @@ int expect_ds_priority_lookup_mutation(void){
     size.t==V_REAL && size.d==1;
   (void)gml_builtin_call(&vm,"ds_priority_destroy",&queue,1);
   if(!ok) fprintf(stderr,"ds_priority lookup/mutation fixture failed\n");
+  gml_vm_free(&vm);
   return ok;
 }
 
@@ -158,5 +160,6 @@ int expect_ds_priority_native_read(void){
     size.t,size.d,first_priority.t,first_priority.d,seven_priority.t,seven_priority.d,
     maximum.t,maximum.d,
     size_after.t,size_after.d,first_after.t,first_after.d);
+  gml_vm_free(&vm);
   return ok;
 }

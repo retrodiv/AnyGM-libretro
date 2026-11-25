@@ -45,11 +45,11 @@ static int concat_case(void){
     GmlVal zero=invoke(&vm,"array_concat",empties,2,cached,&ok);
     ok &= expect(zero.t==V_ARR && zero.arr && zero.arr!=empty.arr &&
                  gml_val_array_length(zero)==0,"empty concat returns a new array");
-    gml_values_release(&right,1);
+    gml_values_release_owned(&right,1);
     ok &= expect(string_is(gml_arr_get(joined,2),"text"),
                  "concat strings survive source destruction");
     GmlVal roots[]={left,empty,joined,zero};
-    gml_values_release(roots,4);
+    gml_values_release_owned(roots,4);
     gml_vm_free(&vm);
   }
   return ok;
@@ -140,6 +140,10 @@ static int state_case_mode(int existing_only){
   if(!vm.particles) return 0;
   gml_vm_software3d_reset(&vm);
   GmlVal source=gml_arr_new(1,vstr("saved"));
+  if(!gml_array_heap_adopt(&vm.array_heap,source)){
+    gml_vm_free(&vm);
+    return 0;
+  }
   GmlVal arrays[]={source,source};
   GmlVal joined;
   if(existing_only){

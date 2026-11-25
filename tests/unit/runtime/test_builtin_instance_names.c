@@ -53,6 +53,8 @@ int main(void){
     ok=0;
   }
 
+  gml_values_release_owned(&names,1);
+  gml_vm_free(&vm);
   if(ok) printf("instance names: the count and the array agree on what was set\n");
   return ok?0:1;
 }

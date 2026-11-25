@@ -66,6 +66,9 @@ int main(void){
   GmlVal tags=gml_builtin_call(&vm,"asset_get_tags",none,1);
   ok &= is_array("asset_get_tags reports no tags as an empty array",tags,0);
 
+  GmlVal arrays[]={empty_keys,keys,values,tags};
+  gml_values_release(arrays,sizeof arrays/sizeof arrays[0]);
+  gml_vm_free(&vm);
   printf("%s\n", ok?"ok":"FAILED");
   return ok?0:1;
 }

@@ -2295,6 +2295,8 @@ static int replacement_sprite_variant(int interpolation,int mode,double alpha,
   uint32_t base[16]={0};uint8_t texel[4]={255,255,255,(uint8_t)source_alpha};int frame=0;
   REQUIRE(render!=NULL,"replacement sprite renderer allocation");
   REQUIRE(gml_render_init(render,NULL)==0,"replacement sprite renderer initialization");
+  GmlAtlas *owned_atlas=render->atlas;
+  int owned_atlas_count=render->n_atlas;
   content.bytecode=17;render->win=&content;
   gml_render_begin(render,base,4,4,0,0);
   render->interp=interpolation;render->blendmode=mode;render->color_write_mask=mask;
@@ -2337,7 +2339,8 @@ static int replacement_sprite_variant(int interpolation,int mode,double alpha,
   gml_surface_reset_target(render);
   gml_render_texture_page_cache_clear(render,&page);
   render->win=NULL;render->spr=NULL;render->n_spr=0;render->tpag=NULL;render->n_tpag=0;
-  render->atlas=NULL;render->n_atlas=0;render->shader_pal=NULL;render->n_shader_pal=0;
+  render->atlas=owned_atlas;render->n_atlas=owned_atlas_count;
+  render->shader_pal=NULL;render->n_shader_pal=0;
   gml_render_free(render);free(render);
   return failures!=0;
 }

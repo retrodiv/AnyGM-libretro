@@ -11,10 +11,11 @@
 GmlVal gml_builtin_call(GmlVM *vm, const char *name, GmlVal *args, int count);
 
 static int expect(const char *label, GmlVal actual, const char *want){
-  if(actual.t==V_STR && actual.s && !strcmp(actual.s,want)) return 1;
-  fprintf(stderr,"%s: expected \"%s\", got \"%s\"\n",label,want,
-          actual.t==V_STR&&actual.s?actual.s:"<not a string>");
-  return 0;
+  int ok=actual.t==V_STR && actual.s && !strcmp(actual.s,want);
+  if(!ok) fprintf(stderr,"%s: expected \"%s\", got \"%s\"\n",label,want,
+                  actual.t==V_STR&&actual.s?actual.s:"<not a string>");
+  gml_values_release_owned(&actual,1);
+  return ok;
 }
 
 int main(void){
@@ -62,6 +63,7 @@ int main(void){
   ok &= expect("a number with an additional argument still converts",
                gml_builtin_call(&vm,"string",legacy_single,2),"7");
 
+  gml_vm_free(&vm);
   if(ok) printf("string format: placeholders are substituted by index\n");
   return ok?0:1;
 }

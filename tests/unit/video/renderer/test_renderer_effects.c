@@ -871,6 +871,7 @@ static void check_channel_mask_pixels(void) {
   gml_draw_sprite_ext(&render,0,0,0.0,0.0,1.0,1.0,0.0,0xFFFFFFu,1.0);
   expect(target==UINT32_C(0xff780000),
          "sampled RGB channel clear did not preserve only the requested red channel");
+  gml_render_texture_page_cache_clear(&render,&tpag);
 }
 
 
@@ -953,6 +954,7 @@ static void check_zero_reference_alpha_test_pixels(void) {
   gml_draw_sprite(&render, 0, 0, 0, 0);
   expect(!memcmp(baseline, zero_reference, sizeof(baseline)),
          "zero-reference alpha test changed runtime sprite pixels");
+  gml_render_texture_page_cache_clear(&render,&tpag);
 }
 
 static void check_solid_alpha_mask_pixels(void) {
@@ -1010,6 +1012,7 @@ static void check_solid_alpha_mask_pixels(void) {
   gml_draw_sprite(&render, 0, 0, 0, 0);
   expect(pixels[0] == 0xff102030u && pixels[1] == 0xff4080bfu,
          "constant-colour alpha-mask pixel kernel diverged from its parsed graph");
+  gml_render_texture_page_cache_clear(&render,&tpag);
 }
 
 static void check_fast_scaled_sample_clamps_to_atlas(void) {
@@ -1061,6 +1064,7 @@ static void check_fast_scaled_sample_clamps_to_atlas(void) {
   gml_draw_sprite_ext(&render, 0, 0, 0, 0, 2, 1, 0, 0xffffffu, 1.0);
   expect(pixels[0] == 0xff406080u && pixels[1] == 0xff406080u,
          "fast scaled sprite sampled beyond the atlas edge");
+  gml_render_texture_page_cache_clear(&render,&tpag);
 }
 
 static void check_stretched_sample_clamps_to_atlas(void) {
@@ -1238,6 +1242,7 @@ static uint32_t flat_fog_pixel(int fogged, unsigned texel_alpha) {
   gml_render_set_flat_fog(&render, fogged, 0x000000ffu);
   /* A blend that is not white, so a result carrying the texel would be visibly not the fog. */
   gml_draw_sprite_ext(&render, 0, 0, 0, 0, 1.0, 1.0, 0.0, 0x0000ff00u, 1.0);
+  gml_render_texture_page_cache_clear(&render,&tpag);
   return pixels[0];
 }
 
@@ -1389,7 +1394,7 @@ static void check_solid_blur_alpha_pixels(void) {
          "constant-colour alpha-convolution cache diverged from its parsed graph");
   expect((pixels[4] & 0x00ffffffu) != 0,
          "constant-colour alpha-convolution pixels were not composited");
-  free(tpag.solid_blur_alpha_cache);
+  gml_render_texture_page_cache_clear(&render,&tpag);
 }
 
 /* Fully synthetic skeletal record: identifiers, pixels and animation are authored for this test. */
@@ -1762,6 +1767,7 @@ static void check_maximum_preset_sprite(void) {
   gml_draw_sprite_ext(&render,0,0,0.0,0.0,1.0,1.0,0.0,0xFFFFFFu,0.5);
   expect(target==UINT32_C(0xff284050),
          "maximum preset sprite factors changed");
+  gml_render_texture_page_cache_clear(&render,&tpag);
 }
 
 typedef struct {
@@ -2372,6 +2378,7 @@ static void check_exact_cardinal_copy_rows(void){
       page.sw=page.sh=page.bw=page.bh=SIDE;page.atlas=0;
       atlas.w=atlas.h=SIDE;atlas.px=pixels;atlas.decode_attempted=1;
       render->spr=&sprite;render->n_spr=1;render->tpag=&page;render->n_tpag=1;
+      GmlAtlas *owned_atlas=render->atlas;int owned_atlas_count=render->n_atlas;
       render->atlas=&atlas;render->n_atlas=1;
       if(policy==5u){render->alpha_test_enable=1;render->alpha_test_ref=255u;}
       for(size_t pixel=0;pixel<(size_t)W*H;pixel++)actual[pixel]=(uint32_t)(pixel*2654435761u);
@@ -2392,7 +2399,7 @@ static void check_exact_cardinal_copy_rows(void){
                   "cardinal copies match general fixed20 ARGB and actual-write accounting");
       gml_render_texture_page_cache_clear(render,&page);
       render->spr=NULL;render->n_spr=0;render->tpag=NULL;render->n_tpag=0;
-      render->atlas=NULL;render->n_atlas=0;
+      render->atlas=owned_atlas;render->n_atlas=owned_atlas_count;
       gml_render_free(render);free(render);controls++;
     }
   }
@@ -2991,6 +2998,7 @@ static void check_magnified_alpha_runs(void) {
       }
     }
     expect(mismatches == 0, "magnified partial-alpha runs differ from the normal blend");
+    gml_render_texture_page_cache_clear(&render,&tpag);
   }
 }
 

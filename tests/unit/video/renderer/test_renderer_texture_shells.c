@@ -80,6 +80,7 @@ static int decodes(const char *label, const uint8_t *shell, size_t shell_len){
   parse_txtr(&render);
   if(render.n_atlas!=1){
     fprintf(stderr,"%s: expected one atlas, got %d\n",label,render.n_atlas);
+    gml_render_free(&render);
     return 0;
   }
   uint8_t *px=atlas_pixels(&render,0);
@@ -101,7 +102,7 @@ static int decodes(const char *label, const uint8_t *shell, size_t shell_len){
       }
     }
   }
-  free(render.atlas);
+  gml_render_free(&render);
   return ok;
 }
 

@@ -20,6 +20,7 @@ include Makefile.common
 platform ?=
 CROSS_COMPILE ?=
 DEBUG ?= 0
+SANITIZE ?= 0
 STATIC_LINKING ?= 0
 TEST ?=
 
@@ -43,6 +44,7 @@ endif
 endif
 
 BUILD_DIR ?= build/$(platform)
+SANITIZER_BUILD_DIR ?= build/sanitize
 
 # The libretro Apple templates set CROSS_COMPILE=1 as a boolean and name the target in
 # LIBRETRO_APPLE_PLATFORM, while everywhere else CROSS_COMPILE is a toolchain prefix. Prefixing the
@@ -103,6 +105,16 @@ CXXFLAGS += -O0 -g3
 else
 CFLAGS += -O2
 CXXFLAGS += -O2
+endif
+ifeq ($(SANITIZE),1)
+SANITIZER_FLAGS := -fsanitize=address,undefined -fno-omit-frame-pointer
+CFLAGS += $(SANITIZER_FLAGS)
+CXXFLAGS += $(SANITIZER_FLAGS)
+LDFLAGS += $(SANITIZER_FLAGS)
+endif
+ifeq ($(FUZZ),1)
+CFLAGS += -fsanitize=fuzzer-no-link
+CXXFLAGS += -fsanitize=fuzzer-no-link
 endif
 
 # Keep separate rounding for multiply and add in runtime arithmetic. Query the effective
@@ -268,7 +280,7 @@ SECURITY_TESTS := $(TEST_DIR)/test_content_security $(TEST_DIR)/test_state_secur
 	$(TEST_DIR)/test_bytecode_security $(TEST_DIR)/test_fmod_security
 API_TEST_OBJECTS := $(TEST_DIR)/public_header_c.o $(TEST_DIR)/public_header_cpp.o
 
-.PHONY: all core runtime check warnings-check api-check contract-check integration-check security-check \
+.PHONY: all core runtime check unit-check warnings-check api-check contract-check integration-check security-check \
 	sanitizer-check architecture-check isolation-check export-check diagnostic-tests \
 	provenance-check builtin-registry-check notices-check audio-data-check \
 	diagnostics-check diagnostics-check-internal \
@@ -443,7 +455,7 @@ ifneq (,$(filter osx ios tvos,$(platform)))
 CXX_RUNTIME_LDLIBS := -lc++
 endif
 define link_runtime_test
-	$(CC) $(1) $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS) $(VIDEO_PROVIDER_LDLIBS)
+	$(CC) $(1) $(CFLAGS) $(TEST_PLATFORM_LDFLAGS) $(2) $(filter-out %.h,$^) -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS) $(VIDEO_PROVIDER_LDLIBS)
 endef
 
 $(TEST_DIR)/test_rng: tests/unit/runtime/test_rng.c $(UNIT_RUNTIME_OBJECTS)
@@ -459,7 +471,7 @@ $(TEST_DIR)/test_persistent_room: $(ANYGM_PERSISTENT_TEST_SOURCES) \
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
-$(TEST_DIR)/test_d3_state: $(ANYGM_SOFTWARE3D_TEST_SOURCES) $(UNIT_RUNTIME_OBJECTS)
+$(TEST_DIR)/test_d3_state: $(ANYGM_SOFTWARE3D_TEST_SOURCES) tests/support/memory_vfs.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
@@ -735,7 +747,7 @@ $(TEST_DIR)/test_classic: $(ANYGM_CLASSIC_TEST_SOURCES) \
 $(TEST_DIR)/test_image_codec: tests/unit/media/test_image_codec.c \
 	src/media/gml_image_codec.c
 	mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm
 
 $(TEST_DIR)/test_hash: tests/unit/media/test_hash.c src/media/gml_hash.c
 	mkdir -p $(dir $@)
@@ -799,10 +811,7 @@ $(TEST_DIR)/test_compatibility: tests/unit/compatibility/test_compatibility.c \
 	mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@
 
-ifeq ($(strip $(TEST)),)
-check: CFLAGS += -Werror
-check: CXXFLAGS += -Werror
-check: warnings-check architecture-check api-check contract-check integration-check security-check video-check $(CHECK_TARGETS)
+define run_unit_tests
 	$(TEST_DIR)/test_keyboard_text
 	$(TEST_DIR)/test_builtin_account_picker
 	$(TEST_DIR)/test_unicode_strings
@@ -878,6 +887,16 @@ check: warnings-check architecture-check api-check contract-check integration-ch
 	$(TEST_DIR)/test_value_compare
 	$(TEST_DIR)/test_instance_copy
 	$(TEST_DIR)/test_stacktop_scope
+endef
+
+unit-check: $(CHECK_TARGETS)
+	$(run_unit_tests)
+
+ifeq ($(strip $(TEST)),)
+check: CFLAGS += -Werror
+check: CXXFLAGS += -Werror
+check: warnings-check architecture-check api-check contract-check integration-check security-check video-check $(CHECK_TARGETS)
+	$(run_unit_tests)
 else ifeq ($(strip $(TEST)),video)
 check: CFLAGS += -Werror
 check: CXXFLAGS += -Werror
@@ -1011,6 +1030,7 @@ $(TEST_DIR)/stb_vorbis_fmod_test.o: src/third_party/stb/stb_vorbis.c
 		-DSTB_VORBIS_NO_PUSHDATA_API -c $< -o $@
 
 $(TEST_DIR)/test_content_security: tests/fuzz/test_content_security.c \
+	tests/support/zip_fixture.h \
 	tests/unit/content/classic/classic_test_fixture.c \
 	tests/support/vcdiff_fixture.c \
 	tests/support/synthetic_content.c \
@@ -1044,13 +1064,49 @@ $(TEST_DIR)/test_bytecode_security: tests/fuzz/test_bytecode_security.c \
 	mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm
 
+.PHONY: fuzz-check
+FUZZ_CC ?= clang
+FUZZ_CXX ?= clang++
+FUZZ_RUNS ?= 1000
+SANITIZER_TEST_ENV := ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+fuzz-check:
+	$(SANITIZER_TEST_ENV) $(MAKE) BUILD_DIR="$(BUILD_DIR)/fuzzer" CC="$(FUZZ_CC)" CXX="$(FUZZ_CXX)" \
+		SANITIZE=1 FUZZ=1 VIDEO_PROVIDER=none HARDWARE_RENDER=0 fuzz-run
+
+ifeq ($(FUZZ),1)
+FUZZ_CORPUS := $(BUILD_DIR)/fuzz-corpus
+FUZZ_ARTIFACTS := $(BUILD_DIR)/fuzz-artifacts
+.PHONY: fuzz-run
+fuzz-run: $(TEST_DIR)/fuzz_form $(TEST_DIR)/fuzz_container $(TEST_DIR)/fuzz_state
+	mkdir -p "$(FUZZ_CORPUS)/form" "$(FUZZ_CORPUS)/container" "$(FUZZ_CORPUS)/state" "$(FUZZ_ARTIFACTS)"
+	$(TEST_DIR)/fuzz_state --export-seeds "$(FUZZ_CORPUS)/form/synthetic" \
+		"$(FUZZ_CORPUS)/state/synthetic" "$(FUZZ_CORPUS)/container/synthetic"
+	$(TEST_DIR)/fuzz_form -runs=$(FUZZ_RUNS) -max_len=65536 -timeout=10 -rss_limit_mb=1024 \
+		-artifact_prefix="$(FUZZ_ARTIFACTS)/form-" "$(FUZZ_CORPUS)/form"
+	$(TEST_DIR)/fuzz_container -runs=$(FUZZ_RUNS) -max_len=65536 -timeout=10 -rss_limit_mb=1024 \
+		-artifact_prefix="$(FUZZ_ARTIFACTS)/container-" "$(FUZZ_CORPUS)/container"
+	$(TEST_DIR)/fuzz_state -runs=$(FUZZ_RUNS) -max_len=262144 -timeout=10 -rss_limit_mb=1024 \
+		-artifact_prefix="$(FUZZ_ARTIFACTS)/state-" "$(FUZZ_CORPUS)/state"
+
+$(TEST_DIR)/fuzz_form: tests/fuzz/fuzz_form.c $(RUNTIME_OBJECTS)
+	mkdir -p $(dir $@)
+	$(call link_runtime_test,$(TEST_CPPFLAGS),-fsanitize=fuzzer)
+
+$(TEST_DIR)/fuzz_container: tests/fuzz/fuzz_container.c tests/support/memory_vfs.c $(RUNTIME_OBJECTS)
+	mkdir -p $(dir $@)
+	$(call link_runtime_test,$(TEST_CPPFLAGS),-fsanitize=fuzzer)
+
+$(TEST_DIR)/fuzz_state: tests/fuzz/fuzz_state.c tests/support/synthetic_content.c \
+	tests/support/zip_fixture.h \
+	$(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
+	mkdir -p $(dir $@)
+	$(call link_runtime_test,$(TEST_CPPFLAGS),-fsanitize=fuzzer)
+endif
+
 sanitizer-check:
-	ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
-	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
-	$(MAKE) -j1 BUILD_DIR=build/sanitize DEBUG=1 \
-		CFLAGS="-std=gnu11 -Wall -Wextra -O0 -g3 $(REPRODUCIBLE_CFLAGS) -fsanitize=address,undefined -fno-omit-frame-pointer" \
-		LDFLAGS="-fsanitize=address,undefined" \
-		security-check contract-check integration-check
+	$(SANITIZER_TEST_ENV) $(MAKE) -j1 BUILD_DIR=$(SANITIZER_BUILD_DIR) DEBUG=1 SANITIZE=1 \
+		security-check contract-check integration-check unit-check
 
 export-check: core
 	@if [ "$(CORE_EXTENSION)" != "so" ] && [ "$(CORE_EXTENSION)" != "dylib" ]; then \
