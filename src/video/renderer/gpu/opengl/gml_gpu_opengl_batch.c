@@ -1453,6 +1453,7 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
     crop.width<=256u && crop.height<=256u;
   const int filtered_text=screen_text && !state->alpha_test_enabled &&
     quad->filtered_draw_alpha==1.0 && quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR;
+  const int padded_box=filtered_text && quad->span_active==GML_RENDER_SPAN_FILTERED_PADDED_BOX;
   if(!source || !source->width || !source->height || source->rendered_origin ||
      source->width>16384u || source->height>16384u ||
      source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
@@ -1461,7 +1462,8 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
      (!numbered && !screen && !binary_numbered) ||
      op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
      op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
-     quad->shape!=GML_RENDER_QUAD_GENERAL || quad->span_active>(filtered_text?1u:0u) ||
+     quad->shape!=GML_RENDER_QUAD_GENERAL ||
+     (!padded_box && quad->span_active>(filtered_text?1u:0u)) ||
      quad->source_endpoint_rgb_mask ||
      (quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN &&
       quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION) ||
@@ -1476,9 +1478,16 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
      state->source_palette.enabled ||
      !isfinite(quad->filtered_draw_alpha) || quad->filtered_draw_alpha<=0.0 ||
      quad->filtered_draw_alpha>1.0) return 0;
+  if(padded_box && (!isfinite(quad->span_x[0]) || !isfinite(quad->span_y[0]) ||
+     !isfinite(quad->span_x[1]) || !isfinite(quad->span_y[1]) ||
+     quad->span_x[0]<0.0 || quad->span_y[0]<0.0 ||
+     quad->span_x[1]>op->target.width || quad->span_y[1]>op->target.height ||
+     quad->span_x[0]>=quad->span_x[1] || quad->span_y[0]>=quad->span_y[1] ||
+     trunc(quad->span_x[0])!=quad->span_x[0] || trunc(quad->span_y[0])!=quad->span_y[0] ||
+     trunc(quad->span_x[1])!=quad->span_x[1] || trunc(quad->span_y[1])!=quad->span_y[1])) return 0;
   const double halo=filtered_text?0.5:0.0;
   for(unsigned corner=0;corner<4u;corner++){
-    if(quad->span_active){
+    if(quad->span_active==1u){
       const int sx=(corner==1u || corner==2u)?1:-1;
       const int sy=corner>=2u?1:-1;
       const double ux=(quad->x[1]-quad->x[0])/(2.0*(crop.width+1u));

@@ -1426,8 +1426,13 @@
   "#else\n" \
   "    int margin=int(floor(v_margin+0.5));\n" \
   "#endif\n" \
-  "    if((physical_filter==79 || physical_filter==80 || physical_filter==82) && v_span_active>0.5 &&\n" \
-  "       !rotated_span_contains(vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y))) discard;\n" \
+  "    if((physical_filter==79 || physical_filter==80 || physical_filter==82) && v_span_active>0.5){\n" \
+  "      vec2 centre=vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y);\n" \
+  "      if(v_span_active>1.5){\n" \
+  "        if(centre.x<v_span_x.x || centre.x>=v_span_x.y ||\n" \
+  "           centre.y<v_span_y.x || centre.y>=v_span_y.y) discard;\n" \
+  "      }else if(!rotated_span_contains(centre)) discard;\n" \
+  "    }\n" \
   "    bool unit_texel=margin==16;\n" \
   "    vec4 sampled=unit_texel?source_texel(ivec2(floor(uv*extent)),0):\n" \
   "      margin!=0?hardware_physical_sprite_sample(v_texcoord,\n" \

@@ -1513,7 +1513,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
         quad->sampling.logical_margin_mask=margins;
       }
       /* The filtered rotation accepts half a texel beyond the physical cell.
-       * At reduction and unit scale this halo fits the CPU's padded bounds. */
+       * Retain the integer padded bounds if the projected halo can exceed them. */
       const double *x=quad->x,*y=quad->y;
       if(native_geometry->use_row_span){
         memcpy(quad->span_x,quad->x,sizeof quad->span_x);
@@ -1525,6 +1525,14 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
       const double uy=(y[1]-y[0])*halo/crop->width;
       const double vx=(x[3]-x[0])*halo/crop->height;
       const double vy=(y[3]-y[0])*halo/crop->height;
+      if(!quad->span_active && (fabs(ux)+fabs(vx)>1.0 || fabs(uy)+fabs(vy)>1.0)){
+        const GmlRenderRect *bounds=&native_geometry->padded_bounds;
+        quad->span_x[0]=bounds->x;
+        quad->span_x[1]=(double)bounds->x+bounds->width;
+        quad->span_y[0]=bounds->y;
+        quad->span_y[1]=(double)bounds->y+bounds->height;
+        quad->span_active=GML_RENDER_SPAN_FILTERED_PADDED_BOX;
+      }
       for(unsigned c=0;c<4u;c++){
         const int sx=(c==1u || c==2u)?1:-1;
         const int sy=c>=2u?1:-1;
@@ -4580,7 +4588,7 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     /* No raw alpha byte can pass the inclusive endpoint. */
     if(r->alpha_test_enable && r->alpha_test_ref==255u) return 1;
     resident_classify_page(r,page,atlas);
-    if(filtered_text && (alpha!=1.0 || fabs(xs)>1.0 || fabs(ys)>1.0 ||
+    if(filtered_text && (alpha!=1.0 ||
        !resident_rotated_text_opaque_taps(r,page,atlas))) return 0;
     GmlRenderRotatedPlacement placement;
     int placed=gml_render_rotated_sprite_placement(r,sprite,page,x,y,xs,ys,phase,&placement);

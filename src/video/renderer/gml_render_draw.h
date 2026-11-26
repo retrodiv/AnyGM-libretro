@@ -480,7 +480,9 @@ enum {
   GML_RENDER_SPAN_FILTERED_POSITIVE_ROW=5u,
   /* Axis-selected CPU coverage permits bounded sub-eighth inverse steps;
    * rotated support rows retain their separate smaller numerical domain. */
-  GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW=6u
+  GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW=6u,
+  /* span_x/y[0..1] is an integer half-open clip for one bilinear affine quad. */
+  GML_RENDER_SPAN_FILTERED_PADDED_BOX=7u
 };
 
 /* Shared admission for the bounded double-expression font rule, before target writes. */

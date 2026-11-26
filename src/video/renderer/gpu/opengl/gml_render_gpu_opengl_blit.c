@@ -500,7 +500,8 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
        quad->sampling.filter==GML_RENDER_FILTER_NEAREST && !quad->sampling.quantisation &&
        state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA)
       vertex[26]=quad->source_opaque==1u?1.0f:0.0f;
-    vertex[27]=quad->span_active?1.0f:0.0f;
+    vertex[27]=quad->span_active==GML_RENDER_SPAN_FILTERED_PADDED_BOX?2.0f:
+      quad->span_active?1.0f:0.0f;
     if(runtime_source_colour){
       /* Keep one native rectangle and evaluate its affine UVs on device.
        * This avoids triangle-dependent varying interpolation at texel ties. */
