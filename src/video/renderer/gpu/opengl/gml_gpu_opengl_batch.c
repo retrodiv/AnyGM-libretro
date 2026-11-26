@@ -1451,6 +1451,8 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
     quad->filtered_draw_alpha>=0x1p-8 && quad->filtered_draw_alpha<=1.0 &&
     (quad->corner_colour[0]>>24)==(uint32_t)lround(quad->filtered_draw_alpha*255.0) &&
     crop.width<=256u && crop.height<=256u;
+  const int filtered_text=screen_text && !state->alpha_test_enabled &&
+    quad->filtered_draw_alpha==1.0 && quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR;
   if(!source || !source->width || !source->height || source->rendered_origin ||
      source->width>16384u || source->height>16384u ||
      source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
@@ -1459,21 +1461,36 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
      (!numbered && !screen && !binary_numbered) ||
      op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
      op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
-     quad->shape!=GML_RENDER_QUAD_GENERAL || quad->span_active ||
+     quad->shape!=GML_RENDER_QUAD_GENERAL || quad->span_active>(filtered_text?1u:0u) ||
      quad->source_endpoint_rgb_mask ||
      (quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN &&
       quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION) ||
-     quad->sampling.filter!=GML_RENDER_FILTER_NEAREST ||
-     quad->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE ||
-     quad->sampling.logical_margin_mask || !valid_region(crop,source->width,source->height) ||
+     (quad->sampling.filter!=GML_RENDER_FILTER_NEAREST && !filtered_text) ||
+     (quad->sampling.logical_margin_mask
+      ?!filtered_text || quad->sampling.logical_margin_mask>15u ||
+       quad->sampling.edge_rule!=GML_RENDER_EDGE_LOGICAL_TPAG
+      :quad->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE) ||
+     !valid_region(crop,source->width,source->height) ||
      crop.width>4096u || crop.height>4096u ||
      state->alpha!=255u || state->colour!=0xFFFFFFFFu || state->source_alpha_key ||
      state->source_palette.enabled ||
      !isfinite(quad->filtered_draw_alpha) || quad->filtered_draw_alpha<=0.0 ||
      quad->filtered_draw_alpha>1.0) return 0;
+  const double halo=filtered_text?0.5:0.0;
   for(unsigned corner=0;corner<4u;corner++){
-    double u=((double)crop.x+((corner==1u || corner==2u)?crop.width:0u))/source->width;
-    double v=((double)crop.y+(corner>=2u?crop.height:0u))/source->height;
+    if(quad->span_active){
+      const int sx=(corner==1u || corner==2u)?1:-1;
+      const int sy=corner>=2u?1:-1;
+      const double ux=(quad->x[1]-quad->x[0])/(2.0*(crop.width+1u));
+      const double uy=(quad->y[1]-quad->y[0])/(2.0*(crop.width+1u));
+      const double vx=(quad->x[3]-quad->x[0])/(2.0*(crop.height+1u));
+      const double vy=(quad->y[3]-quad->y[0])/(2.0*(crop.height+1u));
+      if(!isfinite(quad->span_x[corner]) || !isfinite(quad->span_y[corner]) ||
+         fabs(quad->span_x[corner]-(quad->x[corner]-sx*ux-sy*vx))>1e-8 ||
+         fabs(quad->span_y[corner]-(quad->y[corner]-sx*uy-sy*vy))>1e-8) return 0;
+    }
+    double u=((double)crop.x+((corner==1u || corner==2u)?crop.width+halo:-halo))/source->width;
+    double v=((double)crop.y+(corner>=2u?crop.height+halo:-halo))/source->height;
     if(!isfinite(quad->x[corner]) || !isfinite(quad->y[corner]) ||
        fabs(quad->x[corner])>65536.0 || fabs(quad->y[corner])>65536.0 ||
        quad->u[corner]!=u || quad->v[corner]!=v ||

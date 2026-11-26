@@ -936,6 +936,7 @@ typedef struct GmlRenderRotatedCoverageRegion {
 typedef struct GmlRenderRotatedPlacement {
   double x[4],y[4];
   GmlRenderRect source_region;
+  int use_row_span;
 } GmlRenderRotatedPlacement;
 /* Reuse CPU vertex placement without walking destination coverage. Returns
  * one for placed geometry, zero for an empty draw, and minus one if invalid. */

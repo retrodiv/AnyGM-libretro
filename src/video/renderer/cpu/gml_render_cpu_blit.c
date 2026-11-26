@@ -5889,6 +5889,14 @@ static int rotated_geometry_prepare(GmlRender *r,GmlSprite *spr,GmlTpag *t,
   return 1;
 }
 
+static int rotated_geometry_uses_row_span(const GmlRotatedGeometry *geometry){
+  const double *x=geometry->qx,*y=geometry->qy;
+  const double area=fabs(x[0]*y[1]-x[1]*y[0]+x[1]*y[2]-x[2]*y[1]+
+                         x[2]*y[3]-x[3]*y[2]+x[3]*y[0]-x[0]*y[3])*0.5;
+  const double visible=(double)(geometry->x1-geometry->x0)*(geometry->y1-geometry->y0);
+  return area>0.0 && area<visible*0.85;
+}
+
 int gml_render_rotated_sprite_placement(GmlRender *r,GmlSprite *sprite,GmlTpag *page,
   double x,double y,double xs,double ys,double rotation,GmlRenderRotatedPlacement *placement){
   if(!r || !sprite || !page || !placement || !r->atlas ||
@@ -5905,6 +5913,7 @@ int gml_render_rotated_sprite_placement(GmlRender *r,GmlSprite *sprite,GmlTpag *
   int result=rotated_geometry_prepare(r,sprite,page,&r->atlas[page->atlas],
     x,y,xs,ys,rotation,0,1,&geometry);
   if(result<=0) return result;
+  placement->use_row_span=r->interp && rotated_geometry_uses_row_span(&geometry);
   memcpy(placement->x,geometry.qx,sizeof placement->x);
   memcpy(placement->y,geometry.qy,sizeof placement->y);
   placement->source_region=(GmlRenderRect){page->sx+geometry.abx0,page->sy+geometry.aby0,
@@ -6372,9 +6381,7 @@ static void GML_HOT_RENDER blit_rotated_impl(GmlRender *r, GmlSprite *spr, GmlTp
       t->tx>0 || t->ty>0 || t->tx+t->sw<t->bw || t->ty+t->sh<t->bh,
       bR,bG,bB,alpha,blend,{0},{0},0};
     memcpy(band.qx,qx,sizeof qx); memcpy(band.qy,qy,sizeof qy);
-    double qarea_interp=fabs(qx[0]*qy[1]-qx[1]*qy[0] + qx[1]*qy[2]-qx[2]*qy[1] +
-                             qx[2]*qy[3]-qx[3]*qy[2] + qx[3]*qy[0]-qx[0]*qy[3]) * 0.5;
-    band.use_quad_span=(qarea_interp>0.0 && qarea_interp < (double)vispix * 0.85);
+    band.use_quad_span=rotated_geometry_uses_row_span(&geometry);
     if(gml_render_row_bands_profitable(r,vispix)) gml_run_row_bands(r,y1-y0,rot_interp_band_rows,&band);
     else rot_interp_band_rows(&band,0,y1-y0,0);
     return;

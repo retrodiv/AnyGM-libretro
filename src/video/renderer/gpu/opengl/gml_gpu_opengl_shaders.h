@@ -679,6 +679,18 @@
   "flat in vec4 v_span_y;\n" \
   "flat in float v_span_active;\n" \
   "out vec4 o_color;\n" \
+  "bool rotated_span_contains(vec2 centre){\n" \
+  "    float mn=1e30,mx=-1e30; int hits=0;\n" \
+  "    for(int i=0;i<4;i++){\n" \
+  "      int j=(i+1)&3; float a=v_span_y[i],b=v_span_y[j];\n" \
+  "      if((a<=centre.y && b>centre.y) || (b<=centre.y && a>centre.y)){\n" \
+  "        float x=v_span_x[i]+(centre.y-a)/(b-a)*(v_span_x[j]-v_span_x[i]);\n" \
+  "        mn=min(mn,x); mx=max(mx,x); hits++;\n" \
+  "      }\n" \
+  "    }\n" \
+  "    float px=floor(centre.x);\n" \
+  "    return hits>=2 && px>=floor(mn)-1.0 && px<ceil(mx)+1.0;\n" \
+  "}\n" \
   "vec4 source_palette_colour(vec4 value){\n" \
   "  if(u_source_palette_enabled==0) return value;\n" \
   "  ivec3 bytes=ivec3(floor(value.rgb*255.0+0.5));\n" \
@@ -1414,6 +1426,8 @@
   "#else\n" \
   "    int margin=int(floor(v_margin+0.5));\n" \
   "#endif\n" \
+  "    if((physical_filter==79 || physical_filter==80 || physical_filter==82) && v_span_active>0.5 &&\n" \
+  "       !rotated_span_contains(vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y))) discard;\n" \
   "    bool unit_texel=margin==16;\n" \
   "    vec4 sampled=unit_texel?source_texel(ivec2(floor(uv*extent)),0):\n" \
   "      margin!=0?hardware_physical_sprite_sample(v_texcoord,\n" \
@@ -1436,7 +1450,7 @@
   "#else\n" \
   "#ifndef GML_SCENE_ZERO_ALPHA_BLEND\n" \
   "      if(alpha<=0.0 && physical_filter<112) discard;\n" \
-  "      if(physical_filter==79 && v_span_y.z==2.0 && surface_tap_support()<=0.0) discard;\n" \
+  "      if(physical_filter==79 && v_span_active<0.5 && v_span_y.z==2.0 && surface_tap_support()<=0.0) discard;\n" \
   "#endif\n" \
   "#endif\n" \
   "      vec3 rgb=sampled.rgb*v_colour.rgb;\n" \
@@ -1547,16 +1561,7 @@
   "  // R03_SHADER_ROW_SPAN: conditional rotated/warped CPU coverage.\n" \
   "  if(u_filter>=2 && u_filter!=7 && u_filter!=8 && u_filter!=9 && u_filter!=10 && u_filter!=27 &&\n" \
   "     u_filter!=12 && u_filter!=13 && u_filter!=110 && u_filter!=111 && v_span_active>0.5){\n" \
-  "    float mn=1e30,mx=-1e30; int hits=0;\n" \
-  "    for(int i=0;i<4;i++){\n" \
-  "      int j=(i+1)&3; float a=v_span_y[i],b=v_span_y[j];\n" \
-  "      if((a<=centre.y && b>centre.y) || (b<=centre.y && a>centre.y)){\n" \
-  "        float x=v_span_x[i]+(centre.y-a)/(b-a)*(v_span_x[j]-v_span_x[i]);\n" \
-  "        mn=min(mn,x); mx=max(mx,x); hits++;\n" \
-  "      }\n" \
-  "    }\n" \
-  "    float px=floor(centre.x);\n" \
-  "    if(hits<2 || px<floor(mn)-1.0 || px>=ceil(mx)+1.0) discard;\n" \
+  "    if(!rotated_span_contains(centre)) discard;\n" \
   "  }\n" \
   "  vec2 delta=centre-v_map.xy;\n" \
   "  ivec2 lo; vec2 f;\n" \

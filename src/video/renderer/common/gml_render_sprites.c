@@ -927,7 +927,8 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     !anygm_policy_has_modern_layer_semantics(r->win);
   int tile_point=tile_function && r && (r->classic || physical_sprite_page==12);
   int sampling_interp=r && r->interp && !tile_point && !flat_fog_sprite && !classic_background_point &&
-    !classic_sprite_point && !classic_text_point && !studio_rotated_point && !runtime_function;
+    !classic_sprite_point && !classic_text_point && !studio_rotated_point && !runtime_function &&
+    !(native_geometry && family==GML_RENDER_SCENE_TEXT);
   if(integer_atlas &&
      (!r || !page || sampling_interp ||
       (r->fog_flat && !flat_fog_sprite && !(rotated_sprite_function && family==GML_RENDER_SCENE_SPRITE)) ||
@@ -1501,6 +1502,38 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     quad->u[1]=quad->u[2]=((double)crop->x+crop->width)/source.width;
     quad->v[0]=quad->v[1]=(double)crop->y/source.height;
     quad->v[2]=quad->v[3]=((double)crop->y+crop->height)/source.height;
+    if(family==GML_RENDER_SCENE_TEXT && r->interp){
+      quad->sampling.filter=GML_RENDER_FILTER_HARDWARE_BILINEAR;
+      unsigned margins=(page->tx?GML_RENDER_MARGIN_LEFT:0u) |
+        (page->ty?GML_RENDER_MARGIN_TOP:0u) |
+        (page->sw+page->tx<page->bw?GML_RENDER_MARGIN_RIGHT:0u) |
+        (page->sh+page->ty<page->bh?GML_RENDER_MARGIN_BOTTOM:0u);
+      if(margins){
+        quad->sampling.edge_rule=GML_RENDER_EDGE_LOGICAL_TPAG;
+        quad->sampling.logical_margin_mask=margins;
+      }
+      /* The filtered rotation accepts half a texel beyond the physical cell.
+       * At reduction and unit scale this halo fits the CPU's padded bounds. */
+      const double *x=quad->x,*y=quad->y;
+      if(native_geometry->use_row_span){
+        memcpy(quad->span_x,quad->x,sizeof quad->span_x);
+        memcpy(quad->span_y,quad->y,sizeof quad->span_y);
+        quad->span_active=1u;
+      }
+      const double halo=0.5;
+      const double ux=(x[1]-x[0])*halo/crop->width;
+      const double uy=(y[1]-y[0])*halo/crop->width;
+      const double vx=(x[3]-x[0])*halo/crop->height;
+      const double vy=(y[3]-y[0])*halo/crop->height;
+      for(unsigned c=0;c<4u;c++){
+        const int sx=(c==1u || c==2u)?1:-1;
+        const int sy=c>=2u?1:-1;
+        quad->x[c]+=sx*ux+sy*vx;
+        quad->y[c]+=sx*uy+sy*vy;
+        quad->u[c]=((double)crop->x+(sx>0?crop->width+halo:-halo))/source.width;
+        quad->v[c]=((double)crop->y+(sy>0?crop->height+halo:-halo))/source.height;
+      }
+    }
   }
   /* Public rotated text calls the unwrapped CPU glyph writer: its ordinary
    * normal/add/inverse ports do not apply the sprite API's channel wrapper. */
@@ -4446,6 +4479,20 @@ static int resident_collapsed_additive_sprite_noop(GmlRender *r,GmlSprite *sprit
   return 1;
 }
 
+static int resident_rotated_text_opaque_taps(GmlRender *r,GmlTpag *page,const GmlAtlas *atlas){
+  const int has_margin=page->tx || page->ty ||
+    page->tx+page->sw<page->bw || page->ty+page->sh<page->bh;
+  if(!has_margin) return page->scene_fully_opaque;
+  /* A logical padding tap can escape the crop on both axes. Classify the
+   * one-texel physical apron with the existing immutable alpha cache. */
+  if(!page->sx || !page->sy ||
+     page->sx+page->sw==atlas->w || page->sy+page->sh==atlas->h) return 0;
+  GmlTpag apron={.atlas=page->atlas,.sx=page->sx-1,.sy=page->sy-1,
+                 .sw=page->sw+2,.sh=page->sh+2};
+  resident_classify_page(r,&apron,atlas);
+  return apron.scene_fully_opaque;
+}
+
 static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlTpag *page,
                                             double x,double y,double xs,double ys,double rotation,
                                             uint32_t colour,double alpha,GmlRenderSceneFamily family){
@@ -4490,8 +4537,12 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     (fabs(fmod(rotation,360.0))<0.001 || fabs(fabs(fmod(rotation,360.0))-360.0)<0.001);
   int zero_factor_alpha=native_factors || (axis_preset && r->alphablend &&
     gml_render_blend_uses_destination_colour(r->blendmode));
+  const int filtered_text=r && family==GML_RENDER_SCENE_TEXT && r->interp &&
+    anygm_policy_has_modern_layer_semantics(r->win) && !r->fog_flat &&
+    !r->alpha_test_enable && r->alphablend && !r->blendmode &&
+    !gml_render_target_preserves_alpha(r);
   if(!r || !sprite || !page || !r->resident_application_pass ||
-     (r->interp && !r->classic && !studio_rotated_point && !fog_axis) ||
+     (r->interp && !r->classic && !studio_rotated_point && !fog_axis && !filtered_text) ||
      (family==GML_RENDER_SCENE_SPRITE?resident_sprite_program_blocks(r):r->active_shader>=0) ||
      (r->fog_flat && family!=GML_RENDER_SCENE_SPRITE) || gml_d3_is_active(r) ||
      r->color_write_mask>15u || r->blendmode<0 ||
@@ -4519,7 +4570,7 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     anygm_policy_has_modern_layer_semantics(r->win) && r->alphablend && !r->blendmode &&
     !gml_render_target_preserves_alpha(r);
   if(modern_screen_text){
-    if(r->classic || r->interp || r->gui_pass_active || r->target_id>=0 || r->target_sp ||
+    if(r->classic || r->gui_pass_active || r->target_id>=0 || r->target_sp ||
        alpha<0x1p-8 || page->sw<=0 || page->sh<=0 ||
        page->sw>256 || page->sh>256 || page->sx<0 || page->sy<0 ||
        phase<0.001 || fabs(phase-360.0)<0.001 || !atlas_pixels(r,page->atlas)) return 0;
@@ -4529,6 +4580,8 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     /* No raw alpha byte can pass the inclusive endpoint. */
     if(r->alpha_test_enable && r->alpha_test_ref==255u) return 1;
     resident_classify_page(r,page,atlas);
+    if(filtered_text && (alpha!=1.0 || fabs(xs)>1.0 || fabs(ys)>1.0 ||
+       !resident_rotated_text_opaque_taps(r,page,atlas))) return 0;
     GmlRenderRotatedPlacement placement;
     int placed=gml_render_rotated_sprite_placement(r,sprite,page,x,y,xs,ys,phase,&placement);
     if(placed>0) for(unsigned corner=0;corner<4u;corner++)

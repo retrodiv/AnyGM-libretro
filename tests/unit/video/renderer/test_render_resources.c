@@ -20448,6 +20448,42 @@ static int resident_rotated_text_function(void){
   return 1;
 }
 
+static int resident_filtered_rotated_text_taps(void){
+  enum { W=24,H=20,ATLAS=4 };
+  GmlRender *r=calloc(1,sizeof *r);
+  GmlWin content={.bytecode=17,.has_room_layers=1};
+  FakeDevice fake={.on_demand=1};
+  GmlRenderDeviceServices device=service(&fake);
+  uint32_t screen[W*H]={0};
+  CHECK(r && !gml_render_init(r,NULL));
+  r->win=&content;
+  free(r->atlas[0].px);
+  r->atlas[0].px=malloc(ATLAS*ATLAS*4u);
+  CHECK(r->atlas[0].px);
+  r->atlas[0].w=r->atlas[0].h=ATLAS;
+  memset(r->atlas[0].px,255,ATLAS*ATLAS*4u);
+  r->interp=1;
+  device.observe_on_demand=fake_observe_on_demand;
+  gml_render_bind_device(r,&device);
+  CHECK(gml_render_begin_resident_base(r,screen,W,H,0,0));
+
+  GmlSprite sprite={.w=4,.h=4};
+  GmlTpag page={.sx=1,.sy=1,.sw=2,.sh=2,.tw=2,.th=2,.tx=1,.ty=1,.bw=4,.bh=4};
+  const int submits=fake.submits;
+  r->atlas[0].px[3]=128u;
+  CHECK(!gml_render_resident_rotated_font_glyph(r,&sprite,&page,9,8,.75,-.75,45,0xFFFFFFu,1));
+  CHECK(gml_render_scene_submit_pending(r) && fake.submits==submits);
+  r->atlas[0].px[3]=255u;
+  CHECK(!gml_render_resident_rotated_font_glyph(r,&sprite,&page,9,8,.75,-.75,45,0xFFFFFFu,.75));
+  CHECK(!gml_render_resident_rotated_font_glyph(r,&sprite,&page,9,8,.75,-1.25,45,0xFFFFFFu,1));
+  CHECK(gml_render_scene_submit_pending(r) && fake.submits==submits);
+  CHECK(gml_render_resident_rotated_font_glyph(r,&sprite,&page,9,8,.75,-.75,45,0xFFFFFFu,1));
+  CHECK(gml_render_scene_submit_pending(r) && fake.submits==submits+1);
+  CHECK(fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR && !fake.readbacks);
+  gml_render_free(r);free(r);
+  return 1;
+}
+
 static int channel_alpha_key_byte_partition(void){
   GmlRender *r=calloc(1,sizeof *r);
   CHECK(r);
@@ -23371,6 +23407,7 @@ int main(void){
   passed+=resident_nearest_text_function(2);
   passed+=resident_nearest_text_function(3);
   passed+=resident_rotated_text_function();
+  passed+=resident_filtered_rotated_text_taps();
   passed+=resident_selected_background_function();
   passed+=resident_background_part_trim_function();
   passed+=resident_whole_background_function();
@@ -23469,7 +23506,7 @@ int main(void){
   passed+=resident_runtime_native_rotations();
   passed+=runtime_sprite_deferred_clear();
   passed+=resident_runtime_native_boundaries();
-  enum { total=371 };
+  enum { total=372 };
   printf("render resource cases: passed=%d failed=%d\n",passed,total-passed);
   return passed==total?EXIT_SUCCESS:EXIT_FAILURE;
 }
