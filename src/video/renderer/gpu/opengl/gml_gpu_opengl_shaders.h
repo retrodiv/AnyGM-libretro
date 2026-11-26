@@ -214,6 +214,33 @@
   " sum=d64_add(sum,d64_mul(d64_uint(p3),uvec2(u_alpha_weights[1].zw)));\n" \
   " return sum;\n" \
   "}\n" \
+  "#ifndef DEPTH_WRITE\n" \
+  "int depth_byte_factor(int factor,int c,ivec4 src,ivec4 dst){\n" \
+  " if(factor==1)return 0;\n" \
+  " if(factor==2)return 255;\n" \
+  " if(factor==3)return src.a;\n" \
+  " if(factor==4)return 255-src.a;\n" \
+  " if(factor==5)return src[c];\n" \
+  " if(factor==6)return dst[c];\n" \
+  " if(factor==7)return dst.a;\n" \
+  " if(factor==8)return 255-src[c];\n" \
+  " if(factor==9)return 255-dst.a;\n" \
+  " if(factor==10)return 255-dst[c];\n" \
+  " return c==3?255:min(src.a,255-dst.a);\n" \
+  "}\n" \
+  "ivec4 depth_byte_blend(ivec4 src,ivec4 dst,int recipe){\n" \
+  " ivec4 blended;\n" \
+  " for(int c=0;c<4;c++){\n" \
+  "  int shift=c==3?8:0;\n" \
+  "  int eq=(recipe>>(c==3?19:16))&7;\n" \
+  "  int s=src[c]*depth_byte_factor((recipe>>shift)&15,c,src,dst);\n" \
+  "  int d=dst[c]*depth_byte_factor((recipe>>(shift+4))&15,c,src,dst);\n" \
+  "  int combined=eq==2?d-s:eq==3?s-d:s+d;\n" \
+  "  blended[c]=eq==1?max(src[c],dst[c]):eq==4?min(src[c],dst[c]):clamp((combined+127)/255,0,255);\n" \
+  " }\n" \
+  " return blended;\n" \
+  "}\n" \
+  "#endif\n" \
   "void main(){vec4 source=clamp(v_colour/v_reciprocal,0.0,1.0);float z=v_depth;" \
   "bool encoded=u_input_alpha.z!=0;uvec2 input_alpha=uvec2(u_input_alpha.xy);" \
   "if((u_policy.x&2)!=0&&(encoded?(input_alpha.x|input_alpha.y)==0u:source.a<=0.0))discard;" \
@@ -256,7 +283,16 @@
   "      d64_mul(d64_uint(uint(rgb[c])),fog)));\n" \
   " }\n" \
   " int a=clamp(d64_lround(d64_mul(input_alpha,d64_uint(255u))),0,255);\n" \
-  " if(u_flags.w==0){result_colour=vec4(src.rgb,(u_policy.x&1)!=0?255:a)/255.0;return;}\n" \
+  " if((u_policy.x&32)!=0){\n" \
+  "  for(int c=0;c<3;c++)src[c]=d64_floor(d64_mul(d64_uint(uint(src[c])),input_alpha));\n" \
+  "  a=d64_floor(d64_mul(input_alpha,d64_uint(255u)));\n" \
+  " }\n" \
+  " if((u_policy.x&64)!=0){\n" \
+  "  ivec4 blended=depth_byte_blend(ivec4(src.rgb,a),dst,u_policy.z);\n" \
+  "  if((u_policy.x&1)!=0)blended.a=255;\n" \
+  "  result_colour=vec4(blended)/255.0;return;\n" \
+  " }\n" \
+  " if(u_flags.w!=1){result_colour=vec4(src.rgb,(u_policy.x&1)!=0?255:a)/255.0;return;}\n" \
   " ivec4 result=ivec4(src.rgb,255);\n" \
   " if(any(notEqual(input_alpha,one))){\n" \
   "  for(int c=0;c<3;c++)result[c]=d64_floor(d64_add(d64_mul(d64_uint(uint(src[c])),input_alpha),\n" \

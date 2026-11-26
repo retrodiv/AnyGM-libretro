@@ -2024,8 +2024,9 @@ int gml_gpu_opengl_depth_triangle_valid(GmlGpuBackend *backend,const GmlRenderDr
       (float)triangle->vertex[0][1]!=(float)triangle->vertex[1][1];
   }
   if(pair){
-    if((triangle->textured && !triangle->alpha_sample_policy) || triangle->shading_flags>3u || triangle->blend>GML_RENDER_DEPTH_BLEND_SOURCE_OVER ||
-       !triangle->alpha_source_squared || state->clip.width ||
+    if((triangle->textured && !triangle->alpha_sample_policy) || triangle->shading_flags>3u ||
+       (triangle->blend<GML_RENDER_DEPTH_BLEND_INDEPENDENT && !triangle->alpha_source_squared) ||
+       state->clip.width ||
        fabs(triangle->vertex[0][0]-triangle->vertex[1][0])>1 ||
        fabs(triangle->vertex[0][1]-triangle->vertex[1][1])>1)return 0;
     if(triangle->shading_flags){
@@ -2104,6 +2105,30 @@ static int depth_candidate_draw(GmlGpuBackend *backend,const GmlRenderDrawOp *op
                    (GLint)triangle->alpha_source_squared,(GLint)triangle->textured};
   if(point || line)policy[0]|=2;
   if(exact_point)policy[0]|=4|((GLint)triangle->shading_flags<<3);
+  /* The basic additive CPU writer truncates the source contribution before
+   * adding it. Independent factor tuples already consume normalized bytes. */
+  int exact_additive=exact_point && triangle->blend==GML_RENDER_DEPTH_BLEND_PIXEL &&
+    state->rgb_source_factor==GML_RENDER_BLEND_SOURCE_ALPHA &&
+    state->rgb_destination_factor==GML_RENDER_BLEND_ONE &&
+    state->alpha_source_factor==GML_RENDER_BLEND_ONE &&
+    state->alpha_destination_factor==GML_RENDER_BLEND_ONE &&
+    state->rgb_equation==GML_RENDER_BLEND_NATIVE_ADD &&
+    state->alpha_equation==GML_RENDER_BLEND_NATIVE_ADD;
+  int byte_blend=exact_point &&
+    (triangle->blend==GML_RENDER_DEPTH_BLEND_INDEPENDENT ||
+     (triangle->blend==GML_RENDER_DEPTH_BLEND_PIXEL &&
+      state->rgb_equation==GML_RENDER_BLEND_NATIVE_ADD &&
+      state->alpha_equation==GML_RENDER_BLEND_NATIVE_ADD));
+  const int fixed_blend=native && !byte_blend;
+  if(exact_additive)policy[0]|=32;
+  if(byte_blend){
+    policy[0]|=64|(triangle->stamp_alpha?1:0);
+    uint32_t factors=exact_additive?0x2222u:
+      state->rgb_source_factor|(state->rgb_destination_factor<<4u)|
+      (state->alpha_source_factor<<8u)|(state->alpha_destination_factor<<12u);
+    policy[2]=(GLint)(factors|((state->rgb_equation-GML_RENDER_BLEND_NATIVE_ADD)<<16u)|
+      ((state->alpha_equation-GML_RENDER_BLEND_NATIVE_ADD)<<19u));
+  }
   if(triangle->textured){
     int constant=1;
     for(unsigned v=1;v<vertex_count;v++)for(unsigned c=0;c<2u;c++)
@@ -2228,7 +2253,7 @@ static int depth_candidate_draw(GmlGpuBackend *backend,const GmlRenderDrawOp *op
       backend->gl.Uniform4fv(program->shade,1,shade);backend->gl.Uniform4fv(program->fog_colour,1,fog);
       backend->gl.Uniform2fv(program->fog_range,1,range);
       backend->gl.Uniform1i(program->colour,1);
-      if(native){
+      if(fixed_blend){
         backend->gl.BlendFuncSeparate(gml_gpu_opengl_native_factor(state->rgb_source_factor),
           gml_gpu_opengl_native_factor(state->rgb_destination_factor),
           gml_gpu_opengl_native_factor(state->alpha_source_factor),
@@ -2239,16 +2264,16 @@ static int depth_candidate_draw(GmlGpuBackend *backend,const GmlRenderDrawOp *op
         backend->gl.Enable(GL_BLEND);
       }
       backend->gl.ColorMask((state->write_mask&1u)!=0,(state->write_mask&2u)!=0,
-        (state->write_mask&4u)!=0,(state->write_mask&8u)!=0 && !(native && (triangle->stamp_alpha || alpha_input)));
+        (state->write_mask&4u)!=0,(state->write_mask&8u)!=0 && !(fixed_blend && (triangle->stamp_alpha || alpha_input)));
     }else{
       backend->gl.Disable(GL_BLEND);backend->gl.ColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
     }
     backend->gl.DrawArrays(topology,0,(GLsizei)vertex_count);
     if(backend->gl.GetError()!=GL_NO_ERROR)return 0;
-    if(!pass && native && (triangle->stamp_alpha || alpha_input) && (state->write_mask&8u)){
+    if(!pass && fixed_blend && (triangle->stamp_alpha || alpha_input) && (state->write_mask&8u)){
       /* Stamp the same whole primitive before another command can consume its
        * destination alpha. All candidate storage remains unpublished. */
-      GLint stamp_policy[4]={(point || line)?3:1,policy[1],policy[2],policy[3]};
+      GLint stamp_policy[4]={policy[0]|1,policy[1],policy[2],policy[3]};
       backend->gl.Disable(GL_BLEND);backend->gl.ColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_TRUE);
       backend->gl.Uniform4iv(program->policy,1,stamp_policy);
       backend->gl.DrawArrays(topology,0,(GLsizei)vertex_count);
