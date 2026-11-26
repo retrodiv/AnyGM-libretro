@@ -1764,7 +1764,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   }
   int native_opaque=native_geometry && r->target_id<0 && !r->target_sp &&
     r->fb_opaque_known && r->fb_all_opaque;
-  const int preserving_rotation=native_geometry && r->target_id>0 &&
+  const int preserving_rotation=native_geometry && r->target_id>=0 && r->target_sp>0 &&
     gml_render_target_preserves_alpha(r) &&
     operation.payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_ROTATED_ALPHA;
   if(preserving_rotation ||
@@ -4575,7 +4575,8 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
   int zero_factor_alpha=native_factors || (axis_preset && r->alphablend &&
     gml_render_blend_uses_destination_colour(r->blendmode));
   const int preserving_filtered_text=r && family==GML_RENDER_SCENE_TEXT && r->interp &&
-    r->target_id>0 && r->color_write_mask==15u && gml_render_target_preserves_alpha(r);
+    r->target_id>=0 && r->target_sp>0 && r->color_write_mask==15u &&
+    gml_render_target_preserves_alpha(r);
   const int filtered_text=r && family==GML_RENDER_SCENE_TEXT && r->interp &&
     anygm_policy_has_modern_layer_semantics(r->win) && !r->fog_flat &&
     r->alphablend && !r->blendmode &&

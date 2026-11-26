@@ -1457,16 +1457,18 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
     (quad->corner_colour[0]>>24)==(uint32_t)lround(quad->filtered_draw_alpha*255.0) &&
     crop.width<=256u && crop.height<=256u;
   const int screen_text=rotation_text && screen && qualified_blend(state)==1;
-  const int numbered_text=rotation_text && alpha_support &&
-    op->target.image.resource_class==GML_RENDER_RESOURCE_SURFACE &&
+  const int preserving_text=rotation_text && alpha_support &&
+    (op->target.image.resource_class==GML_RENDER_RESOURCE_SURFACE ||
+     op->target.image.resource_class==GML_RENDER_RESOURCE_APPLICATION ||
+     op->target.image.resource_class==GML_RENDER_RESOURCE_SCREEN) &&
     state->write_mask==15u && state->alpha_test_enabled<=1u &&
     state->alpha_test_reference<=(state->alpha_test_enabled?255u:0u) &&
     !state->coverage_policy && qualified_blend(state)==3;
-  const int filtered_text=(screen_text || numbered_text) &&
+  const int filtered_text=(screen_text || preserving_text) &&
     (!state->alpha_test_enabled || alpha_support) &&
     quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR;
   if(alpha_support){
-    if(!filtered_text || (!numbered_text && op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN) ||
+    if(!filtered_text ||
        state->sampler_count!=1u ||
        memcmp(&state->samplers[0],&quad->sampling,sizeof quad->sampling)) return 0;
     crop=quad->filtered_rotation_bounds;
@@ -1490,9 +1492,9 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
   if(!source || !source->width || !source->height || source->rendered_origin ||
      source->width>16384u || source->height>16384u ||
      source->pixel_format!=GML_RENDER_PIXEL_RGBA8888 ||
-     (op->scene_family!=GML_RENDER_SCENE_SPRITE && !screen_text && !numbered_text) || !op->sources || op->source_count!=1u ||
+     (op->scene_family!=GML_RENDER_SCENE_SPRITE && !screen_text && !preserving_text) || !op->sources || op->source_count!=1u ||
      op->sources[0].resource_class!=GML_RENDER_RESOURCE_ATLAS ||
-     (!numbered && !screen && !binary_numbered && !numbered_text) ||
+     (!numbered && !screen && !binary_numbered && !preserving_text) ||
      op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
      op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
      quad->shape!=GML_RENDER_QUAD_GENERAL ||

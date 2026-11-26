@@ -1045,6 +1045,15 @@ GmlRenderResource *gml_render_application_resource_ensure(GmlRender *r){
   }
   return r->app_surface_resource;
 }
+/* A borrowed application may share the physical SCREEN image. Retain the
+ * established identity only when both logical extents name the same storage. */
+static int borrowed_application_matches_base(const GmlRender *r){
+  return r && r->app_surface && r->app_surface!=r->app_surface_owned &&
+    r->app_surface==r->base_scene_resource_pixels &&
+    r->app_w==r->base_scene_resource_width && r->app_h==r->base_scene_resource_height &&
+    r->win && anygm_policy_has_modern_layer_semantics(r->win);
+}
+
 int gml_render_scene_target_matches(const GmlRender *r){
   if(!r || !r->fb || r->fbw<=0 || r->fbh<=0) return 0;
   if(r->layer_filter_gpu_capture && r->layer_filter_active && r->target_id==-2)
@@ -1057,9 +1066,10 @@ int gml_render_scene_target_matches(const GmlRender *r){
   return (r->target_id==-1 || r->target_id==0) &&
     ((r->fb==r->app_surface_owned && r->fbw==r->app_w && r->fbh==r->app_h &&
       r->app_surface==r->app_surface_owned) ||
-     (r->target_id==-1 && !r->target_sp && r->fb==r->base_scene_resource_pixels &&
-      r->fbw==r->base_scene_resource_width &&
-      r->fbh==r->base_scene_resource_height));
+     (r->fb==r->base_scene_resource_pixels && r->fbw==r->base_scene_resource_width &&
+      r->fbh==r->base_scene_resource_height &&
+      ((!r->target_sp && r->target_id==-1) ||
+       (r->target_sp && r->target_id==0 && borrowed_application_matches_base(r)))));
 }
 void gml_render_base_resource_dispose(GmlRender *r){
   GmlRenderResource *resource;
@@ -5132,6 +5142,7 @@ int gml_surface_set_target(GmlRender *r, int id){
   if(!gml_render_application_scene_flush(r)) return 0;
   int w=0,h=0,si=surface_slot(id);
   uint32_t *px=NULL;
+  GmlRenderResource *resident_resource=NULL;
   const GmlRenderDeviceServices *device=gml_render_device(r);
   /* Initialization may author numbered targets before any world pass exists.
    * A usable owning context admits only that explicit child, never its CPU
@@ -5142,27 +5153,34 @@ int gml_surface_set_target(GmlRender *r, int id){
     device->observe_on_demand(device->context);
   int resident=(r->resident_scene_pass || independent) && device &&
     (!r->classic || id>0 || (id==0 && r->app_surface==r->app_surface_owned));
+  const int same_application_image=id==0 && r->app_surface && r->app_surface==r->fb &&
+    r->app_w==r->fbw && r->app_h==r->fbh && r->win &&
+    anygm_policy_has_modern_layer_semantics(r->win);
+  /* A deferred clear belongs before a later draw through another name for the
+   * same storage. A distinct suspended CPU target keeps its existing fill. */
+  if(same_application_image || (resident && (!independent || r->resident_application_pass))){
+    gml_render_flush_pending_underlay(r);
+    gml_render_flush_pending_fill(r);
+    if(r->pending_underlay || r->pending_fill) return 0;
+  }
   if(resident){
-    /* Resolve pending parent writes before another binding can alias its allocation.
-     * Binding itself borrows storage metadata, not CPU-current raster bytes. */
-    if(!independent || r->resident_application_pass){
-      gml_render_flush_pending_underlay(r);
-      gml_render_flush_pending_fill(r);
-      if(r->pending_underlay || r->pending_fill) return 0;
-    }
     if(si>=0 && r->surface[si].live &&
-       gml_render_surface_resource_ensure(r,id)){
+       (resident_resource=gml_render_surface_resource_ensure(r,id))){
       px=r->surface[si].px; w=r->surface[si].w; h=r->surface[si].h;
     } else if(id==0 && r->app_surface==r->app_surface_owned &&
-              gml_render_application_resource_ensure(r)){
+              (resident_resource=gml_render_application_resource_ensure(r))){
       px=r->app_surface_owned; w=r->app_w; h=r->app_h;
+    } else if(same_application_image && r->resident_application_pass &&
+              !r->classic_phase_scene_target &&
+              r->fb==r->app_surface && borrowed_application_matches_base(r) &&
+              (resident_resource=gml_render_scene_target_resource_ensure(r))){
+      px=r->app_surface; w=r->app_w; h=r->app_h;
     }
   }
   if(!px){ resident=0; px=surface_pixels(r,id,&w,&h); }
   if(resident && px){
     GmlRenderJournalMetrics metrics={0};
-    GmlRenderResource *resource=si>=0?r->surface[si].resource:r->app_surface_resource;
-    gml_render_resource_journal_metrics(resource,&metrics);
+    gml_render_resource_journal_metrics(resident_resource,&metrics);
     if(metrics.authority==GML_RENDER_RESOURCE_INVALID) return 0;
   }
   if(!px || r->target_sp>=GML_SURFACE_STACK) return 0;
