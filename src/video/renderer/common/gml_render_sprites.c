@@ -4520,7 +4520,7 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     !gml_render_target_preserves_alpha(r);
   if(modern_screen_text){
     if(r->classic || r->interp || r->gui_pass_active || r->target_id>=0 || r->target_sp ||
-       r->alpha_test_enable || alpha!=1.0 || page->sw<=0 || page->sh<=0 ||
+       r->alpha_test_enable || alpha<0x1p-8 || page->sw<=0 || page->sh<=0 ||
        page->sw>256 || page->sh>256 || page->sx<0 || page->sy<0 ||
        phase<0.001 || fabs(phase-360.0)<0.001 || !atlas_pixels(r,page->atlas)) return 0;
     const GmlAtlas *atlas=&r->atlas[page->atlas];

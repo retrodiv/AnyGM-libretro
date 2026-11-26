@@ -20415,9 +20415,9 @@ static int resident_rotated_text_function(void){
     unsigned scale=(state+angle)%4u,a=(state+angle)%3u;
     if(anygm_policy_has_modern_layer_semantics(r->win) && r->alphablend &&
        r->blendmode==0 && !gml_render_target_preserves_alpha(r)){
-      /* The authored source has partial alpha. Only the ordinary full-draw-alpha
-       * world case now uses a placed texture. Keep the special-state refusals. */
-      const int native=target_kind<2u && !gui && angle==0u;
+      /* Both positive draw-alpha cases now use a placed texture on the ordinary
+       * world target. Keep the zero-alpha and special-state refusals. */
+      const int native=target_kind<2u && !gui && (angle==0u || angle==2u);
       const int submits=fake.submits;
       const int admitted=gml_render_resident_rotated_font_glyph(r,&r->spr[0],&r->tpag[0],
         12.125,10.25,scales[scale][0],scales[scale][1],rotations[angle],0x70B0D0u,alphas[a]);
@@ -20444,7 +20444,7 @@ static int resident_rotated_text_function(void){
           !metrics.journal_bytes && !memcmp(shadow,r->fb,sizeof shadow));
     gml_render_free(r);free(r);
   }
-  CHECK(native_controls==4u);
+  CHECK(native_controls==8u);
   return 1;
 }
 
