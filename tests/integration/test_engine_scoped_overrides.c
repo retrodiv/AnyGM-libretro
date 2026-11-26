@@ -729,6 +729,136 @@ done:
   return ok;
 }
 
+static int check_application(AnygmEngine *engine,const char *stage,int want_width,
+                             int want_height,double want_seen_width,double want_seen_height){
+  GmlRenderPresentationMetrics presentation={0};
+  double seen_width=gml_global_num(&engine->vm,"seen_w");
+  double seen_height=gml_global_num(&engine->vm,"seen_h");
+  if(!gml_render_presentation_metrics(&engine->render,&presentation) ||
+     presentation.application_width!=want_width ||
+     presentation.application_height!=want_height ||
+     seen_width!=want_seen_width || seen_height!=want_seen_height){
+    fprintf(stderr,"scoped overrides: %s: application=%dx%d seen=%gx%g, expected %dx%d seen=%gx%g\n",
+            stage,presentation.application_width,presentation.application_height,
+            seen_width,seen_height,want_width,want_height,want_seen_width,want_seen_height);
+    return 0;
+  }
+  return 1;
+}
+
+/* Content can resize the application surface inside every Draw. A native-raster policy that sets
+ * the extent after drawing then fights that request within each frame: the content draws into the
+ * enlarged surface and the policy shrinks the result. A hold keeps the declared extent while the
+ * content draws, and releasing it hands the content the extent it last asked for. */
+static int application_hold_case(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_scoped_override_content_create(&fixture)){
+    fputs("scoped overrides: application-hold fixture creation failed\n",stderr);
+    return 0;
+  }
+  int ok=0;
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  AnygmEngine *engine=create_loaded_engine(&services,&source);
+  if(!engine || !set_outer_geometry(engine,320,240)) goto done;
+  gml_set_global_scalar(&engine->vm,"resize_w",96);
+  gml_set_global_scalar(&engine->vm,"resize_h",72);
+  if(anygm_set_runtime_override(engine,0,1,"?gameres @application_hold=1")!=ANYGM_OK ||
+     anygm_set_runtime_override(engine,1,1,"?gameres @application_w=64")!=ANYGM_OK ||
+     anygm_set_runtime_override(engine,2,1,"?gameres @application_h=48")!=ANYGM_OK)
+    goto done;
+  if(!run_frames(engine,1) ||
+     !check_application(engine,"scope closed: the content resizes",96,72,96,72)) goto done;
+  if(!select_logical_raster(engine,1) || !run_frames(engine,2) ||
+     !check_application(engine,"scope open: the content request is held",64,48,64,48))
+    goto done;
+  if(gml_render_application_surface_held(&engine->render)!=1){
+    fputs("scoped overrides: the open scope did not hold the application surface\n",stderr);
+    goto done;
+  }
+  gml_set_global_scalar(&engine->vm,"resize_w",80);
+  gml_set_global_scalar(&engine->vm,"resize_h",60);
+  if(!run_frames(engine,1) ||
+     !check_application(engine,"scope open: a new request is held too",64,48,64,48))
+    goto done;
+  /* Closing the scope releases the hold, so the content's latest request takes effect again. */
+  if(!select_logical_raster(engine,0) || !run_frames(engine,1) ||
+     !check_application(engine,"scope closed again",80,60,80,60) ||
+     gml_render_application_surface_held(&engine->render)!=0) goto done;
+  ok=1;
+done:
+  if(engine) anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
+static int check_mark(AnygmEngine *engine,const char *stage,const char *name,double want){
+  double value=gml_global_num(&engine->vm,name);
+  if(value!=want){
+    fprintf(stderr,"scoped overrides: %s: global.%s is %g, expected %g\n",stage,name,value,want);
+    return 0;
+  }
+  return 1;
+}
+
+/* ?noinstance inverts ?instance: the directive applies only while the content has no active
+ * instance of the object. An object the content never defines satisfies neither form. The
+ * fixture's first room carries the instance and its second room does not. */
+static int absent_instance_scope_case(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_scoped_override_content_create(&fixture)){
+    fputs("scoped overrides: absent-instance fixture creation failed\n",stderr);
+    return 0;
+  }
+  int ok=0;
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  AnygmEngine *engine=create_loaded_engine(&services,&source);
+  if(!engine) goto done;
+  static const char *const marks[]={"absent_mark","present_mark","missing_mark","missing_present"};
+  for(unsigned i=0;i<sizeof marks/sizeof marks[0];i++)
+    gml_set_global_scalar(&engine->vm,marks[i],0);
+  if(anygm_set_runtime_override(engine,0,1,"?gameres ?noinstance.obj_canvas $absent_mark=1")!=ANYGM_OK ||
+     anygm_set_runtime_override(engine,1,1,"?gameres ?instance.obj_canvas $present_mark=1")!=ANYGM_OK ||
+     anygm_set_runtime_override(engine,2,1,"?gameres ?noinstance.obj_undefined $missing_mark=1")!=ANYGM_OK ||
+     anygm_set_runtime_override(engine,3,1,"?gameres ?instance.obj_undefined $missing_present=1")!=ANYGM_OK)
+    goto done;
+  if(!select_logical_raster(engine,1) || !run_frames(engine,1) ||
+     !check_mark(engine,"instance present","absent_mark",0) ||
+     !check_mark(engine,"instance present","present_mark",1) ||
+     !check_mark(engine,"instance present","missing_mark",0) ||
+     !check_mark(engine,"instance present","missing_present",0)) goto done;
+  gml_set_global_scalar(&engine->vm,"advance",1);
+  if(!run_frames(engine,3)) goto done;
+  if(engine->vm.room_index!=1){
+    fprintf(stderr,"scoped overrides: room did not advance (index %d)\n",engine->vm.room_index);
+    goto done;
+  }
+  if(!check_mark(engine,"instance absent","absent_mark",1) ||
+     !check_mark(engine,"instance absent","present_mark",0) ||
+     !check_mark(engine,"instance absent","missing_mark",0) ||
+     !check_mark(engine,"instance absent","missing_present",0)) goto done;
+  if(!select_logical_raster(engine,0) ||
+     !check_mark(engine,"scope closed","absent_mark",0)) goto done;
+  ok=1;
+done:
+  if(engine) anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 int main(void){
   if(!scoped_override_case()) return 1;
   if(!presentation_crop_case()) return 1;
@@ -737,6 +867,8 @@ int main(void){
   if(!after_draw_case()) return 1;
   if(!after_draw_anchor_state_case()) return 1;
   if(!value_scope_case()) return 1;
+  if(!application_hold_case()) return 1;
+  if(!absent_instance_scope_case()) return 1;
   puts("scoped overrides: ok");
   return 0;
 }

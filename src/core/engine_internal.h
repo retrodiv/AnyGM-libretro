@@ -156,7 +156,7 @@ typedef enum {
   TK_PORT_W, TK_PORT_H
 } CheatTok;
 typedef enum { EF_WINDOW_W=0, EF_WINDOW_H, EF_GUI_W, EF_GUI_H, EF_FBW, EF_FBH,
-               EF_APPLICATION_W, EF_APPLICATION_H,
+               EF_APPLICATION_W, EF_APPLICATION_H, EF_APPLICATION_HOLD,
                EF_PRESENT_SHIFT_X, EF_PRESENT_SHIFT_Y,
                EF_PRESENT_CROP_LEFT, EF_PRESENT_CROP_TOP,
                EF_PRESENT_CROP_RIGHT, EF_PRESENT_CROP_BOTTOM,
@@ -174,6 +174,8 @@ typedef struct {
    * directive that carries no such condition. */
   char scope_global[64];
   char scope_instance[64];
+  /* Non-zero inverts scope_instance: the directive applies only while no such instance exists. */
+  int scope_instance_absent;
   int scope_mode;
   char obj[64];
   char var[64];

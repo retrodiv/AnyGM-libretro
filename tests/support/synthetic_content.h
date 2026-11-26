@@ -177,7 +177,9 @@ int anygm_synthetic_extension_init_content_create(AnygmSyntheticContent *fixture
  * Between them these are the two shapes a scoped override has to be able to give back: a value the
  * content wrote once and never revisits, and a value entering a room rewrites from that room's own
  * record. Advancing on a global rather than on input keeps the room change under the test's
- * control without running any input path. */
+ * control without running any input path. While global.resize_w is positive the instance's Draw
+ * resizes the application surface to resize_w x resize_h and records the extent it then reads
+ * back in global.seen_w and global.seen_h. */
 int anygm_synthetic_scoped_override_content_create(AnygmSyntheticContent *fixture);
 /* Paired synthetic classic fixtures use the same 64x48 view and 128x96 port. One leaves a
  * matching surface bound after the step phase; the other uses ordinary room presentation. */

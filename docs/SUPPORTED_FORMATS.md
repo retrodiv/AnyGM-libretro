@@ -208,7 +208,7 @@ configuration load cannot overwrite the repair. This is suitable for replacing i
 configuration with a stable session policy; in-game changes to that list item take effect only
 after the content override is disabled.
 
-A `?gameres` directive applies only while *Render at game resolution* is selected. It declares an inner logical raster for presentation values that the content scales to a separate output raster. Each scoped directive captures the previous value before its first write and restores it when the selection closes. This includes mutable presentation fields such as `@window_w`, `@window_h`, `@application_w`, and `@application_h`, and also permits a scoped instance-variable or surface-resize directive when its target has one meaningful previous value. Room-owned `view_*` and `background_*` arrays are recaptured on room entry, and their directives settle before the frame's output geometry is published.
+A `?gameres` directive applies only while *Render at game resolution* is selected. It declares an inner logical raster for presentation values that the content scales to a separate output raster. Each scoped directive captures the previous value before its first write and restores it when the selection closes. This includes mutable presentation fields such as `@window_w`, `@window_h`, `@application_w`, `@application_h`, and `@application_hold`, and also permits a scoped instance-variable or surface-resize directive when its target has one meaningful previous value. Room-owned `view_*` and `background_*` arrays are recaptured on room entry, and their directives settle before the frame's output geometry is published.
 
 ```
 [overrides]
@@ -221,6 +221,21 @@ A `?gameres` directive applies only while *Render at game resolution* is selecte
 ?gameres @application_h=240
 # shift the delivered frame from a current global value
 ?gameres @present_shift_y=$global.vertical_offset/2
+```
+
+`@application_hold=1` keeps the application surface at its current extent while content asks to
+resize it. A content `surface_resize(application_surface, w, h)` is recorded instead of applied,
+and releasing the hold applies the latest recorded request. Content that resizes the application
+surface on every Draw would otherwise draw at its own extent before `@application_w` and
+`@application_h` set the native one. Declare the hold together with those two fields:
+
+```
+[overrides]
+?gameres @application_hold=1
+?gameres view_wport[0]=$view_w
+?gameres view_hport[0]=$view_h
+?gameres @application_w=$view_w
+?gameres @application_h=$view_h
 ```
 
 `@present_shift_x` and `@present_shift_y` move the delivered frame by whole pixels and fill the

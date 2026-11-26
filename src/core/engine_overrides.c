@@ -339,8 +339,9 @@ static void cheat_parse_body(const char *code, CheatAct *a){
     memcpy(a->scope_global,n,L); a->scope_global[L]=0;
     while(*s==' '||*s=='\t') s++;
   }
-  if(!strncmp(s,"?instance.",10)){
-    s+=10; const char *name=s;while(*s && CHEAT_NAMECH(*s)) s++;
+  if(!strncmp(s,"?instance.",10) || !strncmp(s,"?noinstance.",12)){
+    a->scope_instance_absent=s[1]=='n';
+    s+=a->scope_instance_absent?12:10; const char *name=s;while(*s && CHEAT_NAMECH(*s)) s++;
     size_t length=(size_t)(s-name);
     if(!length || length>=sizeof a->scope_instance) return;
     memcpy(a->scope_instance,name,length);a->scope_instance[length]=0;
@@ -578,6 +579,7 @@ static void cheat_parse_body(const char *code, CheatAct *a){
     else if(!strcmp(f,"fbh"))      a->eng=EF_FBH;
     else if(!strcmp(f,"application_w")) a->eng=EF_APPLICATION_W;
     else if(!strcmp(f,"application_h")) a->eng=EF_APPLICATION_H;
+    else if(!strcmp(f,"application_hold")) a->eng=EF_APPLICATION_HOLD;
     else if(!strcmp(f,"present_shift_x")) a->eng=EF_PRESENT_SHIFT_X;
     else if(!strcmp(f,"present_shift_y")) a->eng=EF_PRESENT_SHIFT_Y;
     else if(!strcmp(f,"present_crop_left")) a->eng=EF_PRESENT_CROP_LEFT;
@@ -745,6 +747,9 @@ static void cheat_apply_one(AnygmEngine *engine,const CheatAct *a){
             (void)gml_render_application_surface_ensure_owned(
               &engine->render,presentation.application_width,iv);
           break; }
+        case EF_APPLICATION_HOLD:
+          gml_render_application_surface_hold(&engine->render,iv!=0);
+          break;
         case EF_COMPOSITOR: case EF_CENTER_VIEW_TARGET: case EF_WIDE_GAMEPLAY_VIEW: break; /* queried by aspect helpers */
       }
       break; }
@@ -755,7 +760,11 @@ static int cheat_scope_instance_ok(AnygmEngine *engine,const CheatAct *a){
   if(!a->scope_instance[0]) return 1;
   if(!engine->loaded) return 0;
   int object=gml_object_index_by_name(&engine->vm,a->scope_instance);
-  return object>=0 && gml_find_instance(&engine->vm,object)!=NULL;
+  /* An object the content does not define never satisfies either form, so a misspelt name
+   * leaves the directive inactive rather than permanently on. */
+  if(object<0) return 0;
+  int present=gml_find_instance(&engine->vm,object)!=NULL;
+  return a->scope_instance_absent?!present:present;
 }
 static bool cheat_crt_scope_ok(const AnygmEngine *engine,CheatCrtScope scope){
   return engine->config.present_logical_raster && engine->config.adjust_crt_tv &&
@@ -1146,7 +1155,8 @@ static int boot_same_target(const CheatSlot *left,const CheatSlot *right){
      a->scope_monitor!=b->scope_monitor || a->scope_gameres!=b->scope_gameres ||
      a->scope_crt!=b->scope_crt || a->scope_sync!=b->scope_sync ||
      a->scope_mode!=b->scope_mode || strcmp(a->scope_global,b->scope_global) ||
-     strcmp(a->scope_instance,b->scope_instance)) return 0;
+     strcmp(a->scope_instance,b->scope_instance) ||
+     a->scope_instance_absent!=b->scope_instance_absent) return 0;
   if(a->kind==CK_GSCALAR_CALL) return !strcmp(a->obj,b->obj);
   if(a->kind!=CK_NONE)
     return !strcmp(a->obj,b->obj) && !strcmp(a->var,b->var) &&
@@ -1483,6 +1493,10 @@ static void cheat_slot_capture(AnygmEngine *engine,CheatSlot *slot){
             slot->saved_valid=1;
           }
           break; }
+        case EF_APPLICATION_HOLD:
+          slot->saved=gml_render_application_surface_held(&engine->render);
+          slot->saved_valid=1;
+          break;
         default: break;
       }
       break;

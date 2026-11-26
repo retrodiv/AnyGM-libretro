@@ -479,6 +479,10 @@ An optional `?instance.object_name` condition after the presentation/global cond
 an active instance of that object (including descendants). Use it when a layout target is shared
 by several rooms. A synchronized layout does not execute its withdrawal calculation after that
 owner disappears, so a title-only policy cannot reposition a newly entered room's shared objects.
+`?noinstance.object_name` is the inverse: the directive applies only while no active instance of
+that object exists, and withdraws, restoring its captured value, when one appears. Use it to keep
+a policy out of the rooms that one controller marks. An object name the content does not define
+satisfies neither form, so a misspelt name leaves the directive inactive.
 
 `$port_w` and `$port_h` read the current `view_wport[0]` and `view_hport[0]`. Use these for
 port-relative layout rather than `$view_w`/`$view_h`, which read the authored legacy view arrays:

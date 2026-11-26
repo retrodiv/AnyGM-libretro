@@ -433,7 +433,11 @@ int anygm_synthetic_scoped_override_content_create(AnygmSyntheticContent *fixtur
   if(!write_text(startup,
                  "global.advance = 0;\n"
                  "global.overlay_like = 1;\n"
-                 "global.step_saw = -1;\n") ||
+                 "global.step_saw = -1;\n"
+                 "global.resize_w = 0;\n"
+                 "global.resize_h = 0;\n"
+                 "global.seen_w = -1;\n"
+                 "global.seen_h = -1;\n") ||
      !write_text(create,"scale = 3;\n") ||
      !write_text(draw,
                  "draw_set_color(16777215);\n"
@@ -441,7 +445,12 @@ int anygm_synthetic_scoped_override_content_create(AnygmSyntheticContent *fixtur
                  "if (global.overlay_like == 0)"
                  " { draw_set_color(255); draw_rectangle(0,0,7,7,0); }\n"
                  "if (global.step_saw == 1)"
-                 " { draw_set_color(65280); draw_rectangle(56,0,63,7,0); }\n") ||
+                 " { draw_set_color(65280); draw_rectangle(56,0,63,7,0); }\n"
+                 /* A content-owned application-surface resize, read back within the same draw. */
+                 "if (global.resize_w > 0) {"
+                 " surface_resize(application_surface, global.resize_w, global.resize_h);"
+                 " global.seen_w = surface_get_width(application_surface);"
+                 " global.seen_h = surface_get_height(application_surface); }\n") ||
      !write_text(step,
                  "global.step_saw = global.overlay_like;\n"
                  "if (global.advance == 1) { global.advance = 0; room_goto_next(); }\n")){

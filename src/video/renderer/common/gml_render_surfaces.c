@@ -5079,6 +5079,20 @@ static int application_surface_resize(GmlRender *r,int w,int h){
 int gml_render_application_surface_ensure_owned(GmlRender *r,int w,int h){
   return application_surface_resize(r,w,h);
 }
+void gml_render_application_surface_hold(GmlRender *r,int hold){
+  if(!r) return;
+  hold=hold!=0;
+  if(r->app_surface_hold==hold) return;
+  r->app_surface_hold=hold;
+  if(hold || !r->app_surface_hold_pending) return;
+  /* The content asked for this extent while the hold was in place; it is the extent the content
+   * expects once presentation policy no longer owns the surface. */
+  r->app_surface_hold_pending=0;
+  (void)application_surface_resize(r,r->app_surface_hold_w,r->app_surface_hold_h);
+}
+int gml_render_application_surface_held(const GmlRender *r){
+  return r && r->app_surface_hold;
+}
 void gml_surface_resize(GmlRender *r, int id, int w, int h){
   if(!r || w<=0 || h<=0 || w>4096 || h>4096) return;
   if(r->pending_presentation && r->presentation.shader>=0 &&
@@ -5087,6 +5101,13 @@ void gml_surface_resize(GmlRender *r, int id, int w, int h){
   if(id==0){
     /* Surface zero follows the same explicit resize request in every generation. */
     if(!r->win) return;
+    if(r->app_surface_hold){
+      r->app_surface_hold_pending=1;
+      r->app_surface_hold_w=w;
+      r->app_surface_hold_h=h;
+      if(render_setting(r,"GML_LOG_SURF")) anygm_host_logf(r->win->host,ANYGM_LOG_DEBUG,"[surf] held application_surface %dx%d (request %dx%d)\n",r->app_w,r->app_h,w,h);
+      return;
+    }
     if(render_setting(r,"GML_LOG_SURF")) anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[surf] resize application_surface %dx%d (was %dx%d)\n",w,h,r->app_w,r->app_h);
     (void)application_surface_resize(r,w,h);
     return;

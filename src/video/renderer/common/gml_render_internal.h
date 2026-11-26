@@ -428,6 +428,10 @@ typedef struct GmlRender {
                               * next frame to supersample that pass so its bilinear bloom renders. */
   int app_w, app_h;                             /* app_surface dims (the view render size) */
   int app_surface_opaque;                       /* host/render metadata: every app pixel has alpha 255 */
+  /* While held, a content resize of surface 0 is recorded instead of applied; releasing the hold
+   * applies the latest recorded request. Presentation policy owns the hold, content never does. */
+  int app_surface_hold;
+  int app_surface_hold_pending,app_surface_hold_w,app_surface_hold_h;
   /* Coverage for the automatic first-generation screen composite. Explicit surface-0 draws read
    * the ordinary alpha stored in app_surface instead. */
   uint8_t *app_presentation_coverage;
