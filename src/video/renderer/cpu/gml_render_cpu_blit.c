@@ -5914,6 +5914,15 @@ int gml_render_rotated_sprite_placement(GmlRender *r,GmlSprite *sprite,GmlTpag *
     x,y,xs,ys,rotation,0,1,&geometry);
   if(result<=0) return result;
   placement->use_row_span=r->interp && rotated_geometry_uses_row_span(&geometry);
+  placement->filter_alpha_support=0;
+  placement->inverse_anchor[0]=geometry.ax;
+  placement->inverse_anchor[1]=geometry.ay;
+  placement->rotation[0]=geometry.c;
+  placement->rotation[1]=geometry.sn;
+  placement->inverse_scale[0]=geometry.invxs;
+  placement->inverse_scale[1]=geometry.invys;
+  placement->sprite_origin[0]=sprite->originx;
+  placement->sprite_origin[1]=sprite->originy;
   placement->padded_bounds=(GmlRenderRect){geometry.x0,geometry.y0,
     (uint32_t)(geometry.x1-geometry.x0),(uint32_t)(geometry.y1-geometry.y0)};
   memcpy(placement->x,geometry.qx,sizeof placement->x);

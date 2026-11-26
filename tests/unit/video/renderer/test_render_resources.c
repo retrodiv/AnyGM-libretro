@@ -20474,26 +20474,31 @@ static int resident_filtered_rotated_text_taps(void){
   GmlTpag page={.sx=1,.sy=1,.sw=2,.sh=2,.tw=2,.th=2,.tx=1,.ty=1,.bw=4,.bh=4};
   const int submits=fake.submits;
   r->atlas[0].px[3]=0u;
-  CHECK(!gml_render_resident_rotated_font_glyph(r,&sprite,&page,9,8,.75,-.75,45,0xFFFFFFu,1));
-  CHECK(gml_render_scene_submit_pending(r) && fake.submits==submits);
+  CHECK(gml_render_resident_rotated_font_glyph(r,&sprite,&page,9,8,.75,-.75,45,0xFFFFFFu,1));
+  CHECK(gml_render_scene_submit_pending(r) && fake.submits==submits+1);
+  CHECK(fake.last_quantisation==GML_RENDER_QUANTISE_FILTERED_ROTATED_ALPHA &&
+        fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR && !fake.readbacks);
   r->atlas[0].px[3]=255u;
   CHECK(!gml_render_resident_rotated_font_glyph(r,&sprite,&page,9,8,.75,-.75,45,0xFFFFFFu,0x1p-9));
   CHECK(!gml_render_resident_rotated_font_glyph(r,&sprite,&page,9,8,.75,-65,45,0xFFFFFFu,1));
-  CHECK(gml_render_scene_submit_pending(r) && fake.submits==submits);
-  CHECK(gml_render_resident_rotated_font_glyph(r,&sprite,&page,9,8,.75,-.75,45,0xFFFFFFu,1));
   CHECK(gml_render_scene_submit_pending(r) && fake.submits==submits+1);
-  CHECK(fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR && !fake.readbacks);
-  CHECK(gml_render_resident_rotated_font_glyph(r,&sprite,&page,9,8,8,-8,.5,0xFFFFFFu,1));
+  CHECK(gml_render_resident_rotated_font_glyph(r,&sprite,&page,9,8,.75,-.75,45,0xFFFFFFu,1));
   CHECK(gml_render_scene_submit_pending(r) && fake.submits==submits+2);
-  CHECK(fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR && !fake.readbacks);
-  CHECK(gml_render_resident_rotated_font_glyph(r,&sprite,&page,9,8,8,-8,.5,0xFFFFFFu,.75));
+  CHECK(fake.last_quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN &&
+        fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR && !fake.readbacks);
+  CHECK(gml_render_resident_rotated_font_glyph(r,&sprite,&page,9,8,8,-8,.5,0xFFFFFFu,1));
   CHECK(gml_render_scene_submit_pending(r) && fake.submits==submits+3);
+  CHECK(fake.last_quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN &&
+        fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR && !fake.readbacks);
+  CHECK(gml_render_resident_rotated_font_glyph(r,&sprite,&page,9,8,8,-8,.5,0xFFFFFFu,.75));
+  CHECK(gml_render_scene_submit_pending(r) && fake.submits==submits+4);
   CHECK(fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
         fake.last_filtered_draw_alpha==.75 && !fake.readbacks);
   r->atlas[0].px[3]=128u;
   CHECK(gml_render_resident_rotated_font_glyph(r,&sprite,&page,9,8,8,-8,.5,0xFFFFFFu,.75));
-  CHECK(gml_render_scene_submit_pending(r) && fake.submits==submits+4);
-  CHECK(fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR && !fake.readbacks);
+  CHECK(gml_render_scene_submit_pending(r) && fake.submits==submits+5);
+  CHECK(fake.last_quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN &&
+        fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR && !fake.readbacks);
   gml_render_free(r);free(r);
   return 1;
 }

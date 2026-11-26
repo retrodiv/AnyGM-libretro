@@ -1509,6 +1509,20 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     quad->v[2]=quad->v[3]=((double)crop->y+crop->height)/source.height;
     if(family==GML_RENDER_SCENE_TEXT && r->interp){
       quad->sampling.filter=GML_RENDER_FILTER_HARDWARE_BILINEAR;
+      if(native_geometry->filter_alpha_support){
+        /* Filtering still sees the physical crop and its logical apron.
+         * The CPU's nonzero bounds remain the source of the clipped span. */
+        quad->sampling.quantisation=GML_RENDER_QUANTISE_FILTERED_ROTATED_ALPHA;
+        quad->sampling.source_region=(GmlRenderRect){page->sx,page->sy,page->sw,page->sh};
+        quad->filtered_rotation_bounds=*crop;
+        memcpy(quad->inverse_anchor,native_geometry->inverse_anchor,sizeof quad->inverse_anchor);
+        memcpy(quad->inverse_x,native_geometry->rotation,sizeof quad->inverse_x);
+        memcpy(quad->inverse_y,native_geometry->inverse_scale,sizeof quad->inverse_y);
+        quad->inverse_offset[0]=native_geometry->sprite_origin[0];
+        quad->inverse_offset[1]=native_geometry->sprite_origin[1];
+        quad->filtered_rotation_trim[0]=page->tx;
+        quad->filtered_rotation_trim[1]=page->ty;
+      }
       unsigned margins=(page->tx?GML_RENDER_MARGIN_LEFT:0u) |
         (page->ty?GML_RENDER_MARGIN_TOP:0u) |
         (page->sw+page->tx<page->bw?GML_RENDER_MARGIN_RIGHT:0u) |
@@ -1530,7 +1544,9 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
       const double uy=(y[1]-y[0])*halo/crop->width;
       const double vx=(x[3]-x[0])*halo/crop->height;
       const double vy=(y[3]-y[0])*halo/crop->height;
-      if(!quad->span_active && (fabs(ux)+fabs(vx)>1.0 || fabs(uy)+fabs(vy)>1.0)){
+      const GmlRenderRect physical=quad->sampling.source_region;
+      const int expanded=crop->width!=physical.width || crop->height!=physical.height;
+      if(!quad->span_active && (expanded || fabs(ux)+fabs(vx)>1.0 || fabs(uy)+fabs(vy)>1.0)){
         const GmlRenderRect *bounds=&native_geometry->padded_bounds;
         quad->span_x[0]=bounds->x;
         quad->span_x[1]=(double)bounds->x+bounds->width;
@@ -1541,10 +1557,14 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
       for(unsigned c=0;c<4u;c++){
         const int sx=(c==1u || c==2u)?1:-1;
         const int sy=c>=2u?1:-1;
-        quad->x[c]+=sx*ux+sy*vx;
-        quad->y[c]+=sx*uy+sy*vy;
-        quad->u[c]=((double)crop->x+(sx>0?crop->width+halo:-halo))/source.width;
-        quad->v[c]=((double)crop->y+(sy>0?crop->height+halo:-halo))/source.height;
+        const double du=sx>0?(double)physical.x+physical.width-crop->x-crop->width:
+          (double)physical.x-crop->x;
+        const double dv=sy>0?(double)physical.y+physical.height-crop->y-crop->height:
+          (double)physical.y-crop->y;
+        quad->x[c]+=(sx+du/halo)*ux+(sy+dv/halo)*vx;
+        quad->y[c]+=(sx+du/halo)*uy+(sy+dv/halo)*vy;
+        quad->u[c]=((double)physical.x+(sx>0?physical.width+halo:-halo))/source.width;
+        quad->v[c]=((double)physical.y+(sy>0?physical.height+halo:-halo))/source.height;
       }
     }
   }
@@ -4593,11 +4613,15 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     /* No raw alpha byte can pass the inclusive endpoint. */
     if(r->alpha_test_enable && r->alpha_test_ref==255u) return 1;
     resident_classify_page(r,page,atlas);
-    if(filtered_text && !resident_rotated_text_positive_taps(r,page,atlas)) return 0;
+    const int filter_alpha_support=filtered_text && !resident_rotated_text_positive_taps(r,page,atlas);
     GmlRenderRotatedPlacement placement;
-    int placed=gml_render_rotated_sprite_placement(r,sprite,page,x,y,xs,ys,phase,&placement);
-    if(placed>0) for(unsigned corner=0;corner<4u;corner++)
-      if(fabs(placement.x[corner])>65536.0 || fabs(placement.y[corner])>65536.0) return 0;
+    int placed=gml_render_rotated_sprite_placement(r,sprite,page,x,y,xs,ys,
+      filter_alpha_support?rotation:phase,&placement);
+    if(placed>0){
+      placement.filter_alpha_support=filter_alpha_support;
+      for(unsigned corner=0;corner<4u;corner++)
+        if(fabs(placement.x[corner])>65536.0 || fabs(placement.y[corner])>65536.0) return 0;
+    }
     /* Real glyph views name the same physical crop without logical dimensions. */
     GmlTpag selected=*page;
     selected.tw=selected.sw;selected.th=selected.sh;

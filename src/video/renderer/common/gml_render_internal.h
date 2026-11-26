@@ -939,6 +939,9 @@ typedef struct GmlRenderRotatedPlacement {
   GmlRenderRect source_region;
   GmlRenderRect padded_bounds;
   int use_row_span;
+  int filter_alpha_support;
+  double inverse_anchor[2],rotation[2],inverse_scale[2];
+  int sprite_origin[2];
 } GmlRenderRotatedPlacement;
 /* Reuse CPU vertex placement without walking destination coverage. Returns
  * one for placed geometry, zero for an empty draw, and minus one if invalid. */

@@ -199,6 +199,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
      quad->sampling.quantisation==GML_RENDER_QUANTISE_VIEW_TEXT ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_VIEW_TILE ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN ||
+     quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_ROTATED_ALPHA ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION ||
      (op->scene_family==GML_RENDER_SCENE_SURFACE &&
       quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC));
@@ -305,6 +306,23 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     if(!isfinite(quad->filtered_draw_alpha) || quad->filtered_draw_alpha<=0.0 ||
        quad->filtered_draw_alpha>1.0) return 0;
   }
+  const int filtered_rotation=quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_ROTATED_ALPHA;
+  float rotation_words[18];
+  if(filtered_rotation){
+    /* Uniform colour and rectangular texture coordinates leave room in the
+     * instance for packed binary64 operands without changing stream layout. */
+    const double transform[]={quad->inverse_anchor[0],quad->inverse_anchor[1],
+                              quad->inverse_x[0],quad->inverse_x[1],
+                              quad->inverse_y[0],quad->inverse_y[1]};
+    for(unsigned operand=0;operand<6u;operand++){
+      uint64_t bits;
+      memcpy(&bits,&transform[operand],sizeof bits);
+      float *words=rotation_words+3u*operand;
+      words[0]=(float)(bits&0x3fffffu);
+      words[1]=(float)((bits>>22u)&0x3fffffu);
+      words[2]=(float)(bits>>44u);
+    }
+  }
   for(uint32_t index=0;index<6;index++){
     uint32_t corner=corners[index];
     uint32_t colour=quad->corner_colour[corner];
@@ -317,6 +335,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
         !gml_gpu_opengl_clamped_background_valid(op,state,source_width,source_height) &&
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN &&
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN &&
+        quad->sampling.quantisation!=GML_RENDER_QUANTISE_FILTERED_ROTATED_ALPHA &&
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SURFACE_LEADING &&
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_TILED_LEADING &&
         !(quad->sampling.quantisation==GML_RENDER_QUANTISE_POSITIONED_SAMPLE &&
@@ -399,6 +418,16 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
       vertex[15]=(float)quad->inverse_y[1];
       vertex[16]=rendered_source_origin?1.0f:0.0f;
       vertex[17]=(float)op->target.height;
+    }
+    if(filtered_rotation){
+      memcpy(vertex+12u,rotation_words,6u*sizeof(float));
+      if(corner) memcpy(vertex+4u,rotation_words+6u+(corner-1u)*4u,4u*sizeof(float));
+      if(corner==1u) vertex[3]=(float)quad->inverse_offset[0];
+      if(corner==2u) vertex[2]=(float)quad->inverse_offset[1];
+      if(corner==3u){
+        vertex[2]=(float)quad->filtered_rotation_trim[0];
+        vertex[3]=(float)quad->filtered_rotation_trim[1];
+      }
     }
     vertex[18]=quad->sampling.edge_rule==GML_RENDER_EDGE_TRANSPARENT
       ?16.0f+(float)quad->sampling.logical_margin_mask

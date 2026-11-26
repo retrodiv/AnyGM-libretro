@@ -225,7 +225,9 @@ enum {
   /* Ordered point or box sampling over one logical repeat grid. Each span vector carries
    * the binary64 phase, period, camera and integral cell count for its axis. UV winding
    * selects the source orientation without changing the destination grid. */
-  GML_RENDER_QUANTISE_SURFACE_REPEAT=36u
+  GML_RENDER_QUANTISE_SURFACE_REPEAT=36u,
+  /* Native rotated atlas colour with coverage from the original inverse transform. */
+  GML_RENDER_QUANTISE_FILTERED_ROTATED_ALPHA=37u
 };
 
 /* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors
@@ -470,6 +472,10 @@ typedef struct GmlRenderQuad {
   double font_sdf_width;
   /* Ordered surface repeats carry the selected CPU sampling and coverage policies. */
   uint32_t surface_repeat_flags;
+  /* Filtered rotation separates the source colour crop from the alpha bounds.
+   * The inverse pairs hold anchor, cosine/sine, reciprocal scales and sprite origin. */
+  GmlRenderRect filtered_rotation_bounds;
+  int32_t filtered_rotation_trim[2];
 } GmlRenderQuad;
 
 enum {

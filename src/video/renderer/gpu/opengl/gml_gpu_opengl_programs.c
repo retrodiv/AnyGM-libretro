@@ -180,15 +180,18 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
     ?GML_GPU_OPENGL_PREFIX_ES:GML_GPU_OPENGL_PREFIX_DESKTOP;
   char vertex_source[sizeof(GML_GPU_OPENGL_PREFIX_ES)+
                      sizeof(GML_GPU_OPENGL_PREFIX_DESKTOP)+
-                     sizeof(GML_GPU_OPENGL_SCENE_INSTANCED_VERTEX_BODY)];
+                     sizeof(GML_GPU_OPENGL_SCENE_INSTANCED_VERTEX_BODY)+64u];
   char fragment_source[sizeof(GML_GPU_OPENGL_PREFIX_ES)+
                        sizeof(GML_GPU_OPENGL_PREFIX_DESKTOP)+sizeof(GML_GPU_OPENGL_SCENE_SURFACE_FRAGMENT_BODY)+128u];
   GLuint vertex,fragment;
   GLint status=GL_FALSE;
   if(scene->program) return 1;
   scene->identity_surface_body=description->surface_body;
-  int vertex_length=snprintf(vertex_source,sizeof vertex_source,"%s%s",prefix,
-                             GML_GPU_OPENGL_SCENE_INSTANCED_VERTEX_BODY);
+  const char *vertex_defines=variant==GL_SCENE_PROGRAM_FILTERED_ROTATION_COLOUR ||
+    variant==GL_SCENE_PROGRAM_FILTERED_ROTATION_STAMP
+    ?"#define GML_SCENE_FILTERED_ROTATION_SUPPORT 1\n":"";
+  int vertex_length=snprintf(vertex_source,sizeof vertex_source,"%s%s%s",prefix,
+                             vertex_defines,GML_GPU_OPENGL_SCENE_INSTANCED_VERTEX_BODY);
   int fragment_length=snprintf(fragment_source,sizeof fragment_source,"%s%s%s",prefix,
                                description->defines,
                                description->surface_body?GML_GPU_OPENGL_SCENE_SURFACE_FRAGMENT_BODY:
@@ -319,6 +322,8 @@ static GlSceneProgramVariant scene_program_variant(uint32_t filter,int native_fl
   case GL_SCENE_SURFACE_CUTOFF_FILTER:return GL_SCENE_PROGRAM_SURFACE_CUTOFF;
   case GL_SCENE_SURFACE_CUTOFF_STAMP_FILTER:return GL_SCENE_PROGRAM_SURFACE_CUTOFF_STAMP;
   case GL_SCENE_SURFACE_CUTOFF_PRESERVING_FILTER:return GL_SCENE_PROGRAM_SURFACE_CUTOFF_PRESERVING;
+  case GL_SCENE_FILTERED_ROTATION_COLOUR_FILTER:return GL_SCENE_PROGRAM_FILTERED_ROTATION_COLOUR;
+  case GL_SCENE_FILTERED_ROTATION_STAMP_FILTER:return GL_SCENE_PROGRAM_FILTERED_ROTATION_STAMP;
   case 186u:return GL_SCENE_PROGRAM_CONSTANT_186;
   case 187u:return GL_SCENE_PROGRAM_CONSTANT_187;
   case 188u:return GL_SCENE_PROGRAM_CONSTANT_188;

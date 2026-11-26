@@ -819,6 +819,7 @@ int gml_render_application_scene_enqueue_quads(GmlRender *r,
      (operation->payload.quad.sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
       (operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN ||
        operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN ||
+       operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_ROTATED_ALPHA ||
        operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_POSITIONED_SAMPLE ||
        (operation->payload.quad.span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW &&
         (operation->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC ||

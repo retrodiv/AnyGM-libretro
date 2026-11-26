@@ -516,11 +516,22 @@
   "flat out vec4 v_span_x;\n" \
   "flat out vec4 v_span_y;\n" \
   "flat out float v_span_active;\n" \
+  "#ifdef GML_SCENE_FILTERED_ROTATION_SUPPORT\n" \
+  "flat out vec4 v_rotation0,v_rotation1,v_rotation2,v_origin_trim;\n" \
+  "#endif\n" \
   "void main(){\n" \
   "  int corner=(gl_VertexID==0 || gl_VertexID==3)?0:(gl_VertexID==1?1:((gl_VertexID==2 || gl_VertexID==4)?2:3));\n" \
   "  vec2 position=corner==0?in_Position01.xy:(corner==1?in_Position01.zw:(corner==2?in_Position23.xy:in_Position23.zw));\n" \
+  "#ifdef GML_SCENE_FILTERED_ROTATION_SUPPORT\n" \
+  "  vec2 texcoord=vec2((corner==1 || corner==2)?in_TextureCoord01.z:in_TextureCoord01.x,\n" \
+  "                     corner>=2?in_TextureCoord23.y:in_TextureCoord01.y);\n" \
+  "  vec4 colour=in_Colour0;\n" \
+  "  v_rotation0=in_Colour1;v_rotation1=in_Colour2;v_rotation2=in_Colour3;\n" \
+  "  v_origin_trim=vec4(in_TextureCoord01.w,in_TextureCoord23.x,in_TextureCoord23.zw);\n" \
+  "#else\n" \
   "  vec2 texcoord=corner==0?in_TextureCoord01.xy:(corner==1?in_TextureCoord01.zw:(corner==2?in_TextureCoord23.xy:in_TextureCoord23.zw));\n" \
   "  vec4 colour=corner==0?in_Colour0:(corner==1?in_Colour1:(corner==2?in_Colour2:in_Colour3));\n" \
+  "#endif\n" \
   "  gl_Position=vec4(2.0*position.x/u_extent.x-1.0,1.0-2.0*position.y/u_extent.y,0.0,1.0);\n" \
   "  if(u_extent.y<0.0) gl_Position.y=-(1.0-2.0*position.y/(-u_extent.y));\n" \
   "  v_texcoord=texcoord;\n" \
@@ -727,6 +738,38 @@
   "  if(any(lessThan(at,ivec2(0))) || any(greaterThanEqual(at,extent))) return vec4(0.0);\n" \
   "  return floor(source_texel(at,0)*255.0+0.5);\n" \
   "}\n" \
+  "#ifdef GML_SCENE_FILTERED_ROTATION_SUPPORT\n" \
+  "flat in vec4 v_rotation0,v_rotation1,v_rotation2,v_origin_trim;\n" \
+  GML_GPU_OPENGL_BINARY64_BODY \
+  "uvec2 glyph_operand(vec3 packed_words){\n" \
+  "  uvec3 words=uvec3(packed_words);\n" \
+  "  return uvec2(words.x|(words.y<<22u),(words.y>>10u)|(words.z<<12u));\n" \
+  "}\n" \
+  "bool glyph_source_inside(uvec2 value,int size){\n" \
+  "  if((value.y&0x80000000u)==0u) return limb_less(value,d64_int(size));\n" \
+  "  value.y&=0x7fffffffu;\n" \
+  "  return !limb_less(uvec2(0u,0x3ff00000u),value);\n" \
+  "}\n" \
+  "bool glyph_inverse_source(vec2 centre,ivec2 size,out ivec2 cell,out bvec2 positive){\n" \
+  "  uvec2 half_unit=uvec2(0u,0x3fe00000u);\n" \
+  "  uvec2 x=d64_add(d64_int(int(centre.x)),half_unit);\n" \
+  "  uvec2 y=d64_add(d64_int(int(centre.y)),half_unit);\n" \
+  "  uvec2 dx=d64_sub(x,glyph_operand(v_map.xyz));\n" \
+  "  uvec2 dy=d64_sub(y,glyph_operand(vec3(v_map.w,v_step)));\n" \
+  "  uvec2 c=glyph_operand(v_rotation0.xyz);\n" \
+  "  uvec2 sn=glyph_operand(vec3(v_rotation0.w,v_rotation1.xy));\n" \
+  "  uvec2 sx=glyph_operand(vec3(v_rotation1.zw,v_rotation2.x));\n" \
+  "  uvec2 sy=glyph_operand(v_rotation2.yzw);\n" \
+  "  uvec2 u=d64_mul(d64_sub(d64_mul(dx,c),d64_mul(dy,sn)),sx);\n" \
+  "  uvec2 v=d64_mul(d64_add(d64_mul(dx,sn),d64_mul(dy,c)),sy);\n" \
+  "  u=d64_sub(d64_sub(d64_add(u,d64_int(int(v_origin_trim.x))),d64_int(int(v_origin_trim.z))),half_unit);\n" \
+  "  v=d64_sub(d64_sub(d64_add(v,d64_int(int(v_origin_trim.y))),d64_int(int(v_origin_trim.w))),half_unit);\n" \
+  "  if(!glyph_source_inside(u,size.x) || !glyph_source_inside(v,size.y)) return false;\n" \
+  "  cell=ivec2(d64_floor(u),d64_floor(v));\n" \
+  "  positive=bvec2(!d64_zero(d64_sub(u,d64_int(cell.x))),!d64_zero(d64_sub(v,d64_int(cell.y))));\n" \
+  "  return true;\n" \
+  "}\n" \
+  "#endif\n" \
   "#if defined(GML_SCENE_RAW_POSITIVE_ALPHA) || defined(GML_SCENE_BYTE_POSITIVE_ALPHA)\n" \
   GML_GPU_OPENGL_BINARY64_BODY \
   "uvec2 background_operand(vec3 packed_words){\n" \
@@ -1433,6 +1476,19 @@
   "           centre.y<v_span_y.x || centre.y>=v_span_y.y) discard;\n" \
   "      }else if(!rotated_span_contains(centre)) discard;\n" \
   "    }\n" \
+  "#ifdef GML_SCENE_FILTERED_ROTATION_SUPPORT\n" \
+  "    {\n" \
+  "      ivec2 first=ivec2(v_clamp.xy),last=ivec2(v_clamp.zw)-first,cell;\n" \
+  "      bvec2 phase;\n" \
+  "      if(!glyph_inverse_source(vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y),last+ivec2(1),cell,phase)) discard;\n" \
+  "      bool supported=margin_tap(cell,first,last,margin).a>0.0 ||\n" \
+  "        (phase.x && margin_tap(cell+ivec2(1,0),first,last,margin).a>0.0) ||\n" \
+  "        (phase.y && margin_tap(cell+ivec2(0,1),first,last,margin).a>0.0) ||\n" \
+  "        (phase.x && phase.y && margin_tap(cell+ivec2(1),first,last,margin).a>0.0);\n" \
+  "      if(v_colour.a<=0.0 || !supported) discard;\n" \
+  "      if(u_filter==82){o_color=vec4(0.0,0.0,0.0,1.0);return;}\n" \
+  "    }\n" \
+  "#endif\n" \
   "    bool unit_texel=margin==16;\n" \
   "    vec4 sampled=unit_texel?source_texel(ivec2(floor(uv*extent)),0):\n" \
   "      margin!=0?hardware_physical_sprite_sample(v_texcoord,\n" \

@@ -411,6 +411,7 @@ static uint32_t scene_filter(const GmlRenderQuad *quad,
       return 21u;
     return quad->sampling.filter==GML_RENDER_FILTER_BOX?75u:77u;
   }
+  if(quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_ROTATED_ALPHA) return GL_SCENE_FILTERED_ROTATION_COLOUR_FILTER;
   if(quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN)
     return (quad->span_active==GML_RENDER_SPAN_FILTERED_POSITIVE_ROW ||
             quad->span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW)
@@ -1424,7 +1425,8 @@ static int hardware_screen_stretch_valid(const GmlRenderDrawOp *op,
 static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
   const GmlRenderDrawStateSnapshot *state,const GlSceneImage *source){
   const GmlRenderQuad *quad=&op->payload.quad;
-  GmlRenderRect crop=quad->sampling.source_region;
+  GmlRenderRect physical=quad->sampling.source_region,crop=physical;
+  const int alpha_support=quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_ROTATED_ALPHA;
   int binary_numbered=op->target.image.resource_class==GML_RENDER_RESOURCE_SURFACE &&
     quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION &&
     state->write_mask==15u && state->alpha_test_enabled<=1u &&
@@ -1440,7 +1442,7 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
     op->target.image.resource_class==GML_RENDER_RESOURCE_SURFACE &&
     state->write_mask==7u && !state->alpha_test_enabled && !state->alpha_test_reference &&
     !state->coverage_policy && qualified_blend(state)==3;
-  int screen=quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN &&
+  int screen=(quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN || alpha_support) &&
     (op->target.image.resource_class==GML_RENDER_RESOURCE_SCREEN ||
               op->target.image.resource_class==GML_RENDER_RESOURCE_APPLICATION) &&
     state->write_mask==15u && state->alpha_test_enabled<=1u && state->alpha_test_reference<=255u &&
@@ -1453,6 +1455,27 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
     crop.width<=256u && crop.height<=256u;
   const int filtered_text=screen_text && !state->alpha_test_enabled &&
     quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR;
+  if(alpha_support){
+    if(!filtered_text || op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN ||
+       state->sampler_count!=1u ||
+       memcmp(&state->samplers[0],&quad->sampling,sizeof quad->sampling)) return 0;
+    crop=quad->filtered_rotation_bounds;
+    if(crop.x<physical.x || crop.y<physical.y || !crop.width || !crop.height ||
+       (int64_t)crop.x+crop.width>(int64_t)physical.x+physical.width ||
+       (int64_t)crop.y+crop.height>(int64_t)physical.y+physical.height) return 0;
+    for(unsigned axis=0;axis<2u;axis++){
+      if(!isfinite(quad->inverse_anchor[axis]) ||
+         fabs(quad->inverse_anchor[axis])>0x1p31 ||
+         !isfinite(quad->inverse_x[axis]) || fabs(quad->inverse_x[axis])>1.0 ||
+         !isfinite(quad->inverse_y[axis]) || fabs(quad->inverse_y[axis])<0x1p-6 ||
+         fabs(quad->inverse_y[axis])>16.0 || !isfinite(quad->inverse_offset[axis]) ||
+         fabs(quad->inverse_offset[axis])>0x1p24 ||
+         trunc(quad->inverse_offset[axis])!=quad->inverse_offset[axis] ||
+         quad->filtered_rotation_trim[axis]<0 ||
+         quad->filtered_rotation_trim[axis]>0x1000000) return 0;
+    }
+    if((crop.width!=physical.width || crop.height!=physical.height) && !quad->span_active) return 0;
+  }
   const int padded_box=filtered_text && quad->span_active==GML_RENDER_SPAN_FILTERED_PADDED_BOX;
   if(!source || !source->width || !source->height || source->rendered_origin ||
      source->width>16384u || source->height>16384u ||
@@ -1465,15 +1488,15 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
      quad->shape!=GML_RENDER_QUAD_GENERAL ||
      (!padded_box && quad->span_active>(filtered_text?1u:0u)) ||
      quad->source_endpoint_rgb_mask ||
-     (quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN &&
+     (!alpha_support && quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN &&
       quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION) ||
      (quad->sampling.filter!=GML_RENDER_FILTER_NEAREST && !filtered_text) ||
      (quad->sampling.logical_margin_mask
       ?!filtered_text || quad->sampling.logical_margin_mask>15u ||
        quad->sampling.edge_rule!=GML_RENDER_EDGE_LOGICAL_TPAG
       :quad->sampling.edge_rule!=GML_RENDER_EDGE_CLAMP_SUBIMAGE) ||
-     !valid_region(crop,source->width,source->height) ||
-     crop.width>4096u || crop.height>4096u ||
+     !valid_region(physical,source->width,source->height) ||
+     physical.width>4096u || physical.height>4096u ||
      state->alpha!=255u || state->colour!=0xFFFFFFFFu || state->source_alpha_key ||
      state->source_palette.enabled ||
      !isfinite(quad->filtered_draw_alpha) || quad->filtered_draw_alpha<=0.0 ||
@@ -1490,16 +1513,18 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
     if(quad->span_active==1u){
       const int sx=(corner==1u || corner==2u)?1:-1;
       const int sy=corner>=2u?1:-1;
-      const double ux=(quad->x[1]-quad->x[0])/(2.0*(crop.width+1u));
-      const double uy=(quad->y[1]-quad->y[0])/(2.0*(crop.width+1u));
-      const double vx=(quad->x[3]-quad->x[0])/(2.0*(crop.height+1u));
-      const double vy=(quad->y[3]-quad->y[0])/(2.0*(crop.height+1u));
+      const double ux=(quad->x[1]-quad->x[0])/(physical.width+1u);
+      const double uy=(quad->y[1]-quad->y[0])/(physical.width+1u);
+      const double vx=(quad->x[3]-quad->x[0])/(physical.height+1u);
+      const double vy=(quad->y[3]-quad->y[0])/(physical.height+1u);
+      const double du=(double)(crop.x-physical.x)+(sx>0?(double)crop.width-physical.width:0.0)-sx*halo;
+      const double dv=(double)(crop.y-physical.y)+(sy>0?(double)crop.height-physical.height:0.0)-sy*halo;
       if(!isfinite(quad->span_x[corner]) || !isfinite(quad->span_y[corner]) ||
-         fabs(quad->span_x[corner]-(quad->x[corner]-sx*ux-sy*vx))>1e-8 ||
-         fabs(quad->span_y[corner]-(quad->y[corner]-sx*uy-sy*vy))>1e-8) return 0;
+         fabs(quad->span_x[corner]-(quad->x[corner]+du*ux+dv*vx))>1e-8 ||
+         fabs(quad->span_y[corner]-(quad->y[corner]+du*uy+dv*vy))>1e-8) return 0;
     }
-    double u=((double)crop.x+((corner==1u || corner==2u)?crop.width+halo:-halo))/source->width;
-    double v=((double)crop.y+(corner>=2u?crop.height+halo:-halo))/source->height;
+    double u=((double)physical.x+((corner==1u || corner==2u)?physical.width+halo:-halo))/source->width;
+    double v=((double)physical.y+(corner>=2u?physical.height+halo:-halo))/source->height;
     if(!isfinite(quad->x[corner]) || !isfinite(quad->y[corner]) ||
        fabs(quad->x[corner])>65536.0 || fabs(quad->y[corner])>65536.0 ||
        quad->u[corner]!=u || quad->v[corner]!=v ||
@@ -2256,6 +2281,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
         (sampling->quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN ||
          sampling->quantisation==GML_RENDER_QUANTISE_FILTERED_RAW_POSITIVE_ALPHA ||
          sampling->quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN ||
+         sampling->quantisation==GML_RENDER_QUANTISE_FILTERED_ROTATED_ALPHA ||
          ((op->scene_family==GML_RENDER_SCENE_BACKGROUND || op->scene_family==GML_RENDER_SCENE_TILE ||
            ((op->scene_family==GML_RENDER_SCENE_SPRITE || op->scene_family==GML_RENDER_SCENE_TEXT) &&
             op->payload.quad.span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW) ||
@@ -3181,6 +3207,8 @@ static int flush_quads_target(GmlGpuBackend *backend,GlSceneImage *target,GlScen
   if(surface_cutoff)
     filter=requested_filter==GL_SCENE_SURFACE_CUTOFF_FILTER?21u:
       requested_filter==GL_SCENE_SURFACE_CUTOFF_STAMP_FILTER?22u:79u;
+  const int rotation_support=requested_filter==GL_SCENE_FILTERED_ROTATION_COLOUR_FILTER || requested_filter==GL_SCENE_FILTERED_ROTATION_STAMP_FILTER;
+  if(rotation_support) filter=requested_filter==GL_SCENE_FILTERED_ROTATION_COLOUR_FILTER?80u:82u;
   GLfloat extent[2]={(GLfloat)target->width,(reflected?-1.0f:1.0f)*(GLfloat)target->height};
   int native_texture=filter>=GL_SCENE_NATIVE_TEXTURE_NEAREST_FILTER &&
                      filter<=GL_SCENE_NATIVE_TEXTURE_SURFACE_LINEAR_FILTER;
@@ -3283,7 +3311,7 @@ static int flush_quads_target(GmlGpuBackend *backend,GlSceneImage *target,GlScen
   /* Colour and alpha must sample the same side of a nearest texel tie.
    * Share the filtered program and select its output at draw time. */
   if(shared_cutout_point) native_flags|=GL_SCENE_NATIVE_SHARED_CUTOUT;
-  program=gml_gpu_opengl_scene_draw_program(backend,positive_byte || positive_raw || surface_cutoff
+  program=gml_gpu_opengl_scene_draw_program(backend,positive_byte || positive_raw || surface_cutoff || rotation_support
     ?requested_filter:filter,native_flags,NULL,0);
   if(!program) return 0;
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,target->framebuffer);
@@ -3560,7 +3588,7 @@ restore_stream_state:
      !flush_quads_target(backend,target,source,48u,0,count,8u,alpha_test,
                   source_alpha_key,palette,reflected)) return 0;
   if(!skip_alpha && ((filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==GL_SCENE_AFFINE_SURFACE_POINT_OPAQUE_FILTER) || filter==23u || filter==35u || filter==39u || filter==40u || filter==53u || filter==66u || filter==21u || filter==25u || (filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER) || filter==80u) && (write_mask&8u))
-    if(!flush_quads_target(backend,target,source,filter==GL_SCENE_AFFINE_SURFACE_POINT_OPAQUE_FILTER?GL_SCENE_AFFINE_SURFACE_POINT_STAMP_FILTER:filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER?GL_SCENE_NATIVE_POINT_STAMP_FILTER:filter==23u?24u:filter==35u?36u:(filter==39u || filter==40u)?41u:filter==53u?55u:filter==21u?(surface_cutoff?GL_SCENE_SURFACE_CUTOFF_STAMP_FILTER:22u):filter==25u?26u:(filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER)?33u:filter==80u?(positive_raw?GL_SCENE_RAW_POSITIVE_FILTER_OFFSET+82u:82u):(unit_background?GL_SCENE_UNIT_BACKGROUND_FILTER_OFFSET+72u:72u),0,count,8u,alpha_test,
+    if(!flush_quads_target(backend,target,source,filter==GL_SCENE_AFFINE_SURFACE_POINT_OPAQUE_FILTER?GL_SCENE_AFFINE_SURFACE_POINT_STAMP_FILTER:filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER?GL_SCENE_NATIVE_POINT_STAMP_FILTER:filter==23u?24u:filter==35u?36u:(filter==39u || filter==40u)?41u:filter==53u?55u:filter==21u?(surface_cutoff?GL_SCENE_SURFACE_CUTOFF_STAMP_FILTER:22u):filter==25u?26u:(filter==32u || filter==GL_SCENE_VIEW_BILINEAR_FILTER)?33u:filter==80u?(rotation_support?GL_SCENE_FILTERED_ROTATION_STAMP_FILTER:positive_raw?GL_SCENE_RAW_POSITIVE_FILTER_OFFSET+82u:82u):(unit_background?GL_SCENE_UNIT_BACKGROUND_FILTER_OFFSET+72u:72u),0,count,8u,alpha_test,
                     source_alpha_key,palette,reflected)) return 0;
   if(full_opaque_point)target->alpha_opaque=target->alpha_nonzero=1;
   if(surface_bounded && program->identity_surface_body && filter!=55u) backend->bounded_surface_draws++;
