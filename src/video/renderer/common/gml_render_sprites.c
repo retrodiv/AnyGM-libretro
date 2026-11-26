@@ -5236,8 +5236,12 @@ static int resident_nearest_sprite_function(GmlRender *r,GmlSprite *sprite,int s
 int gml_render_resident_rotated_font_glyph(GmlRender *r,GmlSprite *sprite,GmlTpag *page,
                                            double x,double y,double xs,double ys,double rotation,
                                            uint32_t colour,double alpha){
-  if(!r || !page || page->atlas<0 || page->atlas>=r->n_atlas ||
-     r->atlas[page->atlas].runtime_font_page) return 0;
+  if(!r || !page || page->atlas<0 || page->atlas>=r->n_atlas) return 0;
+  if(r->atlas[page->atlas].runtime_font_page &&
+     (!resident_first_generation_rotated_point(r,rotation) || !r->alphablend ||
+      r->blendmode || r->active_shader>=0 || r->fog_flat ||
+      !gml_render_target_preserves_alpha(r) || !r->device.context ||
+      !r->device.observe_on_demand || !r->device.observe_on_demand(r->device.context))) return 0;
   /* Rotated CPU glyphs write only the base image. Retain the phase bytes and
    * their independent coverage while staging the same existing text owner. */
   if(r->classic_phase_resource && !r->classic_phase_scene_preparing &&

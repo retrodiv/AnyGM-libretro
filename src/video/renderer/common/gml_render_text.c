@@ -361,7 +361,9 @@ static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, c
           resident_glyph=resident_text_glyph_outside(r,&cell,&gt,clip_x,clip_y,
                                                    xs,ys,use_rot?rotation:0.0);
         }
-        if(!resident_glyph && r->resident_application_pass && use_rot && !f->runtime_owned &&
+        if(!resident_glyph && r->resident_application_pass && use_rot &&
+           (!f->runtime_owned || (r->atlas && f->atlas>=0 && f->atlas<r->n_atlas &&
+                                  r->atlas[f->atlas].runtime_font_page)) &&
            !f->subpixel && f->sdf_spread<=0){
           GmlSprite glyph_sprite={.w=g->w,.h=g->h};
           resident_glyph=gml_render_resident_rotated_font_glyph(r,&glyph_sprite,&gt,
