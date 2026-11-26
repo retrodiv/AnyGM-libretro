@@ -4597,7 +4597,8 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     resident_first_generation_rotated_point(r,rotation) &&
     !r->fog_flat && r->alphablend && !r->blendmode &&
     gml_render_target_preserves_alpha(r) &&
-    (r->target_id>0 || (r->app_surface_owned && r->fb==r->app_surface_owned));
+    (r->target_id>0 || (r->app_surface && r->fb==r->app_surface &&
+      r->fbw==r->app_w && r->fbh==r->app_h));
   const int preserving_filtered_text=r && family==GML_RENDER_SCENE_TEXT && r->interp &&
     r->target_id>=0 && r->target_sp>0 && r->color_write_mask==15u &&
     gml_render_target_preserves_alpha(r);

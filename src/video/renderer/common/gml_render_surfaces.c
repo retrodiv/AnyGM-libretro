@@ -1051,7 +1051,8 @@ static int borrowed_application_matches_base(const GmlRender *r){
   return r && r->app_surface && r->app_surface!=r->app_surface_owned &&
     r->app_surface==r->base_scene_resource_pixels &&
     r->app_w==r->base_scene_resource_width && r->app_h==r->base_scene_resource_height &&
-    r->win && anygm_policy_has_modern_layer_semantics(r->win);
+    r->win && (anygm_policy_has_modern_layer_semantics(r->win) ||
+               anygm_policy_uses_first_generation_studio(r->win));
 }
 
 int gml_render_scene_target_matches(const GmlRender *r){
@@ -5171,8 +5172,7 @@ int gml_surface_set_target(GmlRender *r, int id){
     } else if(id==0 && r->app_surface==r->app_surface_owned &&
               (resident_resource=gml_render_application_resource_ensure(r))){
       px=r->app_surface_owned; w=r->app_w; h=r->app_h;
-    } else if(same_application_image && anygm_policy_has_modern_layer_semantics(r->win) &&
-              r->resident_application_pass &&
+    } else if(same_application_image && r->resident_application_pass &&
               !r->classic_phase_scene_target &&
               r->fb==r->app_surface && borrowed_application_matches_base(r) &&
               (resident_resource=gml_render_scene_target_resource_ensure(r))){
