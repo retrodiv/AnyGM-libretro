@@ -188,7 +188,8 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
   if(scene->program) return 1;
   scene->identity_surface_body=description->surface_body;
   const char *vertex_defines=variant==GL_SCENE_PROGRAM_FILTERED_ROTATION_COLOUR ||
-    variant==GL_SCENE_PROGRAM_FILTERED_ROTATION_STAMP
+    variant==GL_SCENE_PROGRAM_FILTERED_ROTATION_STAMP ||
+    variant==GL_SCENE_PROGRAM_FILTERED_ROTATION_PRESERVING
     ?"#define GML_SCENE_FILTERED_ROTATION_SUPPORT 1\n":"";
   int vertex_length=snprintf(vertex_source,sizeof vertex_source,"%s%s%s",prefix,
                              vertex_defines,GML_GPU_OPENGL_SCENE_INSTANCED_VERTEX_BODY);
@@ -256,6 +257,8 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
   scene->u_source_palette_colour=backend->gl.GetUniformLocation(scene->program,"u_source_palette_colour[0]");
   scene->u_previous=backend->gl.GetUniformLocation(scene->program,"u_previous");
   scene->u_region_origin=backend->gl.GetUniformLocation(scene->program,"u_region_origin");
+  scene->u_rotation_opacity=backend->gl.GetUniformLocation(scene->program,"u_rotation_opacity");
+  scene->u_rotation_span=backend->gl.GetUniformLocation(scene->program,"u_rotation_span[0]");
   scene->u_rotated_alpha16=backend->gl.GetUniformLocation(scene->program,"u_rotated_alpha16[0]");
   scene->u_point_map_x=backend->gl.GetUniformLocation(scene->program,"u_point_map_x");
   scene->u_point_map_y=backend->gl.GetUniformLocation(scene->program,"u_point_map_y");
@@ -279,6 +282,9 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
      scene->u_previous<0 || scene->u_region_origin<0 || scene->u_rotated_alpha16<0 ||
      scene->u_point_map_x<0 || scene->u_point_map_y<0 || scene->u_point_origin<0 ||
      scene->u_recovery_screen<0 || scene->u_recovery_application<0 || scene->u_recovery_rect<0)) ||
+     (variant==GL_SCENE_PROGRAM_FILTERED_ROTATION_PRESERVING &&
+       (scene->u_previous<0 || scene->u_region_origin<0 ||
+        scene->u_rotation_opacity<0 || scene->u_rotation_span<0)) ||
      ((required&GL_SCENE_REQUIRE_PREVIOUS) && (scene->u_previous<0 ||
        scene->u_region_origin<0 || scene->u_rotated_alpha16<0)) ||
      ((required&GL_SCENE_REQUIRE_POINT_MAP) && (scene->u_point_map_x<0 ||
@@ -324,6 +330,7 @@ static GlSceneProgramVariant scene_program_variant(uint32_t filter,int native_fl
   case GL_SCENE_SURFACE_CUTOFF_PRESERVING_FILTER:return GL_SCENE_PROGRAM_SURFACE_CUTOFF_PRESERVING;
   case GL_SCENE_FILTERED_ROTATION_COLOUR_FILTER:return GL_SCENE_PROGRAM_FILTERED_ROTATION_COLOUR;
   case GL_SCENE_FILTERED_ROTATION_STAMP_FILTER:return GL_SCENE_PROGRAM_FILTERED_ROTATION_STAMP;
+  case GL_SCENE_FILTERED_ROTATION_PRESERVING_FILTER:return GL_SCENE_PROGRAM_FILTERED_ROTATION_PRESERVING;
   case 186u:return GL_SCENE_PROGRAM_CONSTANT_186;
   case 187u:return GL_SCENE_PROGRAM_CONSTANT_187;
   case 188u:return GL_SCENE_PROGRAM_CONSTANT_188;

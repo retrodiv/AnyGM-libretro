@@ -1764,13 +1764,17 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
   }
   int native_opaque=native_geometry && r->target_id<0 && !r->target_sp &&
     r->fb_opaque_known && r->fb_all_opaque;
-  if(native_geometry && r->target_id<0 && !r->target_sp && !(r->alphablend && r->blendmode==1)){
+  const int preserving_rotation=native_geometry && r->target_id>0 &&
+    gml_render_target_preserves_alpha(r) &&
+    operation.payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_ROTATED_ALPHA;
+  if(preserving_rotation ||
+     (native_geometry && r->target_id<0 && !r->target_sp && !(r->alphablend && r->blendmode==1))){
     state.rgb_source_factor=GML_RENDER_BLEND_SOURCE_ALPHA;
     state.rgb_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
-    state.alpha_source_factor=GML_RENDER_BLEND_ONE;
+    state.alpha_source_factor=preserving_rotation?GML_RENDER_BLEND_SOURCE_ALPHA:GML_RENDER_BLEND_ONE;
     state.alpha_destination_factor=GML_RENDER_BLEND_ONE_MINUS_SOURCE_ALPHA;
     state.rgb_equation=state.alpha_equation=GML_RENDER_BLEND_ADD;
-    state.coverage_policy=GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
+    state.coverage_policy=preserving_rotation?0u:GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA;
   }
   if(native_atlas && !gml_render_blend_snapshot_extended(&state,r->blendmode,
        r->blend_equation,r->blend_equation_alpha,!gml_render_target_preserves_alpha(r)))return 0;
@@ -1810,7 +1814,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
     r->fb_opaque_known=r->fb_all_opaque=1;
     if(r->fb==r->app_surface) r->app_surface_opaque=1;
   }
-  if(((family==GML_RENDER_SCENE_TEXT && draw_alpha<1.0) || checkpoint_alpha_sprite ||
+  if(((family==GML_RENDER_SCENE_TEXT && draw_alpha<1.0) || preserving_rotation || checkpoint_alpha_sprite ||
      (integer_atlas && r->alphablend && (inverse_sprite || destination_factor_sprite || full_axis_preset || native_atlas || draw_alpha<1.0 || !page->scene_binary_alpha || adjacent_alpha))) &&
      (state.write_mask&8u) &&
      gml_render_target_preserves_alpha(r)){
@@ -4570,10 +4574,12 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     (fabs(fmod(rotation,360.0))<0.001 || fabs(fabs(fmod(rotation,360.0))-360.0)<0.001);
   int zero_factor_alpha=native_factors || (axis_preset && r->alphablend &&
     gml_render_blend_uses_destination_colour(r->blendmode));
+  const int preserving_filtered_text=r && family==GML_RENDER_SCENE_TEXT && r->interp &&
+    r->target_id>0 && r->color_write_mask==15u && gml_render_target_preserves_alpha(r);
   const int filtered_text=r && family==GML_RENDER_SCENE_TEXT && r->interp &&
     anygm_policy_has_modern_layer_semantics(r->win) && !r->fog_flat &&
     r->alphablend && !r->blendmode &&
-    !gml_render_target_preserves_alpha(r);
+    (!gml_render_target_preserves_alpha(r) || preserving_filtered_text);
   if(!r || !sprite || !page || !r->resident_application_pass ||
      (r->interp && !r->classic && !studio_rotated_point && !fog_axis && !filtered_text) ||
      (family==GML_RENDER_SCENE_SPRITE?resident_sprite_program_blocks(r):r->active_shader>=0) ||
@@ -4602,9 +4608,10 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
   int modern_screen_text=family==GML_RENDER_SCENE_TEXT &&
     anygm_policy_has_modern_layer_semantics(r->win) && r->alphablend && !r->blendmode &&
     !gml_render_target_preserves_alpha(r);
-  if(modern_screen_text){
+  if(modern_screen_text || (filtered_text && preserving_filtered_text)){
     /* The public text layout has already mapped the GUI pen and both scales. */
-    if(r->classic || (r->gui_pass_active && !filtered_text) || r->target_id>=0 || r->target_sp ||
+    if(r->classic || (r->gui_pass_active && !filtered_text) ||
+       (modern_screen_text && (r->target_id>=0 || r->target_sp)) ||
        (!filtered_text && alpha<0x1p-8) || page->sw<=0 || page->sh<=0 ||
        page->sw>256 || page->sh>256 || page->sx<0 || page->sy<0 ||
        phase<0.001 || fabs(phase-360.0)<0.001 || !atlas_pixels(r,page->atlas)) return 0;
@@ -4615,7 +4622,8 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     if(!filtered_text && r->alpha_test_enable && r->alpha_test_ref==255u) return 1;
     resident_classify_page(r,page,atlas);
     const int filter_alpha_support=filtered_text &&
-      (alpha<0x1p-8 || r->alpha_test_enable || !resident_rotated_text_positive_taps(r,page,atlas));
+      (preserving_filtered_text || alpha<0x1p-8 || r->alpha_test_enable ||
+       !resident_rotated_text_positive_taps(r,page,atlas));
     GmlRenderRotatedPlacement placement;
     int placed=gml_render_rotated_sprite_placement(r,sprite,page,x,y,xs,ys,
       filter_alpha_support?rotation:phase,&placement);
