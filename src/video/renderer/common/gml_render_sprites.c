@@ -4588,7 +4588,7 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
      sprite->runtime_rgba || sprite->spine || sprite->ns_enabled ||
      !isfinite(rotation) || !isfinite(alpha) || alpha<0.0 ||
      (alpha==0.0 && !zero_factor_alpha) || alpha>1.0 ||
-     (r->alphablend && alpha>0.0 && alpha<0x1p-64 && !native_factors) ||
+     (r->alphablend && alpha>0.0 && alpha<0x1p-64 && !native_factors && !filtered_text) ||
      !isfinite(xs) || !isfinite(ys) || fabs(xs)<minimum_scale || fabs(xs)>maximum_scale ||
      fabs(ys)<minimum_scale || fabs(ys)>maximum_scale) return 0;
   if(gml_render_interpolated_phase_blocks_scene(r)) return 0;
@@ -4604,7 +4604,7 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     !gml_render_target_preserves_alpha(r);
   if(modern_screen_text){
     if(r->classic || r->gui_pass_active || r->target_id>=0 || r->target_sp ||
-       alpha<0x1p-8 || page->sw<=0 || page->sh<=0 ||
+       (!filtered_text && alpha<0x1p-8) || page->sw<=0 || page->sh<=0 ||
        page->sw>256 || page->sh>256 || page->sx<0 || page->sy<0 ||
        phase<0.001 || fabs(phase-360.0)<0.001 || !atlas_pixels(r,page->atlas)) return 0;
     const GmlAtlas *atlas=&r->atlas[page->atlas];
@@ -4614,7 +4614,7 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     if(!filtered_text && r->alpha_test_enable && r->alpha_test_ref==255u) return 1;
     resident_classify_page(r,page,atlas);
     const int filter_alpha_support=filtered_text &&
-      (r->alpha_test_enable || !resident_rotated_text_positive_taps(r,page,atlas));
+      (alpha<0x1p-8 || r->alpha_test_enable || !resident_rotated_text_positive_taps(r,page,atlas));
     GmlRenderRotatedPlacement placement;
     int placed=gml_render_rotated_sprite_placement(r,sprite,page,x,y,xs,ys,
       filter_alpha_support?rotation:phase,&placement);

@@ -307,16 +307,28 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
        quad->filtered_draw_alpha>1.0) return 0;
   }
   const int filtered_rotation=quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_ROTATED_ALPHA;
-  float rotation_words[18];
+  float rotation_words[21];
+  const int stamp_only=filtered_rotation && quad->filtered_draw_alpha>0.0 &&
+    quad->filtered_draw_alpha<0x1p-126;
   if(filtered_rotation){
     /* Uniform colour and rectangular texture coordinates leave room in the
      * instance for packed binary64 operands without changing stream layout. */
-    const double transform[]={quad->inverse_anchor[0],quad->inverse_anchor[1],
-                              quad->inverse_x[0],quad->inverse_x[1],
-                              quad->inverse_y[0],quad->inverse_y[1]};
-    for(unsigned operand=0;operand<6u;operand++){
+    double opacity_floor=0.0;
+    if(stamp_only && quad->filtered_draw_alpha<0x1p-900){
+      /* The rounded product must reach 128 minimum subnormals for the
+       * following division by 255 to survive. Ties at 127.5 round to 128. */
+      int exponent;
+      double mantissa=frexp(quad->filtered_draw_alpha,&exponent);
+      opacity_floor=ldexp(127.5/mantissa,-1074-exponent);
+      if((opacity_floor*quad->filtered_draw_alpha)/255.0==0.0)
+        opacity_floor=nextafter(opacity_floor,INFINITY);
+    }
+    const double operands[]={quad->inverse_anchor[0],quad->inverse_anchor[1],
+                            quad->inverse_x[0],quad->inverse_x[1],
+                            quad->inverse_y[0],quad->inverse_y[1],opacity_floor};
+    for(unsigned operand=0;operand<6u+(unsigned)stamp_only;operand++){
       uint64_t bits;
-      memcpy(&bits,&transform[operand],sizeof bits);
+      memcpy(&bits,&operands[operand],sizeof bits);
       float *words=rotation_words+3u*operand;
       words[0]=(float)(bits&0x3fffffu);
       words[1]=(float)((bits>>22u)&0x3fffffu);
@@ -422,6 +434,12 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     if(filtered_rotation){
       memcpy(vertex+12u,rotation_words,6u*sizeof(float));
       if(corner) memcpy(vertex+4u,rotation_words+6u+(corner-1u)*4u,4u*sizeof(float));
+      else if(stamp_only){
+        /* RGB is unchanged at this opacity. Carry the exact write floor
+         * in the tint lanes of this glyph's compact instance. */
+        memcpy(vertex+4u,rotation_words+18u,3u*sizeof(float));
+        vertex[7]=0.0f;
+      }
       if(corner==1u) vertex[3]=(float)quad->inverse_offset[0];
       if(corner==2u) vertex[2]=(float)quad->inverse_offset[1];
       if(corner==3u){

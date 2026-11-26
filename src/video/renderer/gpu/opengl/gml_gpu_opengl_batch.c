@@ -1452,7 +1452,8 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
     qualified_blend(state)==1 &&
     (state->alpha_test_enabled ? alpha_support || state->alpha_test_reference<255u :
       !state->alpha_test_reference) &&
-    quad->filtered_draw_alpha>=0x1p-8 && quad->filtered_draw_alpha<=1.0 &&
+    isfinite(quad->filtered_draw_alpha) && quad->filtered_draw_alpha>0.0 &&
+    (alpha_support || quad->filtered_draw_alpha>=0x1p-8) && quad->filtered_draw_alpha<=1.0 &&
     (quad->corner_colour[0]>>24)==(uint32_t)lround(quad->filtered_draw_alpha*255.0) &&
     crop.width<=256u && crop.height<=256u;
   const int filtered_text=screen_text && (!state->alpha_test_enabled || alpha_support) &&

@@ -508,7 +508,11 @@
   "in vec4 in_SpanY;\n" \
   "uniform vec2 u_extent;\n" \
   "out vec2 v_texcoord;\n" \
+  "#ifdef GML_SCENE_FILTERED_ROTATION_SUPPORT\n" \
+  "flat out vec4 v_colour;\n" \
+  "#else\n" \
   "out vec4 v_colour;\n" \
+  "#endif\n" \
   "out vec4 v_clamp;\n" \
   "flat out vec4 v_map;\n" \
   "flat out vec2 v_step;\n" \
@@ -681,7 +685,11 @@
   "uniform ivec4 u_recovery_rect;\n" \
   "uniform vec2 u_extent;\n" \
   "in vec2 v_texcoord;\n" \
+  "#ifdef GML_SCENE_FILTERED_ROTATION_SUPPORT\n" \
+  "flat in vec4 v_colour;\n" \
+  "#else\n" \
   "in vec4 v_colour;\n" \
+  "#endif\n" \
   "in vec4 v_clamp;\n" \
   "flat in vec4 v_map;\n" \
   "flat in vec2 v_step;\n" \
@@ -1491,16 +1499,20 @@
   "      uint c=nx && py?uint(margin_tap(cell+ivec2(0,1),first,last,margin).a):0u;\n" \
   "      uint d=px && py?uint(margin_tap(cell+ivec2(1),first,last,margin).a):0u;\n" \
   "      bool supported=(a|b|c|d)!=0u;\n" \
-  "      if(supported && u_alpha_test>0){\n" \
+  "      bool stamp_only=v_colour.a==0.0;\n" \
+  "      uvec2 opacity_floor=stamp_only?glyph_operand(v_colour.rgb):uvec2(0u);\n" \
+  "      if(supported && (u_alpha_test>0 || !d64_zero(opacity_floor))){\n" \
   "        uvec2 ix=d64_sub(one,fx),iy=d64_sub(one,fy);\n" \
   "        uvec2 alpha=d64_mul(d64_uint(a),d64_mul(ix,iy));\n" \
   "        alpha=d64_add(alpha,d64_mul(d64_uint(b),d64_mul(fx,iy)));\n" \
   "        alpha=d64_add(alpha,d64_mul(d64_uint(c),d64_mul(ix,fy)));\n" \
   "        alpha=d64_add(alpha,d64_mul(d64_uint(d),d64_mul(fx,fy)));\n" \
-  "        supported=limb_less(d64_int(u_alpha_test),alpha);\n" \
+  "        supported=(u_alpha_test<=0 || limb_less(d64_int(u_alpha_test),alpha)) &&\n" \
+  "          !limb_less(alpha,opacity_floor);\n" \
   "      }\n" \
-  "      if(v_colour.a<=0.0 || !supported) discard;\n" \
+  "      if(!supported) discard;\n" \
   "      if(u_filter==82){o_color=vec4(0.0,0.0,0.0,1.0);return;}\n" \
+  "      if(stamp_only) discard;\n" \
   "    }\n" \
   "#endif\n" \
   "    bool unit_texel=margin==16;\n" \
