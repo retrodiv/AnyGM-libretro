@@ -750,7 +750,7 @@
   "  value.y&=0x7fffffffu;\n" \
   "  return !limb_less(uvec2(0u,0x3ff00000u),value);\n" \
   "}\n" \
-  "bool glyph_inverse_source(vec2 centre,ivec2 size,out ivec2 cell,out bvec2 positive){\n" \
+  "bool glyph_inverse_source(vec2 centre,ivec2 size,out ivec2 cell,out uvec2 fx,out uvec2 fy){\n" \
   "  uvec2 half_unit=uvec2(0u,0x3fe00000u);\n" \
   "  uvec2 x=d64_add(d64_int(int(centre.x)),half_unit);\n" \
   "  uvec2 y=d64_add(d64_int(int(centre.y)),half_unit);\n" \
@@ -766,7 +766,8 @@
   "  v=d64_sub(d64_sub(d64_add(v,d64_int(int(v_origin_trim.y))),d64_int(int(v_origin_trim.w))),half_unit);\n" \
   "  if(!glyph_source_inside(u,size.x) || !glyph_source_inside(v,size.y)) return false;\n" \
   "  cell=ivec2(d64_floor(u),d64_floor(v));\n" \
-  "  positive=bvec2(!d64_zero(d64_sub(u,d64_int(cell.x))),!d64_zero(d64_sub(v,d64_int(cell.y))));\n" \
+  "  fx=d64_sub(u,d64_int(cell.x));\n" \
+  "  fy=d64_sub(v,d64_int(cell.y));\n" \
   "  return true;\n" \
   "}\n" \
   "#endif\n" \
@@ -1479,12 +1480,25 @@
   "#ifdef GML_SCENE_FILTERED_ROTATION_SUPPORT\n" \
   "    {\n" \
   "      ivec2 first=ivec2(v_clamp.xy),last=ivec2(v_clamp.zw)-first,cell;\n" \
-  "      bvec2 phase;\n" \
-  "      if(!glyph_inverse_source(vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y),last+ivec2(1),cell,phase)) discard;\n" \
-  "      bool supported=margin_tap(cell,first,last,margin).a>0.0 ||\n" \
-  "        (phase.x && margin_tap(cell+ivec2(1,0),first,last,margin).a>0.0) ||\n" \
-  "        (phase.y && margin_tap(cell+ivec2(0,1),first,last,margin).a>0.0) ||\n" \
-  "        (phase.x && phase.y && margin_tap(cell+ivec2(1),first,last,margin).a>0.0);\n" \
+  "      uvec2 fx,fy;\n" \
+  "      if(!glyph_inverse_source(vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y),last+ivec2(1),cell,fx,fy)) discard;\n" \
+  "      uvec2 one=uvec2(0u,0x3ff00000u);\n" \
+  "      bool px=!d64_zero(fx),py=!d64_zero(fy);\n" \
+  "      // Fractions lie in [0,1] and may carry a negative zero bit.\n" \
+  "      bool nx=any(notEqual(fx,one)),ny=any(notEqual(fy,one));\n" \
+  "      uint a=nx && ny?uint(margin_tap(cell,first,last,margin).a):0u;\n" \
+  "      uint b=px && ny?uint(margin_tap(cell+ivec2(1,0),first,last,margin).a):0u;\n" \
+  "      uint c=nx && py?uint(margin_tap(cell+ivec2(0,1),first,last,margin).a):0u;\n" \
+  "      uint d=px && py?uint(margin_tap(cell+ivec2(1),first,last,margin).a):0u;\n" \
+  "      bool supported=(a|b|c|d)!=0u;\n" \
+  "      if(supported && u_alpha_test>0){\n" \
+  "        uvec2 ix=d64_sub(one,fx),iy=d64_sub(one,fy);\n" \
+  "        uvec2 alpha=d64_mul(d64_uint(a),d64_mul(ix,iy));\n" \
+  "        alpha=d64_add(alpha,d64_mul(d64_uint(b),d64_mul(fx,iy)));\n" \
+  "        alpha=d64_add(alpha,d64_mul(d64_uint(c),d64_mul(ix,fy)));\n" \
+  "        alpha=d64_add(alpha,d64_mul(d64_uint(d),d64_mul(fx,fy)));\n" \
+  "        supported=limb_less(d64_int(u_alpha_test),alpha);\n" \
+  "      }\n" \
   "      if(v_colour.a<=0.0 || !supported) discard;\n" \
   "      if(u_filter==82){o_color=vec4(0.0,0.0,0.0,1.0);return;}\n" \
   "    }\n" \
@@ -1493,7 +1507,7 @@
   "    vec4 sampled=unit_texel?source_texel(ivec2(floor(uv*extent)),0):\n" \
   "      margin!=0?hardware_physical_sprite_sample(v_texcoord,\n" \
   "        ivec2(v_clamp.xy),ivec2(v_clamp.zw),margin):source_texture(uv);\n" \
-  "#if !defined(GML_SCENE_ZERO_ALPHA_BLEND) && !defined(GML_SCENE_RAW_POSITIVE_ALPHA) && !defined(GML_SCENE_SURFACE_CUTOFF)\n" \
+  "#if !defined(GML_SCENE_ZERO_ALPHA_BLEND) && !defined(GML_SCENE_RAW_POSITIVE_ALPHA) && !defined(GML_SCENE_SURFACE_CUTOFF) && !defined(GML_SCENE_FILTERED_ROTATION_SUPPORT)\n" \
   "    float raw_alpha=sampled.a*255.0;\n" \
   "    // A normalized nearest texel can round slightly above its byte.\n" \
   "    if(nearest_cutout) raw_alpha=floor(raw_alpha+0.5);\n" \

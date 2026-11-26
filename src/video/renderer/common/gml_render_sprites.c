@@ -4572,7 +4572,7 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     gml_render_blend_uses_destination_colour(r->blendmode));
   const int filtered_text=r && family==GML_RENDER_SCENE_TEXT && r->interp &&
     anygm_policy_has_modern_layer_semantics(r->win) && !r->fog_flat &&
-    !r->alpha_test_enable && r->alphablend && !r->blendmode &&
+    r->alphablend && !r->blendmode &&
     !gml_render_target_preserves_alpha(r);
   if(!r || !sprite || !page || !r->resident_application_pass ||
      (r->interp && !r->classic && !studio_rotated_point && !fog_axis && !filtered_text) ||
@@ -4610,10 +4610,11 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     const GmlAtlas *atlas=&r->atlas[page->atlas];
     if(atlas->w>16384 || atlas->h>16384 || (int64_t)page->sx+page->sw>atlas->w ||
        (int64_t)page->sy+page->sh>atlas->h) return 0;
-    /* No raw alpha byte can pass the inclusive endpoint. */
-    if(r->alpha_test_enable && r->alpha_test_ref==255u) return 1;
+    /* Binary64 filtering can sum to just over 255. Point samples cannot. */
+    if(!filtered_text && r->alpha_test_enable && r->alpha_test_ref==255u) return 1;
     resident_classify_page(r,page,atlas);
-    const int filter_alpha_support=filtered_text && !resident_rotated_text_positive_taps(r,page,atlas);
+    const int filter_alpha_support=filtered_text &&
+      (r->alpha_test_enable || !resident_rotated_text_positive_taps(r,page,atlas));
     GmlRenderRotatedPlacement placement;
     int placed=gml_render_rotated_sprite_placement(r,sprite,page,x,y,xs,ys,
       filter_alpha_support?rotation:phase,&placement);

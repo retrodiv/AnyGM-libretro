@@ -1449,11 +1449,13 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
     state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
     (qualified_blend(state)==1 || qualified_blend(state)==14);
   int screen_text=op->scene_family==GML_RENDER_SCENE_TEXT && screen &&
-    qualified_blend(state)==1 && state->alpha_test_reference<(state->alpha_test_enabled?255u:1u) &&
+    qualified_blend(state)==1 &&
+    (state->alpha_test_enabled ? alpha_support || state->alpha_test_reference<255u :
+      !state->alpha_test_reference) &&
     quad->filtered_draw_alpha>=0x1p-8 && quad->filtered_draw_alpha<=1.0 &&
     (quad->corner_colour[0]>>24)==(uint32_t)lround(quad->filtered_draw_alpha*255.0) &&
     crop.width<=256u && crop.height<=256u;
-  const int filtered_text=screen_text && !state->alpha_test_enabled &&
+  const int filtered_text=screen_text && (!state->alpha_test_enabled || alpha_support) &&
     quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR;
   if(alpha_support){
     if(!filtered_text || op->target.image.resource_class!=GML_RENDER_RESOURCE_SCREEN ||
