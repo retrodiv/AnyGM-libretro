@@ -1511,6 +1511,72 @@ int anygm_synthetic_view_surface_target_content_create(AnygmSyntheticContent *fi
   return ok;
 }
 
+int anygm_synthetic_content_window_gui_content_create(AnygmSyntheticContent *fixture){
+  if(!fixture) return 0;
+  memset(fixture,0,sizeof *fixture);
+  if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
+  snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
+  char startup[192],gui[192];
+  snprintf(startup,sizeof startup,"%s/window-startup.gml",fixture->directory);
+  snprintf(gui,sizeof gui,"%s/window-gui.gml",fixture->directory);
+  /* The GUI is laid out in window pixels for a 384x288 window: its rectangle covers the window's
+   * top-left quarter only when the window really is that size. */
+  if(!write_text(startup,
+       "global.seen_window_w = -1; global.seen_window_h = -1;\n"
+       "global.seen_display_w = -1; global.seen_display_h = -1;\n") ||
+     !write_text(gui,
+       "global.seen_window_w = window_get_width();\n"
+       "global.seen_window_h = window_get_height();\n"
+       "global.seen_display_w = display_get_width();\n"
+       "global.seen_display_h = display_get_height();\n"
+       "display_set_gui_size(display_get_width(), display_get_height());\n"
+       "display_set_gui_maximise(1, 1, 0, 0);\n"
+       "draw_set_colour(255); draw_rectangle(0, 0, 191, 143, false);\n")){
+    anygm_synthetic_content_destroy(fixture);
+    return 0;
+  }
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  GmlcProject project={0};
+  GmlcObject object={0};
+  GmlcObjectEvent events[1]={{0}};
+  GmlcRoom room={0};
+  GmlcRoomInstance instance={0};
+  int room_order=0;
+  project.host=&services;
+  project.name=(char *)"neutral-content-window-gui";
+  project.startup_code_path=startup;
+  project.objects=&object; project.n_objects=project.cap_objects=1;
+  project.rooms=&room; project.n_rooms=project.cap_rooms=1;
+  project.room_order=&room_order; project.n_room_order=1;
+  object.id=object.name=(char *)"object_fixture";
+  object.sprite_id=object.mask_id=object.parent_id=-1;
+  object.visible=1; object.events=events; object.n_events=object.cap_events=1;
+  events[0].event_type=8; events[0].event_number=64; events[0].source_path=gui;
+  room.id=room.name=(char *)"room_fixture";
+  room.width=64; room.height=48; room.speed=60;
+  room.draw_background_color=1;
+  room.view_enabled=1; room.n_views=1;
+  room.views[0].visible=1;
+  room.views[0].wview=room.views[0].wport=64;
+  room.views[0].hview=room.views[0].hport=48;
+  room.views[0].hspeed=room.views[0].vspeed=-1;
+  room.views[0].object_id=-1;
+  room.instances=&instance; room.n_instances=room.cap_instances=1;
+  instance.id=instance.name=(char *)"instance_fixture";
+  instance.object_id=0; instance.instance_id=100000;
+  instance.sx=instance.sy=1.0f; instance.color=0xFFFFFFFFu;
+  char error[256]={0};
+  int ok=gmlc_package_write_structural(&project,fixture->path,error,sizeof error);
+  if(!ok){
+    fprintf(stderr,"content window package failed: %s\n",error);
+    anygm_synthetic_content_destroy(fixture);
+  }
+  return ok;
+}
+
 int anygm_synthetic_shifted_port_content_create(AnygmSyntheticContent *fixture){
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);

@@ -208,7 +208,7 @@ configuration load cannot overwrite the repair. This is suitable for replacing i
 configuration with a stable session policy; in-game changes to that list item take effect only
 after the content override is disabled.
 
-A `?gameres` directive applies only while *Render at game resolution* is selected. It declares an inner logical raster for presentation values that the content scales to a separate output raster. Each scoped directive captures the previous value before its first write and restores it when the selection closes. This includes mutable presentation fields such as `@window_w`, `@window_h`, `@application_w`, `@application_h`, and `@application_hold`, and also permits a scoped instance-variable or surface-resize directive when its target has one meaningful previous value. Room-owned `view_*` and `background_*` arrays are recaptured on room entry, and their directives settle before the frame's output geometry is published.
+A `?gameres` directive applies only while *Render at game resolution* is selected. It declares an inner logical raster for presentation values that the content scales to a separate output raster. Each scoped directive captures the previous value before its first write and restores it when the selection closes. This includes mutable presentation fields such as `@window_w`, `@window_h`, `@application_w`, `@application_h`, `@application_hold`, `@content_window_w`, and `@content_window_h`, and also permits a scoped instance-variable or surface-resize directive when its target has one meaningful previous value. Room-owned `view_*` and `background_*` arrays are recaptured on room entry, and their directives settle before the frame's output geometry is published.
 
 ```
 [overrides]
@@ -236,6 +236,21 @@ surface on every Draw would otherwise draw at its own extent before `@applicatio
 ?gameres view_hport[0]=$view_h
 ?gameres @application_w=$view_w
 ?gameres @application_h=$view_h
+```
+
+`@content_window_w` and `@content_window_h` declare the window that content believes it occupies.
+While they are positive, `window_get_width`, `window_get_height`, `display_get_width`,
+`display_get_height` and `application_get_position` answer with that extent, ahead of any virtual
+monitor, and `display_set_gui_maximise` measures its window pixels in it. The GUI transform then
+maps those window pixels onto the delivered raster, which keeps its own size. Use it when a GUI
+layout uses fixed offsets and text scales written for one window size, so that it keeps its
+proportions on a smaller native raster instead of growing by the ratio between the two:
+
+```
+[overrides]
+# a GUI laid out for a 1920x1080 window, presented on the native raster
+@content_window_w=1920
+@content_window_h=1080
 ```
 
 `@present_shift_x` and `@present_shift_y` move the delivered frame by whole pixels and fill the

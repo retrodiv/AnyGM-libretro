@@ -157,7 +157,17 @@ static int presentation_base_size(const GmlVM *vm, const GmlRender *r, int heigh
   }
   return height?216:288;
 }
+/* A declared content window is what the game believes it occupies; the delivered raster may be
+ * smaller. Every window and display query answers from it so a layout written for that window
+ * keeps its proportions, and the GUI transform converts its window pixels to the target. */
+static int declared_content_window(const GmlVM *vm,int height){
+  if(!vm) return 0;
+  int extent=height?vm->content_window_h:vm->content_window_w;
+  return extent>0?extent:0;
+}
 int presentation_size(const GmlVM *vm, const GmlRender *r, int height){
+  int declared=declared_content_window(vm,height);
+  if(declared>0) return declared;
   GmlRenderPresentationMetrics metrics=builtin_presentation_metrics(r);
   /* Fullscreen is a content-owned request to occupy the monitor. Resolve it immediately, before
    * the next presentation pass has recomputed its effective window raster. In windowed mode the
@@ -176,6 +186,8 @@ int presentation_size(const GmlVM *vm, const GmlRender *r, int height){
  * presentation. The presentation coordinator decides separately whether that monitor also supplies
  * the effective window extent. */
 int display_size(const GmlVM *vm, const GmlRender *r, int height){
+  int declared=declared_content_window(vm,height);
+  if(declared>0) return declared;
   GmlRenderPresentationMetrics metrics=builtin_presentation_metrics(r);
   int configured=r?(height?metrics.monitor_height:metrics.monitor_width):0;
   if(configured>0) return configured;

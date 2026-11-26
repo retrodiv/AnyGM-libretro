@@ -580,6 +580,8 @@ static void cheat_parse_body(const char *code, CheatAct *a){
     else if(!strcmp(f,"application_w")) a->eng=EF_APPLICATION_W;
     else if(!strcmp(f,"application_h")) a->eng=EF_APPLICATION_H;
     else if(!strcmp(f,"application_hold")) a->eng=EF_APPLICATION_HOLD;
+    else if(!strcmp(f,"content_window_w")) a->eng=EF_CONTENT_WINDOW_W;
+    else if(!strcmp(f,"content_window_h")) a->eng=EF_CONTENT_WINDOW_H;
     else if(!strcmp(f,"present_shift_x")) a->eng=EF_PRESENT_SHIFT_X;
     else if(!strcmp(f,"present_shift_y")) a->eng=EF_PRESENT_SHIFT_Y;
     else if(!strcmp(f,"present_crop_left")) a->eng=EF_PRESENT_CROP_LEFT;
@@ -750,6 +752,8 @@ static void cheat_apply_one(AnygmEngine *engine,const CheatAct *a){
         case EF_APPLICATION_HOLD:
           gml_render_application_surface_hold(&engine->render,iv!=0);
           break;
+        case EF_CONTENT_WINDOW_W: engine->vm.content_window_w=iv>0 && iv<=16384?iv:0; break;
+        case EF_CONTENT_WINDOW_H: engine->vm.content_window_h=iv>0 && iv<=16384?iv:0; break;
         case EF_COMPOSITOR: case EF_CENTER_VIEW_TARGET: case EF_WIDE_GAMEPLAY_VIEW: break; /* queried by aspect helpers */
       }
       break; }
@@ -1497,6 +1501,8 @@ static void cheat_slot_capture(AnygmEngine *engine,CheatSlot *slot){
           slot->saved=gml_render_application_surface_held(&engine->render);
           slot->saved_valid=1;
           break;
+        case EF_CONTENT_WINDOW_W: slot->saved=engine->vm.content_window_w; slot->saved_valid=1; break;
+        case EF_CONTENT_WINDOW_H: slot->saved=engine->vm.content_window_h; slot->saved_valid=1; break;
         default: break;
       }
       break;

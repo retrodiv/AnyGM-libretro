@@ -859,6 +859,85 @@ done:
   return ok;
 }
 
+static int check_seen(AnygmEngine *engine,const char *stage,const char *name,double want){
+  double value=gml_global_num(&engine->vm,name);
+  if(value!=want){
+    fprintf(stderr,"scoped overrides: %s: global.%s is %g, expected %g\n",stage,name,value,want);
+    return 0;
+  }
+  return 1;
+}
+
+/* Content can lay out its GUI in window pixels for the window it was written for. When the delivered
+ * raster is smaller, a declared content window answers the window and display queries with that
+ * extent, and the window-space GUI is mapped from it onto the delivered raster: the layout keeps its
+ * proportions instead of growing by the ratio between the two. The delivered extent never changes. */
+static int content_window_case(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_content_window_gui_content_create(&fixture)){
+    fputs("scoped overrides: content-window fixture creation failed\n",stderr);
+    return 0;
+  }
+  int ok=0;
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  AnygmEngine *engine=create_loaded_engine(&services,&source);
+  static uint32_t plain[32768],declared[32768],withdrawn[32768];
+  unsigned pw=0,ph=0,dw=0,dh=0,ww=0,wh=0;
+  if(!engine || !select_logical_raster(engine,1) || !run_frames(engine,1) ||
+     !capture_frame(engine,plain,&pw,&ph,"content window undeclared")) goto done;
+  /* Undeclared, the window is the delivered raster and the 384x288 layout overflows all of it. */
+  if(!check_seen(engine,"content window undeclared","seen_window_w",(double)pw) ||
+     !check_seen(engine,"content window undeclared","seen_window_h",(double)ph)) goto done;
+  {
+    uint32_t inside=plain[(size_t)(ph/4)*pw+pw/4], outside=plain[(size_t)(ph*3/4)*pw+pw*3/4];
+    if(inside!=outside){
+      fputs("scoped overrides: the undeclared GUI rectangle does not cover the whole raster\n",stderr);
+      goto done;
+    }
+  }
+  if(anygm_set_runtime_override(engine,0,1,"?gameres @content_window_w=384")!=ANYGM_OK ||
+     anygm_set_runtime_override(engine,1,1,"?gameres @content_window_h=288")!=ANYGM_OK ||
+     !run_frames(engine,1) ||
+     !capture_frame(engine,declared,&dw,&dh,"content window declared")) goto done;
+  if(dw!=pw || dh!=ph){
+    fprintf(stderr,"scoped overrides: the content window changed the delivered extent to %ux%u\n",dw,dh);
+    goto done;
+  }
+  if(!check_seen(engine,"content window declared","seen_window_w",384) ||
+     !check_seen(engine,"content window declared","seen_window_h",288) ||
+     !check_seen(engine,"content window declared","seen_display_w",384) ||
+     !check_seen(engine,"content window declared","seen_display_h",288)) goto done;
+  {
+    uint32_t inside=declared[(size_t)(dh/4)*dw+dw/4], outside=declared[(size_t)(dh*3/4)*dw+dw*3/4];
+    if(inside!=plain[(size_t)(ph/4)*pw+pw/4] || outside==inside){
+      fputs("scoped overrides: the declared window did not map the GUI to its top-left quarter\n",stderr);
+      goto done;
+    }
+  }
+  /* Withdrawing the directives restores the undeclared queries and picture. */
+  if(anygm_set_runtime_override(engine,0,0,"?gameres @content_window_w=384")!=ANYGM_OK ||
+     anygm_set_runtime_override(engine,1,0,"?gameres @content_window_h=288")!=ANYGM_OK ||
+     !run_frames(engine,1) ||
+     !capture_frame(engine,withdrawn,&ww,&wh,"content window withdrawn")) goto done;
+  if(ww!=pw || wh!=ph || memcmp(withdrawn,plain,(size_t)pw*ph*sizeof plain[0])!=0 ||
+     !check_seen(engine,"content window withdrawn","seen_window_w",(double)pw)){
+    fputs("scoped overrides: the withdrawn content window did not restore the undeclared frame\n",stderr);
+    goto done;
+  }
+  ok=1;
+done:
+  if(engine) anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 int main(void){
   if(!scoped_override_case()) return 1;
   if(!presentation_crop_case()) return 1;
@@ -869,6 +948,7 @@ int main(void){
   if(!value_scope_case()) return 1;
   if(!application_hold_case()) return 1;
   if(!absent_instance_scope_case()) return 1;
+  if(!content_window_case()) return 1;
   puts("scoped overrides: ok");
   return 0;
 }

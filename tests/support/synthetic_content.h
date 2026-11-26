@@ -42,6 +42,10 @@ int anygm_synthetic_bridged_hold_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_draw_content_create(AnygmSyntheticContent *fixture);
 /* One assigned view surface, a translated camera and a GUI-owned transparent clear. */
 int anygm_synthetic_view_surface_target_content_create(AnygmSyntheticContent *fixture);
+/* One modern 64x48 room whose Draw GUI records window_get_* and display_get_* in globals, sizes
+ * its GUI to the display with a 1:1 window maximise, and fills the window rectangle (0,0)-(191,143)
+ * in red: the top-left quarter of a 384x288 window, or more than the whole of a smaller one. */
+int anygm_synthetic_content_window_gui_content_create(AnygmSyntheticContent *fixture);
 /* Two neutral sprite rooms: a held right key moves the visible object, then enters a second room. */
 int anygm_synthetic_gpu_scene_route_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_gpu_dense_scene_route_content_create(AnygmSyntheticContent *fixture);

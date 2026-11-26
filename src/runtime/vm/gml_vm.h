@@ -517,6 +517,10 @@ typedef struct GmlVM {
    * the optional screen-relative GUI transform (display_set_gui_maximise).  A zero maximise
    * scale means automatic fit; inactive restores the application-surface-relative default. */
   int window_w, window_h, gui_w, gui_h;
+  /* Presentation policy, never content: when positive, the window and display extent that content
+   * queries observe, independent of the raster actually delivered. Window-space GUI drawing is
+   * then mapped from this extent onto the delivered raster. */
+  int content_window_w, content_window_h;
   /* First-room view port captured before Create events for default GUI coordinates. */
   int gui_boot_w, gui_boot_h;
   /* Declared os_type; a negative value selects the runtime default. */
