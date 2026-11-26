@@ -305,7 +305,7 @@ DISPATCH_HELPERS = {
     "resident_depth_pixel_snapshot",
     "resident_primitive_alpha_noop",
     "resident_classify_page", "resident_classify_clamped_page", "resident_identity_screen_gui",
-    "resident_rotated_text_opaque_taps",
+    "resident_rotated_text_positive_taps",
     "resident_tile_source_metadata",
     "resident_page_endpoint_rgb_mask",
     "resident_mapped_screen_gui_font", "resident_nearest_text_scale", "resident_filtered_text_scale",

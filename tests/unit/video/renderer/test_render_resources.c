@@ -13191,7 +13191,8 @@ static int immutable_alpha_window_cache(void){
   GmlTpag base={.atlas=0,.sx=0,.sy=0,.sw=2,.sh=2},view;
   for(unsigned repeat=0;repeat<100u;repeat++){
     view=base;resident_classify_page(r,&view,a);
-    CHECK(view.scene_opaque_checked && !view.scene_fully_opaque && view.scene_binary_alpha &&
+    CHECK(view.scene_opaque_checked && !view.scene_fully_opaque && !view.scene_positive_alpha &&
+      view.scene_binary_alpha &&
       view.scene_ax0==0 && view.scene_ay0==0 && view.scene_ax1==1 && view.scene_ay1==1);
   }
   CHECK(r->resident_alpha_scan_texels==4u);
@@ -13207,7 +13208,9 @@ static int immutable_alpha_window_cache(void){
   uint8_t *replacement=malloc(24u);CHECK(replacement);memset(replacement,128,24u);
   free(a->px);a->px=replacement;
   view=base;resident_classify_page(r,&view,a);
-  CHECK(!view.scene_binary_alpha && r->resident_alpha_scan_texels==18u);
+  CHECK(!view.scene_binary_alpha && view.scene_positive_alpha && r->resident_alpha_scan_texels==18u);
+  view=base;resident_classify_page(r,&view,a);
+  CHECK(!view.scene_binary_alpha && view.scene_positive_alpha && r->resident_alpha_scan_texels==18u);
   /* Retire windows even when an older canonical page already holds its own facts. */
   a->blob=0;memset(a->px,255,24u);resident_classify_page(r,&view,a);
   a->blob=1;view=base;resident_classify_page(r,&view,a);
@@ -13243,7 +13246,7 @@ static int immutable_alpha_window_cache(void){
   CHECK(view.scene_fully_opaque && other->resident_alpha_scan_texels==4u);
   a->blob=0;memset(a->px,0,24u);view=base;resident_classify_page(r,&view,a);
   a->blob=1;view=base;resident_classify_page(other,&view,a);
-  CHECK(!view.scene_fully_opaque && view.scene_ax1==-1 &&
+  CHECK(!view.scene_fully_opaque && !view.scene_positive_alpha && view.scene_ax1==-1 &&
     other->resident_alpha_scan_texels==8u);
   free(other);
   gml_render_free(r);free(r);return 1;
@@ -20470,7 +20473,7 @@ static int resident_filtered_rotated_text_taps(void){
   GmlSprite sprite={.w=4,.h=4};
   GmlTpag page={.sx=1,.sy=1,.sw=2,.sh=2,.tw=2,.th=2,.tx=1,.ty=1,.bw=4,.bh=4};
   const int submits=fake.submits;
-  r->atlas[0].px[3]=128u;
+  r->atlas[0].px[3]=0u;
   CHECK(!gml_render_resident_rotated_font_glyph(r,&sprite,&page,9,8,.75,-.75,45,0xFFFFFFu,1));
   CHECK(gml_render_scene_submit_pending(r) && fake.submits==submits);
   r->atlas[0].px[3]=255u;
@@ -20487,6 +20490,10 @@ static int resident_filtered_rotated_text_taps(void){
   CHECK(gml_render_scene_submit_pending(r) && fake.submits==submits+3);
   CHECK(fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR &&
         fake.last_filtered_draw_alpha==.75 && !fake.readbacks);
+  r->atlas[0].px[3]=128u;
+  CHECK(gml_render_resident_rotated_font_glyph(r,&sprite,&page,9,8,8,-8,.5,0xFFFFFFu,.75));
+  CHECK(gml_render_scene_submit_pending(r) && fake.submits==submits+4);
+  CHECK(fake.last_filter==GML_RENDER_FILTER_HARDWARE_BILINEAR && !fake.readbacks);
   gml_render_free(r);free(r);
   return 1;
 }

@@ -37,6 +37,7 @@ typedef struct GmlTpag {
   int alpha_partial;                      /* at least one source texel has alpha 1..254 */
   int black_scanned, all_black;           /* cached source-colour classification */
   int scene_opaque_checked,scene_fully_opaque,scene_binary_alpha; /* immutable atlas crop eligibility */
+  int scene_positive_alpha;             /* every physical alpha byte is nonzero */
   int scene_endpoint_rgb_checked;
   uint32_t scene_endpoint_rgb_mask;       /* visible immutable page channels containing only 0/255 */
   int scene_ax0,scene_ay0,scene_ax1,scene_ay1; /* nonzero-alpha crop bounds for device rotation */
@@ -173,7 +174,7 @@ typedef struct {
   uint64_t incarnation,version,alpha_epoch;
   size_t blob_bytes,external_bytes;
   uint32_t blob;
-  int key[7],result[6],valid;
+  int key[7],result[7],valid;
 } GmlRenderAlphaWindow;
 typedef struct {
   int atlas, sx, sy, sw, sh;

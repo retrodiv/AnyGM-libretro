@@ -158,6 +158,7 @@ void resident_classify_page(GmlRender *r,GmlTpag *page,const GmlAtlas *atlas){
         page->scene_fully_opaque=entry->result[0];page->scene_binary_alpha=entry->result[1];
         page->scene_ax0=entry->result[2];page->scene_ay0=entry->result[3];
         page->scene_ax1=entry->result[4];page->scene_ay1=entry->result[5];
+        page->scene_positive_alpha=entry->result[6];
         page->scene_opaque_checked=1;return;
       }
     }
@@ -167,12 +168,14 @@ void resident_classify_page(GmlRender *r,GmlTpag *page,const GmlAtlas *atlas){
   if(r && page->sw>0 && page->sh>0)r->resident_alpha_scan_texels+=(uint64_t)(unsigned)page->sw*(unsigned)page->sh;
   page->scene_fully_opaque=1;
   page->scene_binary_alpha=1;
+  page->scene_positive_alpha=1;
   page->scene_ax0=page->sw; page->scene_ay0=page->sh;
   page->scene_ax1=-1; page->scene_ay1=-1;
   for(int row=0;row<page->sh;row++)
     for(int column=0;column<page->sw;column++){
       uint8_t coverage=atlas->px[((size_t)(page->sy+row)*atlas->w+page->sx+column)*4u+3u];
       if(coverage!=255u) page->scene_fully_opaque=0;
+      if(!coverage) page->scene_positive_alpha=0;
       if(coverage!=0u && coverage!=255u) page->scene_binary_alpha=0;
       if(coverage){
         if(column<page->scene_ax0) page->scene_ax0=column;
@@ -191,7 +194,8 @@ void resident_classify_page(GmlRender *r,GmlTpag *page,const GmlAtlas *atlas){
     memcpy(cached->key,key,sizeof key);
     cached->result[0]=page->scene_fully_opaque;cached->result[1]=page->scene_binary_alpha;
     cached->result[2]=page->scene_ax0;cached->result[3]=page->scene_ay0;
-    cached->result[4]=page->scene_ax1;cached->result[5]=page->scene_ay1;cached->valid=1;
+    cached->result[4]=page->scene_ax1;cached->result[5]=page->scene_ay1;
+    cached->result[6]=page->scene_positive_alpha;cached->valid=1;
   }
 }
 
@@ -211,6 +215,7 @@ static void resident_classify_clamped_page(GmlRender *r,GmlTpag *page,const GmlA
   resident_classify_page(r,&bounded,atlas);
   page->scene_fully_opaque=bounded.scene_fully_opaque;
   page->scene_binary_alpha=bounded.scene_binary_alpha;
+  page->scene_positive_alpha=bounded.scene_positive_alpha;
   page->scene_ax0=page->sw;page->scene_ay0=page->sh;
   page->scene_ax1=page->scene_ay1=-1;
   if(bounded.scene_ax1>=0){
@@ -4487,10 +4492,10 @@ static int resident_collapsed_additive_sprite_noop(GmlRender *r,GmlSprite *sprit
   return 1;
 }
 
-static int resident_rotated_text_opaque_taps(GmlRender *r,GmlTpag *page,const GmlAtlas *atlas){
+static int resident_rotated_text_positive_taps(GmlRender *r,GmlTpag *page,const GmlAtlas *atlas){
   const int has_margin=page->tx || page->ty ||
     page->tx+page->sw<page->bw || page->ty+page->sh<page->bh;
-  if(!has_margin) return page->scene_fully_opaque;
+  if(!has_margin) return page->scene_fully_opaque || page->scene_positive_alpha;
   /* A logical padding tap can escape the crop on both axes. Classify the
    * one-texel physical apron with the existing immutable alpha cache. */
   if(!page->sx || !page->sy ||
@@ -4498,7 +4503,7 @@ static int resident_rotated_text_opaque_taps(GmlRender *r,GmlTpag *page,const Gm
   GmlTpag apron={.atlas=page->atlas,.sx=page->sx-1,.sy=page->sy-1,
                  .sw=page->sw+2,.sh=page->sh+2};
   resident_classify_page(r,&apron,atlas);
-  return apron.scene_fully_opaque;
+  return apron.scene_positive_alpha;
 }
 
 static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlTpag *page,
@@ -4588,7 +4593,7 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     /* No raw alpha byte can pass the inclusive endpoint. */
     if(r->alpha_test_enable && r->alpha_test_ref==255u) return 1;
     resident_classify_page(r,page,atlas);
-    if(filtered_text && !resident_rotated_text_opaque_taps(r,page,atlas)) return 0;
+    if(filtered_text && !resident_rotated_text_positive_taps(r,page,atlas)) return 0;
     GmlRenderRotatedPlacement placement;
     int placed=gml_render_rotated_sprite_placement(r,sprite,page,x,y,xs,ys,phase,&placement);
     if(placed>0) for(unsigned corner=0;corner<4u;corner++)
