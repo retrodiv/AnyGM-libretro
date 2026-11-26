@@ -234,11 +234,13 @@
   "source.rgb=mix(source.rgb,u_fog_colour.rgb,clamp(amount,0.0,1.0));}" \
   "vec4 old_colour=texelFetch(u_colour,ivec2(gl_FragCoord.xy),0);" \
   "if((u_policy.x&4)!=0){\n" \
-  " if(u_policy.w!=0&&limb_less(input_alpha,uvec2(0u,0x3bf00000u))){\n" \
+  " bool tiny_texture=u_policy.w!=0&&limb_less(input_alpha,uvec2(0u,0x3bf00000u));\n" \
+  " if(tiny_texture&&u_flags.w==1){\n" \
   "  result_colour=old_colour;if((u_policy.x&1)!=0)result_colour.a=1.0;return;\n" \
   " }\n" \
   " uvec2 one=uvec2(0u,0x3ff00000u);\n" \
-  " if(u_policy.w!=0){input_alpha=d64_mul(input_alpha,state_sample);if(limb_less(one,input_alpha))input_alpha=one;}\n" \
+  " if(tiny_texture)input_alpha=uvec2(0u);\n" \
+  " else if(u_policy.w!=0){input_alpha=d64_mul(input_alpha,state_sample);if(limb_less(one,input_alpha))input_alpha=one;}\n" \
   " uvec2 inverse=d64_sub(one,input_alpha);\n" \
   " ivec4 src=ivec4(floor(source*255.0+0.5)),dst=ivec4(floor(old_colour*255.0+0.5));\n" \
   " if(u_policy.w!=0)for(int c=0;c<3;c++)src[c]=clamp(d64_lround(d64_div(\n" \
@@ -254,6 +256,7 @@
   "      d64_mul(d64_uint(uint(rgb[c])),fog)));\n" \
   " }\n" \
   " int a=clamp(d64_lround(d64_mul(input_alpha,d64_uint(255u))),0,255);\n" \
+  " if(u_flags.w==0){result_colour=vec4(src.rgb,(u_policy.x&1)!=0?255:a)/255.0;return;}\n" \
   " ivec4 result=ivec4(src.rgb,255);\n" \
   " if(any(notEqual(input_alpha,one))){\n" \
   "  for(int c=0;c<3;c++)result[c]=d64_floor(d64_add(d64_mul(d64_uint(uint(src[c])),input_alpha),\n" \

@@ -2024,7 +2024,7 @@ int gml_gpu_opengl_depth_triangle_valid(GmlGpuBackend *backend,const GmlRenderDr
       (float)triangle->vertex[0][1]!=(float)triangle->vertex[1][1];
   }
   if(pair){
-    if((triangle->textured && !triangle->alpha_sample_policy) || triangle->shading_flags>3u || triangle->blend!=1u ||
+    if((triangle->textured && !triangle->alpha_sample_policy) || triangle->shading_flags>3u || triangle->blend>GML_RENDER_DEPTH_BLEND_SOURCE_OVER ||
        !triangle->alpha_source_squared || state->clip.width ||
        fabs(triangle->vertex[0][0]-triangle->vertex[1][0])>1 ||
        fabs(triangle->vertex[0][1]-triangle->vertex[1][1])>1)return 0;

@@ -706,7 +706,7 @@ int gml_render_cpu_backend_depth_triangle(GmlRender *r,GmlRenderDepthPrimitive *
   const GmlRenderDeviceServices *device=gml_render_device(r);
   if(!resident_depth_triangle_eligible(r)) return 0;
   if(triangle && triangle->topology==GML_RENDER_DEPTH_TOPOLOGY_POINT_PAIR &&
-     (!r->alphablend || r->blendmode || r->blend_equation!=1 || r->blend_equation_alpha!=1))
+     (r->alphablend && (r->blendmode || r->blend_equation!=1 || r->blend_equation_alpha!=1)))
     return 0;
   GmlRenderResourceSource sampled={0};
   if(!triangle) return texture==-1 || vertex_texture_source(r,texture,&sampled,1,1);
