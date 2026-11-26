@@ -85,7 +85,7 @@ GmlRenderImageRef gml_render_application_scene_next_image_ref(GmlRender *render,
                                                                GmlRenderResource *resource);
 GmlRenderImageRef gml_render_application_scene_next_image_ref_before_rotations(
   GmlRender *render,GmlRenderResource *resource);
-int gml_render_rotated_scene_prepare_begin(GmlRender *render);
+int gml_render_rotated_scene_prepare_begin(GmlRender *render, uint32_t operation_count);
 int gml_render_rotated_scene_prepare_finish(GmlRender *render,int accepted);
 int gml_render_rotated_scene_flush(GmlRender *render);
 int gml_render_application_scene_enqueue(GmlRender *render,const GmlRenderDrawOp *operation,

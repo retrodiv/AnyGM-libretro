@@ -2250,7 +2250,7 @@ static int deferred_rotation_queue_transactions_and_lifetime(void){
     GmlRenderResource *target=gml_render_scene_target_resource_ensure(r);
     if(variant==2u)CHECK(paired_root_append(r,&source) && gml_render_scene_submit_pending(r));
     uint64_t original=gml_render_resource_image_ref(target).content_version;
-    CHECK(gml_render_rotated_scene_prepare_begin(r) && paired_root_append(r,&source) &&
+    CHECK(gml_render_rotated_scene_prepare_begin(r,1u) && paired_root_append(r,&source) &&
       gml_render_rotated_scene_prepare_finish(r,1) && fake.submits==(variant==2u?1:0) && !fake.readbacks &&
       gml_render_resource_image_ref(target).content_version==original &&
       gml_render_device_observation_pending(r));
@@ -2294,7 +2294,7 @@ static int deferred_rotation_queue_transactions_and_lifetime(void){
       free(saved);gml_render_abandon_device(r);gml_render_free(r);free(r);continue;
     }
     if(variant==0u || variant==6u){
-      CHECK(gml_render_rotated_scene_prepare_begin(r) && paired_root_append(r,&source));
+      CHECK(gml_render_rotated_scene_prepare_begin(r,1u) && paired_root_append(r,&source));
       if(variant==6u){
         /* A preparation borrows its committed parent;disposing both is not
          * two independent ownerships of that same allocation. */
@@ -22218,7 +22218,7 @@ static int resident_surface_feedback_authority(void){
     r->win=&content;gml_render_bind_device(r,&device);
     CHECK(gml_render_begin_resident_base(r,base,4,4,0,0));
     gml_render_application_surface_bind(r,r->fb,4,4,1);gml_render_application_surface_publish(r);
-    CHECK(gml_render_rotated_scene_prepare_begin(r) && paired_root_append(r,&source) &&
+    CHECK(gml_render_rotated_scene_prepare_begin(r,1u) && paired_root_append(r,&source) &&
       gml_render_rotated_scene_prepare_finish(r,1) && !fake.submits);
     gml_draw_surface_stretched(r,0,1,1,4,4,0xFFFFFFu,.37);
     CHECK(r->resident_application_pass && !fake.readbacks && fake.submits==4 && fake.retires==1 &&

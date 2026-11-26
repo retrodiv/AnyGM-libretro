@@ -4121,7 +4121,7 @@ static int resident_modern_screen_binary_rotation(GmlRender *r,GmlSprite *sprite
   if(!operations) goto done;
   gml_render_flush_pending_fill(r);
   if(r->pending_fill || !(target=gml_render_scene_target_resource_ensure(r))) goto done;
-  if(!gml_render_rotated_scene_prepare_begin(r)) goto done;
+  if(!gml_render_rotated_scene_prepare_begin(r,count)) goto done;
   prepared=1;
   GmlRenderImageRef image=gml_render_application_scene_next_image_ref(r,target);
   if(image.content_version>UINT64_MAX-count) goto done;
@@ -4296,7 +4296,7 @@ retry_submission:
   gml_render_flush_pending_fill(r);
   if(r->pending_fill || !(target=gml_render_scene_target_resource_ensure(r))) goto done;
   if(screen_axis && r->color_write_mask==15u){
-    if(!gml_render_rotated_scene_prepare_begin(r)) goto done;
+    if(!gml_render_rotated_scene_prepare_begin(r,byte_axis?alpha_count:count)) goto done;
     prepared=1;
   }
   if(byte_axis){
@@ -4520,12 +4520,14 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     !gml_render_target_preserves_alpha(r);
   if(modern_screen_text){
     if(r->classic || r->interp || r->gui_pass_active || r->target_id>=0 || r->target_sp ||
-       r->alpha_test_enable || alpha<0x1p-8 || page->sw<=0 || page->sh<=0 ||
+       alpha<0x1p-8 || page->sw<=0 || page->sh<=0 ||
        page->sw>256 || page->sh>256 || page->sx<0 || page->sy<0 ||
        phase<0.001 || fabs(phase-360.0)<0.001 || !atlas_pixels(r,page->atlas)) return 0;
     const GmlAtlas *atlas=&r->atlas[page->atlas];
     if(atlas->w>16384 || atlas->h>16384 || (int64_t)page->sx+page->sw>atlas->w ||
        (int64_t)page->sy+page->sh>atlas->h) return 0;
+    /* No raw alpha byte can pass the inclusive endpoint. */
+    if(r->alpha_test_enable && r->alpha_test_ref==255u) return 1;
     resident_classify_page(r,page,atlas);
     GmlRenderRotatedPlacement placement;
     int placed=gml_render_rotated_sprite_placement(r,sprite,page,x,y,xs,ys,phase,&placement);
@@ -4566,8 +4568,19 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
       int placed=gml_render_rotated_sprite_placement(r,sprite,page,x,y,xs,ys,phase,&placement);
       if(placed>0) for(unsigned corner=0;corner<4u;corner++)
         if(fabs(placement.x[corner])>65536.0 || fabs(placement.y[corner])>65536.0) placed=-1;
-      if(placed>=0) return !placed || resident_atlas_crop_from_page_impl(r,page,
-        0,0,page->sw,page->sh,0,0,1,1,family,colour,alpha,16,NULL,NULL,0u,0,NULL,&placement);
+      if(placed==0) return 1;
+      if(placed>0){
+        /* Normal rotations on SCREEN take effect in the deferred order,
+         * including across the opaque surface copies that can precede them. */
+        const int deferred=!r->blendmode && !gml_render_target_preserves_alpha(r);
+        if(deferred){
+          gml_render_flush_pending_fill(r);
+          if(r->pending_fill || !gml_render_rotated_scene_prepare_begin(r,1u)) return 0;
+        }
+        const int accepted=resident_atlas_crop_from_page_impl(r,page,
+          0,0,page->sw,page->sh,0,0,1,1,family,colour,alpha,16,NULL,NULL,0u,0,NULL,&placement);
+        return deferred?gml_render_rotated_scene_prepare_finish(r,accepted):accepted;
+      }
     }
     if(fog_rotated_alias) return 0;
     enum { CAPACITY=2048 };
@@ -4602,7 +4615,7 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
       !gml_render_target_preserves_alpha(r);
     if(deferred){
       if(r->pending_fill) gml_render_flush_pending_fill(r);
-      if(r->pending_fill || !gml_render_rotated_scene_prepare_begin(r)) goto rotated_done;
+      if(r->pending_fill || !gml_render_rotated_scene_prepare_begin(r,count)) goto rotated_done;
     }
     accepted=resident_atlas_crop_from_page_impl(r,&selected,0,0,page->sw,page->sh,
       0.0,0.0,1.0,1.0,family,colour,alpha,row_geometry?21:16,NULL,regions,count,0,NULL,NULL);

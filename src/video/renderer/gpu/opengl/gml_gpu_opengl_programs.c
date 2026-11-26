@@ -301,6 +301,7 @@ int gml_gpu_opengl_scene_program(GmlGpuBackend *backend,char *error,size_t error
 }
 
 static GlSceneProgramVariant scene_program_variant(uint32_t filter,int native_flags){
+  if(native_flags&GL_SCENE_NATIVE_SHARED_CUTOUT) return GL_SCENE_PROGRAM_FILTERED_ONLY;
   if(filter>=GL_SCENE_UNIT_BACKGROUND_FILTER_FIRST && filter<=GL_SCENE_UNIT_BACKGROUND_FILTER_LAST)
     filter-=GL_SCENE_UNIT_BACKGROUND_FILTER_OFFSET;
   if(filter>=GL_SCENE_RAW_POSITIVE_FILTER_FIRST && filter<=GL_SCENE_RAW_POSITIVE_FILTER_LAST)

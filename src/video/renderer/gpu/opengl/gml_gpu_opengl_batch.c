@@ -1447,7 +1447,7 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
     state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA &&
     (qualified_blend(state)==1 || qualified_blend(state)==14);
   int screen_text=op->scene_family==GML_RENDER_SCENE_TEXT && screen &&
-    !state->alpha_test_enabled && !state->alpha_test_reference && qualified_blend(state)==1 &&
+    qualified_blend(state)==1 && state->alpha_test_reference<(state->alpha_test_enabled?255u:1u) &&
     quad->filtered_draw_alpha>=0x1p-8 && quad->filtered_draw_alpha<=1.0 &&
     (quad->corner_colour[0]>>24)==(uint32_t)lround(quad->filtered_draw_alpha*255.0) &&
     crop.width<=256u && crop.height<=256u;
@@ -3252,6 +3252,11 @@ static int flush_quads_target(GmlGpuBackend *backend,GlSceneImage *target,GlScen
       if(!equal) native_flags&=~GL_SCENE_NATIVE_EQUAL_EXTENT;
     }
   }
+  int shared_cutout_point=alpha_test>=0 &&
+    (filter==GL_SCENE_NATIVE_POINT_OPAQUE_FILTER || filter==GL_SCENE_NATIVE_POINT_STAMP_FILTER);
+  /* Colour and alpha must sample the same side of a nearest texel tie.
+   * Share the filtered program and select its output at draw time. */
+  if(shared_cutout_point) native_flags|=GL_SCENE_NATIVE_SHARED_CUTOUT;
   program=gml_gpu_opengl_scene_draw_program(backend,positive_byte || positive_raw || surface_cutoff
     ?requested_filter:filter,native_flags,NULL,0);
   if(!program) return 0;

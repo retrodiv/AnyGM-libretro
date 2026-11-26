@@ -325,11 +325,17 @@ int gml_render_application_scene_flush(GmlRender *r){
   return 1;
 }
 
-int gml_render_rotated_scene_prepare_begin(GmlRender *r){
+int gml_render_rotated_scene_prepare_begin(GmlRender *r, uint32_t operation_count){
   if(!r || r->rotated_scene_building || r->rotated_scene_flushing ||
      !r->resident_application_pass || r->classic || r->pending_fill ||
      r->pending_underlay || r->pending_presentation ||
      !gml_render_application_scene_flush(r)) return 0;
+  const GmlRenderPendingSceneBatch *rotated=r->rotated_scene_batch;
+  /* Preparation copies the queue and cannot submit it. Flush the committed
+   * prefix before opening an atomic group that would exceed its capacity. */
+  if(rotated && operation_count<=GML_SCENE_BATCH_LIMIT &&
+     rotated->count>GML_SCENE_BATCH_LIMIT-operation_count &&
+     !gml_render_rotated_scene_flush(r)) return 0;
   GmlRenderPendingSceneBatch *ordinary=r->pending_scene_batch;
   r->pending_scene_batch=r->rotated_scene_batch;
   r->rotated_scene_building=1;

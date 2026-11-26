@@ -1403,8 +1403,9 @@
   "    o_color=vec4(rgb,(u_filter==149 || u_filter==153)?1.0:alpha); return;\n" \
   "  }\n" \
   "  bool covered_row=u_filter>=137 && u_filter<=146;\n" \
-  "  int physical_filter=covered_row?u_filter-72:u_filter;\n" \
-  "  if((u_filter>=65 && u_filter<=74)||(u_filter>=79 && u_filter<=82)||(u_filter>=112 && u_filter<=115)||covered_row){\n" \
+  "  bool nearest_cutout=u_filter==172 || u_filter==173;\n" \
+  "  int physical_filter=covered_row?u_filter-72:nearest_cutout?(u_filter==173?82:79):u_filter;\n" \
+  "  if((u_filter>=65 && u_filter<=74)||(u_filter>=79 && u_filter<=82)||(u_filter>=112 && u_filter<=115)||covered_row||nearest_cutout){\n" \
   "    vec2 extent=vec2(textureSize(u_image,0));\n" \
   "    vec2 uv=clamp(v_texcoord,(v_clamp.xy+vec2(0.5))/extent,\n" \
   "                            (v_clamp.zw+vec2(0.5))/extent);\n" \
@@ -1418,7 +1419,10 @@
   "      margin!=0?hardware_physical_sprite_sample(v_texcoord,\n" \
   "        ivec2(v_clamp.xy),ivec2(v_clamp.zw),margin):source_texture(uv);\n" \
   "#if !defined(GML_SCENE_ZERO_ALPHA_BLEND) && !defined(GML_SCENE_RAW_POSITIVE_ALPHA) && !defined(GML_SCENE_SURFACE_CUTOFF)\n" \
-  "    if(!covered_row && physical_filter<112 && u_alpha_test>=0 && sampled.a*255.0<=float(u_alpha_test)) discard;\n" \
+  "    float raw_alpha=sampled.a*255.0;\n" \
+  "    // A normalized nearest texel can round slightly above its byte.\n" \
+  "    if(nearest_cutout) raw_alpha=floor(raw_alpha+0.5);\n" \
+  "    if(!covered_row && physical_filter<112 && u_alpha_test>=0 && raw_alpha<=float(u_alpha_test)) discard;\n" \
   "#endif\n" \
   "    if(physical_filter>=79){\n" \
   "      float alpha=sampled.a*v_colour.a;\n" \

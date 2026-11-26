@@ -358,7 +358,7 @@ typedef struct GlScene {
 } GlScene;
 
 enum { GL_SCENE_NATIVE_PLAIN=1,GL_SCENE_NATIVE_WHITE_TINT=2,GL_SCENE_NATIVE_ZERO_ALPHA_BLEND=4,
-       GL_SCENE_NATIVE_EQUAL_EXTENT=8 };
+       GL_SCENE_NATIVE_EQUAL_EXTENT=8,GL_SCENE_NATIVE_SHARED_CUTOUT=16 };
 
 typedef struct GlFrameSnapshot {
   GLuint framebuffer,texture;
