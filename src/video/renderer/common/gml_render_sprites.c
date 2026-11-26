@@ -4514,8 +4514,7 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
      page->tx<0 || page->ty<0 ||
      (int64_t)page->tx+page->sw>sprite->w ||
      (int64_t)page->ty+page->sh>sprite->h) return 0;
-  /* Share the placed atlas quad with sprites. Binary coverage is resolved
-   * by nearest sampling and the existing device alpha stamp. */
+  /* Share the placed atlas quad, normal blend and opaque-alpha stamp with sprites. */
   int modern_screen_text=family==GML_RENDER_SCENE_TEXT &&
     anygm_policy_has_modern_layer_semantics(r->win) && r->alphablend && !r->blendmode &&
     !gml_render_target_preserves_alpha(r);
@@ -4528,7 +4527,6 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     if(atlas->w>16384 || atlas->h>16384 || (int64_t)page->sx+page->sw>atlas->w ||
        (int64_t)page->sy+page->sh>atlas->h) return 0;
     resident_classify_page(r,page,atlas);
-    if(!page->scene_binary_alpha) return 0;
     GmlRenderRotatedPlacement placement;
     int placed=gml_render_rotated_sprite_placement(r,sprite,page,x,y,xs,ys,phase,&placement);
     if(placed>0) for(unsigned corner=0;corner<4u;corner++)

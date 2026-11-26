@@ -20367,6 +20367,7 @@ static int resident_rotated_text_function(void){
   const double rotations[]={-1,45,90};
   const double alphas[]={1,0,.37};
   const double scales[][2]={{1,1},{2,3},{-2,-3},{.75,1.5}};
+  unsigned native_controls=0;
   for(unsigned generation=0;generation<6u;generation++)
   for(unsigned interpolation=0;interpolation<(generations[generation]>100?2u:1u);interpolation++)
   for(unsigned target_kind=0;target_kind<4u;target_kind++)
@@ -20414,8 +20415,19 @@ static int resident_rotated_text_function(void){
     unsigned scale=(state+angle)%4u,a=(state+angle)%3u;
     if(anygm_policy_has_modern_layer_semantics(r->win) && r->alphablend &&
        r->blendmode==0 && !gml_render_target_preserves_alpha(r)){
-      CHECK(!gml_render_resident_rotated_font_glyph(r,&r->spr[0],&r->tpag[0],
-        12.125,10.25,scales[scale][0],scales[scale][1],rotations[angle],0x70B0D0u,alphas[a]));
+      /* The authored source has partial alpha. Only the ordinary full-draw-alpha
+       * world case now uses a placed texture. Keep the special-state refusals. */
+      const int native=target_kind<2u && !gui && angle==0u;
+      const int submits=fake.submits;
+      const int admitted=gml_render_resident_rotated_font_glyph(r,&r->spr[0],&r->tpag[0],
+        12.125,10.25,scales[scale][0],scales[scale][1],rotations[angle],0x70B0D0u,alphas[a]);
+      CHECK(admitted==native && gml_render_scene_submit_pending(r));
+      CHECK(fake.submits==submits+native);
+      if(native){
+        CHECK(fake.last_opcode==GML_RENDER_OP_TEXTURED_QUAD && fake.last_batch_operations==1u &&
+              fake.last_quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN);
+        native_controls++;
+      }
       CHECK(r->resident_application_pass && !fake.readbacks && !fake.rgb_queries &&
             !memcmp(shadow,r->fb,sizeof shadow));
       gml_render_free(r);free(r);continue;
@@ -20432,6 +20444,7 @@ static int resident_rotated_text_function(void){
           !metrics.journal_bytes && !memcmp(shadow,r->fb,sizeof shadow));
     gml_render_free(r);free(r);
   }
+  CHECK(native_controls==4u);
   return 1;
 }
 
