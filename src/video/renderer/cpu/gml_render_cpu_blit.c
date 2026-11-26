@@ -5913,7 +5913,7 @@ int gml_render_rotated_sprite_placement(GmlRender *r,GmlSprite *sprite,GmlTpag *
   int result=rotated_geometry_prepare(r,sprite,page,&r->atlas[page->atlas],
     x,y,xs,ys,rotation,0,1,&geometry);
   if(result<=0) return result;
-  placement->use_row_span=r->interp && rotated_geometry_uses_row_span(&geometry);
+  placement->use_row_span=rotated_geometry_uses_row_span(&geometry);
   placement->filter_alpha_support=0;
   placement->inverse_anchor[0]=geometry.ax;
   placement->inverse_anchor[1]=geometry.ay;

@@ -666,7 +666,7 @@
   "uniform ivec2 u_region_origin;\n" \
   "uniform ivec4 u_rotated_alpha16[64];\n" \
   "#ifdef GML_SCENE_FILTERED_ROTATION_PRESERVING\n" \
-  "uniform ivec2 u_rotation_opacity;\n" \
+  "uniform ivec4 u_rotation_opacity;\n" \
   "uniform ivec4 u_rotation_span[4];\n" \
   "#endif\n" \
   "#ifdef GML_SCENE_CONSTANT_FILTER\n" \
@@ -762,7 +762,7 @@
   "  value.y&=0x7fffffffu;\n" \
   "  return !limb_less(uvec2(0u,0x3ff00000u),value);\n" \
   "}\n" \
-  "bool glyph_inverse_source(vec2 centre,ivec2 size,out ivec2 cell,out uvec2 fx,out uvec2 fy){\n" \
+  "void glyph_inverse_map(vec2 centre,out uvec2 u,out uvec2 v){\n" \
   "  uvec2 half_unit=uvec2(0u,0x3fe00000u);\n" \
   "  uvec2 x=d64_add(d64_int(int(centre.x)),half_unit);\n" \
   "  uvec2 y=d64_add(d64_int(int(centre.y)),half_unit);\n" \
@@ -772,10 +772,16 @@
   "  uvec2 sn=glyph_operand(vec3(v_rotation0.w,v_rotation1.xy));\n" \
   "  uvec2 sx=glyph_operand(vec3(v_rotation1.zw,v_rotation2.x));\n" \
   "  uvec2 sy=glyph_operand(v_rotation2.yzw);\n" \
-  "  uvec2 u=d64_mul(d64_sub(d64_mul(dx,c),d64_mul(dy,sn)),sx);\n" \
-  "  uvec2 v=d64_mul(d64_add(d64_mul(dx,sn),d64_mul(dy,c)),sy);\n" \
-  "  u=d64_sub(d64_sub(d64_add(u,d64_int(int(v_origin_trim.x))),d64_int(int(v_origin_trim.z))),half_unit);\n" \
-  "  v=d64_sub(d64_sub(d64_add(v,d64_int(int(v_origin_trim.y))),d64_int(int(v_origin_trim.w))),half_unit);\n" \
+  "  u=d64_mul(d64_sub(d64_mul(dx,c),d64_mul(dy,sn)),sx);\n" \
+  "  v=d64_mul(d64_add(d64_mul(dx,sn),d64_mul(dy,c)),sy);\n" \
+  "  u=d64_sub(d64_add(u,d64_int(int(v_origin_trim.x))),d64_int(int(v_origin_trim.z)));\n" \
+  "  v=d64_sub(d64_add(v,d64_int(int(v_origin_trim.y))),d64_int(int(v_origin_trim.w)));\n" \
+  "}\n" \
+  "bool glyph_inverse_source(vec2 centre,ivec2 size,out ivec2 cell,out uvec2 fx,out uvec2 fy){\n" \
+  "  uvec2 u,v,half_unit=uvec2(0u,0x3fe00000u);\n" \
+  "  glyph_inverse_map(centre,u,v);\n" \
+  "  u=d64_sub(u,half_unit);\n" \
+  "  v=d64_sub(v,half_unit);\n" \
   "  if(!glyph_source_inside(u,size.x) || !glyph_source_inside(v,size.y)) return false;\n" \
   "  cell=ivec2(d64_floor(u),d64_floor(v));\n" \
   "  fx=d64_sub(u,d64_int(cell.x));\n" \
@@ -784,9 +790,9 @@
   "}\n" \
   "#ifdef GML_SCENE_FILTERED_ROTATION_PRESERVING\n" \
   "// Retain the exact ordered intersections when the target can be read by the game.\n" \
-  "bool preserving_glyph_span_contains(vec2 centre){\n" \
+  "bool preserving_glyph_row(vec2 centre,out int left){\n" \
   "  uvec2 y=d64_add(d64_int(int(centre.y)),uvec2(0u,0x3fe00000u));\n" \
-  "  int left=2147483647,right=-2147483647,hits=0;\n" \
+  "  left=2147483647; int right=-2147483647,hits=0;\n" \
   "  for(int i=0;i<4;i++){\n" \
   "    int j=(i+1)&3;\n" \
   "    uvec2 a=uvec2(u_rotation_span[i].zw),b=uvec2(u_rotation_span[j].zw);\n" \
@@ -803,6 +809,62 @@
   "  }\n" \
   "  int x=int(centre.x);\n" \
   "  return hits>=2 && x>=left && x<right;\n" \
+  "}\n" \
+  "ivec2 fixed20_floor_parts(uvec2 input_value) {\n" \
+  "    bool negative = (input_value.y & 0x80000000u) != 0u;\n" \
+  "    uvec2 magnitude = uvec2(input_value.x, input_value.y & 0x7fffffffu);\n" \
+  "    int whole = d64_floor(magnitude);\n" \
+  "    uvec2 fraction = d64_sub(magnitude, d64_int(whole));\n" \
+  "    uvec2 scaled = d64_mul(fraction, d64_int(1048576));\n" \
+  "    int bits = d64_floor(scaled);\n" \
+  "    if (!negative) return ivec2(whole, bits);\n" \
+  "    bits += int(limb_less(d64_int(bits), scaled));\n" \
+  "    if (bits == 0) return ivec2(-whole, 0);\n" \
+  "    return ivec2(-whole - 1, 1048576 - bits);\n" \
+  "}\n" \
+  "\n" \
+  "int fixed20_advance(ivec2 start, int offset, int step) {\n" \
+  "    int whole = step >> 20;\n" \
+  "    int fraction = step & 1048575;\n" \
+  "    int upper = offset * (fraction >> 10);\n" \
+  "    int lower = start.y + offset * (fraction & 1023);\n" \
+  "    return start.x + offset * whole + ((upper + (lower >> 10)) >> 10);\n" \
+  "}\n" \
+  "\n" \
+  "int glyph_fixed_step(uvec2 direction,uvec2 scale){\n" \
+  "  uvec2 value=d64_mul(d64_mul(direction,scale),d64_int(1048576));\n" \
+  "  int magnitude=d64_lround(uvec2(value.x,value.y&0x7fffffffu));\n" \
+  "  return (value.y&0x80000000u)!=0u?-magnitude:magnitude;\n" \
+  "}\n" \
+  "vec4 fixed20_glyph_sample(vec2 centre){\n" \
+  "  int left=u_rotation_opacity.w;\n" \
+  "  if(v_span_active>0.5){\n" \
+  "    int intersection;\n" \
+  "    if(!preserving_glyph_row(centre,intersection)) discard;\n" \
+  "    left=max(left,intersection);\n" \
+  "  }\n" \
+  "  uvec2 u,v;\n" \
+  "  glyph_inverse_map(vec2(float(left)+0.5,centre.y),u,v);\n" \
+  "  int x=int(centre.x)-left;\n" \
+  "  int sx=glyph_fixed_step(glyph_operand(v_rotation0.xyz),\n" \
+  "    glyph_operand(vec3(v_rotation1.zw,v_rotation2.x)));\n" \
+  "  int sy=glyph_fixed_step(glyph_operand(vec3(v_rotation0.w,v_rotation1.xy)),\n" \
+  "    glyph_operand(v_rotation2.yzw));\n" \
+  "  ivec2 point=ivec2(fixed20_advance(fixed20_floor_parts(u),x,sx),\n" \
+  "                    fixed20_advance(fixed20_floor_parts(v),x,sy))+ivec2(v_clamp.xy);\n" \
+  "  if(any(lessThan(point,ivec2(v_clamp.xy))) || any(greaterThan(point,ivec2(v_clamp.zw)))) discard;\n" \
+  "  ivec4 sample_bytes=ivec4(floor(source_texel(point,0)*255.0+0.5));\n" \
+  "  if(sample_bytes.a<=u_alpha_test) discard;\n" \
+  "  int encoded=u_rotated_alpha16[sample_bytes.a/4][sample_bytes.a%4];\n" \
+  "  int factor=encoded&131071;\n" \
+  "  if(factor==0) discard;\n" \
+  "  ivec3 tint=ivec3(floor(v_colour.rgb*255.0+0.5));\n" \
+  "  ivec3 rgb=sample_bytes.rgb*tint/255;\n" \
+  "  ivec4 prior=ivec4(floor(texelFetch(u_previous,ivec2(gl_FragCoord.xy)-u_region_origin,0)*255.0+0.5));\n" \
+  "  rgb=(rgb*factor+prior.rgb*(65536-factor))/65536;\n" \
+  "  int alpha=encoded>>17;\n" \
+  "  alpha=(alpha*alpha+prior.a*(255-alpha)+127)/255;\n" \
+  "  return vec4(rgb,alpha)/255.0;\n" \
   "}\n" \
   "float glyph_alpha_weight(uvec2 opacity){\n" \
   "  if(d64_zero(opacity)) return 0.0;\n" \
@@ -1510,13 +1572,18 @@
   "#else\n" \
   "    int margin=int(floor(v_margin+0.5));\n" \
   "#endif\n" \
+  "#ifdef GML_SCENE_FILTERED_ROTATION_PRESERVING\n" \
+  "    if(u_rotation_opacity.z!=0){\n" \
+  "      o_color=fixed20_glyph_sample(vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y)); return;\n" \
+  "    }\n" \
+  "#endif\n" \
   "    if((physical_filter==79 || physical_filter==80 || physical_filter==82) && v_span_active>0.5){\n" \
   "      vec2 centre=vec2(gl_FragCoord.x,u_extent.y-gl_FragCoord.y);\n" \
   "      if(v_span_active>1.5){\n" \
   "        if(centre.x<v_span_x.x || centre.x>=v_span_x.y ||\n" \
   "           centre.y<v_span_y.x || centre.y>=v_span_y.y) discard;\n" \
   "#ifdef GML_SCENE_FILTERED_ROTATION_PRESERVING\n" \
-  "      }else if(!preserving_glyph_span_contains(centre)) discard;\n" \
+  "      }else{int left; if(!preserving_glyph_row(centre,left)) discard;}\n" \
   "#else\n" \
   "      }else if(!rotated_span_contains(centre)) discard;\n" \
   "#endif\n" \
@@ -1554,7 +1621,7 @@
   "        supported=(u_alpha_test<=0 || limb_less(d64_int(u_alpha_test),alpha)) &&\n" \
   "          !limb_less(alpha,opacity_floor);\n" \
   "#ifdef GML_SCENE_FILTERED_ROTATION_PRESERVING\n" \
-  "        uvec2 effective=d64_mul(alpha,uvec2(u_rotation_opacity));\n" \
+  "        uvec2 effective=d64_mul(alpha,uvec2(u_rotation_opacity.xy));\n" \
   "        rotation_alpha=uint(clamp(d64_lround(effective),0,255));\n" \
   "        rotation_weight=glyph_alpha_weight(effective);\n" \
   "#endif\n" \

@@ -199,7 +199,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
      quad->sampling.quantisation==GML_RENDER_QUANTISE_VIEW_TEXT ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_VIEW_TILE ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN ||
-     quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_ROTATED_ALPHA ||
+     gml_render_rotation_alpha_quantisation(quad->sampling.quantisation) ||
      quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION ||
      (op->scene_family==GML_RENDER_SCENE_SURFACE &&
       quad->sampling.quantisation==GML_RENDER_QUANTISE_INTEGER_TINT_TRUNC));
@@ -306,9 +306,10 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
     if(!isfinite(quad->filtered_draw_alpha) || quad->filtered_draw_alpha<=0.0 ||
        quad->filtered_draw_alpha>1.0) return 0;
   }
-  const int filtered_rotation=quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_ROTATED_ALPHA;
+  const int filtered_rotation=gml_render_rotation_alpha_quantisation(quad->sampling.quantisation);
   float rotation_words[21];
-  const int stamp_only=filtered_rotation && quad->filtered_draw_alpha>0.0 &&
+  const int stamp_only=quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_ROTATED_ALPHA &&
+    quad->filtered_draw_alpha>0.0 &&
     quad->filtered_draw_alpha<0x1p-126;
   if(filtered_rotation){
     /* Uniform colour and rectangular texture coordinates leave room in the
@@ -347,7 +348,7 @@ int gml_render_gpu_opengl_draw_textured_quad(const GmlRenderDrawOp *op,
         !gml_gpu_opengl_clamped_background_valid(op,state,source_width,source_height) &&
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN &&
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN &&
-        quad->sampling.quantisation!=GML_RENDER_QUANTISE_FILTERED_ROTATED_ALPHA &&
+        !gml_render_rotation_alpha_quantisation(quad->sampling.quantisation) &&
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SURFACE_LEADING &&
         quad->sampling.quantisation!=GML_RENDER_QUANTISE_SURFACE_TILED_LEADING &&
         !(quad->sampling.quantisation==GML_RENDER_QUANTISE_POSITIONED_SAMPLE &&

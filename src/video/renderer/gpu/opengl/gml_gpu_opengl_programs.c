@@ -284,7 +284,7 @@ static int build_scene_program(GmlGpuBackend *backend,GlSceneProgram *scene,
      scene->u_recovery_screen<0 || scene->u_recovery_application<0 || scene->u_recovery_rect<0)) ||
      (variant==GL_SCENE_PROGRAM_FILTERED_ROTATION_PRESERVING &&
        (scene->u_previous<0 || scene->u_region_origin<0 ||
-        scene->u_rotation_opacity<0 || scene->u_rotation_span<0)) ||
+        scene->u_rotation_opacity<0 || scene->u_rotation_span<0 || scene->u_rotated_alpha16<0)) ||
      ((required&GL_SCENE_REQUIRE_PREVIOUS) && (scene->u_previous<0 ||
        scene->u_region_origin<0 || scene->u_rotated_alpha16<0)) ||
      ((required&GL_SCENE_REQUIRE_POINT_MAP) && (scene->u_point_map_x<0 ||

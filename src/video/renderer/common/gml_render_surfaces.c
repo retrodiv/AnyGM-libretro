@@ -5155,7 +5155,8 @@ int gml_surface_set_target(GmlRender *r, int id){
     (!r->classic || id>0 || (id==0 && r->app_surface==r->app_surface_owned));
   const int same_application_image=id==0 && r->app_surface && r->app_surface==r->fb &&
     r->app_w==r->fbw && r->app_h==r->fbh && r->win &&
-    anygm_policy_has_modern_layer_semantics(r->win);
+    (anygm_policy_has_modern_layer_semantics(r->win) ||
+     anygm_policy_uses_first_generation_studio(r->win));
   /* A deferred clear belongs before a later draw through another name for the
    * same storage. A distinct suspended CPU target keeps its existing fill. */
   if(same_application_image || (resident && (!independent || r->resident_application_pass))){
@@ -5170,7 +5171,8 @@ int gml_surface_set_target(GmlRender *r, int id){
     } else if(id==0 && r->app_surface==r->app_surface_owned &&
               (resident_resource=gml_render_application_resource_ensure(r))){
       px=r->app_surface_owned; w=r->app_w; h=r->app_h;
-    } else if(same_application_image && r->resident_application_pass &&
+    } else if(same_application_image && anygm_policy_has_modern_layer_semantics(r->win) &&
+              r->resident_application_pass &&
               !r->classic_phase_scene_target &&
               r->fb==r->app_surface && borrowed_application_matches_base(r) &&
               (resident_resource=gml_render_scene_target_resource_ensure(r))){

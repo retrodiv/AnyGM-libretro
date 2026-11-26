@@ -227,8 +227,15 @@ enum {
    * selects the source orientation without changing the destination grid. */
   GML_RENDER_QUANTISE_SURFACE_REPEAT=36u,
   /* Native rotated atlas colour with coverage from the original inverse transform. */
-  GML_RENDER_QUANTISE_FILTERED_ROTATED_ALPHA=37u
+  GML_RENDER_QUANTISE_FILTERED_ROTATED_ALPHA=37u,
+  /* Placed atlas rotation with readable fixed20 point samples. */
+  GML_RENDER_QUANTISE_FIXED20_ROTATED_ALPHA=38u
 };
+
+static inline int gml_render_rotation_alpha_quantisation(uint32_t quantisation){
+  return quantisation==GML_RENDER_QUANTISE_FILTERED_ROTATED_ALPHA ||
+         quantisation==GML_RENDER_QUANTISE_FIXED20_ROTATED_ALPHA;
+}
 
 /* Resolved blend semantics, independent of any device API's enumerant values. Zeroed factors
  * and equations describe disabled blending; unsupported combinations are rejected before writes. */

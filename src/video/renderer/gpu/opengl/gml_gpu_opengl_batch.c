@@ -411,7 +411,7 @@ static uint32_t scene_filter(const GmlRenderQuad *quad,
       return 21u;
     return quad->sampling.filter==GML_RENDER_FILTER_BOX?75u:77u;
   }
-  if(quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_ROTATED_ALPHA)
+  if(gml_render_rotation_alpha_quantisation(quad->sampling.quantisation))
     return state->coverage_policy==GML_RENDER_COVERAGE_OPAQUE_WRITTEN_ALPHA
       ?GL_SCENE_FILTERED_ROTATION_COLOUR_FILTER:GL_SCENE_FILTERED_ROTATION_PRESERVING_FILTER;
   if(quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN)
@@ -1427,7 +1427,8 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
   const GmlRenderDrawStateSnapshot *state,const GlSceneImage *source){
   const GmlRenderQuad *quad=&op->payload.quad;
   GmlRenderRect physical=quad->sampling.source_region,crop=physical;
-  const int alpha_support=quad->sampling.quantisation==GML_RENDER_QUANTISE_FILTERED_ROTATED_ALPHA;
+  const int fixed20=quad->sampling.quantisation==GML_RENDER_QUANTISE_FIXED20_ROTATED_ALPHA;
+  const int alpha_support=gml_render_rotation_alpha_quantisation(quad->sampling.quantisation);
   int binary_numbered=op->target.image.resource_class==GML_RENDER_RESOURCE_SURFACE &&
     quad->sampling.quantisation==GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION &&
     state->write_mask==15u && state->alpha_test_enabled<=1u &&
@@ -1464,11 +1465,14 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
     state->write_mask==15u && state->alpha_test_enabled<=1u &&
     state->alpha_test_reference<=(state->alpha_test_enabled?255u:0u) &&
     !state->coverage_policy && qualified_blend(state)==3;
-  const int filtered_text=(screen_text || preserving_text) &&
+  const int filtered_text=!fixed20 && (screen_text || preserving_text) &&
     (!state->alpha_test_enabled || alpha_support) &&
     quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR;
   if(alpha_support){
-    if(!filtered_text ||
+    if((!filtered_text && !(fixed20 && preserving_text &&
+          quad->sampling.filter==GML_RENDER_FILTER_NEAREST &&
+          !quad->sampling.logical_margin_mask && exact_rect(op,NULL,NULL,NULL,NULL,0) &&
+          op->target.width<=16384u && op->target.height<=16384u)) ||
        state->sampler_count!=1u ||
        memcmp(&state->samplers[0],&quad->sampling,sizeof quad->sampling)) return 0;
     crop=quad->filtered_rotation_bounds;
@@ -1486,7 +1490,7 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
          quad->filtered_rotation_trim[axis]<0 ||
          quad->filtered_rotation_trim[axis]>0x1000000) return 0;
     }
-    if((crop.width!=physical.width || crop.height!=physical.height) && !quad->span_active) return 0;
+    if(!fixed20 && (crop.width!=physical.width || crop.height!=physical.height) && !quad->span_active) return 0;
   }
   const int padded_box=filtered_text && quad->span_active==GML_RENDER_SPAN_FILTERED_PADDED_BOX;
   if(!source || !source->width || !source->height || source->rendered_origin ||
@@ -1498,7 +1502,7 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
      op->target.pixel_format!=GML_RENDER_PIXEL_ARGB8888 ||
      op->reconstruction_mode!=GML_RENDER_DEVICE_CHECKPOINT ||
      quad->shape!=GML_RENDER_QUAD_GENERAL ||
-     (!padded_box && quad->span_active>(filtered_text?1u:0u)) ||
+     (!padded_box && quad->span_active>((filtered_text || fixed20)?1u:0u)) ||
      quad->source_endpoint_rgb_mask ||
      (!alpha_support && quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN &&
       quad->sampling.quantisation!=GML_RENDER_QUANTISE_HARDWARE_BINARY_ROTATION) ||
@@ -1522,7 +1526,10 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
      trunc(quad->span_x[1])!=quad->span_x[1] || trunc(quad->span_y[1])!=quad->span_y[1])) return 0;
   const double halo=filtered_text?0.5:0.0;
   for(unsigned corner=0;corner<4u;corner++){
-    if(quad->span_active==1u){
+    if(fixed20 && quad->span_active &&
+       (!isfinite(quad->span_x[corner]) || !isfinite(quad->span_y[corner]) ||
+        fabs(quad->span_x[corner])>65536.0 || fabs(quad->span_y[corner])>65536.0)) return 0;
+    if(!fixed20 && quad->span_active==1u){
       const int sx=(corner==1u || corner==2u)?1:-1;
       const int sy=corner>=2u?1:-1;
       const double ux=(quad->x[1]-quad->x[0])/(physical.width+1u);
@@ -2286,7 +2293,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
       int sample_plane=sample_plane_copy_valid(op,state,source);
       int hardware_veil=hardware_screen_veil_valid(op,state,source);
       int hardware_stretch=hardware_screen_stretch_valid(op,state,source);
-      if(sampling->quantisation==GML_RENDER_QUANTISE_FILTERED_ROTATED_ALPHA &&
+      if(gml_render_rotation_alpha_quantisation(sampling->quantisation) &&
          !state->coverage_policy &&
          (!backend->gl.CopyTexSubImage2D || !backend->gl.Uniform2iv || !backend->gl.Uniform4iv)) return 0;
       int hardware_sprite=hardware_screen_sprite_valid(op,state,source) ||
@@ -2296,7 +2303,7 @@ static int scene_preflight(GmlGpuBackend *backend,const GmlRenderDrawBatch *batc
         (sampling->quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_FIRSTGEN ||
          sampling->quantisation==GML_RENDER_QUANTISE_FILTERED_RAW_POSITIVE_ALPHA ||
          sampling->quantisation==GML_RENDER_QUANTISE_HARDWARE_SPRITE_MODERN ||
-         sampling->quantisation==GML_RENDER_QUANTISE_FILTERED_ROTATED_ALPHA ||
+         gml_render_rotation_alpha_quantisation(sampling->quantisation) ||
          ((op->scene_family==GML_RENDER_SCENE_BACKGROUND || op->scene_family==GML_RENDER_SCENE_TILE ||
            ((op->scene_family==GML_RENDER_SCENE_SPRITE || op->scene_family==GML_RENDER_SCENE_TEXT) &&
             op->payload.quad.span_active==GML_RENDER_SPAN_FILTERED_AXIS_SUPPORT_ROW) ||
@@ -3718,6 +3725,33 @@ int gml_gpu_opengl_compose_shader_output(GmlGpuBackend *backend,GlSceneImage *ta
   return flush_quads(backend,target,&source,53u,1,1u,15u,-1,0u,NULL);
 }
 
+static int upload_rotated_alpha16(GmlGpuBackend *backend,GlSceneProgram *program,
+                                  double draw_alpha,int alpha_mode){
+  if(program->rotated_alpha16_valid && program->rotated_alpha16_modern_nearest==alpha_mode &&
+     program->rotated_alpha16_value==draw_alpha) return 1;
+  GLint factors[256];
+  for(unsigned alpha=0;alpha<256u;alpha++){
+    if(alpha_mode==2){
+      unsigned factor=gml_render_rotated_alpha16_factor(alpha,draw_alpha);
+      unsigned source_alpha=(unsigned)lround(alpha*draw_alpha);
+      factors[alpha]=(GLint)((source_alpha<<17)|factor);
+    }else if(alpha_mode==1){
+      /* Retain the separately rounded source byte and combined RGB weight. */
+      double weight=(alpha/255.0)*draw_alpha;
+      unsigned factor=(unsigned)lround(weight*4194304.0);
+      unsigned source_alpha=(unsigned)lround(alpha*draw_alpha);
+      factors[alpha]=(GLint)((source_alpha<<23)|factor);
+    }else factors[alpha]=(GLint)gml_render_rotated_alpha16_factor(alpha,draw_alpha);
+  }
+  /* Pack four entries per vector to remain below the GLES uniform minimum. */
+  backend->gl.Uniform4iv(program->u_rotated_alpha16,64,factors);
+  if(backend->gl.GetError()!=GL_NO_ERROR){ program->rotated_alpha16_valid=0; return 0; }
+  program->rotated_alpha16_value=draw_alpha;
+  program->rotated_alpha16_modern_nearest=alpha_mode;
+  program->rotated_alpha16_valid=1;
+  return 1;
+}
+
 /* Each pixel of an ordered, disjoint row run reads one immutable device-local
  * predecessor. Overlapping or differently versioned runs take a fresh snapshot;
  * scalar and vector packets carry their own alpha policy in the vertex operand. */
@@ -3804,31 +3838,7 @@ static int draw_rotated_regions(GmlGpuBackend *backend,const GmlRenderDrawBatch 
   if(!scene_snapshot_region(backend,target,left,bottom,right-left,top-bottom))
     return 0;
   backend->gl.UseProgram(program->program);
-  if(!program->rotated_alpha16_valid || program->rotated_alpha16_modern_nearest!=alpha_mode ||
-     program->rotated_alpha16_value!=base->payload.quad.filtered_draw_alpha){
-    GLint factors[256];
-    for(unsigned alpha=0;alpha<256u;alpha++){
-      double draw_alpha=base->payload.quad.filtered_draw_alpha;
-      if(texel){
-        unsigned factor=gml_render_rotated_alpha16_factor(alpha,draw_alpha);
-        unsigned source_alpha=(unsigned)lround(alpha*draw_alpha);
-        factors[alpha]=(GLint)((source_alpha<<17)|factor);
-      } else if(modern){
-        /* RGB retains a combined 22-bit weight; alpha independently uses the CPU's
-         * binary64 rounded source byte. Both fit in one positive signed uniform. */
-        double weight=(alpha/255.0)*draw_alpha;
-        unsigned factor=(unsigned)lround(weight*4194304.0);
-        unsigned source_alpha=(unsigned)lround(alpha*draw_alpha);
-        factors[alpha]=(GLint)((source_alpha<<23)|factor);
-      } else factors[alpha]=(GLint)gml_render_rotated_alpha16_factor(alpha,draw_alpha);
-    }
-    /* Pack four entries per vector to remain below the GLES uniform minimum. */
-    backend->gl.Uniform4iv(program->u_rotated_alpha16,64,factors);
-    if(backend->gl.GetError()!=GL_NO_ERROR){ program->rotated_alpha16_valid=0; return 0; }
-    program->rotated_alpha16_value=base->payload.quad.filtered_draw_alpha;
-    program->rotated_alpha16_modern_nearest=alpha_mode;
-    program->rotated_alpha16_valid=1;
-  }
+  if(!upload_rotated_alpha16(backend,program,base->payload.quad.filtered_draw_alpha,alpha_mode)) return 0;
   GLint origin[2]={left,bottom};
   backend->gl.Uniform2iv(program->u_region_origin,1,origin);
   if(backend->gl.GetError()!=GL_NO_ERROR) return 0;
@@ -3928,13 +3938,15 @@ static int draw_preserving_rotated_glyph(GmlGpuBackend *backend,const GmlRenderD
   const uint32_t filter=GL_SCENE_FILTERED_ROTATION_PRESERVING_FILTER;
   GlSceneProgram *program=gml_gpu_opengl_scene_draw_program(backend,filter,0,error,error_capacity);
   if(!program || !scene_snapshot_region(backend,target,origin[0],origin[1],x_end-x,y_end-y)) return 0;
-  GLint opacity[2];
+  const int fixed20=op->payload.quad.sampling.quantisation==GML_RENDER_QUANTISE_FIXED20_ROTATED_ALPHA;
+  GLint opacity[4]={0,0,fixed20,(GLint)op->payload.quad.x[0]};
   double draw_alpha=op->payload.quad.filtered_draw_alpha;
   /* Even a filtered value one ULP above 255 rounds to zero at this scale. */
   double_words(draw_alpha<0x1p-9?0.0:draw_alpha,opacity);
   backend->gl.UseProgram(program->program);
   backend->gl.Uniform2iv(program->u_region_origin,1,origin);
-  backend->gl.Uniform2iv(program->u_rotation_opacity,1,opacity);
+  backend->gl.Uniform4iv(program->u_rotation_opacity,1,opacity);
+  if(fixed20 && !upload_rotated_alpha16(backend,program,draw_alpha,2)) return 0;
   if(op->payload.quad.span_active==1u){
     GLint span[16];
     for(unsigned corner=0;corner<4u;corner++){
