@@ -938,7 +938,7 @@ static int resident_atlas_crop_from_page_impl(GmlRender *r,GmlTpag *page,
      (!r || !page || sampling_interp ||
       (r->fog_flat && !flat_fog_sprite && !(rotated_sprite_function && family==GML_RENDER_SCENE_SPRITE)) ||
       gml_d3_is_active(r) ||
-      (text_function && r->gui_pass_active &&
+      (text_function && !native_geometry && r->gui_pass_active &&
        (r->gui_maximise_active || r->gui_maximise_xoffset!=0.0 || r->gui_maximise_yoffset!=0.0)) ||
       family!=(text_function?GML_RENDER_SCENE_TEXT:tile_function?GML_RENDER_SCENE_TILE:
                integer_background?GML_RENDER_SCENE_BACKGROUND:GML_RENDER_SCENE_SPRITE) ||
@@ -4603,7 +4603,8 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     anygm_policy_has_modern_layer_semantics(r->win) && r->alphablend && !r->blendmode &&
     !gml_render_target_preserves_alpha(r);
   if(modern_screen_text){
-    if(r->classic || r->gui_pass_active || r->target_id>=0 || r->target_sp ||
+    /* The public text layout has already mapped the GUI pen and both scales. */
+    if(r->classic || (r->gui_pass_active && !filtered_text) || r->target_id>=0 || r->target_sp ||
        (!filtered_text && alpha<0x1p-8) || page->sw<=0 || page->sh<=0 ||
        page->sw>256 || page->sh>256 || page->sx<0 || page->sy<0 ||
        phase<0.001 || fabs(phase-360.0)<0.001 || !atlas_pixels(r,page->atlas)) return 0;
