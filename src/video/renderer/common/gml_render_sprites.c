@@ -4588,8 +4588,7 @@ static int resident_nearest_texture_function(GmlRender *r,GmlSprite *sprite,GmlT
     /* No raw alpha byte can pass the inclusive endpoint. */
     if(r->alpha_test_enable && r->alpha_test_ref==255u) return 1;
     resident_classify_page(r,page,atlas);
-    if(filtered_text && (alpha!=1.0 ||
-       !resident_rotated_text_opaque_taps(r,page,atlas))) return 0;
+    if(filtered_text && !resident_rotated_text_opaque_taps(r,page,atlas)) return 0;
     GmlRenderRotatedPlacement placement;
     int placed=gml_render_rotated_sprite_placement(r,sprite,page,x,y,xs,ys,phase,&placement);
     if(placed>0) for(unsigned corner=0;corner<4u;corner++)

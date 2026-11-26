@@ -1452,7 +1452,7 @@ static int hardware_masked_rotated_sprite_valid(const GmlRenderDrawOp *op,
     (quad->corner_colour[0]>>24)==(uint32_t)lround(quad->filtered_draw_alpha*255.0) &&
     crop.width<=256u && crop.height<=256u;
   const int filtered_text=screen_text && !state->alpha_test_enabled &&
-    quad->filtered_draw_alpha==1.0 && quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR;
+    quad->sampling.filter==GML_RENDER_FILTER_HARDWARE_BILINEAR;
   const int padded_box=filtered_text && quad->span_active==GML_RENDER_SPAN_FILTERED_PADDED_BOX;
   if(!source || !source->width || !source->height || source->rendered_origin ||
      source->width>16384u || source->height>16384u ||
