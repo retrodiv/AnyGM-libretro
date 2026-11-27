@@ -15,7 +15,7 @@ extern "C" {
  * runtime library version, and every publishable metadata file declares the literal "Git" instead
  * of a number, so no copy can promise a value that has gone stale. CONTRIBUTING.md owns the single
  * increment step. */
-#define ANYGM_VERSION "0.1.1084"
+#define ANYGM_VERSION "0.1.1085"
 #define ANYGM_API_VERSION 13u
 #define ANYGM_HOST_SERVICES_VERSION 4u
 #define ANYGM_STATE_SCHEMA 70u
@@ -434,7 +434,8 @@ typedef struct AnygmConfig {
    * omission policy still skips its unsupported draws. */
   uint32_t scene_renderer;
   /* Host oversize CRT canvas in screen axes. Zero uses the default for each axis.
-   * Width accepts 320, 512 or 640, and height accepts 224, 240, 360, 384, 448 or 480.
+   * Width accepts 320, 512 or 640. Height accepts 240, 384 or 480, which use
+   * 224, 360 or 448 lines respectively for a natively portrait image.
    * Either can use ANYGM_CRT_CANVAS_KEEP to preserve the game samples along that axis. */
   uint32_t crt_canvas_width;
   uint32_t crt_vertical;
@@ -448,7 +449,7 @@ typedef struct AnygmConfig {
 enum {
   ANYGM_CRT_CANVAS_KEEP=1,
   ANYGM_CRT_CANVAS_DEFAULT_WIDTH=ANYGM_CRT_CANVAS_KEEP,
-  ANYGM_CRT_CANVAS_DEFAULT_HEIGHT=448
+  ANYGM_CRT_CANVAS_DEFAULT_HEIGHT=480
 };
 
 enum {

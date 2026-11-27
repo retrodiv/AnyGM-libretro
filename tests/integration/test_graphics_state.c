@@ -3892,7 +3892,7 @@ static int presentation_filter_variant(
       unsigned source_width=variant==0?64u:variant==1?400u:128u;
       unsigned source_height=variant==0?32u:variant==1?300u:96u;
       unsigned host_width=variant==1?(selected_crt_height?640u:400u):64u;
-      unsigned crt_height=selected_crt_height?selected_crt_height:448u;
+      unsigned crt_height=selected_crt_height?selected_crt_height:480u;
       unsigned host_height=variant==0?48u:variant==1?crt_height:64u;
       unsigned fallback=variant==2?GML_PLAN_FALLBACK_BOX_REDUCTION:
                                    GML_PLAN_FALLBACK_UNSUPPORTED_OPERATION;
@@ -3949,7 +3949,7 @@ static int presentation_filter_case(void){
          presentation_filter_variant(
            "CRT scaled to the default canvas",anygm_synthetic_crt_scaled_content_create,1,0) &&
          presentation_filter_variant(
-           "CRT scaled to 480 lines",anygm_synthetic_crt_scaled_content_create,1,480) &&
+           "CRT scaled to 384 lines",anygm_synthetic_crt_scaled_content_create,1,384) &&
          presentation_filter_variant(
            "host box",anygm_synthetic_host_box_content_create,2,0);
 }

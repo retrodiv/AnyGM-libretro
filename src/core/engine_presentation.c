@@ -1102,6 +1102,14 @@ void engine_update_host_canvas(AnygmEngine *engine){
     if(!declared && scanlines>244u){
       unsigned canvas_width=engine->config.crt_canvas_width;
       unsigned canvas_height=engine->config.crt_canvas_height;
+      /* Classify the native raster before aspect forcing, crop or rotation. */
+      bool native_portrait=engine->aspect_force_active?engine->base_width<engine->base_height:
+                                                       engine->output_width<engine->output_height;
+      if(native_portrait){
+        if(canvas_height==240u) canvas_height=224u;
+        else if(canvas_height==384u) canvas_height=360u;
+        else if(canvas_height==480u) canvas_height=448u;
+      }
       engine->host_crt_area_filter=canvas_height==224u || canvas_height==240u ||
         (canvas_height==ANYGM_CRT_CANVAS_KEEP && canvas_width==320u);
       engine->host_crt_active=1;

@@ -3388,8 +3388,7 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
   }
   if(f&ANYGM_CONFIG_CRT_CANVAS_HEIGHT){
     uint32_t height=delta->values.crt_canvas_height;
-    if(height!=ANYGM_CRT_CANVAS_KEEP && height!=224u && height!=240u &&
-       height!=360u && height!=384u && height!=480u)
+    if(height!=ANYGM_CRT_CANVAS_KEEP && height!=240u && height!=384u && height!=480u)
       height=ANYGM_CRT_CANVAS_DEFAULT_HEIGHT;
     if(engine->config.adjust_crt_tv && engine->config.crt_canvas_height!=height)
       engine->fps_room=-1;

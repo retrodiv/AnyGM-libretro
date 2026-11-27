@@ -90,7 +90,7 @@ display the canvas with the intended proportions.
 | **OS Screen Orientation** (`crt_vertical`) | Set **Horizontal** (default) for a system rotation of 0° or 180°, and **Vertical** for a system rotation of 90° or 270°. This supplies the CRT axes. The system setting determines its own rotation angle. |
 | **Image Rotation** (`image_rotation`) | Turns the picture and GUI **Left** or **Right** by 90°, or **Upside Down** by 180°. **None** (default) applies zero extra rotation. This option also works with CRT adjustment off. Pointer coordinates follow the displayed picture. |
 | **CRT Oversize Canvas Width** | Selects **Keep Game Width** (default), **320px**, **512px**, or **640px**. |
-| **CRT Oversize Canvas Height** | Selects **Keep Game Height**, **224px**, **240px**, **360px**, **384px**, **448px** (default), or **480px**. |
+| **CRT Oversize Canvas Height** | Selects **Keep Game Height**, **240px**, **384px**, or **480px** (default). |
 
 CRT adjustment exposes the OS orientation and oversize controls. After aspect forcing and
 presentation cropping, AnyGM allows up to 244 lines on the CRT scanline axis. Left and Right swap
@@ -112,19 +112,18 @@ image would need 270 lines and uses the oversize fit.
 
 ### Oversize modes
 
-A numeric selection fixes the canvas extent on its CRT axis. The display aspect describes the
+A numeric selection fixes the canvas extent on its CRT axis. Oversize portrait images
+(native width less than height, before aspect forcing, crop or rotation) use 224, 360 or 448
+lines for 240px, 384px or 480px respectively. The display aspect describes the
 canvas independently of its raster dimensions, so a 512×360 canvas still displays at 4:3.
 The picture keeps its visual aspect and is centered with black margins. This example uses a
 1920×1080 game raster, a horizontal screen and no image rotation.
 
 | Canvas width | Canvas height | Frame sent to the frontend | Picture inside the frame | Black lines at the top and bottom |
 | --- | --- | --- | --- | --- |
-| Keep Game Width (default) | 448px (default) | 1920×448 | 1920×336 | 56 each |
+| Keep Game Width (default) | 480px (default) | 1920×480 | 1920×360 | 60 each |
 | 640px | 480px | 640×480 | 640×360 | 60 each |
-| Keep Game Width | 480px | 1920×480 | 1920×360 | 60 each |
-| 320px | 224px | 320×224 | 320×168 | 28 each |
 | 320px | 240px | 320×240 | 320×180 | 30 each |
-| 512px | 360px | 512×360 | 512×270 | 45 each |
 | 512px | 384px | 512×384 | 512×288 | 48 each |
 | Keep Game Width | Keep Game Height | 1920×1440 | 1920×1080 | 180 each |
 
@@ -137,9 +136,9 @@ by the frontend.
 
 The vertical fit uses a 3:4 canvas in game coordinates and swaps the selector axes. For a
 1080×1920 portrait image, **Keep Game Width** with a **480px** height keeps all 1920 source
-lines and fits the picture into 360×1920 within a 480×1920 canvas. Each side gets 60 black
+lines and fits the picture into 336×1920 within a 448×1920 canvas. Each side gets 56 black
 columns. When the frontend accepts paired rotation, the core sends the canvas in scanout
-order as 1920×480, with the 480-line axis fixed.
+order as 1920×448, with the 448-line axis fixed.
 
 ### Native portrait and landscape examples
 
@@ -149,10 +148,10 @@ the framebuffer the frontend receives.
 
 | Game raster | System rotation | OS Screen Orientation | Image Rotation | Canvas before rotation | Frame sent |
 | --- | --- | --- | --- | --- | --- |
-| 224×288 | None | Horizontal | None | 640×480, with a centered 373×480 picture | 640×480 |
+| 224×288 | None | Horizontal | None | 640×448, with a centered 373×448 picture | 640×448 |
 | 224×288 | Left | Vertical | None | Native 224×288 | 288×224 |
 | 224×288 | None | Horizontal | Left | Native 224×288 | 288×224 |
-| 224×288 | Left | Vertical | Right | 640×480, with a centered 373×480 picture | 640×480 |
+| 224×288 | Left | Vertical | Right | 640×448, with a centered 373×448 picture | 640×448 |
 | 288×216 | None | Horizontal | None | Native 288×216 | 288×216 |
 | 288×216 | Left | Vertical | None | 480×640, with a centered 480×360 picture | 640×480 |
 | 288×216 | Left | Vertical | Right | Native 288×216 | 288×216 |

@@ -568,11 +568,11 @@ static void crt_adjustment_forces_the_logical_raster(void){
           strcmp(width->desc,"CRT Oversize Canvas Width") ||
           strcmp(height->desc,"CRT Oversize Canvas Height") ||
           strcmp(orientation->desc,"OS Screen Orientation") || strcmp(rotation->desc,"Image Rotation") ||
-          strcmp(width->default_value,"Keep Game Width") || strcmp(height->default_value,"448px") ||
+          strcmp(width->default_value,"Keep Game Width") || strcmp(height->default_value,"480px") ||
           strcmp(orientation->default_value,"Horizontal") || strcmp(rotation->default_value,"None"))
     complain("CRT and rotation labels, categories and defaults must match their menu");
   static const char *const widths[]={"Keep Game Width","320px","512px","640px"};
-  static const char *const heights[]={"Keep Game Height","224px","240px","360px","384px","448px","480px"};
+  static const char *const heights[]={"Keep Game Height","240px","384px","480px"};
   if(!width || !height || value_count(width)!=sizeof widths/sizeof widths[0] ||
      value_count(height)!=sizeof heights/sizeof heights[0])
     complain("CRT canvas selector value counts differ");
@@ -586,7 +586,7 @@ static void crt_adjustment_forces_the_logical_raster(void){
   libretro_options_apply(true);
   expect("CRT default",applied_config.values.adjust_crt_tv,0u);
   expect("CRT canvas width default",applied_config.values.crt_canvas_width,ANYGM_CRT_CANVAS_KEEP);
-  expect("CRT canvas height default",applied_config.values.crt_canvas_height,448u);
+  expect("CRT canvas height default",applied_config.values.crt_canvas_height,480u);
   expect("OS orientation default",applied_config.values.crt_vertical,0u);
   expect("image rotation default",applied_config.values.image_rotation,ANYGM_IMAGE_ROTATION_NONE);
   answered_monitor_value="1920";
@@ -630,7 +630,7 @@ static void crt_adjustment_forces_the_logical_raster(void){
   if(!flat || strcmp(flat,"CRT Oversize Canvas Width; Keep Game Width|320px|512px|640px"))
     complain("legacy CRT canvas width declaration differs");
   flat=flat_text("anygm_crt_oversize_canvas_height");
-  if(!flat || strcmp(flat,"CRT Oversize Canvas Height; 448px|Keep Game Height|224px|240px|360px|384px|480px"))
+  if(!flat || strcmp(flat,"CRT Oversize Canvas Height; 480px|Keep Game Height|240px|384px"))
     complain("legacy CRT canvas height declaration differs");
   flat=flat_text("anygm_os_screen_orientation");
   if(!flat || strcmp(flat,"OS Screen Orientation; Horizontal|Vertical"))

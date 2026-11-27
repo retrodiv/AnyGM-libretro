@@ -45,13 +45,13 @@ static struct retro_core_option_v2_definition g_definitions[]={
    {{"Keep Game Width",NULL},{"320px",NULL},{"512px",NULL},{"640px",NULL},{NULL,NULL}},
    "Keep Game Width"},
   {"anygm_crt_oversize_canvas_height","CRT Oversize Canvas Height",NULL,
-   "Sets the vertical extent of the CRT canvas for oversized images. Keep Game Height preserves "
-   "native samples on that axis and allows black margins. The canvas axes follow CRT orientation. "
-   "Use the core's aspect ratio in the frontend.",
+   "Sets the vertical extent of the CRT canvas for oversized images. For a natively portrait "
+   "image, 240px, 384px and 480px use 224, 360 and 448 lines respectively. Keep Game Height "
+   "preserves native samples on that axis and allows black margins. The canvas axes follow CRT "
+   "orientation. Use the core's aspect ratio in the frontend.",
    NULL,"video",
-   {{"Keep Game Height",NULL},{"224px",NULL},{"240px",NULL},{"360px",NULL},{"384px",NULL},
-    {"448px",NULL},{"480px",NULL},{NULL,NULL}},
-   "448px"},
+   {{"Keep Game Height",NULL},{"240px",NULL},{"384px",NULL},{"480px",NULL},{NULL,NULL}},
+   "480px"},
   {"anygm_os_screen_orientation","OS Screen Orientation",NULL,
    "Match the screen orientation already set in the operating system. This option only selects "
    "the axes for CRT fitting. The operating system controls its own rotation. Vertical swaps "

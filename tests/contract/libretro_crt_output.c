@@ -77,7 +77,9 @@ static int geometry_cases(void){
     {358,244,"None",358,640,480,0,22,640,436},
     {320,245,"None",320,640,480,7,0,626,480},
     {400,200,"None",400,640,480,0,80,640,320},
-    {240,320,"None",240,640,480,140,0,360,480},
+    {240,320,"None",240,640,448,140,0,360,448},
+    {240,320,"4:3",424,640,448,2,0,636,448},
+    {300,300,"None",300,640,480,80,0,480,480},
     {640,480,"None",640,640,480,0,0,640,480},
     {1280,720,"None",1280,640,480,0,60,640,360},
     {1920,1080,"None",1920,640,480,0,60,640,360},
@@ -120,7 +122,8 @@ static int geometry_cases(void){
     struct retro_system_av_info av={0}; retro_get_system_av_info(&av);
     REQUIRE(av.geometry.base_width==cases[i].host_width && av.geometry.base_height==cases[i].host_height,
             "cold AV geometry");
-    REQUIRE(fabs(av.geometry.aspect_ratio-(double)cases[i].host_width/cases[i].host_height)<1e-6,
+    REQUIRE(fabs(av.geometry.aspect_ratio-(cases[i].host_height==448?4.0/3.0:
+            (double)cases[i].host_width/cases[i].host_height))<1e-6,
             "frontend display aspect");
     retro_run();
     AnygmEngine *engine=g_libretro.engine;
@@ -239,7 +242,7 @@ static int frontend_portrait_case(bool supported,unsigned canvas_lines){
   unsigned packed_width=supported?native_height:native_width;
   unsigned packed_height=supported?native_width:native_height;
   crt_on=logical_on=vertical=1; rotation=NULL; aspect="None";
-  canvas_height=canvas_lines==448?NULL:"480px";
+  canvas_height=canvas_lines==448?NULL:"384px";
   frontend_rotation_supported=supported;
   frontend_rotation=frontend_rotation_requests=0;
   REQUIRE(anygm_synthetic_sized_content_create(&fixture,native_width,native_height),"portrait fixture");
@@ -324,10 +327,10 @@ static int vertical_native_cases(void){
     unsigned width,height,expected_width,expected_height;
     bool area_filter;
   } cases[]={
-    {244,320,244,320,false}, {245,320,240,320,true},
-    {180,320,240,320,false}, {180,326,240,320,true}, {240,348,240,348,false},
+    {244,320,244,320,false}, {245,320,224,320,true},
+    {180,320,240,320,false}, {180,326,224,320,true}, {240,348,240,348,false},
     /* Relative tolerance is measured against 3:4 in this orientation. */
-    {244,358,244,358,false}, {244,361,244,361,false}, {244,362,240,320,true}
+    {244,358,244,358,false}, {244,361,244,361,false}, {244,362,224,320,true}
   };
   for(size_t i=0;i<sizeof cases/sizeof cases[0];i++){
     AnygmSyntheticContent fixture={0};
@@ -364,10 +367,10 @@ static int keep_axis_cases(void){
     {1920,480,0,0,NULL,1920,480,0,160,1920,160,4.0/3.0},
     {1920,1080,0,1,NULL,1920,240,0,30,1920,180,4.0/3.0},
     {1920,1080,0,0,"Left",2560,480,740,0,1080,480,4.0/3.0},
-    {1080,1920,1,0,NULL,480,1920,60,0,360,1920,3.0/4.0},
-    {1080,1920,1,1,NULL,240,1920,30,0,180,1920,3.0/4.0},
-    {1080,1920,1,1,"Right",240,2560,0,740,240,1080,3.0/4.0},
-    {400,600,0,0,NULL,800,480,200,0,400,480,4.0/3.0},
+    {1080,1920,1,0,NULL,448,1920,56,0,336,1920,3.0/4.0},
+    {1080,1920,1,1,NULL,224,1920,28,0,168,1920,3.0/4.0},
+    {1080,1920,1,1,"Right",224,2560,0,740,224,1080,3.0/4.0},
+    {400,600,0,0,NULL,800,448,200,0,400,448,4.0/3.0},
     {3840,1080,1,0,NULL,480,3840,0,1380,480,1080,1.0}
   };
   for(size_t i=0;i<sizeof cases/sizeof cases[0];i++){
@@ -423,20 +426,18 @@ static int canvas_selector_cases(void){
     unsigned width,height,top,picture_height;
     bool area_filter,keep_width,keep_height,vertical;
   } cases[]={
-    {NULL,NULL,640,448,56,336,false,true,false,false},
-    {"320px","224px",320,224,28,168,true,false,false,false},
+    {NULL,NULL,640,480,60,360,false,true,false,false},
+    {"320px","240px",320,240,30,180,true,false,false,false},
     {"640px","240px",640,240,30,180,true,false,false,false},
-    {"512px","360px",512,360,45,270,false,false,false,false},
     {"512px","384px",512,384,48,288,false,false,false,false},
     {"320px","480px",320,480,60,360,false,false,false,false},
-    {"Keep Game Width","224px",640,224,28,168,true,true,false,false},
+    {"Keep Game Width","240px",640,240,30,180,true,true,false,false},
     {"320px","Keep Game Height",320,480,60,360,true,false,true,false},
     {"Keep Game Width","Keep Game Height",640,480,60,360,false,true,true,false},
     /* The selector axes are reversed in game coordinates for a vertical CRT. */
-    {"640px","448px",448,640,185,270,false,false,false,true},
-    {"512px","360px",360,512,148,216,false,false,false,true},
+    {"640px","480px",480,640,185,270,false,false,false,true},
     {"512px","384px",384,512,148,216,false,false,false,true},
-    {"Keep Game Width","224px",224,854,247,360,true,false,true,true},
+    {"Keep Game Width","240px",240,854,247,360,true,false,true,true},
     {"320px","Keep Game Height",640,320,92,135,true,true,false,true}
   };
   AnygmSyntheticContent fixture={0};
@@ -449,7 +450,7 @@ static int canvas_selector_cases(void){
   REQUIRE(retro_load_game(&info),"canvas selector load");
   struct retro_system_av_info av={0};
   retro_get_system_av_info(&av);
-  REQUIRE(av.geometry.base_width==640 && av.geometry.base_height==448 &&
+  REQUIRE(av.geometry.base_width==640 && av.geometry.base_height==480 &&
           fabs(av.geometry.aspect_ratio-4.0/3.0)<1e-6,"cold default canvas and display aspect");
   geometry_width=av.geometry.base_width; geometry_height=av.geometry.base_height;
   geometry_aspect=av.geometry.aspect_ratio;
@@ -629,11 +630,11 @@ static int live_state_case(int response,unsigned source_width,unsigned source_he
   REQUIRE(snapshot(&ring,&capacity,initial),"CRT snapshot");
   if(source_width==1920 && source_height==1080){
     canvas_width="640px"; changed=1; retro_run();
-    REQUIRE(video_width==640 && video_height==448 && snapshot(&ring,&capacity,initial),
+    REQUIRE(video_width==640 && video_height==480 && snapshot(&ring,&capacity,initial),
             "the original ring accepts a fixed-width frame");
     REQUIRE(retro_unserialize(native,state_size),"restore the original frame under fixed width");
     retro_run();
-    REQUIRE(video_width==640 && video_height==448 &&
+    REQUIRE(video_width==640 && video_height==480 &&
             fabs(geometry_aspect-4.0/3.0)<1e-6,"restored frame uses the fixed width and its display aspect");
     canvas_width=NULL; changed=1; retro_run();
   }
@@ -694,13 +695,13 @@ int main(void){
   if(!aspect_tolerance_cases()) return 1;
   if(!crop_padding_case() || !rotation_cases() || !vertical_native_cases() ||
      !keep_axis_cases() || !canvas_selector_cases() || !keep_aspect_reset_case()) return 1;
-  if(!frontend_portrait_case(false,480) || !frontend_portrait_case(true,480) ||
+  if(!frontend_portrait_case(false,360) || !frontend_portrait_case(true,360) ||
      !frontend_portrait_case(false,448) || !frontend_portrait_case(true,448)) return 1;
   for(int response=-1;response<=1;response++){
-    if(!live_state_case(response,1920,1080,1920,448) ||
+    if(!live_state_case(response,1920,1080,1920,480) ||
        !live_state_case(response,320,180,320,240) ||
        !live_state_case(response,240,240,320,240) ||
-       !live_state_case(response,360,180,360,448)) return 1;
+       !live_state_case(response,360,180,360,480)) return 1;
   }
   puts("CRT output: thresholds, aspect, margins, live options, state and Reset passed");
   return 0;
